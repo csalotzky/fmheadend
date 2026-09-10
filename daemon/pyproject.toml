@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fmheadendd"
+version = "0.1.0"
+description = "Eight-channel FM headend control daemon"
+requires-python = ">=3.11"
+dependencies = ["fastapi>=0.115,<1", "pydantic>=2.10,<3", "uvicorn>=0.30,<1"]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10", "httpx>=0.27,<1"]
+
+[project.scripts]
+fmheadendd = "fmheadendd.app:main"
+
+[tool.setuptools]
+packages = ["fmheadendd", "fmheadendd.models", "fmheadendd.api", "fmheadendd.sources", "fmheadendd.modulators", "fmheadendd.rp2354", "fmheadendd.mux", "fmheadendd.rds", "fmheadendd.status"]
+package-dir = {fmheadendd = "."}
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

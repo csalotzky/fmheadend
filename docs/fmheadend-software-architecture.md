@@ -1,0 +1,2009 @@
+# fmheadend - Linux oldali szoftverarchitektúra és implementációs specifikáció
+
+**Dokumentum státusza:** V1 tervezési specifikáció  
+**Projekt munkaneve:** `fmheadend`  
+**Fő Linux daemon:** `fmheadendd`  
+**Audio SPI mux daemon:** `fmheadend-muxd`  
+**Célgép:** Raspberry Pi Zero 2 W  
+**Fejlesztőgép:** Raspberry Pi 4  
+**Dátum:** 2026-09-10
+
+---
+
+# 1. A dokumentum célja
+
+Ez a dokumentum a `fmheadend` projekt **Linux/Raspberry Pi oldali szoftverének kanonikus implementációs specifikációja**. Úgy készült, hogy egy másik fejlesztő vagy kódoló AI a dokumentum alapján a Linux oldali rendszert fokozatosan, minimális architekturális találgatással meg tudja valósítani.
+
+A dokumentum nem az RP2354 firmware belső implementációját tervezi meg. Az RP2354 a Linux szoftver szempontjából egy külső, jól definiált hardveres szolgáltatás, amely:
+
+- SPI-n multiplexelt PCM audio adatot fogad;
+- I2C-n konfigurációs, állapot- és RDS parancsokat fogad/ad vissza;
+- a 8 darab QN8007B fizikai modulátor hardverközeli kezelését elrejti a Linux elől.
+
+Az RP2354 belső DMA-, PIO-, interrupt-, FIFO- és I2S implementációja **nem része ennek a dokumentumnak**. A Linux oldali interfész-contract azonban igen, mert annak kliensoldalát a Linux szoftvernek implementálnia kell.
+
+## 1.1 Normatív nyelv
+
+A specifikációban:
+
+- **KÖTELEZŐ / MUST:** V1 architekturális döntés, implementációkor nem változtatható meg önkényesen.
+- **AJÁNLOTT / SHOULD:** erősen preferált, de mérés vagy hardveres tapasztalat alapján módosítható.
+- **OPCIONÁLIS / MAY:** nem szükséges az első működő verzióhoz.
+
+## 1.2 Elsődleges fejlesztési cél
+
+A V1 célja nem egy vizuálisan kifinomult webalkalmazás, hanem egy **stabil, unattended, setup-and-forget FM mini-headend**, amely hosszú ideig képes folyamatosan működni.
+
+A prioritási sorrend:
+
+1. stabilitás;
+2. korrekt audioút;
+3. helyes és rugalmas RDS;
+4. kiszámítható hardvervezérlés;
+5. diagnosztizálhatóság;
+6. egyszerű, jól használható API;
+7. web UI;
+8. esztétika és extra kényelmi funkciók.
+
+---
+
+# 2. Rendszerkörnyezet és hardveres kontextus
+
+A rendszer 8 darab QN8007B FM modulátort tartalmaz. A Raspberry Pi nem generál nyolc külön I2S adatfolyamot. Ehelyett a Linux oldal egyetlen multiplexelt SPI audiofolyamot küld egy RP2354 mikrokontrollernek, amely a hardver felé szétosztja az audioadatot.
+
+Minden QN8007B analóg audio bemenete is ki van vezetve a nyákon. Emiatt egy modulátor audioforrása lehet:
+
+- a Pi által szállított digitális PCM;
+- közvetlen QN analóg bemenet.
+
+A Linux oldali logikai architektúrának ezt az analóg bypass módot első osztályú üzemmódként kell kezelnie.
+
+## 2.1 Magas szintű adat- és vezérlési síkok
+
+A rendszer két lényegében független síkra válik szét:
+
+- **Audio data plane:** GStreamer -> `fmheadendd` -> Unix socket -> `fmheadend-muxd` -> SPI -> RP2354.
+- **Control plane:** Web/API -> `fmheadendd` -> I2C -> RP2354 -> QN8007B.
+
+Az RDS a control plane része. Az RDS tartalmi logikája és schedulere Linux/Python oldalon fut; az RP2354 csak a már előállított groupokat fogadja és buffereli.
+
+## 2.2 Architektúra diagram
+
+```mermaid
+flowchart LR
+    UI[Web UI / API client] --> API[FastAPI REST API]
+    API --> HD[fmheadendd - Python]
+
+    NET[HTTP / HLS / UDP / RTP] --> GST[GStreamer pipelines]
+    ALSA[USB / ALSA input] --> GST
+    GST --> HD
+
+    HD -->|8 x raw PCM via Unix sockets| MUX[fmheadend-muxd - C++]
+    MUX -->|single multiplexed SPI audio stream| RP[RP2354]
+
+    HD -->|I2C control/status/RDS| RP
+    RP --> QN[8 x QN8007B]
+    ANALOG[External analog audio] --> QN
+
+    HD --> DB[(SQLite)]
+```
+
+---
+
+# 3. Projekt- és szolgáltatásnevek
+
+A projekt/repository neve **`fmheadend`** marad. A daemonokra külön név vonatkozik.
+
+| Elem | Név | Megjegyzés |
+|---|---|---|
+| Projekt / repository | `fmheadend` | A teljes Linux oldali projekt |
+| Fő Python daemon | `fmheadendd` | Orchestration, GStreamer, config, API, RDS, I2C |
+| Audio mux daemon | `fmheadend-muxd` | PCM buffering és SPI adatpumpa |
+| systemd unit | `fmheadendd.service` | Fő daemon |
+| systemd unit | `fmheadend-muxd.service` | Audio mux daemon |
+| Runtime könyvtár | `/run/fmheadend/` | Unix socketek |
+| Adatbázis | `/var/lib/fmheadend/fmheadend.db` | SQLite |
+
+A `d` suffix kizárólag a daemonokat jelöli; a projekt neve nem `fmheadendd`.
+
+---
+
+# 4. Fő komponensek és felelősségi határok
+
+## 4.1 `fmheadendd`
+
+A `fmheadendd` a rendszer fő orchestratora és control plane-je. Pythonban készül.
+
+### KÖTELEZŐ feladatok
+
+- persistent konfiguráció betöltése és mentése SQLite-ba;
+- 8 fizikai modulátor logikai állapotának kezelése;
+- `InputSource` objektumok kezelése;
+- GStreamer pipeline-ok létrehozása és felügyelete;
+- audio normalizálása a rendszer fix belső PCM formátumára;
+- GStreamer metadata feldolgozása;
+- PCM továbbítása a `fmheadend-muxd` felé;
+- modulátor start/stop/config lifecycle orchestration;
+- RP2354 I2C kliens;
+- RDS encoder és online scheduler;
+- RP RDS FIFO-k credit/free-space alapú feltöltése;
+- runtime státusz aggregálása;
+- FastAPI HTTP szerver és REST API;
+- később a statikus web UI kiszolgálása;
+- journald-kompatibilis logging.
+
+### KÖTELEZŐEN nem a `fmheadendd` feladata
+
+- sample-szintű audio DSP Python ciklusokban;
+- a 8 PCM stream SPI-re multiplexálása;
+- közvetlen SPI audio adatküldés;
+- RP2354 firmware belső időzítése;
+- közvetlen QN I2C/SEB hardverlogika;
+- web UI authentikáció V1-ben.
+
+## 4.2 `fmheadend-muxd`
+
+Kis, determinisztikus C++ daemon. Feladata kizárólag a real-time-ish Linux audio transport.
+
+### KÖTELEZŐ feladatok
+
+- 8 fix formátumú PCM Unix socket fogadása;
+- csatornánként bounded ring buffer;
+- underrun esetén zero-fill;
+- overrun esetén régi audio eldobása, hogy ne nőjön a latency;
+- fix SPI audio frame-ek összeállítása;
+- folyamatos SPI adatküldés az RP2354 felé;
+- minimális control/status Unix socket biztosítása;
+- audio transport számlálók és hibák szolgáltatása.
+
+### Nem feladata
+
+- GStreamer;
+- SQLite;
+- RDS;
+- QN konfiguráció;
+- I2C vezérlés;
+- annak ismerete, hogy egy TX ON/OFF vagy ANALOG/DIGITAL módban van;
+- samplerate-konverzió vagy hangprocesszálás.
+
+## 4.3 RP2354 a Linux szemszögéből
+
+Az RP2354 black-box periféria. A Linux két contractot ismer:
+
+1. **SPI audio contract** - multiplexelt PCM fogadása.
+2. **I2C control contract** - TX konfiguráció, státusz, RDS FIFO és debug műveletek.
+
+Az RP belső implementációja nincs specifikálva ebben a dokumentumban.
+
+---
+
+# 5. Audio alapformátum és GStreamer stratégia
+
+## 5.1 Fix belső PCM formátum
+
+A Linux audioút kimeneti contractja V1-ben fix:
+
+- **sample rate:** 48 000 Hz;
+- **sample format:** signed 16-bit little endian (`S16LE`);
+- **channels:** 2, stereo;
+- **PCM layout:** interleaved L/R.
+
+A forrás eredeti sample rate-je lehet 44.1 kHz, 48 kHz vagy más támogatott érték. A GStreamer a forrást a fix belső formátumra normalizálja.
+
+### Indoklás
+
+A 48 kHz-es fix domain leegyszerűsíti a teljes downstream transportot, az RP oldali audio interfészt és a hibakezelést. A netrádióknál gyakori 44.1 kHz -> 48 kHz sample rate conversion jó minőségű GStreamer resamplerrel elfogadható; az FM rendszer teljes minőségét nem ez fogja limitálni.
+
+A sample-szintű SRC-t **nem Pythonban** kell implementálni.
+
+## 5.2 GStreamer használata
+
+A GStreamer a digitális inputok elsődleges ingest/decode/resample keretrendszere.
+
+Egy tipikus pipeline logikailag:
+
+```text
+source -> demux/decode -> audioconvert -> audioresample -> optional processing ->
+audio/x-raw,format=S16LE,rate=48000,channels=2 -> appsink
+```
+
+A konkrét pipeline source típustól függően változhat, de a kimeneti caps mindig azonos.
+
+## 5.3 Támogatott input osztályok V1-ben
+
+- `HTTP` - hagyományos HTTP/Icecast/Shoutcast és HLS URI is ebbe tartozik;
+- `UDP` - raw vagy explicit formátumú UDP audio;
+- `RTP` - RTP transport a megadott codec/payload paraméterekkel;
+- `ALSA` - Linux ALSA capture device, tipikusan USB hangkártya;
+- `ANALOG` - nincs Pi PCM; a megfelelő QN közvetlen analóg bemenetet használ.
+
+**HLS nem külön `InputSource.type`.** HTTP/URI source-ként kezelendő.
+
+## 5.4 Future source lehetőségek
+
+Nem V1 követelmény, de az adatmodellnek ne zárja ki:
+
+- M3U / file playlist;
+- USB háttértárról zenelejátszás;
+- Liquidsoap integráció;
+- custom/local generator;
+- külső processzor.
+
+---
+
+# 6. Persistent adatmodell
+
+A persistent konfiguráció SQLite-ban tárolódik. Nincs külön adatbázis-szerver; egyetlen lokális fájl a canonical desired state.
+
+A persistent config és a runtime state **szigorúan különválasztandó**.
+
+## 6.1 `InputSource`
+
+Az `InputSource` egy újrahasznosítható logikai audioforrás. Nem tartalmaz FM modulációs vagy RDS hardverbeállításokat.
+
+### Közös mezők
+
+| Mező | Típus | Kötelező | Jelentés |
+|---|---|---:|---|
+| `id` | integer | igen | SQLite primary key |
+| `name` | string | igen | Emberi név, pl. `KEXP` |
+| `type` | enum | igen | `HTTP`, `UDP`, `RTP`, `ALSA`, `ANALOG` |
+| `enabled` | bool | igen | A source használható-e |
+| `config` | JSON object | igen | Type-specifikus config |
+| `audio_profile_id` | nullable integer | nem | Opcionális audio processing profil |
+| `gst_options` | JSON object | igen | Haladó GStreamer property override-ok; default `{}` |
+| `timestamp` | datetime | igen | Utolsó mentés/módosítás időpontja |
+
+Csak egyetlen timestamp szükséges. Ez setup-and-forget rendszer, nem audit/CRM.
+
+### 6.1.1 `HTTP` config
+
+Javasolt mezők:
+
+```json
+{
+  "uri": "https://example.org/stream",
+  "buffer_ms": 3000,
+  "connect_timeout_ms": 10000,
+  "user_agent": "fmheadend/1.0"
+}
+```
+
+- A `uri` kötelező.
+- HLS `.m3u8` is ugyanebbe a típusba tartozik.
+- ICY metadata kinyerése támogatandó, ha a stream szolgáltatja.
+
+### 6.1.2 `UDP` config
+
+V1-ben lehet szándékosan szűk.
+
+```json
+{
+  "host": "0.0.0.0",
+  "port": 5000,
+  "multicast_group": null,
+  "format": "S16LE",
+  "sample_rate": 48000,
+  "channels": 2
+}
+```
+
+Raw UDP esetén a format/sample rate/channel count explicit, mert a transport nem feltétlenül önleíró.
+
+### 6.1.3 `RTP` config
+
+```json
+{
+  "host": "0.0.0.0",
+  "port": 5004,
+  "multicast_group": "239.1.1.1",
+  "codec": "OPUS",
+  "payload_type": 96
+}
+```
+
+A V1 codec lista lehet korlátozott: `PCM`, `MP3`, `AAC`, `OPUS`.
+
+### 6.1.4 `ALSA` config
+
+```json
+{
+  "device": "hw:1,0",
+  "sample_rate": 48000,
+  "channels": 2
+}
+```
+
+A capture formátumot a GStreamer normalizálja a fix belső PCM contractra.
+
+### 6.1.5 `ANALOG` config
+
+```json
+{}
+```
+
+Jelentése: a modulátor QN8007B közvetlen analóg audio bemenetet használ. Ebben az esetben:
+
+- nincs GStreamer pipeline;
+- nincs PCM producer a modulátor Unix socketjére;
+- a digitális SPI slot ettől függetlenül létezik, a muxd csendet küld rajta;
+- RDS és FM vezérlés továbbra is teljesen aktív.
+
+## 6.2 `AudioProfile`
+
+Az audio processinget nem az `InputSource` mezőivel kell szétszórni. Opcionális, újrahasznosítható `AudioProfile` tartozhat egy source-hoz.
+
+V1-ben a modell maradjon egyszerű:
+
+| Mező | Jelentés |
+|---|---|
+| `id` | Primary key |
+| `name` | Profil neve |
+| `processing_enabled` | Teljes processing bypass |
+| `gain_db` | Kimeneti gain |
+| `eq_config` | Opcionális JSON, kezdetben minimális |
+| `compressor_config` | Opcionális JSON |
+| `limiter_config` | Opcionális JSON |
+| `processor` | `GSTREAMER` V1-ben; később más backend |
+| `advanced_options` | Opcionális advanced config |
+| `timestamp` | Utolsó módosítás |
+
+### V1 processing elv
+
+A rendszernek nem kell Optimod-szintű teljes FM broadcast processzort implementálnia. Kívánatos, hogy legalább ezekhez legyen hook:
+
+- gain;
+- egyszerű EQ;
+- compressor;
+- limiter.
+
+Multiband compressor, AGC, LADSPA/LV2 és hasonló funkciók később bővíthetők.
+
+### Stereo Tool jövőbeli integráció
+
+A pipeline architektúrája **ne zárja ki** egy külső Stereo Tool / `libStereoTool` processing backend későbbi beszúrását. Ez advanced/future funkció; különösen Pi Zero 2-n nem feltételezhető, hogy 8 teljes Stereo Tool instance futtatható.
+
+## 6.3 `Modulator`
+
+A `Modulator` a nyolc fizikai QN egyikét reprezentálja. Az `id` **fizikai azonosító 0..7**, nem tetszőleges auto-increment rekord.
+
+| Mező | Típus | Jelentés |
+|---|---|---|
+| `id` | integer 0..7 | Fizikai QN index |
+| `name` | string | Emberi név |
+| `enabled` | bool | Desired boot/runtime ON állapot |
+| `input_source_id` | nullable FK | Hozzárendelt `InputSource` |
+| `frequency_khz` | integer | FM frekvencia kHz-ben |
+| `stereo` | bool | Stereo/mono |
+| `preemphasis_us` | enum 50/75 | Pre-emphasis |
+| `rf_level` | hardware-level value | QN/RP által értelmezett RF beállítás |
+| `rds_enabled` | bool | RDS enable |
+| `rds_pi` | string/uint16 | PI |
+| `rds_ps` | JSON array | PS lista; 1 elem = statikus PS, több elem = dinamikus PS (DPS) |
+| `rds_pty` | integer | PTY |
+| `rds_tp` | bool | TP flag |
+| `rds_rt` | string | Persistent fallback RadioText |
+| `rds_metadata_to_rt` | bool | GStreamer metadata használható-e RT-nek |
+| `timestamp` | datetime | Utolsó módosítás |
+
+Az `audio_input_mode` ne legyen külön persistent mező: az `InputSource.type == ANALOG` egyértelműen meghatározza az analóg módot.
+
+### 6.3.1 PS és dinamikus PS
+
+Az `rds_ps` mindig lista. Ha a listának egyetlen eleme van, az statikus PS; ilyenkor a `duration_s` értékét a backend figyelmen kívül hagyja. Ha több elem van, a lista dinamikus PS-ként (DPS) ciklikusan fut, és az egyes elemek `duration_s` értéke határozza meg a megjelenítési időt. A DPS tudatosan advanced, nem szabványos RDS-használat.
+
+Statikus PS példa:
+
+```json
+[
+  {"text": "KEXP", "duration_s": 5}
+]
+```
+
+Dinamikus PS példa:
+
+```json
+[
+  {"text": "RADIO123", "duration_s": 5},
+  {"text": "BUDAPEST", "duration_s": 5},
+  {"text": "98.1 FM ", "duration_s": 5}
+]
+```
+
+A backend validálja, hogy minden PS elem legfeljebb 8 karakteres, RDS PS mezőként érvényes érték legyen. Egyetlen elem esetén a `duration_s` megtartható az egységes adatstruktúra miatt, de runtime viselkedésre nincs hatása.
+
+### 6.3.2 RT forrás-prioritás
+
+A runtime RT effektív tartalmának prioritása:
+
+1. API runtime override;
+2. GStreamer/stream metadata, ha `rds_metadata_to_rt == true`;
+3. persistent `rds_rt` fallback.
+
+Az API override opcionális TTL-t kaphat. Lejárat után automatikusan vissza kell állni a normál metadata/fallback logikára.
+
+## 6.4 `SystemConfig`
+
+Csak a teljes headendre vonatkozó technikai paraméterek kerüljenek ide.
+
+Javasolt V1 mezők:
+
+| Mező | Példa |
+|---|---|
+| `spi_device` | `/dev/spidev0.0` |
+| `spi_clock_hz` | `25000000` |
+| `i2c_device` | `/dev/i2c-1` |
+| `rp2354_i2c_address` | implementation-defined |
+| `rp_status_poll_interval_ms` | pl. 1000 |
+| `web_listen_address` | `0.0.0.0` |
+| `web_port` | `8080` |
+| `log_level` | `INFO` |
+
+A `48000/S16LE/stereo` V1-ben lehet kódoldali konstans; nem kell a normál UI-ban állíthatóvá tenni.
+
+---
+
+# 7. Runtime state modell
+
+A runtime state nem persistent config és nem szükséges SQLite-ba írni.
+
+## 7.1 `InputSourceStatus`
+
+Javasolt mezők:
+
+```json
+{
+  "source_id": 4,
+  "state": "RUNNING",
+  "codec": "AAC",
+  "input_sample_rate": 44100,
+  "input_channels": 2,
+  "bitrate_bps": 128000,
+  "stream_title": "Portishead - Roads",
+  "reconnect_count": 2,
+  "last_error": null
+}
+```
+
+`state` enum:
+
+- `IDLE`
+- `CONNECTING`
+- `BUFFERING`
+- `RUNNING`
+- `ERROR`
+
+Reconnect alatt ismét `CONNECTING`; külön `RECONNECTING` nem szükséges.
+
+## 7.2 `ModulatorStatus`
+
+A V1 dashboardhoz szándékosan minimális.
+
+```json
+{
+  "id": 0,
+  "source_state": "RUNNING",
+  "tx_state": "ON",
+  "rf_output_dbuv": 121.0,
+  "underruns": 0,
+  "last_error": null
+}
+```
+
+### `source_state`
+
+Digitális source esetén az `InputSourceStatus.state` egyszerűsített tükrözése. Analóg source esetén:
+
+```text
+ANALOG
+```
+
+### `tx_state`
+
+- `OFF`
+- `STARTING`
+- `ON`
+- `ERROR`
+
+Nincs külön `qn_ok` mező. A hardverhiba a `tx_state` és `last_error` segítségével jelenik meg.
+
+### `rf_output_dbuv`
+
+Ez a kimeneti RF beállítás/névleges hardveres output readback reprezentációja. Nem laboratóriumi RF teljesítménymérés. Ha nincs külön power detector, a UI ezt nem nevezheti ténylegesen mért teljesítménynek.
+
+### Tudatosan NINCS a V1 státuszban
+
+- pillanatnyi VU / `level_dbfs`;
+- current dynamic PS;
+- current RadioText;
+- részletes RDS carousel/cursor állapot.
+
+## 7.3 `SystemStatus`
+
+Példa:
+
+```json
+{
+  "system_state": "RUNNING",
+  "rp2354_state": "OK",
+  "mux_state": "RUNNING",
+  "spi_errors": 0,
+  "i2c_errors": 0,
+  "uptime_s": 86432,
+  "cpu_percent": 24,
+  "memory_percent": 31,
+  "temperature_c": 51,
+  "last_error": null
+}
+```
+
+`system_state`:
+
+- `STARTING`
+- `RUNNING`
+- `DEGRADED`
+- `ERROR`
+- `SHUTTING_DOWN`
+
+`rp2354_state`:
+
+- `OK`
+- `UNRESPONSIVE`
+- `ERROR`
+
+`mux_state`:
+
+- `RUNNING`
+- `ERROR`
+
+Egyetlen stream vagy egyetlen modulátor hibája tipikusan `DEGRADED`, nem teljes system `ERROR`.
+
+---
+
+# 8. `SourceManager` és GStreamer lifecycle
+
+## 8.1 Egy pipeline per aktív source
+
+Nem modulátoronként kell feltétlenül külön GStreamer pipeline. **Egy aktív digitális `InputSource` = egy GStreamer pipeline.**
+
+Ha ugyanazt a source-ot több modulátor használja, ugyanaz az ingest/decode pipeline szolgálja ki őket.
+
+```mermaid
+flowchart LR
+    SRC[InputSource KEXP] --> GST[1 x GStreamer pipeline]
+    GST --> T2[Modulator 2 PCM output]
+    GST --> T7[Modulator 7 PCM output]
+```
+
+## 8.2 Demand-driven lifecycle
+
+Digitális pipeline akkor fusson, ha legalább egy aktív/enabled modulátor használja.
+
+- első consumer megjelenik -> pipeline indul;
+- további consumer -> ugyanaz a pipeline fan-out;
+- egy consumer eltűnik -> pipeline marad, ha más használja;
+- utolsó consumer eltűnik -> pipeline leáll.
+
+`ANALOG` source soha nem hoz létre GStreamer pipeline-t.
+
+## 8.3 Reconnect
+
+Folyamatos hálózati streamnél automatikus reconnect KÖTELEZŐ.
+
+Javasolt backoff:
+
+```text
+1 s -> 2 s -> 5 s -> 10 s -> 30 s -> 30 s -> ...
+```
+
+Stabil működés után a backoff resetelhető.
+
+Streamhiba **nem TX hardware hiba**. Ha a source megszakad:
+
+- `source_state` változik;
+- a TX carrier maradhat ON;
+- a muxd/RP digitális csendet kap azon a csatornán;
+- reconnect fut a háttérben.
+
+## 8.4 Appsink és backpressure
+
+A GStreamer callback **soha nem blokkolhat SPI/I2C műveleten**.
+
+A pipeline végén `appsink` használható. Az appsinkből érkező PCM-et gyorsan bounded queue-ba kell enqueue-olni, majd külön worker/async producer továbbítja a muxd felé.
+
+A queue-k kapacitása korlátozott. Ha downstream megakad, nem épülhet fel korlátlan audio backlog.
+
+## 8.5 Metadata
+
+A SourceManager gyűjtse a GStreamer tageket és streamadatokat, például:
+
+- StreamTitle;
+- artist;
+- title;
+- codec;
+- input sample rate;
+- bitrate, ha rendelkezésre áll.
+
+A SourceManager **nem ír közvetlenül RDS-t**. Metadata-change eseményt ad át az RDS logikának.
+
+## 8.6 Advanced GStreamer opciók
+
+A `gst_options` mező kontrollált property override-okat támogasson. Első körben ne tetszőleges pipeline-string legyen az alapértelmezett escape hatch.
+
+Példa:
+
+```json
+{
+  "source": {"timeout": 10000000000},
+  "queue": {"max-size-time": 3000000000},
+  "resample": {"quality": 4, "sinc-filter-mode": "full"}
+}
+```
+
+Később opcionálisan létezhet `gst_pipeline_override`, de ez advanced, unsupported-by-default mód legyen.
+
+---
+
+# 9. `ModulatorManager`
+
+A `ModulatorManager` a 8 fizikai modulátor magas szintű lifecycle orchestratora.
+
+Az API route-ok nem beszélhetnek közvetlenül GStreamerrel vagy I2C-vel; minden modulátor-művelet a manageren keresztül menjen.
+
+## 9.1 Digitális TX start
+
+```mermaid
+sequenceDiagram
+    participant API
+    participant MM as ModulatorManager
+    participant SM as SourceManager
+    participant RP as Rp2354Client
+
+    API->>MM: start(modulator_id)
+    MM->>MM: tx_state = STARTING
+    MM->>SM: ensure source running
+    SM-->>MM: source RUNNING
+    MM->>RP: SET_TX_CONFIG(DIGITAL,...)
+    RP-->>MM: OK
+    MM->>RP: SET_TX_ENABLED(true)
+    RP-->>MM: OK
+    MM->>MM: tx_state = ON
+```
+
+Az RF enable ne történjen meg addig, amíg a digitális source nincs használható állapotban.
+
+## 9.2 Analóg TX start
+
+- nincs GStreamer pipeline;
+- nincs PCM producer;
+- `SET_TX_CONFIG` audio mode = `ANALOG`;
+- majd `SET_TX_ENABLED(true)`.
+
+## 9.3 TX stop
+
+Ajánlott sorrend:
+
+1. RF/TX OFF;
+2. szükséges hardveres standby;
+3. source consumer reference elengedése;
+4. ha nincs több consumer, SourceManager pipeline stop;
+5. `tx_state = OFF`.
+
+Az RF-et előbb kell kikapcsolni, mint az audio pipeline-t, hogy shutdownkor ne sugározzon véletlen audio-szemetet.
+
+## 9.4 Source failure
+
+`source_state` és `tx_state` külön fogalom.
+
+Példa:
+
+```text
+tx_state = ON
+source_state = CONNECTING
+```
+
+A carrier nem flappelhet minden rövid internetes streamhiba miatt.
+
+## 9.5 Persistent desired state
+
+A `Modulator.enabled` a kívánt állapot. Reboot vagy RP reset után a `fmheadendd` a persistent desired state alapján állítja helyre a rendszert.
+
+---
+
+# 10. `fmheadend-muxd` részletes Linux contract
+
+## 10.1 Process modell
+
+A `fmheadend-muxd` önálló C++ process, amelyet systemd indít és felügyel. A `fmheadendd` nem spawnolja.
+
+## 10.2 PCM Unix socketek
+
+A daemon hozza létre:
+
+```text
+/run/fmheadend/pcm0.sock
+/run/fmheadend/pcm1.sock
+...
+/run/fmheadend/pcm7.sock
+```
+
+Javasolt socket type: `AF_UNIX`, `SOCK_STREAM`.
+
+A socketen nincs audio header. A contract fix:
+
+- S16LE;
+- 48 kHz;
+- 2 channels;
+- interleaved L/R.
+
+A socket index maga a modulátor indexe.
+
+## 10.3 Bufferelés
+
+Csatornánként külön bounded ring buffer.
+
+Kiinduló ajánlás: kb. **100 ms** PCM/channel.
+
+Egy stream adatsebessége:
+
+```text
+48000 * 2 channel * 2 byte = 192000 byte/s
+```
+
+100 ms kb. 19.2 kB/channel, nyolc csatorna kb. 154 kB.
+
+A pontos méret belső config/konstans, nem normál web UI setting.
+
+## 10.4 Underrun és overrun
+
+**Underrun:** zero-fill, számláló növelése.
+
+**Overrun:** a legrégebbi minták eldobása, számláló növelése. Élő audio esetén fontosabb az aktuális hang, mint az egyre növekvő latency.
+
+## 10.5 Hiányzó producer
+
+A muxd-nak nem kell tudnia, miért nincs PCM. Producer hiányakor digitális csendet küld.
+
+Ez ugyanúgy igaz:
+
+- stream reconnectre;
+- kikapcsolt TX-re;
+- analóg QN inputra;
+- `fmheadendd` restart idejére.
+
+## 10.6 Folyamatos SPI
+
+V1-ben a muxd a saját indulásától folyamatosan küldje a fix-rate SPI audio streamet, akkor is, ha minden TX OFF vagy ANALOG.
+
+Ez tudatos egyszerűsítés: nincs külön SPI start/stop/resync state machine.
+
+## 10.7 Javasolt SPI audio frame
+
+A Linux oldali implementáció számára a jelenlegi V1 javaslat:
+
+- 128 stereo sample per TX per frame;
+- 8 TX;
+- 16 bit stereo;
+- channel-major payload;
+- egy frame kb. 2.667 ms audiót fed le;
+- PCM payload 4096 byte;
+- SPI clock kezdetben kb. 25 MHz;
+- a CS tranzakcióhatárként használható;
+- nincs V1 CRC.
+
+Javasolt payload:
+
+```text
+uint32_le frame_counter
+TX0: 128 x (int16_le L, int16_le R)
+TX1: 128 x (int16_le L, int16_le R)
+...
+TX7: 128 x (int16_le L, int16_le R)
+```
+
+A `frame_counter` diagnosztikai célú. A pontos wire contractot a Linux muxd és RP firmware implementációja előtt közösen fagyasztani kell; az architektúra azonban erre a fix-frame elvre épül.
+
+## 10.8 Mux control/status socket
+
+```text
+/run/fmheadend/mux-control.sock
+```
+
+Alacsony sebességű control/status, itt JSON request/response elfogadható.
+
+Minimum V1 command:
+
+```json
+{"command":"get_status"}
+```
+
+Példa válasz:
+
+```json
+{
+  "state": "RUNNING",
+  "spi_ok": true,
+  "frames_sent": 1456231,
+  "channels": [
+    {"id": 0, "underruns": 0, "overruns": 0},
+    {"id": 1, "underruns": 3, "overruns": 0}
+  ],
+  "last_error": null
+}
+```
+
+FIFO fill debug adat lehet, de a normál dashboardnak nem kell megjelenítenie.
+
+---
+
+# 11. RP2354 I2C API - Linux oldali contract
+
+## 11.1 Alapelv
+
+- Pi = I2C master.
+- RP2354 = I2C slave.
+- A Pi csak modulátor indexet (`0..7`) ismer.
+- A Pi nem ismeri a QN közvetlen I2C címzését, SEB routingot vagy hardveres multiplexelést.
+- A Linux oldalon kizárólag `Rp2354Client` foglalkozhat `/dev/i2c-*` hozzáféréssel és wire-format byte-okkal.
+
+## 11.2 Minimalista request/response frame
+
+V1-ben nincs sequence number és nincs CRC.
+
+Request:
+
+```text
+command     u8
+target      u8
+length      u8
+payload     length bytes
+```
+
+Response:
+
+```text
+status      u8
+length      u8
+payload     length bytes
+```
+
+`target`:
+
+- `0..7` - fizikai modulátor;
+- `0xFF` - global.
+
+Ajánlott endian a több-byte mezőkre: little endian. Ezt a firmware-rel együtt kell véglegesíteni és egyetlen `protocol.py`/header contractban rögzíteni.
+
+## 11.3 Status kódok
+
+Minimum:
+
+- `OK`
+- `INVALID_COMMAND`
+- `INVALID_TARGET`
+- `INVALID_ARGUMENT`
+- `BUSY`
+- `QN_ERROR`
+- `INTERNAL_ERROR`
+
+## 11.4 Kötelező V1 műveletek
+
+### `GET_INFO`
+
+Global startup handshake.
+
+Visszaadandó minimum:
+
+- `protocol_version`;
+- `firmware_version`;
+- `hardware_revision`;
+- `modulator_count`.
+
+A Linux kompatibilitási checket végez.
+
+### `SET_TX_CONFIG`
+
+Egy modulátor teljes, konzisztens hardverconfigja egy műveletben.
+
+Payload logikai mezői:
+
+- `frequency_khz`;
+- `rf_level`;
+- `stereo`;
+- `preemphasis_us`;
+- `audio_mode` = `DIGITAL` / `ANALOG`;
+- `rds_enabled`.
+
+A művelet **nem kapcsolja automatikusan ON állapotba a TX-et**.
+
+### `SET_TX_ENABLED`
+
+- target `0..7`;
+- boolean ON/OFF.
+
+### `GET_STATUS`
+
+Egy hívással célszerű a globális és a 8 modulátor státuszt visszaadni.
+
+A Linux számára modulátoronként szükséges minimum:
+
+- `tx_state`;
+- `rf_output_dbuv` vagy ennek reprezentálható hardveres megfelelője;
+- `audio_underrun_count`;
+- `rds_underrun_count`;
+- `rds_fifo_free`;
+- `last_error_code`.
+
+Globálisan legalább:
+
+- RP alive/uptime jellegű állapot;
+- SPI audio link hiba/számláló, ha firmware szolgáltatja;
+- globális error state.
+
+### `RDS_PUSH`
+
+Egy target modulátor RDS FIFO-jába több teljes RDS group feltöltése.
+
+Logikai payload:
+
+```text
+group_count
+group[0]
+group[1]
+...
+```
+
+A groupokat sorrendben kell értelmezni. A Linux csak annyit küld, amennyi a legutóbbi `rds_fifo_free` alapján elfér.
+
+### `RDS_CLEAR`
+
+Target modulátor RDS FIFO ürítése.
+
+### Debug műveletek
+
+- `QN_READ_REGISTER`
+- `QN_WRITE_REGISTER`
+- `RESET_ERROR_COUNTERS`
+- `RP_SOFT_RESET`
+
+A raw register access a bring-up és hibakeresés miatt szándékosan része V1-nek, de a normál user UI-ban advanced/debug területre való.
+
+## 11.5 Python `Rp2354Client` felület
+
+Javasolt magas szintű API:
+
+```python
+get_info()
+get_status()
+set_tx_config(modulator_id, config)
+set_tx_enabled(modulator_id, enabled)
+push_rds(modulator_id, groups)
+clear_rds(modulator_id)
+qn_read_register(modulator_id, register)
+qn_write_register(modulator_id, register, value)
+reset_error_counters()
+reset()
+```
+
+A manager rétegek nem formázhatnak saját I2C packeteket.
+
+---
+
+# 12. RDS architektúra
+
+## 12.1 Végleges V1 irány
+
+A RDS **online schedulingja és encodingja Linux/Python oldalon történik**.
+
+Az RP2354 modulátoronként egyszerű RDS group FIFO-t szolgáltat. Az RP nem ismeri és nem dönti el a 0A/2A/RT+/TMC group arányokat.
+
+Ez azért fontos, mert a jövőben a Linux oldali RDS logika firmware-frissítés nélkül bővíthető.
+
+```mermaid
+flowchart LR
+    CFG[Static RDS config] --> SCHED[Python RDS Scheduler/Encoder]
+    META[GStreamer metadata] --> SCHED
+    API[Runtime RT API override] --> SCHED
+    STAT[RP GET_STATUS: fifo_free] --> SCHED
+    SCHED -->|RDS_PUSH: N groups| FIFO[RP2354 per-TX RDS FIFO]
+    FIFO --> QN[QN8007B]
+```
+
+## 12.2 V1 RDS funkciók
+
+Kötelező:
+
+- PI;
+- PS;
+- PTY;
+- TP;
+- RadioText 2A;
+- optional dynamic PS;
+- metadata -> RT;
+- API runtime RT override;
+- RT Text A/B bit helyes kezelése tartalomváltozáskor;
+- standard rövid RT lezárás kezelése;
+- RP FIFO credit alapú feltöltés;
+- underrun számlálás/státusz.
+
+CT V1-ben **nem szükséges**.
+
+RT+, TMC, ODA és más speciális groupok V1-ben nem kötelezők, de az architektúra ne zárja ki őket.
+
+## 12.3 Online FIFO flow control
+
+A scheduler periodikusan a cached RP statusból ismeri modulátoronként:
+
+```text
+rds_fifo_free
+```
+
+Ha `0`, nem pushol. Ha például `9`, maximum 9 következő groupot állít elő és küld.
+
+Az RP FIFO fogyasztási időzítése nem Linux schedulingből származik. A Linux csak producer.
+
+Az RDS polling/töltés gyakorisága belső daemon paraméter; nem az 5 másodperces web UI pollinghoz kötődik. Tipikusan lényegesen gyorsabb, kis overheadű belső ciklus szükséges.
+
+## 12.4 Miért nem teljes offline carousel?
+
+A tervezés során felmerült teljes, loopolható carousel feltöltése az RP-re. Ezt V1-ben elvetettük, mert:
+
+- az RT változó hosszúsága megváltoztathatná a carousel struktúrát;
+- hosszú dynamic PS esetén egy teljes carousel swap resetelhetné a DPS progresszt;
+- a teljes carousel végének megvárása indokolatlanul késleltethetné az új RT-t;
+- safe-swap indexek és fix slot-layout túl sok edge case-t és group-aránytalansági kockázatot hoznának;
+- Linux oldali online scheduler egyszerűbb és jövőbiztosabb.
+
+## 12.5 RT runtime prioritás
+
+Effektív RT:
+
+```text
+API override (optional TTL)
+        ↓ fallback
+stream metadata
+        ↓ fallback
+persistent rds_rt
+```
+
+Az API override nem írja át automatikusan a persistent DB configot.
+
+## 12.6 Dynamic PS
+
+Dynamic PS támogatott advanced funkció. A schedulernek saját időalapú PS-állapotot kell kezelnie, de ez nem befolyásolhatja a digitális audio útvonalat.
+
+---
+
+# 13. REST API
+
+## 13.1 Alapelv
+
+FastAPI használata ajánlott. API prefix:
+
+```text
+/api/v1/
+```
+
+Az API elsődleges célja, hogy a rendszer **UI nélkül is teljesen vezérelhető és tesztelhető** legyen.
+
+A FastAPI automatikus OpenAPI/Swagger dokumentációja az első fejlesztési mérföldkő fontos acceptance criterionja.
+
+V1-ben nincs kötelező authentication. Feltételezés: helyi/lab LAN, nincs internetes port forward.
+
+## 13.2 `InputSource` endpointok
+
+```http
+GET    /api/v1/sources
+POST   /api/v1/sources
+POST   /api/v1/sources/test
+GET    /api/v1/sources/{id}
+PATCH  /api/v1/sources/{id}
+DELETE /api/v1/sources/{id}
+POST   /api/v1/sources/{id}/test
+GET    /api/v1/sources/{id}/status
+```
+
+### Source törlési constraint
+
+Ha bármely `Modulator.input_source_id` hivatkozik rá, törlés `409 Conflict` legyen, ne csendes cascade.
+
+### Source test
+
+A source test endpoint nem unit tesztet jelent, hanem setup funkciót: a backend röviden megpróbálja megnyitni/dekódolni a megadott audioforrást, majd diagnosztikai eredményt ad vissza.
+
+A `POST /sources/test` egy még el nem mentett source-konfigurációt kap request bodyban. Ez a web UI-ban a **Test** gomb alapja: a user beírhatja például a stream URL-t, kipróbálhatja, és csak sikeres teszt után mentheti el.
+
+A `POST /sources/{id}/test` ugyanezt végzi egy már elmentett `InputSource` aktuális konfigurációjával.
+
+Sikeres válasz például:
+
+```json
+{
+  "ok": true,
+  "codec": "AAC",
+  "sample_rate": 44100,
+  "channels": 2
+}
+```
+
+A teszt egyik változata sem módosíthat persistent assignmentet vagy konfigurációt.
+
+## 13.3 Modulator endpointok
+
+A modulátorok fix hardverentitások; nincs create/delete.
+
+```http
+GET   /api/v1/modulators
+GET   /api/v1/modulators/{id}
+PATCH /api/v1/modulators/{id}
+
+POST  /api/v1/modulators/{id}/start
+POST  /api/v1/modulators/{id}/stop
+POST  /api/v1/modulators/start-all
+POST  /api/v1/modulators/stop-all
+```
+
+A `PATCH` configot módosít. A `start/stop` explicit action.
+
+Az API route a `ModulatorManager` szolgáltatását hívja, nem közvetlen I2C/GStreamer függvényt.
+
+## 13.4 RDS runtime API
+
+V1-ben legalább RT override:
+
+```http
+PUT    /api/v1/modulators/{id}/rds/rt
+DELETE /api/v1/modulators/{id}/rds/rt
+```
+
+Példa:
+
+```json
+{
+  "text": "Special programme tonight",
+  "ttl_s": 120
+}
+```
+
+TTL opcionális. Törlés vagy TTL lejárat után visszaáll a metadata/fallback RT.
+
+Ez a külső script/Liquidsoap/custom automation integráció alapja is lehet.
+
+## 13.5 AudioProfile endpointok
+
+```http
+GET    /api/v1/audio-profiles
+POST   /api/v1/audio-profiles
+GET    /api/v1/audio-profiles/{id}
+PATCH  /api/v1/audio-profiles/{id}
+DELETE /api/v1/audio-profiles/{id}
+```
+
+V1 implementation minimális lehet; az adatmodell jövőbővíthető.
+
+## 13.6 Status endpoint
+
+A dashboard fő polling endpointja:
+
+```http
+GET /api/v1/status
+```
+
+Példa:
+
+```json
+{
+  "system": {
+    "system_state": "RUNNING",
+    "rp2354_state": "OK",
+    "mux_state": "RUNNING",
+    "uptime_s": 123456,
+    "cpu_percent": 27,
+    "memory_percent": 34,
+    "temperature_c": 52,
+    "last_error": null
+  },
+  "modulators": [
+    {
+      "id": 0,
+      "source_state": "RUNNING",
+      "tx_state": "ON",
+      "rf_output_dbuv": 121.0,
+      "underruns": 0,
+      "last_error": null
+    }
+  ]
+}
+```
+
+A böngészőnek elegendő kb. 5 másodpercenként pollolni. WebSocket V1-ben nem szükséges.
+
+A browser request ne generáljon közvetlen I2C transactiont; a daemon saját status cache-t tart.
+
+## 13.7 System endpointok
+
+```http
+GET   /api/v1/system/config
+PATCH /api/v1/system/config
+GET   /api/v1/system/info
+```
+
+`/system/info` példa:
+
+```json
+{
+  "fmheadend_version": "0.1.0",
+  "rp_protocol_version": 1,
+  "rp_firmware_version": "...",
+  "hardware_revision": "...",
+  "modulator_count": 8
+}
+```
+
+## 13.8 Debug endpointok
+
+Külön namespace:
+
+```text
+/api/v1/debug/
+```
+
+Minimum lehetőségek:
+
+- raw RP status;
+- QN register read;
+- QN register write;
+- error counter reset.
+
+Ezek advanced fejlesztői funkciók, nem normál dashboard elemek.
+
+## 13.9 Egységes hibaválasz
+
+Javasolt forma:
+
+```json
+{
+  "error": "INVALID_FREQUENCY",
+  "message": "Frequency must be inside the configured FM band."
+}
+```
+
+Az API ne használjon endpointonként eltérő error shape-et.
+
+Ajánlott HTTP státuszok:
+
+| HTTP | Jelentés |
+|---|---|
+| 200/204 | siker |
+| 400 | hibás request |
+| 404 | nem létező resource |
+| 409 | state/resource conflict |
+| 422 | validation error |
+| 500 | belső szoftverhiba |
+| 503 | hardver/control dependency nem elérhető |
+
+---
+
+# 14. Web UI - későbbi vázlat
+
+A production UI nem része az első vibe-coding milestone-nak. A backendnek UI nélkül is teljesen használhatónak kell lennie.
+
+V1 UI később lehet szándékosan fapados.
+
+## 14.1 Dashboard
+
+8 modulátor sor/kártya:
+
+- név;
+- frekvencia;
+- hozzárendelt source;
+- TX state;
+- source state;
+- RF output dBµV;
+- underrun count;
+- last error;
+- start/stop.
+
+Nincs szükség realtime VU meterre.
+
+## 14.2 Configuration
+
+Javasolt oldalak/tabok:
+
+- Sources;
+- Modulators;
+- Audio Profiles;
+- System.
+
+Modulator oldalon legalább:
+
+- source dropdown;
+- frequency;
+- stereo/mono;
+- 50/75 us;
+- RF level;
+- RDS enable;
+- PI;
+- PS;
+- dynamic PS;
+- PTY/TP;
+- fallback RT;
+- metadata-to-RT toggle.
+
+## 14.3 Advanced/Debug
+
+- RP firmware/protocol info;
+- raw QN register read/write;
+- transport/error counters;
+- log/debug információk.
+
+V1-ben nincs login/auth UI.
+
+---
+
+# 15. systemd, startup, shutdown és recovery
+
+## 15.1 Két külön systemd service
+
+```text
+fmheadend-muxd.service
+fmheadendd.service
+```
+
+A `fmheadendd` függjön a muxd-tól:
+
+```ini
+Requires=fmheadend-muxd.service
+After=fmheadend-muxd.service network-online.target
+```
+
+Mindkettőnél javasolt:
+
+```ini
+Restart=on-failure
+RestartSec=2
+```
+
+A `fmheadendd` **nem spawnolja** a muxd-t.
+
+## 15.2 Startup sorrend
+
+Javasolt:
+
+1. SQLite open és schema/version check;
+2. persistent config betöltése;
+3. muxd control kapcsolat;
+4. RP2354 `GET_INFO`;
+5. protocol/firmware compatibility check;
+6. RP status lekérés;
+7. persistent modulator config előkészítése/alkalmazása;
+8. szükséges digitális InputSource pipeline-ok indítása;
+9. `enabled` modulátorok kontrollált startja;
+10. system state -> `RUNNING` vagy `DEGRADED`.
+
+A HTTP API indulhat a startup alatt is; ilyenkor `system_state = STARTING`.
+
+## 15.3 RP kiesés és recovery
+
+Ha az RP nem válaszol:
+
+- `rp2354_state = UNRESPONSIVE`;
+- megfelelő system `DEGRADED`/`ERROR`;
+- periodikus reconnect/retry.
+
+Ha visszatér:
+
+1. `GET_INFO`;
+2. compatibility check;
+3. teljes desired TX config újraküldése;
+4. RDS FIFO-k újratöltése;
+5. desired TX ON/OFF állapot helyreállítása.
+
+A DB a desired state forrása.
+
+## 15.4 muxd kiesés
+
+- `mux_state = ERROR`;
+- `fmheadendd` control és PCM socket reconnectet próbál;
+- GStreamer oldali bounded queue-k nem nőhetnek végtelenre;
+- muxd visszatérése után a PCM flow automatikusan helyreáll.
+
+## 15.5 Streamhiba
+
+Hálózati source hibája nem állítja le a TX hardvert. A source reconnectel, a digitális audio közben silence.
+
+## 15.6 Graceful shutdown
+
+Ajánlott sorrend:
+
+1. `system_state = SHUTTING_DOWN`;
+2. minden TX OFF;
+3. RDS folyamat leállítása/clear ahol szükséges;
+4. GStreamer pipeline-ok stop;
+5. mux/socket kapcsolatok lezárása;
+6. DB close;
+7. process exit.
+
+Az RF kikapcsolása legyen a shutdown elején.
+
+## 15.7 Logging
+
+V1-ben journald az egyetlen kötelező log backend.
+
+- stdout/stderr -> systemd/journald;
+- log levels: DEBUG, INFO, WARNING, ERROR;
+- normál: INFO;
+- minden releváns log tartalmazzon source/modulator azonosítót.
+
+Példák:
+
+```text
+INFO  source 3 connected: AAC 44100 Hz
+INFO  modulator 2 started at 98.1 MHz
+WARN  source 3 disconnected, retry in 5 s
+ERROR RP2354 I2C communication failed
+```
+
+Nem kell V1-ben saját log file rotation vagy SQLite log history.
+
+## 15.8 Watchdog
+
+V1-ben nem szükséges saját watchdog daemon. A systemd restart policy elegendő első körben. Később `WatchdogSec` / `sd_notify` hozzáadható.
+
+---
+
+# 16. SQLite viselkedés és desired/actual state
+
+## 16.1 Miért SQLite
+
+A rendszer már nem csak 8 fix JSON konfigurációból áll. Külön vannak:
+
+- reusable input source-ok;
+- modulátorok és source assignment;
+- audio profile-ok;
+- későbbi playlist/preset lehetőségek.
+
+SQLite továbbra is egyszerű, lokális, egyfájlos megoldás, de jobban kezeli a relációkat és későbbi bővítést, mint egy saját JSON adatbázis.
+
+## 16.2 Desired vs actual
+
+Kritikus alapelv:
+
+- SQLite = **desired state**;
+- runtime status = **actual state**.
+
+Példa:
+
+```text
+desired frequency = 98.1 MHz
+actual hardware state = ERROR / RP unavailable
+```
+
+A desired configot nem kell visszagörgetni csak azért, mert pillanatnyilag nem sikerült hardverre alkalmazni.
+
+## 16.3 Config update sorrend
+
+Ajánlott:
+
+1. API input validation;
+2. SQLite transaction commit;
+3. runtime apply;
+4. ha runtime apply hibázik, actual state/error frissül;
+5. későbbi recovery újrapróbálja a persistent desired state alkalmazását.
+
+## 16.4 Schema version
+
+A DB-nek legyen egyszerű schema version/migration mechanizmusa már V1-től. Nem kell bonyolult framework, de a későbbi mezőbővítések ne kézi DB-törlést igényeljenek.
+
+---
+
+# 17. Repo layout
+
+Javasolt monorepo:
+
+```text
+fmheadend/
+├── daemon/                 # Python főprogram: fmheadendd
+│   ├── app.py
+│   ├── config.py
+│   ├── database.py
+│   ├── models/
+│   ├── sources/
+│   ├── gstreamer/
+│   ├── modulators/
+│   ├── rds/
+│   ├── rp2354/
+│   ├── mux/
+│   ├── status/
+│   ├── api/
+│   ├── tests/
+│   └── pyproject.toml
+│
+├── muxd/                   # C++ audio/SPI daemon: fmheadend-muxd
+│   ├── src/
+│   ├── include/
+│   ├── tests/
+│   └── CMakeLists.txt
+│
+├── webui/
+│   └── ... later
+│
+├── systemd/
+│   ├── fmheadendd.service
+│   └── fmheadend-muxd.service
+│
+├── docs/
+│   ├── architecture.md
+│   ├── api.md
+│   └── rp2354-protocol.md
+│
+└── README.md
+```
+
+A forrásmappák jelentése szándékosan egyszerű: `daemon/` tartalmazza az `fmheadendd` Python főprogramot, `muxd/` pedig az `fmheadend-muxd` C++ audio/SPI daemont. Nincs további egymásba ágyazott `fmheadend` vagy `fmheadendd` forrásmappa.
+
+Az RP firmware lehet külön repository. A Linux monorepo nem függhet a firmware source tree jelenlététől.
+
+---
+
+# 18. Technológiai stack
+
+## 18.1 Backend
+
+- Python 3;
+- `asyncio`;
+- FastAPI;
+- Pydantic;
+- GStreamer Python bindings;
+- Python `sqlite3` vagy vékony adat-hozzáférési réteg;
+- Linux `i2c-dev`/SMBus kompatibilis kliens;
+- standard logging -> journald.
+
+Nem szükséges ORM-heavy megoldás. Ha ORM használatos, legyen könnyű és ne dominálja az architektúrát.
+
+## 18.2 Mux daemon
+
+- C++;
+- CMake;
+- POSIX Unix sockets;
+- Linux spidev;
+- bounded ring buffers;
+- egyszerű RAII/threading.
+
+Nem kell nagy C++ framework.
+
+## 18.3 Frontend
+
+Nincs V1 stack freeze. Lehet nagyon egyszerű HTML/CSS/TypeScript vagy könnyű frontend framework. A backend API nem függhet a frontend technológiájától.
+
+---
+
+# 19. Belső modulstruktúra és dependency szabályok
+
+Javasolt Python csomagstruktúra:
+
+```text
+models/
+    input_source.py
+    modulator.py
+    audio_profile.py
+    runtime_status.py
+
+sources/
+    manager.py
+    gst_pipeline.py
+
+modulators/
+    manager.py
+
+rds/
+    encoder.py
+    scheduler.py
+    metadata.py
+
+rp2354/
+    client.py
+    protocol.py
+
+mux/
+    client.py
+
+api/
+    sources.py
+    modulators.py
+    status.py
+    system.py
+    debug.py
+```
+
+### Dependency irány
+
+```mermaid
+flowchart TD
+    API[FastAPI routes] --> MAN[Managers / domain services]
+    MAN --> SRV[Source / RDS / RP / Mux services]
+    SRV --> LOW[SQLite / GStreamer / I2C / Unix sockets]
+```
+
+KÖTELEZŐ szabályok:
+
+- API route nem ír közvetlen SQL-t;
+- API route nem ír közvetlen I2C-t;
+- API route nem manipulál közvetlen GStreamer elementet;
+- `ModulatorManager` orchestrationt végez;
+- `SourceManager` source lifecycle-t végez;
+- `Rp2354Client` az egyetlen RP wire-protocol implementáció;
+- `MuxClient` az egyetlen mux control/PCM IPC absztrakció.
+
+---
+
+# 20. Tesztelhetőség és mockok
+
+Hardver nélkül is fejleszthető backend KÖTELEZŐ.
+
+Javasolt interface-ek:
+
+```text
+Rp2354Client
+├── RealRp2354Client
+└── MockRp2354Client
+
+MuxClient
+├── UnixMuxClient
+└── MockMuxClient
+
+SourcePipeline
+├── GstPipeline
+└── MockPipeline
+```
+
+Példa unit test digitális modulátorra:
+
+```text
+start TX3
+-> source pipeline elindult
+-> SET_TX_CONFIG(DIGITAL) meghívódott
+-> SET_TX_ENABLED(true) meghívódott
+-> tx_state ON
+```
+
+Analóg source test:
+
+```text
+start TX3 with ANALOG source
+-> GStreamer pipeline NEM indul
+-> SET_TX_CONFIG(ANALOG)
+-> SET_TX_ENABLED(true)
+```
+
+A mock backendből az OpenAPI/Swagger API az első milestone-ban valódi hardver nélkül teljesen tesztelhető legyen.
+
+---
+
+# 21. Implementációs mérföldkövek
+
+## Milestone 1 - Backend skeleton + API, mock hardverrel
+
+**Ez legyen az első vibe-coding feladat.**
+
+Kötelező eredmény:
+
+- `fmheadendd` Python package;
+- FastAPI server;
+- SQLite schema és migration/version alap;
+- `InputSource` CRUD;
+- 8 fix `Modulator` config;
+- `AudioProfile` alapmodell;
+- runtime status modellek;
+- mock RP2354;
+- mock muxd;
+- `ModulatorManager` start/stop lifecycle;
+- `/api/v1/status`;
+- source test endpointok (elmentett és még el nem mentett source konfigurációhoz);
+- runtime RT override + TTL;
+- egységes error model;
+- automatikus OpenAPI/Swagger docs;
+- unit tesztek.
+
+**Nem kell még:** valódi GStreamer, I2C, SPI, production UI.
+
+### Milestone 1 acceptance criteria
+
+- `fmheadendd` indul egy sima Linux gépen/Pi-n hardver nélkül mock módban;
+- `/docs` alatt minden fontos API interaktívan hívható;
+- a 8 modulátor configolható és start/stop mockolható;
+- source create/update/delete és mindkét source test mód működik;
+- invalid config korrekt HTTP errorral tér vissza;
+- restart után persistent config megmarad;
+- unit test suite zöld.
+
+## Milestone 2 - GStreamer integration
+
+- HTTP/HLS ingest;
+- UDP;
+- RTP;
+- ALSA;
+- ANALOG special case;
+- decode;
+- audioconvert/resample;
+- 48k/S16LE/stereo caps;
+- appsink;
+- bounded output queue;
+- metadata;
+- reconnect;
+- egy source -> több modulator fan-out;
+- gain és basic AudioProfile hook;
+- valós source test endpoint.
+
+## Milestone 3 - `fmheadend-muxd`
+
+- 8 Unix PCM socket;
+- bounded ring buffers;
+- zero-fill;
+- overrun/underrun counters;
+- fixed SPI frame builder;
+- control/status socket;
+- mock SPI backend;
+- spidev backend;
+- unit/integration tests.
+
+## Milestone 4 - RP2354 client
+
+- Linux I2C transport;
+- wire protocol;
+- `GET_INFO`;
+- `GET_STATUS`;
+- `SET_TX_CONFIG`;
+- `SET_TX_ENABLED`;
+- `RDS_PUSH`;
+- `RDS_CLEAR`;
+- raw QN register debug;
+- RP reconnect/recovery.
+
+## Milestone 5 - RDS
+
+- 0A/0B PS;
+- 2A RT;
+- PI;
+- PTY;
+- TP;
+- dynamic PS;
+- metadata -> RT;
+- runtime API RT override;
+- TTL;
+- RT Text A/B helyes váltás;
+- online scheduler;
+- RP FIFO free-space alapú töltés;
+- underrun monitoring.
+
+## Milestone 6 - Integration és reliability
+
+- systemd units;
+- desired-state startup restore;
+- muxd reconnect;
+- RP reset recovery;
+- network stream reconnect;
+- journald logging;
+- `DEGRADED` állapot;
+- hosszú stress test;
+- Pi Zero 2 CPU/RAM/temperature benchmark;
+- 8 párhuzamos stream + SRC + SPI + RDS + API teszt.
+
+## Milestone 7 - Web UI
+
+Csak az API stabilizálása után:
+
+- dashboard;
+- sources;
+- modulators;
+- audio profiles;
+- advanced/debug.
+
+---
+
+# 22. Pi Zero 2 teljesítményelvárások
+
+A rendszer célplatformja Raspberry Pi Zero 2 W, ezért a Pi 4-en végzett fejlesztés során nem szabad a Pi 4 erőforrástöbbletére építeni.
+
+KÖTELEZŐ elvek:
+
+- Python ne végezzen sample-szintű DSP-t;
+- decode/resample GStreamer natív kódban;
+- muxing C++ daemonban;
+- bounded queue-k;
+- nincs felesleges 24-bit PCM;
+- 48 kHz / 16-bit / stereo fix;
+- performance benchmark a Pi Zero 2-n Milestone 6 előtt production readinesshez.
+
+A legnagyobb várható terhelés a 8 párhuzamos codec decode + SRC + esetleges DSP, nem maga a kb. 12.288 Mbit/s nyers 8-stereo PCM adatsebesség.
+
+---
+
+# 23. Tudatosan kihagyott V1 funkciók
+
+A következők **nem részei a V1 kötelező scope-nak**:
+
+- teljes production web UI az első milestone-ban;
+- authentication/user management;
+- WebSocket status stream;
+- realtime VU meter;
+- CT RDS;
+- RT+;
+- TMC;
+- ODA custom groupok;
+- full multiband broadcast processor;
+- 8 x Stereo Tool;
+- M3U/local playlist engine;
+- Liquidsoap natív integráció;
+- internetre nyitott remote management;
+- Docker/Kubernetes/Redis/RabbitMQ;
+- külön logging database;
+- saját watchdog daemon;
+- QN alapú FM bandscan/RSSI adatbázis.
+
+### Bandscan megjegyzés
+
+A korábban felmerült teljes FM sáv 100 kHz-es lépésekben történő RSSI/dBµV mintavétele **nem kerül a specifikációba**, mert a QN8007B dokumentált interfésze alapján nem biztosított az egyedi frekvencián mért RSSI kiolvasása. Ha hardveres bring-upkor dokumentálatlan, megbízható RSSI readback derül ki, külön későbbi feature-ként újratervezhető.
+
+---
+
+# 24. Biztonság és deployment feltételezések
+
+V1-ben nincs UI/API login.
+
+Feltételezés:
+
+- a headend helyi, megbízható LAN-on fut;
+- routeren nincs nyers internetes port forward;
+- ha később remote access kell, VPN/Tailscale/WireGuard jellegű megoldás preferált;
+- raw debug QN register write csak advanced/debug felületből érhető el.
+
+---
+
+# 25. AI/vibe-coding handoff szabályok
+
+A következő szabályokat a kódoló AI-nak explicit át kell adni.
+
+## 25.1 Architektúrát ne tervezze újra
+
+**Do not redesign the architecture unless explicitly requested.**
+
+Különösen:
+
+- ne olvassza össze a `fmheadendd` és `fmheadend-muxd` processzt;
+- ne vigye a PCM muxingot Pythonba;
+- ne cserélje le a GStreamert önkényesen VLC/FFmpeg process farmra;
+- ne cserélje le az SQLite-ot szerveres DB-re;
+- ne vezessen be Redis/RabbitMQ/Kafka/containers orchestration megoldást;
+- ne tegyen WebSocketet csak azért, mert modernebb;
+- ne építsen auth rendszert V1-ben;
+- ne implementáljon RP firmware belső viselkedést találomra;
+- ne keverje össze a persistent desired state-et a runtime actual state-tel;
+- ne indítson egy GStreamer pipeline-t modulátoronként, ha több modulátor ugyanazt az `InputSource`-ot használja;
+- ne blokkolja a GStreamer streaming callbacket I2C/SPI/socket várakozással;
+- ne generáljon sample-szintű audio processing loopokat Pythonban.
+
+## 25.2 Kis, ellenőrizhető lépések
+
+Minden milestone végén legyen:
+
+- futtatható program;
+- unit/integration teszt;
+- rövid README/frissített docs;
+- reprodukálható indítási parancs;
+- egyértelmű known limitations lista.
+
+## 25.3 Mock-first
+
+Az első backend implementáció hardver nélkül legyen tesztelhető. Ne várjon a PCB vagy RP firmware elkészültére.
+
+## 25.4 API-first
+
+A UI előtt az API legyen stabil. A frontend ugyanazt a publikus REST API-t használja, amit a Swagger és külső kliens is.
+
+---
+
+# 26. Első vibe-coding feladat - ajánlott prompt
+
+Az alábbi feladat adható első körben egy másik kódoló AI-nak:
+
+> Implement Milestone 1 of the `fmheadend` Linux backend according to this specification. Build the `fmheadendd` Python service with FastAPI, Pydantic models, SQLite persistence, schema versioning, eight fixed Modulator entities, InputSource CRUD, basic AudioProfile persistence, runtime status objects, mock RP2354 and mux clients, ModulatorManager lifecycle, source test mock, runtime RDS RT override with optional TTL, unified API error responses, and OpenAPI/Swagger documentation. Hardware access, real GStreamer, SPI, I2C and the production web UI are explicitly out of scope for this milestone. Keep boundaries mockable and do not redesign the architecture.
+
+### Első körben elvárt demonstráció
+
+1. service startup;
+2. `/docs` működik;
+3. source létrehozása;
+4. source modulátorhoz rendelése;
+5. modulátor config módosítás;
+6. start/stop;
+7. `/status` értelmes mock állapotot ad;
+8. RT override TTL-lel működik;
+9. restart után config megmarad;
+10. test suite sikeres.
+
+---
+
+# 27. Nyitott, de nem blokkoló technikai pontok
+
+Ezeket nem kell az első backend milestone előtt véglegesíteni:
+
+1. RP2354 I2C slave cím konkrét értéke.
+2. I2C commandok numerikus ID-i és pontos bináris structjai.
+3. SPI frame pontos wire header véglegesítése.
+4. `rf_level` user-facing reprezentációja: raw QN level vs elsősorban dBµV setpoint.
+5. GStreamer alapértelmezett resampler quality mérés Pi Zero 2-n.
+6. Basic compressor/limiter konkrét pluginja.
+7. muxd ring buffer végleges mérete.
+8. RDS FIFO méret az RP firmware-ben.
+9. RDS scheduler default 0A/2A arány.
+10. frontend technológia.
+
+Ezeket mérés vagy a firmware contract véglegesítése alapján lehet lezárni anélkül, hogy a fő architektúra változna.
+
+---
+
+# 28. Rövid döntési összefoglaló
+
+| Téma | V1 döntés |
+|---|---|
+| Cél Linux gép | Raspberry Pi Zero 2 W |
+| Fejlesztés | Raspberry Pi 4 |
+| Projekt neve | `fmheadend` |
+| Fő daemon | `fmheadendd`, Python |
+| Audio mux | `fmheadend-muxd`, C++ |
+| Ingest/decode/SRC | GStreamer |
+| Belső PCM | 48 kHz, S16LE, stereo |
+| Pi -> RP audio | egyetlen multiplexelt SPI stream |
+| Pi -> RP control | I2C request/response |
+| QN analog input | támogatott source mód |
+| Persistent storage | SQLite |
+| Source / Modulator | külön entitások, FK assignment |
+| HLS | HTTP source része |
+| Audio processing | opcionális `AudioProfile` |
+| RDS | Python encoder + online scheduler |
+| RDS RP oldalon | per-TX FIFO, credit/free-space flow control |
+| CT | nincs V1-ben |
+| Dynamic PS | advanced, támogatott |
+| Metadata -> RT | támogatott |
+| Runtime RT API | támogatott, optional TTL |
+| HTTP backend | FastAPI |
+| WebSocket | nincs V1-ben |
+| UI auth | nincs V1-ben |
+| Status UI | kb. 5 s REST polling |
+| Logging | journald |
+| Process supervisor | systemd |
+| Hardware-less dev | kötelező mockokkal |
+| Első milestone | backend + API mock hardware-rel |
+
+---
+
+# 29. Definition of Done - Linux V1
+
+A Linux V1 akkor tekinthető késznek, ha:
+
+- Pi Zero 2 W-n stabilan indul és systemd alatt újraindítható;
+- a 8 modulátor persistent configja kezelhető REST API-ból;
+- digitális HTTP/HLS, UDP/RTP és ALSA source működik;
+- ANALOG source módban nincs felesleges GStreamer/PCM út;
+- digitális audio 48 kHz/S16LE/stereo formátumban eljut a muxd-ig;
+- muxd folyamatosan előállítja az SPI frame-eket;
+- RP I2C vezérlés működik;
+- TX start/stop lifecycle korrekt;
+- RP reset után desired state recovery működik;
+- streamhiba esetén reconnect és silence működik carrier flappelés nélkül;
+- RDS PS/RT/PI/PTY/TP működik;
+- metadata -> RT működik;
+- API RT override működik;
+- RDS FIFO flow control nem okoz normál üzemben overrun/underrun problémát;
+- `/api/v1/status` diagnosztizálható állapotot ad;
+- journald logok használhatók hibakeresésre;
+- legalább többórás 8-stream stress test stabil;
+- Pi Zero 2 erőforrás-terhelés elfogadható;
+- a backend teljes API-ja dokumentált OpenAPI-ban.
+
+---
+
+## Záró megjegyzés
+
+A `fmheadend` Linux architektúra szándékosan két processzre oszlik: a Python `fmheadendd` végzi a magas szintű, jól fejleszthető control/media orchestrationt, míg a C++ `fmheadend-muxd` a kiszámítható PCM/SPI adatpumpát. A QN/RP hardver részletei contract mögött maradnak. Ez az elválasztás lehetővé teszi, hogy a rendszer Pi Zero 2-n is takarékos legyen, miközben a source-, RDS- és API-logika később Linux oldalon firmware módosítás nélkül fejleszthető.
