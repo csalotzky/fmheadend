@@ -1,4 +1,5 @@
 ﻿from typing import Literal, Protocol
+from pydantic import Field
 
 from ..errors import DependencyUnavailable
 from ..models.configuration import Model, Modulator
@@ -6,7 +7,7 @@ from ..models.configuration import Model, Modulator
 
 class TxConfig(Model):
     frequency_khz: int
-    rf_level: int
+    rf_output_dbuv: float | None = Field(default=None, ge=0, le=6553.5, multiple_of=0.1, strict=True)
     stereo: bool
     preemphasis_us: int
     audio_mode: Literal["DIGITAL", "ANALOG"]
@@ -14,7 +15,7 @@ class TxConfig(Model):
 
     @classmethod
     def from_modulator(cls, modulator: Modulator, analog: bool):
-        return cls(**modulator.model_dump(include={"frequency_khz", "rf_level", "stereo", "preemphasis_us", "rds_enabled"}),
+        return cls(**modulator.model_dump(include={"frequency_khz", "rf_output_dbuv", "stereo", "preemphasis_us", "rds_enabled"}),
                    audio_mode="ANALOG" if analog else "DIGITAL")
 
 
@@ -23,6 +24,7 @@ class Rp2354Client(Protocol):
     def set_tx_enabled(self, modulator_id: int, enabled: bool) -> None: ...
     def get_info(self) -> dict: ...
     def get_status(self) -> dict: ...
+    def get_rds_fifo_free(self) -> list[int]: ...
 
 
 class MockRp2354Client:
@@ -55,3 +57,7 @@ class MockRp2354Client:
             {"id": i, "tx_state": "ON" if enabled else "OFF", "rf_output_dbuv": None,
              "audio_underrun_count": 0, "rds_underrun_count": 0, "rds_fifo_free": 0,
              "last_error_code": None} for i, enabled in enumerate(self.enabled)]}
+
+    def get_rds_fifo_free(self) -> list[int]:
+        self._check()
+        return [0] * 8

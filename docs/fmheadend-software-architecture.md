@@ -376,7 +376,7 @@ A `Modulator` a nyolc fizikai QN egyikét reprezentálja. Az `id` **fizikai azon
 | `frequency_khz` | integer | FM frekvencia kHz-ben |
 | `stereo` | bool | Stereo/mono |
 | `preemphasis_us` | enum 50/75 | Pre-emphasis |
-| `rf_level` | hardware-level value | QN/RP által értelmezett RF beállítás |
+| `rf_output_dbuv` | nullable number | Nominal RF target in dBuV, 0.1 dBuV steps; no default target |
 | `rds_enabled` | bool | RDS enable |
 | `rds_pi` | string/uint16 | PI |
 | `rds_ps` | JSON array | PS lista; 1 elem = statikus PS, több elem = dinamikus PS (DPS) |
@@ -838,6 +838,10 @@ FIFO fill debug adat lehet, de a normál dashboardnak nem kell megjelenítenie.
 
 # 11. RP2354 I2C API - Linux oldali contract
 
+The authoritative binary specification is [RP2354 V1 protocol](rp2354-protocol.md).
+This chapter describes component responsibilities; command IDs, offsets and exact
+wire semantics are maintained only in that protocol document.
+
 ## 11.1 Alapelv
 
 - Pi = I2C master.
@@ -872,7 +876,7 @@ payload     length bytes
 - `0..7` - fizikai modulátor;
 - `0xFF` - global.
 
-Ajánlott endian a több-byte mezőkre: little endian. Ezt a firmware-rel együtt kell véglegesíteni és egyetlen `protocol.py`/header contractban rögzíteni.
+V1 multibyte fields are little-endian as defined in [RP2354 V1 protocol](rp2354-protocol.md).
 
 ## 11.3 Status kódok
 
@@ -908,7 +912,7 @@ Egy modulátor teljes, konzisztens hardverconfigja egy műveletben.
 Payload logikai mezői:
 
 - `frequency_khz`;
-- `rf_level`;
+- `rf_output_dbuv` (wire: `rf_output_dbuv_x10:u16`);
 - `stereo`;
 - `preemphasis_us`;
 - `audio_mode` = `DIGITAL` / `ANALOG`;
@@ -939,6 +943,23 @@ Globálisan legalább:
 - RP alive/uptime jellegű állapot;
 - SPI audio link hiba/számláló, ha firmware szolgáltatja;
 - globális error state.
+
+### `GET_RDS_FIFO_FREE`
+
+Global request for the free capacity of all eight RDS FIFOs in complete groups.
+This supports future frequent capacity polling; GET_STATUS remains the full
+hardware diagnostic snapshot. No scheduler or FIFO refill policy is part of M4.
+
+### Diagnostic semantics
+
+Global state describes a currently active fault; last_error_code is latched history.
+The same distinction applies per channel. Historical errors alone are not active faults.
+RP SPI audio link errors count RP-detected Pi-to-RP transport/frame failures, never
+missing sources or generated silence. Without CRC, some bit corruption is undetectable.
+Per-channel audio_underrun_count counts detected QN8007B I2S underrun flags, cleared
+by firmware after detection. Multiple underruns between polls can collapse into one.
+Linux mux underruns, RP SPI link errors and QN I2S underruns are distinct layers.
+QN overflow and INSAT are not dedicated V1 fields; raw diagnostics remain available.
 
 ### `RDS_PUSH`
 
@@ -975,6 +996,7 @@ Javasolt magas szintű API:
 ```python
 get_info()
 get_status()
+get_rds_fifo_free()
 set_tx_config(modulator_id, config)
 set_tx_enabled(modulator_id, enabled)
 push_rds(modulator_id, groups)
@@ -1762,9 +1784,10 @@ Kötelező eredmény:
 
 ## Milestone 5 - RDS
 
-- 0A/0B PS;
+- 0A PS;
 - 2A RT;
 - PI;
+- ECC;
 - PTY;
 - TP;
 - dynamic PS;
@@ -1929,9 +1952,9 @@ Az alábbi feladat adható első körben egy másik kódoló AI-nak:
 Ezeket nem kell az első backend milestone előtt véglegesíteni:
 
 1. RP2354 I2C slave cím konkrét értéke.
-2. I2C commandok numerikus ID-i és pontos bináris structjai.
+2. I2C IDs and layouts are defined in [RP2354 V1 protocol](rp2354-protocol.md).
 3. SPI frame pontos wire header véglegesítése.
-4. `rf_level` user-facing reprezentációja: raw QN level vs elsősorban dBµV setpoint.
+4. RF units resolved: nominal `rf_output_dbuv`; QN PA conversion belongs to RP firmware.
 5. GStreamer alapértelmezett resampler quality mérés Pi Zero 2-n.
 6. Basic compressor/limiter konkrét pluginja.
 7. muxd ring buffer végleges mérete.

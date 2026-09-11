@@ -1,0 +1,227 @@
+"""RP2354 V1 wire contract. See docs/rp2354-protocol.md; no device access here."""
+from enum import IntEnum
+import struct
+from decimal import Decimal, InvalidOperation
+
+from ..errors import DependencyUnavailable
+
+PROTOCOL_VERSION = 1
+GLOBAL = 0xFF
+
+
+class Command(IntEnum):
+    GET_INFO = 1
+    SET_TX_CONFIG = 2
+    SET_TX_ENABLED = 3
+    GET_STATUS = 4
+    RDS_PUSH = 5
+    RDS_CLEAR = 6
+    QN_READ_REGISTER = 7
+    QN_WRITE_REGISTER = 8
+    RESET_ERROR_COUNTERS = 9
+    RP_SOFT_RESET = 10
+    GET_RDS_FIFO_FREE = 11
+
+
+class Status(IntEnum):
+    OK = 0
+    INVALID_COMMAND = 1
+    INVALID_TARGET = 2
+    INVALID_ARGUMENT = 3
+    BUSY = 4
+    QN_ERROR = 5
+    INTERNAL_ERROR = 6
+
+
+class ProtocolError(DependencyUnavailable):
+    """Invalid framing, payload or enum received from RP."""
+
+
+class IncompatibleProtocol(ProtocolError):
+    pass
+
+
+class HardwareUnavailable(DependencyUnavailable):
+    pass
+
+
+class RpResponseError(DependencyUnavailable):
+    def __init__(self, command: Command, status: Status):
+        self.command, self.rp_status = command, status
+        super().__init__(f"RP2354 {command.name}: {status.name}")
+
+
+class InvalidCommand(RpResponseError): pass
+class InvalidTarget(RpResponseError): pass
+class InvalidArgument(RpResponseError): pass
+class Busy(RpResponseError): pass
+class QnError(RpResponseError): pass
+class InternalError(RpResponseError): pass
+
+ERROR_TYPES = {Status.INVALID_COMMAND: InvalidCommand, Status.INVALID_TARGET: InvalidTarget,
+               Status.INVALID_ARGUMENT: InvalidArgument, Status.BUSY: Busy,
+               Status.QN_ERROR: QnError, Status.INTERNAL_ERROR: InternalError}
+GLOBAL_COMMANDS = {Command.GET_INFO, Command.GET_STATUS, Command.RESET_ERROR_COUNTERS, Command.RP_SOFT_RESET, Command.GET_RDS_FIFO_FREE}
+# All successful responses have exact fixed sizes in V1.
+INFO = struct.Struct("<H16s16sB")
+GLOBAL_STATUS = struct.Struct("<BIIB")
+CHANNEL_STATUS = struct.Struct("<BhIIHB")
+RESPONSE_SIZES = {command: 0 for command in Command}
+RESPONSE_SIZES.update({Command.GET_INFO: INFO.size, Command.GET_STATUS: GLOBAL_STATUS.size + 8 * CHANNEL_STATUS.size,
+                       Command.QN_READ_REGISTER: 1, Command.GET_RDS_FIFO_FREE: 16})
+
+
+def uint(value: int, bits: int, name: str) -> int:
+    if type(value) is not int or not 0 <= value < 1 << bits:
+        raise ValueError(f"{name} must be an unsigned {bits}-bit integer")
+    return value
+
+
+def boolean(value: bool, name: str) -> int:
+    if type(value) is not bool:
+        raise ValueError(f"{name} must be boolean")
+    return int(value)
+
+
+def request(command: Command, target: int, payload: bytes = b"") -> bytes:
+    if not isinstance(command, Command):
+        raise ValueError("command must be a V1 Command")
+    uint(target, 8, "target")
+    if (command in GLOBAL_COMMANDS and target != GLOBAL) or (command not in GLOBAL_COMMANDS and target > 7):
+        raise ValueError(f"Invalid target for {command.name}")
+    if not isinstance(payload, bytes) or len(payload) > 255:
+        raise ValueError("payload must be at most 255 bytes")
+    lengths = {Command.SET_TX_CONFIG: 10, Command.SET_TX_ENABLED: 1,
+               Command.QN_READ_REGISTER: 1, Command.QN_WRITE_REGISTER: 2}
+    if command == Command.RDS_PUSH:
+        if not payload or not 1 <= payload[0] <= 31 or len(payload) != 1 + 8 * payload[0]:
+            raise ValueError("RDS_PUSH must contain 1..31 complete four-block groups")
+    elif len(payload) != lengths.get(command, 0):
+        raise ValueError(f"Invalid {command.name} request length")
+    if command == Command.SET_TX_ENABLED and payload[0] not in (0, 1):
+        raise ValueError("SET_TX_ENABLED must be 0 or 1")
+    if command == Command.SET_TX_CONFIG:
+        frequency, level, stereo, emphasis, mode, rds = struct.unpack("<IHBBBB", payload)
+        if frequency == 0 or stereo not in (0, 1) or emphasis not in (50, 75) or mode not in (0, 1) or rds not in (0, 1):
+            raise ValueError("Invalid SET_TX_CONFIG field value")
+    return bytes((command, target, len(payload))) + payload
+
+
+def response_header(command: Command, data: bytes) -> tuple[Status, int]:
+    if len(data) != 2:
+        raise ProtocolError("RP response header must be exactly two bytes")
+    try:
+        status = Status(data[0])
+    except ValueError as exc:
+        raise ProtocolError(f"Unknown RP status: {data[0]}") from exc
+    expected = RESPONSE_SIZES[command] if status == Status.OK else 0
+    if data[1] != expected:
+        raise ProtocolError(f"{command.name} response length {data[1]}, expected {expected}")
+    return status, expected
+
+
+def response(command: Command, data: bytes) -> bytes:
+    status, length = response_header(command, data[:2])
+    if len(data) != 2 + length:
+        raise ProtocolError(f"{command.name} truncated or oversized response")
+    if status != Status.OK:
+        raise ERROR_TYPES[status](command, status)
+    return data[2:]
+
+
+def rf_dbuv_x10(value: float | None) -> int:
+    if value is None or isinstance(value, bool):
+        raise ValueError("Configure rf_output_dbuv explicitly in nominal dBµV")
+    try:
+        scaled = Decimal(str(value)) * 10
+        if not scaled.is_finite() or not 0 <= scaled <= 65535 or scaled != scaled.to_integral_value():
+            raise ValueError("rf_output_dbuv must be 0..6553.5 in steps of 0.1 dBµV")
+        return int(scaled)
+    except InvalidOperation as exc:
+        raise ValueError("Invalid rf_output_dbuv") from exc
+
+
+def parse_rds_fifo_free(payload: bytes) -> list[int]:
+    if len(payload) != 16:
+        raise ProtocolError("GET_RDS_FIFO_FREE requires exactly 16 payload bytes")
+    return list(struct.unpack("<8H", payload))
+
+
+def tx_config(config) -> bytes:
+    frequency = uint(config.frequency_khz, 32, "frequency_khz")
+    if frequency == 0:
+        raise ValueError("frequency_khz must be explicitly configured and positive")
+    level = rf_dbuv_x10(config.rf_output_dbuv)
+    if config.preemphasis_us not in (50, 75) or type(config.preemphasis_us) is not int:
+        raise ValueError("preemphasis_us must be 50 or 75")
+    if config.audio_mode not in ("DIGITAL", "ANALOG"):
+        raise ValueError("audio_mode must be DIGITAL or ANALOG")
+    return struct.pack("<IHBBBB", frequency, level, boolean(config.stereo, "stereo"),
+                       config.preemphasis_us, int(config.audio_mode == "ANALOG"), boolean(config.rds_enabled, "rds_enabled"))
+
+
+def rds_groups(groups) -> bytes:
+    # Transport already formed 16-bit blocks; no RDS encoding or FIFO policy.
+    if not isinstance(groups, (list, tuple)) or not 1 <= len(groups) <= 31:
+        raise ValueError("Supply 1..31 RDS groups")
+    payload = bytearray((len(groups),))
+    for group in groups:
+        if not isinstance(group, (list, tuple)) or len(group) != 4:
+            raise ValueError("Each RDS group must contain four uint16 blocks")
+        payload.extend(struct.pack("<4H", *(uint(block, 16, "RDS block") for block in group)))
+    return bytes(payload)
+
+
+def _text(data: bytes) -> str:
+    raw, separator, padding = data.partition(b"\0")
+    if not separator or any(padding) or not raw:
+        raise ProtocolError("Version text must be nonempty, NUL-terminated and zero padded")
+    try:
+        text = raw.decode("ascii")
+    except UnicodeDecodeError as exc:
+        raise ProtocolError("Version text is not ASCII") from exc
+    if not text.isprintable():
+        raise ProtocolError("Version text contains control characters")
+    return text
+
+
+def parse_info(payload: bytes) -> dict:
+    if len(payload) != INFO.size:
+        raise ProtocolError("Invalid GET_INFO payload size")
+    version, firmware, hardware, count = INFO.unpack(payload)
+    info = {"rp_protocol_version": version, "rp_firmware_version": _text(firmware),
+            "hardware_revision": _text(hardware), "modulator_count": count}
+    if version != PROTOCOL_VERSION or count != 8:
+        raise IncompatibleProtocol(f"Unsupported RP protocol/count: {version}/{count}; expected 1/8")
+    return info
+
+
+def _enum(value: int, values: tuple, name: str):
+    if value >= len(values):
+        raise ProtocolError(f"Invalid {name}: {value}")
+    return values[value]
+
+
+def _error(value: int):
+    try:
+        code = Status(value)
+    except ValueError as exc:
+        raise ProtocolError(f"Invalid hardware error code: {value}") from exc
+    return None if code == Status.OK else code.name
+
+
+def parse_status(payload: bytes) -> dict:
+    if len(payload) != RESPONSE_SIZES[Command.GET_STATUS]:
+        raise ProtocolError("Invalid GET_STATUS payload size")
+    # Current state and latched error are independent. SPI count excludes silence.
+    state, uptime, spi_errors, error = GLOBAL_STATUS.unpack_from(payload)
+    result = {"state": _enum(state, ("OK", "ERROR"), "RP state"), "uptime_ms": uptime,
+              "rp_spi_audio_link_error_count": spi_errors, "last_error_code": _error(error), "modulators": []}
+    for channel in range(8):
+        # audio counts detected QN I2S underrun flags, not missing Linux PCM.
+        tx, level, audio, rds, free, error = CHANNEL_STATUS.unpack_from(payload, GLOBAL_STATUS.size + channel * CHANNEL_STATUS.size)
+        result["modulators"].append({"id": channel, "tx_state": _enum(tx, ("OFF", "ON", "ERROR"), "TX state"),
+            "rf_output_dbuv": None if level == -32768 else level / 10,
+            "audio_underrun_count": audio, "rds_underrun_count": rds,
+            "rds_fifo_free": free, "last_error_code": _error(error)})
+    return result

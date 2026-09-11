@@ -1,5 +1,8 @@
 # Milestone 3: Linux PCM mux
 
+With Milestone 4 installed, add `--mock-rp` to the Python daemon commands below
+to retain the hardware-free RP control used in this milestone. See [Milestone 4](milestone4.md).
+
 Milestone 3 adds an independent C++17 `fmheadend-muxd` and Python Unix mux client.
 No architectural deviation is introduced. RP2354 I2C/QN control remains mocked;
 RDS encoding/scheduling, firmware, systemd deployment and the Web UI remain later

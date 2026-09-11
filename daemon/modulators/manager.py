@@ -57,7 +57,7 @@ class ModulatorManager:
     def _start(self, modulator_id):
         config = self.get(modulator_id)
         status = self.statuses[modulator_id]
-        if status.tx_state == TxState.ON:
+        if status.tx_state == TxState.ON and modulator_id in self.active_sources:
             return status
         if modulator_id in self.active_sources:
             self._stop(modulator_id)
@@ -74,7 +74,7 @@ class ModulatorManager:
             self.rp.set_tx_config(modulator_id, TxConfig.from_modulator(config, analog))
             enable_attempted = True
             self.rp.set_tx_enabled(modulator_id, True)
-        except DependencyUnavailable as exc:
+        except (DependencyUnavailable, ValueError) as exc:
             # A failed enable may have reached hardware. Keep audio if RF OFF
             # cannot be confirmed; failures before enable can release it safely.
             rf_off = not enable_attempted
@@ -92,7 +92,7 @@ class ModulatorManager:
             raise DomainError(503, "DEPENDENCY_UNAVAILABLE", str(exc)) from exc
         status.tx_state = TxState.ON
         status.source_state = "ANALOG" if analog else "RUNNING"
-        logger.info("modulator %s started at %s kHz (mock)", modulator_id, config.frequency_khz)
+        logger.info("modulator %s started at %s kHz", modulator_id, config.frequency_khz)
         return status
 
     def stop(self, modulator_id):
@@ -118,7 +118,7 @@ class ModulatorManager:
                 raise DomainError(503, "DEPENDENCY_UNAVAILABLE", str(exc)) from exc
             self.active_sources.pop(modulator_id, None)
         status.tx_state, status.source_state, status.last_error = TxState.OFF, "IDLE", None
-        logger.info("modulator %s stopped (mock)", modulator_id)
+        logger.info("modulator %s stopped", modulator_id)
         return status
 
     def all(self, start):

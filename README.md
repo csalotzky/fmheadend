@@ -3,9 +3,11 @@
 Eight-channel FM headend for Raspberry Pi Zero 2 W. The canonical design is
 [docs/fmheadend-software-architecture.md](docs/fmheadend-software-architecture.md).
 
-Milestones 1-3 provide the Python control backend, real GStreamer ingest, and
+Milestones 1-4 provide the Python control backend, real GStreamer ingest, and
 the independent C++ PCM mux daemon with mock and Linux spidev transports.
-Configuration remains in SQLite; RP2354 control remains mocked.
+Configuration remains in SQLite; Milestone 4 adds real Linux RP2354 I2C control.
+See [Milestone 4 setup, tests and hardware smoke procedure](docs/milestone4.md)
+and the [exact V1 RP protocol](docs/rp2354-protocol.md).
 See [Milestone 3 build, run, wire format and verification](docs/milestone3.md).
 See [Milestone 2 setup and verification](docs/milestone2.md) for transport details,
 dependency installation, integration tests and smoke tests.
@@ -24,7 +26,7 @@ sudo apt install python3-venv python3-gi python3-gst-1.0 \
 python3 -m venv --system-site-packages .venv
 . .venv/bin/activate
 python -m pip install -e './daemon[test]'
-fmheadendd --mock-mux --database ./fmheadend.db --host 127.0.0.1 --port 8080
+fmheadendd --mock-rp --mock-mux --database ./fmheadend.db --host 127.0.0.1 --port 8080
 ```
 
 The system-site-packages flag exposes distro PyGObject/GStreamer bindings to the
@@ -32,12 +34,15 @@ virtual environment. Use the distro Python interpreter; a separately installed
 Python must have matching GI bindings. Older Mint releases whose default Python
 is below 3.11 do not satisfy the existing package requirement.
 
-The CLI uses GStreamer and the independent Unix mux daemon by default. The
-command above uses `--mock-mux` for standalone Milestone 2 operation. Add `--mock`
-for original Milestone 1 source and mux behavior without GI. RP2354 control is
-mocked in all modes. The `create_app()` factory retains its mock defaults for
+The CLI uses real GStreamer, the independent Unix mux daemon and Linux RP2354
+I2C by default. The command above explicitly mocks RP and mux for standalone
+Milestone 2 operation. Use `--mock-rp` with native mux for Milestone 3 operation
+without an RP. Use `--mock` for all original Milestone 1 mocks without GI.
+Real I2C requires an explicitly configured slave address; failure never falls
+back to mock, and the HTTP server remains available with degraded status. The `create_app()` factory retains its mock defaults for
 existing callers; inject `pipeline_factory=GstPipeline` and a `mux_factory`
 returning `UnixMuxClient(sources.output_for)` for real ingest and mux integration.
+Inject `rp=Rp2354Client(device, address)` from `rp2354.linux_client` for real control.
 
 Open http://127.0.0.1:8080/docs for Swagger or `/openapi.json` for the schema.
 All REST routes use `/api/v1`. `python -m fmheadendd.app` accepts the same flags.
@@ -98,7 +103,7 @@ missing routes, resource conflicts and unavailable dependencies.
   hardware application returns 503 and leaves desired configuration intact while
   actual state becomes ERROR. Shutdown turns RF off without changing desired state.
 - Newly created sources default to enabled. Modulators default to disabled,
-  unassigned, with `frequency_khz: null`, RF level 0, stereo, 50 us pre-emphasis
+  unassigned, with `frequency_khz: null`, unset nominal RF target, stereo, 50 us pre-emphasis
   and RDS disabled. A frequency must be explicitly configured before enabling
   a modulator; starting without it returns 409 `FREQUENCY_REQUIRED` without
   changing desired state or touching hardware. Starting without an enabled
@@ -111,8 +116,10 @@ missing routes, resource conflicts and unavailable dependencies.
   stop failures retain the source until RF-off can be confirmed.
 - The default FM validation band is 87500..108000 kHz inclusive. Override it with
   `--fm-band-min-khz` and `--fm-band-max-khz`. No tuning raster is assumed.
-  `rf_level` is an opaque nonnegative integer pending the hardware contract;
-  reported `rf_output_dbuv` is null, with no invented conversion or measurement.
+  Configure `rf_output_dbuv` in nominal dBµV (0.1 dBµV steps) for real RP control.
+  The RP owns PA conversion and hardware range checks. Schema 2 migrates legacy
+  raw RF values to null; it does not invent a physical target. Readback is nominal,
+  never measured RF power. See the [canonical protocol](docs/rp2354-protocol.md).
 - PI is represented as a uint16 integer. PS entries contain up to eight printable
   characters and a positive duration; RT allows up to 64 printable characters.
   Actual character encoding and RDS group generation are deferred to Milestone 5.
@@ -145,9 +152,9 @@ actual state, concurrent requests, and RadioText priority/expiry.
 Milestone 2 adds HTTP/HLS, raw UDP, RTP and ALSA ingest, appsink output, GStreamer
 gain, metadata and source reconnects. See [details and test results](docs/milestone2.md).
 Milestone 3 adds the Unix PCM/control sockets, bounded C++ rings, fixed frame
-builder, mock capture and Linux spidev transport. No RP2354 I2C transport, RDS
-encoder/FIFO scheduler, web UI, systemd integration or automatic desired-state
-restoration is implemented. New modulators
+builder, mock capture and Linux spidev transport. Milestone 4 adds RP2354 I2C protocol/client primitives and hardware status.
+No RDS encoder/FIFO scheduler, firmware, web UI, systemd integration or automatic
+desired-state restoration is implemented. New modulators
 remain disabled with no frequency until explicitly configured.
 
 No architectural deviation is introduced. There is one source worker per active

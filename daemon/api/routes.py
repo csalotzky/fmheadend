@@ -131,7 +131,7 @@ def update_modulator(id: int, body: ModulatorPatch, request: Request):
 @router.post("/modulators/{id}/start", response_model=ModulatorStatus, tags=["modulators"])
 @control_route
 def start_modulator(id: int, request: Request):
-    """Persist enabled=true and start the mock TX."""
+    """Persist enabled=true and start the TX through the selected RP client."""
     return request.app.state.services.modulators.start(id)
 
 

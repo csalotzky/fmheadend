@@ -41,6 +41,11 @@ class ModulatorStatus(Model):
     overruns: int = 0
     pcm_bytes_received: int = 0
     pcm_bytes_consumed: int = 0
+    hardware_tx_state: str | None = None
+    audio_underrun_count: int | None = None
+    rds_underrun_count: int | None = None
+    rds_fifo_free: int | None = None
+    hardware_last_error: str | None = None
     last_error: str | None = None
 
 
@@ -54,6 +59,9 @@ class SystemStatus(Model):
     mux_mocked: bool = True
     spi_errors: int = 0
     i2c_errors: int = 0
+    rp_uptime_ms: int | None = None
+    rp_spi_audio_link_error_count: int | None = None
+    rp_last_error_code: str | None = None
     uptime_s: float = 0
     cpu_percent: float | None = None
     memory_percent: float | None = None

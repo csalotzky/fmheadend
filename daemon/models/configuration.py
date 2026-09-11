@@ -138,7 +138,7 @@ class ModulatorConfig(Model):
     frequency_khz: int | None = Field(default=None, gt=0, strict=True)
     stereo: bool = True
     preemphasis_us: Literal[50, 75] = 50
-    rf_level: int = Field(default=0, ge=0, strict=True)
+    rf_output_dbuv: float | None = Field(default=None, ge=0, le=6553.5, multiple_of=0.1, strict=True)
     rds_enabled: bool = False
     rds_pi: int = Field(default=0, ge=0, le=65535, strict=True)
     rds_ps: list[PsEntry] = Field(default_factory=lambda: [PsEntry(text="FMHEAD")], min_length=1)

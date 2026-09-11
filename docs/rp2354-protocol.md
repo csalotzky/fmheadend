@@ -1,0 +1,280 @@
+# RP2354 V1 Linux wire protocol
+
+This is the authoritative V1 binary protocol specification and Milestone 4 contract implemented by
+`daemon/rp2354/protocol.py` and `daemon/rp2354/linux_client.py`.
+The architecture defines command semantics and envelopes, but leaves numeric IDs,
+field widths and bus transaction details open in sections 11 and 27. The choices
+below resolve those points for V1; they are not claims about existing firmware.
+The future RP firmware must implement this same contract. No firmware, QN driver,
+RDS encoder, scheduler or FIFO refill policy is implemented here.
+
+## Framing and bus transactions
+
+Pi is the only master. RP uses a configured unreserved 7-bit address, 0x08..0x77;
+there is deliberately no default address. The bus/device path is configurable.
+All multibyte fields are little-endian; structures are packed without padding.
+There are no sequence numbers or checksums.
+
+Request: `command:u8 target:u8 length:u8 payload[length]`.
+Response: `status:u8 length:u8 payload[length]`.
+Lengths count payload bytes only; maximum payload is 255 bytes.
+Targets 0..7 are physical modulators; 0xFF is global. Other targets are invalid.
+Global commands reject channel targets and channel commands reject global targets.
+
+One request is outstanding at a time. Linux performs:
+
+1. One write containing the complete request, ending with STOP.
+2. Wait at least 2 ms for RP to prepare a response.
+3. One read of exactly two header bytes, ending with STOP.
+4. For a nonempty payload, one read of exactly its declared size, ending with STOP.
+
+RP must keep a response cursor across the two read transactions: the second read
+continues at the payload, not at the header. A new complete request replaces any
+abandoned response and resets the cursor. No repeated START is required. The RP
+must have a response header ready within 2 ms; when not ready to execute a command
+it returns BUSY, with no command side effects. Delayed execution after BUSY is
+forbidden. Each successful response size is fixed below; error payloads are empty.
+Linux rejects a wrong declared length before reading an unexpected payload, and
+rejects short/extra bytes returned by the OS. I2C is master-clocked, so bytes a
+slave might offer beyond the requested read cannot be independently detected;
+firmware must honor the declared size and new-request cursor reset.
+
+The client locks requests within its process and takes an advisory exclusive lock
+on the device while open, preventing other cooperating client instances from
+interleaving transactions. Do not run independent bus tools against the RP while
+the daemon owns it. This lock does not constrain uncooperative external programs.
+
+## Command and response status IDs
+
+| ID | Command | Target | Request payload bytes | OK payload bytes |
+|---:|---|---|---:|---:|
+| 0x01 | GET_INFO | 0xFF | 0 | 35 |
+| 0x02 | SET_TX_CONFIG | 0..7 | 10 | 0 |
+| 0x03 | SET_TX_ENABLED | 0..7 | 1 | 0 |
+| 0x04 | GET_STATUS | 0xFF | 0 | 122 |
+| 0x05 | RDS_PUSH | 0..7 | 1 + 8*N | 0 |
+| 0x06 | RDS_CLEAR | 0..7 | 0 | 0 |
+| 0x07 | QN_READ_REGISTER | 0..7 | 1 | 1 |
+| 0x08 | QN_WRITE_REGISTER | 0..7 | 2 | 0 |
+| 0x09 | RESET_ERROR_COUNTERS | 0xFF | 0 | 0 |
+| 0x0A | RP_SOFT_RESET | 0xFF | 0 | 0 |
+| 0x0B | GET_RDS_FIFO_FREE | 0xFF | 0 | 16 |
+
+| Status ID | Name | Python exception |
+|---:|---|---|
+| 0 | OK | none |
+| 1 | INVALID_COMMAND | InvalidCommand |
+| 2 | INVALID_TARGET | InvalidTarget |
+| 3 | INVALID_ARGUMENT | InvalidArgument |
+| 4 | BUSY | Busy |
+| 5 | QN_ERROR | QnError |
+| 6 | INTERNAL_ERROR | InternalError |
+
+All RP error responses must be exactly two bytes: `[status, 0]`. Typed status
+exceptions derive from `RpResponseError`, itself a `DependencyUnavailable`, and
+retain `command` and `rp_status`. Invalid framing/enums raise `ProtocolError`;
+unsupported version/count raises `IncompatibleProtocol`. OS/device/slave access
+failures raise `HardwareUnavailable`. Existing manager/API dependency error handling
+therefore remains applicable. Local invalid arguments raise `ValueError` before I/O.
+
+## GET_INFO (0x01)
+
+Request has no payload: `01 ff 00`. OK response starts `00 23`.
+
+| Payload offset | Type | Field |
+|---:|---|---|
+| 0 | u16 | protocol_version, exactly 1 |
+| 2 | char[16] | firmware_version |
+| 18 | char[16] | hardware_revision |
+| 34 | u8 | modulator_count, exactly 8 |
+
+Strings are nonempty printable ASCII, maximum 15 characters, NUL terminated and
+zero padded to 16 bytes. Linux exposes the existing keys `rp_protocol_version`,
+`rp_firmware_version`, `hardware_revision`, `modulator_count`. Unknown versions or
+counts block every command except GET_INFO; no best-effort interpretation or mock
+fallback is allowed. Successful GET_INFO is required before the first operational
+command and after a failed/reopened session or explicit reset.
+
+## SET_TX_CONFIG (0x02)
+
+The payload is exactly ten bytes:
+
+| Payload offset | Type | Field |
+|---:|---|---|
+| 0 | u32 | frequency_khz, positive and explicitly configured |
+| 4 | u16 | rf_output_dbuv_x10, nominal target in tenths of dBµV |
+| 6 | u8 | stereo: 0 mono, 1 stereo |
+| 7 | u8 | preemphasis_us: literal 50 or 75 |
+| 8 | u8 | audio_mode: 0 DIGITAL, 1 ANALOG |
+| 9 | u8 | rds_enabled: 0 or 1 |
+
+This atomically applies configuration and **does not enable TX**. Linux/API
+configuration uses `rf_output_dbuv` in dBµV: 96.0 becomes 960, 100.0 becomes 1000.
+Linux accepts only finite values 0..6553.5 in 0.1 dBµV steps (the wire range),
+without rounding or clamping. This is not a claim that the QN supports that entire
+range. RP firmware owns hardware-range validation, rounding and the QN PA mapping.
+The nominal approximation is `dBµV = 0.37 * PAC_TARGET + 68`; for example 96.0
+maps approximately to raw 76. Linux never performs this conversion or exposes
+PAC_TARGET in normal configuration. Invalid hardware targets are rejected by RP.
+
+Both frequency and RF target must be explicitly configured for a real TX config.
+Unset RF targets remain null; no physical target is inferred from legacy raw values.
+The high-level mock accepts an unset target for existing hardware-free workflows.
+
+Example, TX7, 98100 kHz, 96.0 dBµV, stereo, 50 us, DIGITAL, RDS disabled:
+`02 07 0a 34 7f 01 00 c0 03 01 32 00 00`. ACK: `00 00`.
+
+## SET_TX_ENABLED (0x03)
+
+Payload offset 0: `enabled:u8`, exactly 0 or 1. No other fields.
+`03 00 01 01` enables TX0; `03 00 01 00` disables it. ACK: `00 00`.
+The firmware must reject enabling an unconfigured modulator with INVALID_ARGUMENT.
+The Linux manager retains configuration-before-enable and RF-off-before-audio-stop.
+
+## GET_STATUS (0x04)
+
+Request `04 ff 00`. Response `00 7a` followed by one coherent 122-byte snapshot.
+Global prefix is ten bytes:
+
+| Payload offset | Type | Field |
+|---:|---|---|
+| 0 | u8 | global_state: 0 OK, 1 ERROR |
+| 1 | u32 | uptime_ms, wraps modulo 2^32 |
+| 5 | u32 | rp_spi_audio_link_error_count |
+| 9 | u8 | global last_error_code, status IDs above; 0 means none |
+
+Eight consecutive 14-byte records follow, ordered TX0..TX7. Channel `c` starts at
+payload offset `10 + 14*c`; no repeated channel ID is transmitted.
+
+| Record offset | Type | Field |
+|---:|---|---|
+| 0 | u8 | tx_state: 0 OFF, 1 ON, 2 ERROR |
+| 1 | i16 | rf_output_dbuv_x10 in tenths of dBµV; -32768 means unavailable |
+| 3 | u32 | audio_underrun_count |
+| 7 | u32 | rds_underrun_count |
+| 11 | u16 | rds_fifo_free, capacity in complete groups |
+| 13 | u8 | last_error_code, status IDs above; 0 means none |
+
+RF readback describes nominal configured/read-back QN output level, **not measured
+RF power**. Firmware must use the unavailable sentinel if it cannot supply a
+meaningful nominal value. Linux returns JSON null for that sentinel; otherwise
+it divides the signed integer by ten. No QN PA conversion is performed by Linux.
+Counters are unsigned cumulative counts; FIFO free capacity is an instantaneous
+snapshot. Linux transports these values without running a refill policy.
+
+### Current faults, latched history, and diagnostic layers
+
+`global_state` represents the current RP-wide condition: ERROR means an active
+global fault. `last_error_code` records the most recently latched error. Thus
+`global_state=OK, last_error_code=QN_ERROR` is valid history, not an active fault.
+Per-channel `tx_state` and `last_error_code` use the same distinction. Linux retains
+latched codes in diagnostics but does not mark the system degraded solely for
+latched history. RESET_ERROR_COUNTERS clears codes and counters; active faults may
+immediately assert again.
+
+`rp_spi_audio_link_error_count` counts cumulative RP-detected Pi-to-RP SPI audio
+transport/frame errors: missing/unexpected frame counters, invalid frame lengths,
+SPI/PIO/DMA receive framing or overflow failures, and other conditions making a
+frame unusable. An absent Linux source or generated silent PCM must not increment
+it. With no SPI checksum/CRC, same-length undetected bit corruption cannot always
+be counted.
+
+Per-channel `audio_underrun_count` counts **detected QN8007B I2S underrun events**.
+Firmware monitors the QN underrun flag, increments the counter when observed, and
+clears the flag using the QN-supported mechanism. Several physical underruns between
+polls may collapse into one detection because the chip exposes a flag, not an event
+queue. This is separate from Linux mux underruns (missing PCM before SPI) and RP
+SPI audio link errors (transport faults). QN I2S overflow and analog saturation
+INSAT are not dedicated V1 fields; raw register diagnostics remain available.
+
+## RDS_PUSH (0x05)
+
+Payload offset 0: `group_count:u8`, 1..31. Exactly N groups follow, each eight bytes:
+`block_A:u16 block_B:u16 block_C:u16 block_D:u16`, in that order, all little-endian.
+Group count 31 produces 249 payload bytes; zero groups and incomplete groups are
+invalid. Blocks are already formed RDS data words, not text. No checkwords, RDS
+encoding, group selection, FIFO scheduler or carousel is performed by this client.
+
+The caller must respect its latest FIFO free-capacity snapshot. RP must append all
+N groups atomically in order, or return BUSY without appending any if capacity is
+insufficient. Partial acceptance is not representable in V1. The bounded BUSY retry
+reuses exactly the same batch. ACK: `00 00`.
+
+## RDS_CLEAR (0x06)
+
+No payload; target is one modulator. Empties that FIFO. ACK: `00 00`.
+It does not change configuration or TX enable. This is a primitive only and is
+not automatically scheduled by the Milestone 4 daemon.
+
+## QN_READ_REGISTER (0x07)
+
+Request payload offset 0: `register:u8`. Response payload offset 0: `value:u8`.
+Example: read TX2 register 0x12: `07 02 01 12`; value 0xA5: `00 01 a5`.
+Firmware owns QN routing/access and may reject unsupported registers.
+
+## QN_WRITE_REGISTER (0x08)
+
+Request payload offsets 0 and 1: `register:u8 value:u8`. ACK: `00 00`.
+Example: write TX3 register 0x34 to 0x56: `08 03 02 34 56`.
+Linux does not implement a QN driver or choose hardware register values.
+
+## RESET_ERROR_COUNTERS (0x09)
+
+Global request `09 ff 00`, no payload. ACK `00 00`. Clears RP global and per-channel
+error/underrun counters and latched error codes; current active errors may reassert.
+Does not reset uptime, TX configuration, enable state or FIFO content. The Linux
+client's cumulative `i2c_errors` and mux counters are separate and are not cleared.
+
+## RP_SOFT_RESET (0x0A)
+
+Global request `0a ff 00`, no payload. Firmware must provide ACK `00 00` before
+resetting. After ACK consumption it resets with TX disabled and FIFOs empty.
+Linux closes the session, invalidates compatibility information, and waits at
+least 250 ms before another attempt. A fresh GET_INFO is mandatory. A lost ACK
+leaves outcome unknown; Linux reports failure and never automatically replays the
+reset. Automatic desired-state restoration and RDS refill are not added here.
+
+## GET_RDS_FIFO_FREE (0x0B)
+
+Global request `0b ff 00`, no payload. Successful header `00 10`, followed by
+exactly eight little-endian u16 capacities: TX0 at offset 0, TX1 at 2, TX2 at 4,
+TX3 at 6, TX4 at 8, TX5 at 10, TX6 at 12 and TX7 at 14. Total payload: 16 bytes.
+Each capacity counts complete eight-byte RDS groups. The typed client method
+`get_rds_fifo_free()` returns eight integers in channel order.
+
+This primitive permits frequent capacity queries by a future scheduler; GET_STATUS
+remains the full diagnostic snapshot. No scheduler/refill policy is added now.
+RDS_PUSH still acknowledges with an empty payload; `fifo_free_after` is not V1.
+
+## Linux timing, retry and integration behavior
+
+The real client uses standard-library `os.open/read/write/close` and `fcntl` ioctls,
+not SMBus block framing. It requires plain-I2C adapter capability. Default adapter
+timeout is requested as 200 ms (configurable 10..1000 ms, rounded up to 10 ms units).
+Kernel arbitration retries are set to zero to avoid replaying commands with side
+effects. These ioctls configure adapter-level settings; use a dedicated control bus.
+The kernel/controller governs actual timeout behavior; Python cannot preempt a
+stuck kernel syscall. Hardware timing still requires validation on the real board.
+
+BUSY alone is retried once after 10 ms. All other RP errors are surfaced immediately.
+A short write, short read, malformed response, NACK or OS error closes the session;
+there is no blind request replay because execution may already have happened.
+Reopening waits at least 250 ms. Existing periodic status polling retries communication
+and performs a fresh handshake; no extra recovery daemon or fake bus is introduced.
+An unavailable device does not prevent the HTTP application from starting.
+
+The real CLI is the default. `--mock-rp` explicitly selects the unchanged high-level
+`MockRp2354Client`; `--mock` selects all original mocks. `--mock-mux` affects only
+mux selection. The embedding `create_app()` keeps its original mock defaults;
+pass `rp=Rp2354Client(device, address)` to opt into real control.
+
+Runtime status adds independent RP `hardware_tx_state`, `audio_underrun_count`,
+`rds_underrun_count`, `rds_fifo_free`, `hardware_last_error`, plus global
+`rp_uptime_ms`, `rp_spi_audio_link_error_count` and latched `rp_last_error_code`. Real reported TX state updates `tx_state`.
+On communication failure, measurements/counters that require a current RP snapshot
+become null, hardware TX state is unknown, and runtime TX state reports ERROR.
+Persistent desired state and the existing PCM streams are retained. A subsequent
+snapshot restores observed status; it does not silently enable RF or restore desired
+configuration. Explicit start remains available. Mux `underruns`, `overruns` and PCM
+counters retain their Milestone 3 meanings. API handlers never handle protocol bytes
+or open device nodes. Hardware info is cached through the status service.
