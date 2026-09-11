@@ -1,3 +1,3 @@
-﻿"""fmheadendd control plane; Milestone 1 mock backend."""
+"""fmheadendd control plane; control plane and media ingest."""
 
 __version__ = "0.1.0"

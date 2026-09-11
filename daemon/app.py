@@ -14,6 +14,7 @@ from starlette.exceptions import HTTPException
 from . import __version__
 from .api.routes import router
 from .config import Settings
+from .control import ControlExecutor
 from .database import Database
 from .errors import DomainError
 from .modulators.manager import ModulatorManager
@@ -23,6 +24,7 @@ from .rp2354.client import MockRp2354Client
 from .services import ConfigurationService
 from .sources.manager import SourceManager
 from .sources.pipeline import MockPipeline
+from .sources.gst_pipeline import GstPipeline
 from .status.service import StatusService
 
 logger = logging.getLogger(__name__)
@@ -33,44 +35,69 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
 
     @asynccontextmanager
     async def lifespan(app):
-        database = Database(settings.database_path)
-        sources = SourceManager(database, pipeline_factory)
-        rp_client, mux_client = rp or MockRp2354Client(), mux or MockMuxClient()
-        modulators = ModulatorManager(database, sources, rp_client, mux_client, settings)
-        rt = RadioTextService(database, sources, clock)
-        status = StatusService(modulators, sources, rp_client, mux_client, clock)
-        config = ConfigurationService(database, sources, modulators)
-        app.state.services = SimpleNamespace(
-            config=config, sources=sources, modulators=modulators, rt=rt, status=status,
-            info={"fmheadend_version": __version__, "rp_protocol_version": 1,
-                  "rp_firmware_version": "mock", "hardware_revision": "mock", "modulator_count": 8, "mocked": True},
-        )
+        control = ControlExecutor()
+        app.state.control = control
+        def initialize():
+            database = Database(settings.database_path)
+            sources = SourceManager(database, pipeline_factory)
+            rp_client, mux_client = rp or MockRp2354Client(), mux or MockMuxClient()
+            modulators = ModulatorManager(database, sources, rp_client, mux_client, settings)
+            rt = RadioTextService(database, sources, clock)
+            status = StatusService(modulators, sources, rp_client, mux_client, clock)
+            config = ConfigurationService(database, sources, modulators)
+            return SimpleNamespace(
+                database=database, config=config, sources=sources, modulators=modulators, rt=rt, status=status,
+                info={"fmheadend_version": __version__, "rp_protocol_version": 1,
+                      "rp_firmware_version": "mock", "hardware_revision": "mock", "modulator_count": 8, "mocked": True},
+            )
+        try:
+            app.state.services = await control.call(initialize)
+        except BaseException:
+            control.close()
+            raise
+        services = app.state.services
+
+        next_poll = 0.0
+        def tick():
+            nonlocal next_poll
+            services.rt.expire()
+            now = time.monotonic()
+            if now >= next_poll:
+                services.status.refresh()
+                next_poll = now + services.config.get_system().rp_status_poll_interval_ms / 1000
+            return max(0.01, next_poll - time.monotonic())
 
         async def maintenance():
-            next_poll = time.monotonic()
             while True:
-                rt.expire()
-                now = time.monotonic()
-                if now >= next_poll:
-                    status.refresh()
-                    next_poll = now + config.get_system().rp_status_poll_interval_ms / 1000
-                await asyncio.sleep(min(0.25, max(0, next_poll - time.monotonic())))
+                try:
+                    interval = await control.call(tick)
+                except DomainError as exc:
+                    if exc.error != "CONTROL_BUSY":
+                        raise
+                    interval = 0.25
+                await asyncio.sleep(min(0.25, interval))
 
         task = asyncio.create_task(maintenance())
-        logger.info("fmheadendd started in mock mode")
+        logger.info("fmheadendd started; media backend: %s; hardware: mock", pipeline_factory.__name__)
         try:
             yield
         finally:
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
+            def shutdown():
+                try:
+                    services.modulators.shutdown()
+                    services.sources.close()
+                finally:
+                    services.database.close()
             try:
-                modulators.shutdown()
+                await control.call(shutdown)
             finally:
-                database.close()
+                control.close()
 
     app = FastAPI(title="fmheadend", version=__version__, lifespan=lifespan,
-                  description="Milestone 1 mock backend. No real media decoding, RF, I2C or SPI access.")
+                  description="Milestone 2 source ingest. RP2354 and mux remain mocked; no SPI/I2C access.")
 
     @app.exception_handler(DomainError)
     async def domain_error(request, exc):
@@ -98,11 +125,11 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
 
 
 def main():
-    parser = argparse.ArgumentParser(description="fmheadendd Milestone 1 mock backend")
+    parser = argparse.ArgumentParser(description="fmheadendd source ingest with mock hardware")
     parser.add_argument("--database", default="/var/lib/fmheadend/fmheadend.db")
     parser.add_argument("--host", help="Override persistent web_listen_address")
     parser.add_argument("--port", type=int, help="Override persistent web_port")
-    parser.add_argument("--mock", action="store_true", help="Mock mode (currently the only backend)")
+    parser.add_argument("--mock", action="store_true", help="Use mock sources instead of GStreamer (hardware is always mocked)")
     parser.add_argument("--fm-band-min-khz", type=int, default=87500)
     parser.add_argument("--fm-band-max-khz", type=int, default=108000)
     args = parser.parse_args()
@@ -114,7 +141,7 @@ def main():
         database.close()
     logging.basicConfig(level=config.log_level, format="%(levelname)s %(name)s %(message)s")
     import uvicorn
-    uvicorn.run(create_app(settings), host=args.host or config.web_listen_address,
+    uvicorn.run(create_app(settings, pipeline_factory=MockPipeline if args.mock else GstPipeline), host=args.host or config.web_listen_address,
                 port=args.port if args.port is not None else config.web_port, log_level=config.log_level.lower())
 
 

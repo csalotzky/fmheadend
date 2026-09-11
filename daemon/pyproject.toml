@@ -21,3 +21,4 @@ package-dir = {fmheadendd = "."}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["gstreamer: requires native GStreamer and PyGObject"]

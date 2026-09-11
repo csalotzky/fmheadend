@@ -1,4 +1,4 @@
-﻿from enum import StrEnum
+from enum import StrEnum
 from .configuration import Model
 
 
@@ -25,6 +25,9 @@ class InputSourceStatus(Model):
     input_channels: int | None = None
     bitrate_bps: int | None = None
     stream_title: str | None = None
+    artist: str | None = None
+    title: str | None = None
+    output_caps: str | None = None
     reconnect_count: int = 0
     last_error: str | None = None
 

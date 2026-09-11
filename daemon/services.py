@@ -1,4 +1,4 @@
-﻿from .errors import DomainError
+from .errors import DomainError
 from .models.configuration import AudioProfileConfig, InputSourceConfig, SystemConfig
 
 
@@ -20,7 +20,7 @@ class ConfigurationService:
         model = {"sources": InputSourceConfig, "audio_profiles": AudioProfileConfig}[table]
         config = model.model_validate(current.model_dump(exclude={"id", "timestamp"}) | patch.model_dump(exclude_unset=True))
         if table == "sources":
-            # Live media reconfiguration belongs to the GStreamer milestone.
+            # Preserve explicit stop-before-edit semantics; apply changes on next start.
             if record_id in self.modulators.active_sources.values():
                 raise DomainError(409, "SOURCE_ACTIVE", "Stop consumers before editing this source")
             if not config.enabled and any(m.enabled and m.input_source_id == record_id for m in self.modulators.list()):

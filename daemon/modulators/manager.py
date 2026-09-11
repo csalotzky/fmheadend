@@ -109,9 +109,14 @@ class ModulatorManager:
             status.tx_state, status.last_error = TxState.ERROR, str(exc)
             raise DomainError(503, "DEPENDENCY_UNAVAILABLE", str(exc)) from exc
         self.mux.detach(modulator_id)
-        source_id = self.active_sources.pop(modulator_id, None)
+        source_id = self.active_sources.get(modulator_id)
         if source_id is not None:
-            self.sources.release(source_id, modulator_id)
+            try:
+                self.sources.release(source_id, modulator_id)
+            except DependencyUnavailable as exc:
+                status.tx_state, status.last_error = TxState.ERROR, str(exc)
+                raise DomainError(503, "DEPENDENCY_UNAVAILABLE", str(exc)) from exc
+            self.active_sources.pop(modulator_id, None)
         status.tx_state, status.source_state, status.last_error = TxState.OFF, "IDLE", None
         logger.info("modulator %s stopped (mock)", modulator_id)
         return status

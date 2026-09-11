@@ -59,6 +59,9 @@ class RtpConfig(Model):
     multicast_group: str | None = None
     codec: Literal["PCM", "MP3", "AAC", "OPUS"]
     payload_type: int = Field(ge=0, le=127, strict=True)
+    clock_rate: Rate | None = None
+    channels: int | None = Field(default=None, ge=1, le=8, strict=True)
+    codec_data: str | None = Field(default=None, pattern=r"^(?:[0-9A-Fa-f]{2})+$")
 
 
 class AlsaConfig(Model):
@@ -195,8 +198,10 @@ class ErrorResponse(Model):
 
 class SourceTestResult(Model):
     ok: bool = True
-    mocked: Literal[True] = True
+    mocked: bool = True
     codec: str | None = None
     sample_rate: int | None = None
     channels: int | None = None
+    output_caps: str | None = None
+    stream_title: str | None = None
     message: str = "Mock probe only; no connection or decoding was attempted."

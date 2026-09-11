@@ -3,37 +3,49 @@
 Eight-channel FM headend for Raspberry Pi Zero 2 W. The canonical design is
 [docs/fmheadend-software-architecture.md](docs/fmheadend-software-architecture.md).
 
-Milestone 1 provides the `fmheadendd` Python package and a hardware-free FastAPI
-backend. Sources and audio profiles have CRUD APIs; modulators are fixed IDs 0..7.
-SQLite stores configuration, while source/TX status and RadioText overrides live
-only in memory. RP2354, mux and source pipelines are mocks.
+Milestones 1 and 2 provide the Python control backend and real GStreamer source
+ingest. Configuration remains in SQLite; hardware clients remain mocked.
+See [Milestone 2 setup and verification](docs/milestone2.md) for transport details,
+dependency installation, integration tests and smoke tests.
 
-## Run on Linux / Raspberry Pi
+## Run on Linux Mint / Raspberry Pi
 
-Python 3.11 or newer is required. No GStreamer, SPI, I2C or RF hardware is needed.
-From the repository root:
+Python 3.11 or newer is required. On Mint 22.x, install the native runtime:
 
 ```sh
-python3 -m venv .venv
+sudo apt update
+sudo apt install python3-venv python3-gi python3-gst-1.0 \
+  gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 \
+  gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+  gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav \
+  gstreamer1.0-alsa alsa-utils
+python3 -m venv --system-site-packages .venv
 . .venv/bin/activate
 python -m pip install -e './daemon[test]'
-fmheadendd --mock --database ./fmheadend.db --host 127.0.0.1 --port 8080
+fmheadendd --database ./fmheadend.db --host 127.0.0.1 --port 8080
 ```
 
-Open http://127.0.0.1:8080/docs for interactive Swagger, or
-http://127.0.0.1:8080/openapi.json for the schema. All REST routes use `/api/v1`.
-`python -m fmheadendd.app` accepts the same arguments as `fmheadendd`.
-Without a database override, the path is `/var/lib/fmheadend/fmheadend.db`; its
-parent must be writable by the service account. Use one daemon process/worker
-per database and headend because runtime state is process-local.
+The system-site-packages flag exposes distro PyGObject/GStreamer bindings to the
+virtual environment. Use the distro Python interpreter; a separately installed
+Python must have matching GI bindings. Older Mint releases whose default Python
+is below 3.11 do not satisfy the existing package requirement.
 
-The distribution maps the `fmheadendd` import package directly to `daemon/`.
-There is no extra nested source directory. `muxd/`, `systemd/` and `webui/` are
-reserved for later milestones.
+The CLI uses GStreamer by default. Add `--mock` for the original Milestone 1
+source behavior; it needs no GI installation. RP2354 and mux remain mocks in both
+modes. The `create_app()` Python factory retains its mock default for existing
+callers; inject `pipeline_factory=GstPipeline` for real ingest when embedding it.
+
+Open http://127.0.0.1:8080/docs for Swagger or `/openapi.json` for the schema.
+All REST routes use `/api/v1`. `python -m fmheadendd.app` accepts the same flags.
+The default database is `/var/lib/fmheadend/fmheadend.db`; use a writable path
+for local development. Run one daemon process/worker per headend.
+
+The distribution maps `fmheadendd` directly to `daemon/` without an extra nested
+source directory. `muxd/`, `systemd/` and `webui/` remain reserved for later work.
 
 ## Try the API
 
-Create a source, assign it, and start a mock transmitter:
+Create a source, assign it, and start a transmitter with mocked RF control (replace the example URL with a real stream):
 
 ```sh
 curl -X POST http://127.0.0.1:8080/api/v1/sources \
@@ -58,8 +70,11 @@ curl -X POST http://127.0.0.1:8080/api/v1/modulators/0/stop
 Test an unsaved source with `POST /api/v1/sources/test` and the same body as
 source creation. Test a saved source with `POST /api/v1/sources/{id}/test`.
 Neither operation changes configuration, assignments, or active pipelines.
-Results explicitly include `mocked: true`: success means valid mock configuration,
-not verified connectivity or decodability. Analog probes report no digital format.
+In real mode, probes wait for decoded audio and report success/failure, input
+sample rate/channels, codec when available, negotiated output caps and a useful
+message. Failed connections return `ok: false`, `mocked: false`; invalid request
+models retain HTTP 422. Active saved-source tests reuse the running pipeline.
+Analog tests bypass GStreamer and do not claim to verify physical audio.
 
 Other endpoints cover `/audio-profiles`, `/system/config`, `/system/info`,
 `/sources/{id}/status`, `/modulators/start-all` and `/modulators/stop-all`.
@@ -86,7 +101,7 @@ missing routes, resource conflicts and unavailable dependencies.
   source also returns 409. A disabled modulator's frequency can be cleared with
   `PATCH {"frequency_khz": null}`. Start-all attempts every ID and
   returns per-ID statuses/errors; unassigned modulators do not silently succeed.
-- One mock pipeline serves all consumers of a digital source. The last consumer
+- One pipeline serves all consumers of a digital source. The last consumer
   stopping releases it. Analog sources create no pipeline or PCM producer.
   Source edits while active return 409; stop consumers before editing. Hardware
   stop failures retain the source until RF-off can be confirmed.
@@ -123,18 +138,12 @@ actual state, concurrent requests, and RadioText priority/expiry.
 
 ## Milestone boundary and known limitations
 
-Only Milestone 1 is implemented. There is no real GStreamer ingest, audio DSP,
-PCM transport, C++ mux implementation, SPI/I2C access, RP wire protocol, raw
-register debugging, RDS encoder/scheduler/FIFO feeding, or production UI.
-Audio profiles are persisted but do not process audio. Mock source metadata is
-available to injected tests; there is no real metadata extraction.
+Milestone 2 adds HTTP/HLS, raw UDP, RTP and ALSA ingest, appsink output, GStreamer
+gain, metadata and source reconnects. See [details and test results](docs/milestone2.md).
+No mux daemon, SPI/I2C transport, RDS encoder/FIFO scheduler, web UI, systemd
+integration or automatic desired-state restoration is implemented. New modulators
+remain disabled with no frequency until explicitly configured.
 
-Saved `enabled` values survive restart, but actual TX state initially returns to
-OFF. Automatic desired-state startup restoration, reconnect/recovery, systemd
-units and target performance/reliability measurements belong to Milestone 6.
-No claim of Linux/Pi hardware or performance validation is made from Windows tests.
-
-There are no architectural deviations. The optional runtime RT GET endpoint,
-configurable default FM band, raw RF-level representation, whole-object PATCH
-semantics and active-source edit restriction are documented implementation choices
-where the specification leaves details open.
+No architectural deviation is introduced. There is one source worker per active
+digital source and a single serialized control executor inside `fmheadendd`;
+media callbacks never access SQLite or hardware. This is not a separate service.
