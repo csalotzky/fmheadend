@@ -1,4 +1,4 @@
-﻿import time
+import time
 from ..errors import DependencyUnavailable
 from ..models.runtime_status import HeadendStatus, SystemStatus, TxState
 
@@ -23,10 +23,23 @@ class StatusService:
             mux_status = self.mux.get_status()
             self.system.mux_state = mux_status["state"]
             self.system.spi_errors = mux_status["spi_errors"]
+            self.system.mux_transport = mux_status.get("transport", "mock")
+            self.system.mux_transport_state = mux_status.get("transport_state", "RUNNING")
+            self.system.mux_frames_sent = mux_status["frames_sent"]
+            self.system.mux_mocked = mux_status.get("mocked", True)
+            if mux_status.get("last_error"):
+                errors.append(mux_status["last_error"])
+            if self.system.mux_transport_state == "ERROR":
+                self.system.mux_state = "ERROR"
             for channel in mux_status["channels"]:
-                self.modulators.statuses[channel["id"]].underruns = channel["underruns"]
+                row = self.modulators.statuses[channel["id"]]
+                row.underruns = channel["underruns"]
+                row.overruns = channel["overruns"]
+                row.pcm_bytes_received = channel.get("bytes_received", 0)
+                row.pcm_bytes_consumed = channel.get("bytes_consumed", 0)
         except DependencyUnavailable as exc:
             self.system.mux_state = "ERROR"
+            self.system.mux_transport_state = "ERROR"
             errors.append(str(exc))
         self.system.last_error = "; ".join(errors) or None
 

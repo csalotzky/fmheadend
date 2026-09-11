@@ -19,6 +19,7 @@ from .database import Database
 from .errors import DomainError
 from .modulators.manager import ModulatorManager
 from .mux.client import MockMuxClient
+from .mux.unix_client import UnixMuxClient
 from .rds.radiotext import RadioTextService
 from .rp2354.client import MockRp2354Client
 from .services import ConfigurationService
@@ -30,7 +31,7 @@ from .status.service import StatusService
 logger = logging.getLogger(__name__)
 
 
-def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipeline, clock=time.monotonic):
+def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipeline, clock=time.monotonic, mux_factory=None):
     settings = settings or Settings()
 
     @asynccontextmanager
@@ -40,13 +41,14 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
         def initialize():
             database = Database(settings.database_path)
             sources = SourceManager(database, pipeline_factory)
-            rp_client, mux_client = rp or MockRp2354Client(), mux or MockMuxClient()
+            rp_client = rp or MockRp2354Client()
+            mux_client = mux or (mux_factory(sources) if mux_factory else MockMuxClient())
             modulators = ModulatorManager(database, sources, rp_client, mux_client, settings)
             rt = RadioTextService(database, sources, clock)
             status = StatusService(modulators, sources, rp_client, mux_client, clock)
             config = ConfigurationService(database, sources, modulators)
             return SimpleNamespace(
-                database=database, config=config, sources=sources, modulators=modulators, rt=rt, status=status,
+                database=database, mux=mux_client, config=config, sources=sources, modulators=modulators, rt=rt, status=status,
                 info={"fmheadend_version": __version__, "rp_protocol_version": 1,
                       "rp_firmware_version": "mock", "hardware_revision": "mock", "modulator_count": 8, "mocked": True},
             )
@@ -78,7 +80,7 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
                 await asyncio.sleep(min(0.25, interval))
 
         task = asyncio.create_task(maintenance())
-        logger.info("fmheadendd started; media backend: %s; hardware: mock", pipeline_factory.__name__)
+        logger.info("fmheadendd started; media backend: %s; RP2354 control: mock", pipeline_factory.__name__)
         try:
             yield
         finally:
@@ -90,14 +92,17 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
                     services.modulators.shutdown()
                     services.sources.close()
                 finally:
-                    services.database.close()
+                    try:
+                        services.mux.close()
+                    finally:
+                        services.database.close()
             try:
                 await control.call(shutdown)
             finally:
                 control.close()
 
     app = FastAPI(title="fmheadend", version=__version__, lifespan=lifespan,
-                  description="Milestone 2 source ingest. RP2354 and mux remain mocked; no SPI/I2C access.")
+                  description="Milestone 3 media and Unix mux integration. RP2354 control remains mocked.")
 
     @app.exception_handler(DomainError)
     async def domain_error(request, exc):
@@ -129,7 +134,9 @@ def main():
     parser.add_argument("--database", default="/var/lib/fmheadend/fmheadend.db")
     parser.add_argument("--host", help="Override persistent web_listen_address")
     parser.add_argument("--port", type=int, help="Override persistent web_port")
-    parser.add_argument("--mock", action="store_true", help="Use mock sources instead of GStreamer (hardware is always mocked)")
+    parser.add_argument("--mock", action="store_true", help="Use mock sources and mux; RP2354 control is always mocked")
+    parser.add_argument("--mock-mux", action="store_true", help="Use real sources with the M2 mock mux")
+    parser.add_argument("--mux-runtime-dir", default="/run/fmheadend")
     parser.add_argument("--fm-band-min-khz", type=int, default=87500)
     parser.add_argument("--fm-band-max-khz", type=int, default=108000)
     args = parser.parse_args()
@@ -141,7 +148,8 @@ def main():
         database.close()
     logging.basicConfig(level=config.log_level, format="%(levelname)s %(name)s %(message)s")
     import uvicorn
-    uvicorn.run(create_app(settings, pipeline_factory=MockPipeline if args.mock else GstPipeline), host=args.host or config.web_listen_address,
+    mux_factory = None if args.mock or args.mock_mux else lambda sources: UnixMuxClient(sources.output_for, args.mux_runtime_dir)
+    uvicorn.run(create_app(settings, pipeline_factory=MockPipeline if args.mock else GstPipeline, mux_factory=mux_factory), host=args.host or config.web_listen_address,
                 port=args.port if args.port is not None else config.web_port, log_level=config.log_level.lower())
 
 

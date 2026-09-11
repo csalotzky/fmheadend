@@ -3,8 +3,10 @@
 Eight-channel FM headend for Raspberry Pi Zero 2 W. The canonical design is
 [docs/fmheadend-software-architecture.md](docs/fmheadend-software-architecture.md).
 
-Milestones 1 and 2 provide the Python control backend and real GStreamer source
-ingest. Configuration remains in SQLite; hardware clients remain mocked.
+Milestones 1-3 provide the Python control backend, real GStreamer ingest, and
+the independent C++ PCM mux daemon with mock and Linux spidev transports.
+Configuration remains in SQLite; RP2354 control remains mocked.
+See [Milestone 3 build, run, wire format and verification](docs/milestone3.md).
 See [Milestone 2 setup and verification](docs/milestone2.md) for transport details,
 dependency installation, integration tests and smoke tests.
 
@@ -22,7 +24,7 @@ sudo apt install python3-venv python3-gi python3-gst-1.0 \
 python3 -m venv --system-site-packages .venv
 . .venv/bin/activate
 python -m pip install -e './daemon[test]'
-fmheadendd --database ./fmheadend.db --host 127.0.0.1 --port 8080
+fmheadendd --mock-mux --database ./fmheadend.db --host 127.0.0.1 --port 8080
 ```
 
 The system-site-packages flag exposes distro PyGObject/GStreamer bindings to the
@@ -30,10 +32,12 @@ virtual environment. Use the distro Python interpreter; a separately installed
 Python must have matching GI bindings. Older Mint releases whose default Python
 is below 3.11 do not satisfy the existing package requirement.
 
-The CLI uses GStreamer by default. Add `--mock` for the original Milestone 1
-source behavior; it needs no GI installation. RP2354 and mux remain mocks in both
-modes. The `create_app()` Python factory retains its mock default for existing
-callers; inject `pipeline_factory=GstPipeline` for real ingest when embedding it.
+The CLI uses GStreamer and the independent Unix mux daemon by default. The
+command above uses `--mock-mux` for standalone Milestone 2 operation. Add `--mock`
+for original Milestone 1 source and mux behavior without GI. RP2354 control is
+mocked in all modes. The `create_app()` factory retains its mock defaults for
+existing callers; inject `pipeline_factory=GstPipeline` and a `mux_factory`
+returning `UnixMuxClient(sources.output_for)` for real ingest and mux integration.
 
 Open http://127.0.0.1:8080/docs for Swagger or `/openapi.json` for the schema.
 All REST routes use `/api/v1`. `python -m fmheadendd.app` accepts the same flags.
@@ -41,7 +45,7 @@ The default database is `/var/lib/fmheadend/fmheadend.db`; use a writable path
 for local development. Run one daemon process/worker per headend.
 
 The distribution maps `fmheadendd` directly to `daemon/` without an extra nested
-source directory. `muxd/`, `systemd/` and `webui/` remain reserved for later work.
+source directory. `muxd/` contains the C++ daemon; `systemd/` and `webui/` remain reserved for later work.
 
 ## Try the API
 
@@ -140,8 +144,10 @@ actual state, concurrent requests, and RadioText priority/expiry.
 
 Milestone 2 adds HTTP/HLS, raw UDP, RTP and ALSA ingest, appsink output, GStreamer
 gain, metadata and source reconnects. See [details and test results](docs/milestone2.md).
-No mux daemon, SPI/I2C transport, RDS encoder/FIFO scheduler, web UI, systemd
-integration or automatic desired-state restoration is implemented. New modulators
+Milestone 3 adds the Unix PCM/control sockets, bounded C++ rings, fixed frame
+builder, mock capture and Linux spidev transport. No RP2354 I2C transport, RDS
+encoder/FIFO scheduler, web UI, systemd integration or automatic desired-state
+restoration is implemented. New modulators
 remain disabled with no frequency until explicitly configured.
 
 No architectural deviation is introduced. There is one source worker per active

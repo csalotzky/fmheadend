@@ -58,9 +58,9 @@ class PcmQueue:
 
 
 class PcmOutput:
-    """One short queue per consumer; a future mux producer may drain these.
+    """One short queue per consumer, drained by the mux output worker.
 
-    Empty returns None, indicating silence/no audio to the future transport.
+    Empty returns None, indicating silence/no audio to the transport.
     Slow consumers lose old audio independently. Never stores more than 100 ms.
     """
     def __init__(self):

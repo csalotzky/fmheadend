@@ -115,6 +115,11 @@ class SourceManager:
             if pipeline is not None:
                 pipeline.stop()
 
+    def output_for(self, source_id):
+        """Resolve on the control thread; the mux worker only retains this output."""
+        pipeline = self.pipelines.get(source_id)
+        return getattr(pipeline, "output", None)
+
     def close(self):
         for pipeline in list(self.pipelines.values()):
             pipeline.stop()

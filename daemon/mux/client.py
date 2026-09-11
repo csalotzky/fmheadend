@@ -1,4 +1,4 @@
-﻿from typing import Protocol
+from typing import Protocol
 from ..errors import DependencyUnavailable
 
 
@@ -6,6 +6,7 @@ class MuxClient(Protocol):
     def attach(self, modulator_id: int, source_id: int) -> None: ...
     def detach(self, modulator_id: int) -> None: ...
     def get_status(self) -> dict: ...
+    def close(self) -> None: ...
 
 
 class MockMuxClient:
@@ -27,3 +28,6 @@ class MockMuxClient:
             raise DependencyUnavailable("Mock mux is unavailable")
         return {"state": "RUNNING", "spi_ok": True, "spi_errors": 0, "frames_sent": 0,
                 "channels": [{"id": i, "underruns": 0, "overruns": 0} for i in range(8)], "last_error": None}
+
+    def close(self):
+        self.producers.clear()
