@@ -164,7 +164,7 @@ def test_restart_persistence_and_runtime_reset(tmp_path):
         assert row["frequency_khz"] == 98100 and row["enabled"]
         assert row["input_source_id"] == sid
         assert client.get(P + "/modulators/3/rds/rt").json()["text"] == "Fallback"
-        assert client.get(P + "/status").json()["modulators"][3]["tx_state"] == "OFF"
+        assert client.get(P + "/status").json()["modulators"][3]["tx_state"] == "ON"
         assert client.get(P + "/system/config").json()["web_port"] == 8888
         assert client.get(P + "/audio-profiles").json()[0]["name"] == "Keep"
 

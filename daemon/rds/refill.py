@@ -28,11 +28,27 @@ class RdsRefill:
         self.clock, self.horizon = clock, horizon
         self.channels = [Channel() for _ in range(8)]
         self.next_poll = 0.0
+        self.suspended = False
+        self.on_failure = None
+
+    def suspend(self):
+        self.suspended = True
+        for channel in range(8):
+            self.reset_channel(channel)
+            row = self.modulators.statuses[channel]
+            row.rds_state = "UNKNOWN"
+
+    def reset_channel(self, channel):
+        self.channels[channel] = Channel()
+        row = self.modulators.statuses[channel]
+        row.rds_state, row.rds_last_error = "DISABLED", None
 
     def _error(self, channel, error):
         self.modulators.statuses[channel].rds_last_error = str(error)
         self.modulators.statuses[channel].rds_state = 'ERROR'
         self.channels[channel].retry_at = self.clock() + ERROR_RETRY_SECONDS
+        if self.on_failure:
+            self.on_failure(error)
 
     def stop(self, channel):
         state = self.channels[channel]
@@ -58,12 +74,16 @@ class RdsRefill:
         return True
 
     def tick(self):
+        if self.suspended:
+            return
         now = self.clock()
         if now < self.next_poll:
             return
         self.next_poll = now + POLL_SECONDS
         ready = []
         for config in self.database.list('modulators'):
+            if self.suspended:
+                return
             channel = config.id
             state = self.channels[channel]
             active = config.rds_enabled and channel in self.modulators.active_sources
@@ -89,6 +109,8 @@ class RdsRefill:
                 continue
             if state.needs_clear:
                 if not self._clear(channel):
+                    if self.suspended:
+                        return
                     continue
                 # Clear drops queued fragments, not independent content timers.
                 # RT updates must not restart the PS carousel or ECC deadline.
@@ -109,6 +131,8 @@ class RdsRefill:
                 self._error(channel, exc)
             return
         for channel in ready:
+            if self.suspended:
+                return
             state = self.channels[channel]
             row = self.modulators.statuses[channel]
             row.rds_fifo_free = free[channel]

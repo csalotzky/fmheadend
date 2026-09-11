@@ -1,4 +1,6 @@
 import time
+import logging
+
 from ..errors import DependencyUnavailable
 from .. import __version__
 from ..rp2354.linux_client import Rp2354Client
@@ -6,10 +8,15 @@ from ..rp2354.protocol import IncompatibleProtocol
 from ..models.runtime_status import HeadendStatus, SystemStatus, TxState
 
 
+logger = logging.getLogger(__name__)
+
+
 class StatusService:
-    def __init__(self, modulators, sources, rp, mux, clock=time.monotonic):
+    def __init__(self, modulators, sources, rp, mux, clock=time.monotonic, recovery=None):
         self.modulators, self.sources, self.rp, self.mux = modulators, sources, rp, mux
         self.clock, self.started = clock, clock()
+        self.recovery = recovery
+        self._mux_state = None
         self.real_rp = isinstance(rp, Rp2354Client)
         self.system = SystemStatus(mocked=not self.real_rp)
         self.info = {"fmheadend_version": __version__, "rp_protocol_version": None,
@@ -20,7 +27,7 @@ class StatusService:
     def refresh(self):
         errors = []
         try:
-            rp_status = self.rp.get_status()
+            rp_status = self.recovery.observe() if self.recovery else self.rp.get_status()
             self.system.rp2354_state = rp_status["state"]
             self.system.i2c_errors = rp_status["i2c_errors"]
             self.info.update((self.rp.info or self.rp.get_info()) if self.real_rp else self.rp.get_info())
@@ -30,20 +37,20 @@ class StatusService:
                 self.system.rp_last_error_code = rp_status.get("last_error_code")
                 if rp_status["state"] != "OK":
                     errors.append("RP hardware: " + (rp_status.get("last_error_code") or rp_status["state"]))
-                for channel in rp_status["modulators"]:
-                    row = self.modulators.statuses[channel["id"]]
-                    row.hardware_tx_state = channel["tx_state"]
-                    row.tx_state = TxState(channel["tx_state"])
-                    row.rf_output_dbuv = channel["rf_output_dbuv"]
-                    row.audio_underrun_count = channel["audio_underrun_count"]
-                    row.rds_underrun_count = channel["rds_underrun_count"]
-                    row.rds_fifo_free = channel["rds_fifo_free"]
-                    row.hardware_last_error = channel["last_error_code"]
-                    if row.hardware_tx_state == "ERROR":
-                        errors.append(f"RP TX{row.id}: {row.hardware_last_error}")
+            for channel in rp_status["modulators"]:
+                row = self.modulators.statuses[channel["id"]]
+                row.hardware_tx_state = channel["tx_state"]
+                row.tx_state = TxState(channel["tx_state"])
+                row.rf_output_dbuv = channel["rf_output_dbuv"]
+                row.audio_underrun_count = channel["audio_underrun_count"]
+                row.rds_underrun_count = channel["rds_underrun_count"]
+                row.rds_fifo_free = channel["rds_fifo_free"]
+                row.hardware_last_error = channel["last_error_code"]
+                if row.hardware_tx_state == "ERROR":
+                    errors.append(f"RP TX{row.id}: {row.hardware_last_error}")
         except DependencyUnavailable as exc:
             self.system.rp2354_state = "INCOMPATIBLE" if isinstance(exc, IncompatibleProtocol) else "UNRESPONSIVE"
-            if self.real_rp:
+            if self.real_rp or self.recovery:
                 self.system.i2c_errors = self.rp.i2c_errors
                 self.system.rp_uptime_ms = self.system.rp_spi_audio_link_error_count = None
                 self.system.rp_last_error_code = None
@@ -78,11 +85,18 @@ class StatusService:
             self.system.mux_state = "ERROR"
             self.system.mux_transport_state = "ERROR"
             errors.append(str(exc))
+        if self.system.mux_state != self._mux_state:
+            logger.info('mux state: %s', self.system.mux_state)
+            self._mux_state = self.system.mux_state
         self.system.last_error = "; ".join(errors) or None
 
     def snapshot(self):
         # No dependency IO in the HTTP request path; refresh runs periodically.
         system = self.system.model_copy(deep=True)
+        if self.recovery and not self.recovery.ready:
+            system.rp2354_state = 'INCOMPATIBLE' if isinstance(self.recovery.error, IncompatibleProtocol) else 'UNRESPONSIVE'
+            system.rp_uptime_ms = system.rp_spi_audio_link_error_count = None
+            system.last_error = str(self.recovery.error)
         system.uptime_s = max(0, self.clock() - self.started)
         rows = []
         for status in self.modulators.statuses.values():
@@ -91,6 +105,6 @@ class StatusService:
             if source_id is not None and row.source_state != "ANALOG":
                 row.source_state = self.sources.status(source_id).state.value
             rows.append(row)
-        if system.last_error or any(r.tx_state == TxState.ERROR or r.source_state == "ERROR" or r.rds_last_error for r in rows):
+        if system.last_error or system.mux_state != "RUNNING" or any(r.tx_state == TxState.ERROR or r.source_state == "ERROR" or r.rds_last_error for r in rows):
             system.system_state = "DEGRADED"
         return HeadendStatus(system=system, modulators=rows)

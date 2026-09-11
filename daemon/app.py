@@ -20,6 +20,7 @@ from .errors import DomainError
 from .modulators.manager import ModulatorManager
 from .mux.client import MockMuxClient
 from .mux.unix_client import UnixMuxClient
+from .recovery import Recovery
 from .rds.radiotext import RadioTextService
 from .rds.refill import RdsRefill, POLL_SECONDS
 from .rp2354.client import MockRp2354Client
@@ -49,10 +50,14 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
             rt = RadioTextService(database, sources, clock)
             rds = RdsRefill(database, modulators, rt, rp_client, clock)
             modulators.rds = rds
-            status = StatusService(modulators, sources, rp_client, mux_client, clock)
+            recovery = Recovery(modulators, rds, clock)
+            modulators.recovery = recovery
+            rds.on_failure = recovery.lost
+            rds.suspended = True
+            status = StatusService(modulators, sources, rp_client, mux_client, clock, recovery)
             config = ConfigurationService(database, sources, modulators)
             return SimpleNamespace(
-                database=database, rp=rp_client, mux=mux_client, config=config, sources=sources, modulators=modulators, rt=rt, rds=rds, status=status,
+                database=database, rp=rp_client, mux=mux_client, config=config, sources=sources, modulators=modulators, rt=rt, rds=rds, status=status, recovery=recovery,
                 info=status.info,
             )
         try:
@@ -94,9 +99,10 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
                 await task
             def shutdown():
                 try:
-                    services.modulators.shutdown()
-                    services.rds.close()
-                    services.sources.close()
+                    try:
+                        services.recovery.shutdown()
+                    finally:
+                        services.sources.close()
                 finally:
                     try:
                         services.mux.close()
@@ -110,9 +116,10 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
                 await control.call(shutdown)
             finally:
                 control.close()
+                logger.info("fmheadendd shutdown completed")
 
     app = FastAPI(title="fmheadend", version=__version__, lifespan=lifespan,
-                  description="Milestone 5 Linux RDS encoding and FIFO scheduling with RP2354 control.")
+                  description="Milestone 6A lifecycle and dependency recovery.")
 
     @app.exception_handler(DomainError)
     async def domain_error(request, exc):

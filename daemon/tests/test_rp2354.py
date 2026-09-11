@@ -295,13 +295,19 @@ def test_http_stays_available_when_real_i2c_fails(calls, tmp_path):
 
 
 def test_native_status_reaches_existing_api(calls, tmp_path):
+    diagnostic = [False]
     def read(fd, size):
         command = packets(calls)[-1][0]
-        payload = INFO if command == 1 else status_payload() if command == 4 else b''
+        data = bytearray(status_payload())
+        if not diagnostic[0]:
+            for i in range(8): data[10 + i * 14] = 0
+        payload = INFO if command == 1 else bytes(data) if command == 4 else b''
         return bytes((0, len(payload))) if size == 2 else payload
     calls[0].read.side_effect = read
     rp = client()
     with TestClient(create_app(Settings(tmp_path / 'test.db'), rp=rp)) as api:
+        diagnostic[0] = True
+        api.app.state.control.executor.submit(api.app.state.services.status.refresh).result()
         status = api.get('/api/v1/status').json()
         assert status['modulators'][1]['hardware_tx_state'] == 'ON'
         assert status['modulators'][1]['rf_output_dbuv'] == 87.5
@@ -454,14 +460,16 @@ def test_fifo_free_bad_payload(data):
 @pytest.mark.parametrize('global_active,tx_active', [(False, False), (True, False), (False, True)])
 def test_latched_errors_do_not_imply_current_fault(calls, tmp_path, global_active, tx_active):
     data = bytearray(status_payload())
-    data[0] = int(global_active); data[9] = 5
-    data[10] = 2 if tx_active else 0; data[23] = 5
+    for i in range(8): data[10 + i * 14] = 0
+    data[9] = 5; data[23] = 5
     def read(fd, size):
         command = packets(calls)[-1][0]
         payload = INFO if command == 1 else bytes(data) if command == 4 else b''
         return bytes((0, len(payload))) if size == 2 else payload
     calls[0].read.side_effect = read
     with TestClient(create_app(Settings(tmp_path / 'latched.db'), rp=client())) as api:
+        data[0] = int(global_active); data[10] = 2 if tx_active else 0
+        api.app.state.control.executor.submit(api.app.state.services.status.refresh).result()
         status = api.get('/api/v1/status').json()
         assert status['system']['rp_last_error_code'] == 'QN_ERROR'
         assert status['modulators'][0]['hardware_last_error'] == 'QN_ERROR'

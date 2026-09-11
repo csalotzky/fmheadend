@@ -1,0 +1,25 @@
+[Unit]
+Description=FM headend control and media daemon
+Wants=network-online.target fmheadend-muxd.service
+After=network-online.target fmheadend-muxd.service
+
+[Service]
+Type=simple
+User=fmheadend
+Group=fmheadend
+SupplementaryGroups=i2c audio
+StateDirectory=fmheadend
+StateDirectoryMode=0750
+EnvironmentFile=/etc/fmheadend/fmheadendd.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/fmheadend/venv/bin/fmheadendd $FMHEADEND_ARGS
+Restart=on-failure
+RestartSec=2
+KillSignal=SIGTERM
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

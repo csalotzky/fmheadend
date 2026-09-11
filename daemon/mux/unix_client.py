@@ -57,10 +57,13 @@ class UnixMuxClient:
         try:
             sock = self._connect(modulator_id)
         except OSError as exc:
-            raise DependencyUnavailable(f"Mux PCM connection failed: {exc}") from exc
+            # Keep the producer so mux startup/restart needs no API reconfiguration.
+            sock = None
+            self.last_error = str(exc)
         with self._lock:
             if self._stop.is_set():
-                sock.close()
+                if sock:
+                    sock.close()
                 raise DependencyUnavailable("Mux client is closed")
             if existing and existing.sock:
                 existing.sock.close()

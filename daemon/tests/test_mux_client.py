@@ -99,3 +99,17 @@ def test_invalid_control_response_is_dependency_error(monkeypatch, reply):
     client = UnixMuxClient(lambda unused: None)
     with pytest.raises(DependencyUnavailable):
         client.get_status()
+
+
+def test_initially_missing_mux_retains_producer_for_retry(monkeypatch):
+    from unittest.mock import Mock
+    output=PcmOutput();output.attach(0)
+    client=UnixMuxClient(lambda unused:output)
+    monkeypatch.setattr(client,'_connect',Mock(side_effect=FileNotFoundError('mux absent')))
+    try:
+        client.attach(0,1)
+        assert client.producers[0].source_id==1
+        assert client.producers[0].sock is None
+        assert client._thread.is_alive()
+    finally:
+        client.close()

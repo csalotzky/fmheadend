@@ -122,6 +122,9 @@ class SourceManager:
 
     def close(self):
         for pipeline in list(self.pipelines.values()):
-            pipeline.stop()
+            try:
+                pipeline.stop()
+            except DependencyUnavailable:
+                logger.exception("source worker cleanup failed")
         self.pipelines.clear()
         self.consumers.clear()

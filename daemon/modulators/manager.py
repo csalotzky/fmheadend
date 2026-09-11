@@ -12,6 +12,7 @@ class ModulatorManager:
         self.database, self.sources, self.rp, self.mux = database, sources, rp, mux
         self.settings = settings
         self.rds = None
+        self.recovery = None
         self.statuses = {i: ModulatorStatus(id=i) for i in range(8)}
         self.active_sources: dict[int, int] = {}
 
@@ -56,6 +57,8 @@ class ModulatorManager:
         return self._start(modulator_id)
 
     def _start(self, modulator_id):
+        if self.recovery:
+            self.recovery.require_ready()
         config = self.get(modulator_id)
         status = self.statuses[modulator_id]
         if status.tx_state == TxState.ON and modulator_id in self.active_sources:
@@ -66,13 +69,17 @@ class ModulatorManager:
         analog = source.type == SourceType.ANALOG
         status.tx_state, status.last_error = TxState.STARTING, None
         enable_attempted = False
+        rp_attempted = False
         try:
             if not analog:
                 self.sources.acquire(source.id, modulator_id)
                 self.active_sources[modulator_id] = source.id
                 self.mux.attach(modulator_id, source.id)
             self.active_sources[modulator_id] = source.id
+            rp_attempted = True
             self.rp.set_tx_config(modulator_id, TxConfig.from_modulator(config, analog))
+            if self.recovery:
+                self.recovery.boundary(modulator_id)
             enable_attempted = True
             self.rp.set_tx_enabled(modulator_id, True)
         except (DependencyUnavailable, ValueError) as exc:
@@ -90,6 +97,8 @@ class ModulatorManager:
                 self.sources.release(source.id, modulator_id)
                 self.active_sources.pop(modulator_id, None)
             status.tx_state, status.last_error = TxState.ERROR, str(exc)
+            if self.recovery and rp_attempted:
+                self.recovery.lost(exc)
             raise DomainError(503, "DEPENDENCY_UNAVAILABLE", str(exc)) from exc
         status.tx_state = TxState.ON
         status.source_state = "ANALOG" if analog else "RUNNING"
@@ -103,11 +112,15 @@ class ModulatorManager:
         return self._stop(modulator_id)
 
     def _stop(self, modulator_id):
+        if self.recovery:
+            self.recovery.require_ready()
         status = self.statuses[modulator_id]
         try:
             self.rp.set_tx_enabled(modulator_id, False)
         except DependencyUnavailable as exc:
             status.tx_state, status.last_error = TxState.ERROR, str(exc)
+            if self.recovery:
+                self.recovery.lost(exc)
             raise DomainError(503, "DEPENDENCY_UNAVAILABLE", str(exc)) from exc
         if self.rds is not None:
             self.rds.stop(modulator_id)
@@ -140,3 +153,28 @@ class ModulatorManager:
                 self._stop(modulator_id)
             except DomainError:
                 logger.exception("modulator %s shutdown failed", modulator_id)
+
+
+    def restore_audio(self, config):
+        source = self.database.get('sources', config.input_source_id)
+        existing = self.active_sources.get(config.id)
+        if existing != source.id:
+            self.release_audio(config.id)
+            if source.type != SourceType.ANALOG:
+                self.sources.acquire(source.id, config.id)
+                self.active_sources[config.id] = source.id
+                self.mux.attach(config.id, source.id)
+            self.active_sources[config.id] = source.id
+        elif source.type != SourceType.ANALOG:
+            self.mux.attach(config.id, source.id)
+        self.statuses[config.id].source_state = 'ANALOG' if source.type == SourceType.ANALOG else 'RUNNING'
+
+    def release_audio(self, channel):
+        self.mux.detach(channel)
+        source = self.active_sources.pop(channel, None)
+        if source is not None:
+            try:
+                self.sources.release(source, channel)
+            except DependencyUnavailable:
+                logger.exception('source cleanup failed for channel %s', channel)
+        self.statuses[channel].source_state = 'IDLE'

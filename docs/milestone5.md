@@ -38,8 +38,8 @@ Example PATCH body (configure the actual PI/ECC/frequencies for your service):
 ```
 
 Scheduling runs only for locally active modulators with RDS enabled, including
-ANALOG sources. It does not restore desired TX state on daemon startup. Start the
-modulator through its existing lifecycle API. The GStreamer and mux paths are unchanged.
+ANALOG sources. M6A restores persistent desired TX state through the safe recovery path described
+in [Milestone 6A](milestone6a.md). The GStreamer and mux paths are unchanged.
 
 ## Standard and information groups
 
@@ -155,8 +155,8 @@ A capacity-query failure does not consume pending scheduler state.
 
 Disable/stop drops Linux pending groups and clears the RP FIFO. Re-enable starts
 coherently after a successful clear. Content configuration changes also establish
-a clean FIFO boundary. No RP reboot detection, RF desired-state restore, systemd
-recovery service or firmware implementation is introduced.
+a clean FIFO boundary. M5 itself introduced no RP reboot detection, RF desired-state restore, systemd
+service or firmware. Lifecycle recovery is now described in [Milestone 6A](milestone6a.md).
 
 RDS errors are caught and exposed through existing modulator status fields:
 `rds_state`, `rds_last_error`, `rds_groups_accepted`, `rds_text_ab`. `rds_fifo_free`

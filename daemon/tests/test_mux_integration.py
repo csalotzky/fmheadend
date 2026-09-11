@@ -112,7 +112,8 @@ def test_mux_disappearance_is_reported_without_mock_fallback(mux_process):
 
 
 @pytest.mark.gstreamer
-def test_real_http_gstreamer_to_mux_via_existing_api(mux_process):
+@pytest.mark.parametrize("restart", [False, True])
+def test_real_http_gstreamer_to_mux_via_existing_api(mux_process, restart):
     try:
         Gst = load_gst()
     except DependencyUnavailable as exc:
@@ -129,20 +130,50 @@ def test_real_http_gstreamer_to_mux_via_existing_api(mux_process):
     app = create_app(Settings(root / "config.db"), pipeline_factory=GstPipeline,
                      mux_factory=lambda sources: UnixMuxClient(sources.output_for, root))
     observer = UnixMuxClient(lambda unused: None, root)
+    replacement = None
     try:
         with TestClient(app) as api:
             response = api.post("/api/v1/sources", json={"name": "native", "type": "HTTP", "config": {"uri": f"http://127.0.0.1:{server.server_port}/input.wav"}})
             assert response.status_code == 201
             source_id = response.json()["id"]
             for channel in (0, 7):
-                assert api.patch(f"/api/v1/modulators/{channel}", json={"input_source_id": source_id, "frequency_khz": 98100}).status_code == 200
+                assert api.patch(f"/api/v1/modulators/{channel}", json={"input_source_id": source_id, "frequency_khz": 98100, "rds_enabled": True, "rds_ecc": 224}).status_code == 200
                 started = api.post(f"/api/v1/modulators/{channel}/start")
                 assert started.status_code == 200, started.text
             wait_for(observer, lambda s: s["channels"][0]["bytes_consumed"] > 0 and s["channels"][7]["bytes_consumed"] > 0)
             assert len(app.state.services.sources.pipelines) == 1
+            if restart:
+                services=app.state.services
+                deadline=time.monotonic()+5
+                while not services.rp.rds_history and time.monotonic()<deadline:
+                    time.sleep(0.05)
+                assert services.rp.rds_history
+                pipeline=services.sources.pipelines[source_id]
+                process.kill();process.wait(timeout=5)
+                app.state.control.executor.submit(services.status.refresh).result()
+                assert api.get('/api/v1/status').json()['system']['system_state']=='DEGRADED'
+                assert api.get('/api/v1/modulators/0').json()['enabled']
+                replacement=subprocess.Popen(process.args,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+                deadline=time.monotonic()+5
+                while time.monotonic()<deadline:
+                    try:
+                        current=observer.get_status()
+                        if all(current['channels'][i]['bytes_consumed']>0 for i in (0,7)):
+                            break
+                    except DependencyUnavailable:
+                        pass
+                    time.sleep(0.05)
+                else:
+                    pytest.fail('PCM did not resume after real mux process restart')
+                app.state.control.executor.submit(services.status.refresh).result()
+                assert api.get('/api/v1/status').json()['system']['system_state']=='RUNNING'
+                assert services.sources.pipelines[source_id] is pipeline
+                assert services.rp.enabled[0] and services.rp.enabled[7]
             for channel in (0, 7):
                 assert api.post(f"/api/v1/modulators/{channel}/stop").status_code == 200
             wait_for(observer, lambda s: not s["channels"][0]["connected"] and not s["channels"][7]["connected"])
     finally:
         observer.close()
+        if replacement is not None:
+            replacement.terminate();replacement.wait(timeout=5)
         server.shutdown(); server.server_close(); thread.join()

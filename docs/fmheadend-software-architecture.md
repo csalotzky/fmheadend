@@ -1381,7 +1381,7 @@ fmheadendd.service
 A `fmheadendd` függjön a muxd-tól:
 
 ```ini
-Requires=fmheadend-muxd.service
+Wants=fmheadend-muxd.service
 After=fmheadend-muxd.service network-online.target
 ```
 
@@ -1393,6 +1393,14 @@ RestartSec=2
 ```
 
 A `fmheadendd` **nem spawnolja** a muxd-t.
+
+M6A clarification: Wants/After deliberately keeps the HTTP service alive when
+muxd stops. Startup and RP reconnect share one serialized recovery path: GET_INFO,
+disable all channels, apply configured TX settings, clear/reset RDS boundaries,
+restore desired ON channels, then verify current status. Unconfigured channels
+remain OFF. Shutdown never overwrites persistent desired enabled state.
+See [Milestone 6A](milestone6a.md) for deployment and exact lifecycle semantics;
+Zero 2 W stress/performance validation is deferred to M6B.
 
 ## 15.2 Startup sorrend
 

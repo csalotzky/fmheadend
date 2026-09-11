@@ -1,0 +1,22 @@
+[Unit]
+Description=FM headend PCM to SPI mux
+
+[Service]
+Type=simple
+User=fmheadend
+Group=fmheadend
+SupplementaryGroups=spi
+RuntimeDirectory=fmheadend
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=restart
+EnvironmentFile=/etc/fmheadend/muxd.env
+ExecStart=/usr/local/bin/fmheadend-muxd $MUXD_ARGS
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
