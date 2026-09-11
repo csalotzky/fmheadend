@@ -21,6 +21,7 @@ from .modulators.manager import ModulatorManager
 from .mux.client import MockMuxClient
 from .mux.unix_client import UnixMuxClient
 from .rds.radiotext import RadioTextService
+from .rds.refill import RdsRefill, POLL_SECONDS
 from .rp2354.client import MockRp2354Client
 from .rp2354.linux_client import Rp2354Client
 from .services import ConfigurationService
@@ -46,10 +47,12 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
             mux_client = mux or (mux_factory(sources) if mux_factory else MockMuxClient())
             modulators = ModulatorManager(database, sources, rp_client, mux_client, settings)
             rt = RadioTextService(database, sources, clock)
+            rds = RdsRefill(database, modulators, rt, rp_client, clock)
+            modulators.rds = rds
             status = StatusService(modulators, sources, rp_client, mux_client, clock)
             config = ConfigurationService(database, sources, modulators)
             return SimpleNamespace(
-                database=database, rp=rp_client, mux=mux_client, config=config, sources=sources, modulators=modulators, rt=rt, status=status,
+                database=database, rp=rp_client, mux=mux_client, config=config, sources=sources, modulators=modulators, rt=rt, rds=rds, status=status,
                 info=status.info,
             )
         try:
@@ -63,11 +66,12 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
         def tick():
             nonlocal next_poll
             services.rt.expire()
+            services.rds.tick()
             now = time.monotonic()
             if now >= next_poll:
                 services.status.refresh()
                 next_poll = now + services.config.get_system().rp_status_poll_interval_ms / 1000
-            return max(0.01, next_poll - time.monotonic())
+            return min(POLL_SECONDS, max(0.01, next_poll - time.monotonic()))
 
         async def maintenance():
             while True:
@@ -91,6 +95,7 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
             def shutdown():
                 try:
                     services.modulators.shutdown()
+                    services.rds.close()
                     services.sources.close()
                 finally:
                     try:
@@ -107,7 +112,7 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
                 control.close()
 
     app = FastAPI(title="fmheadend", version=__version__, lifespan=lifespan,
-                  description="Milestone 4 Linux RP2354 control, media and Unix mux integration.")
+                  description="Milestone 5 Linux RDS encoding and FIFO scheduling with RP2354 control.")
 
     @app.exception_handler(DomainError)
     async def domain_error(request, exc):

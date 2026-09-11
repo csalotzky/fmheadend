@@ -379,6 +379,8 @@ A `Modulator` a nyolc fizikai QN egyikét reprezentálja. Az `id` **fizikai azon
 | `rf_output_dbuv` | nullable number | Nominal RF target in dBuV, 0.1 dBuV steps; no default target |
 | `rds_enabled` | bool | RDS enable |
 | `rds_pi` | string/uint16 | PI |
+| `rds_ecc` | nullable uint8 | Extended Country Code; missing means unconfigured/null |
+| `rds_af_khz` | integer list | Fixed ordered AF Method A frequencies; 87600..107900 kHz, 100 kHz raster, max 25 |
 | `rds_ps` | JSON array | PS lista; 1 elem = statikus PS, több elem = dinamikus PS (DPS) |
 | `rds_pty` | integer | PTY |
 | `rds_tp` | bool | TP flag |
@@ -1026,7 +1028,7 @@ flowchart LR
     CFG[Static RDS config] --> SCHED[Python RDS Scheduler/Encoder]
     META[GStreamer metadata] --> SCHED
     API[Runtime RT API override] --> SCHED
-    STAT[RP GET_STATUS: fifo_free] --> SCHED
+    STAT[RP GET_RDS_FIFO_FREE] --> SCHED
     SCHED -->|RDS_PUSH: N groups| FIFO[RP2354 per-TX RDS FIFO]
     FIFO --> QN[QN8007B]
 ```
@@ -1036,6 +1038,8 @@ flowchart LR
 Kötelező:
 
 - PI;
+- ECC (nullable uint8, integer API);
+- fixed AF Method A list;
 - PS;
 - PTY;
 - TP;
@@ -1054,17 +1058,17 @@ RT+, TMC, ODA és más speciális groupok V1-ben nem kötelezők, de az architek
 
 ## 12.3 Online FIFO flow control
 
-A scheduler periodikusan a cached RP statusból ismeri modulátoronként:
+Normal refill uses GET_RDS_FIFO_FREE, not full GET_STATUS. Linux sends complete
+information groups in atomic batches of at most 31, never exceeding fresh capacity.
+BUSY retains the exact uncommitted batch; ACK alone commits scheduler advancement.
+Ambiguous outcomes require a successful FIFO clear before coherent segment restart.
 
-```text
-rds_fifo_free
-```
-
-Ha `0`, nem pushol. Ha például `9`, maximum 9 következő groupot állít elő és küld.
-
-Az RP FIFO fogyasztási időzítése nem Linux schedulingből származik. A Linux csak producer.
-
-Az RDS polling/töltés gyakorisága belső daemon paraméter; nem az 5 másodperces web UI pollinghoz kötődik. Tipikusan lényegesen gyorsabb, kis overheadű belső ciklus szükséges.
+M5 policy, character conversion, standard reference and validation are documented
+in [Milestone 5](milestone5.md). Baseline PS/RT weighted rates are 4.5/s and 6.7/s, with
+short RT-change priority and five-second ECC deadlines. The 100 ms refill loop and
+0.5 s lookahead are internal policy, independent of UI polling and GStreamer callbacks.
+Null ECC emits no 1A ECC. AF is a fixed user-ordered frequency list, never discovered.
+Schema 3 backfills ECC=null and AF=[] without changing other desired configuration.
 
 ## 12.4 Miért nem teljes offline carousel?
 
@@ -1346,6 +1350,8 @@ Modulator oldalon legalább:
 - RF level;
 - RDS enable;
 - PI;
+- ECC (nullable uint8, integer API);
+- fixed AF Method A list;
 - PS;
 - dynamic PS;
 - PTY/TP;
@@ -1784,9 +1790,12 @@ Kötelező eredmény:
 
 ## Milestone 5 - RDS
 
-- 0A PS;
+- 0A PS and fixed VHF AF Method A;
+- 1A variant 0 ECC;
 - 2A RT;
 - PI;
+- ECC (nullable uint8, integer API);
+- fixed AF Method A list;
 - ECC;
 - PTY;
 - TP;
@@ -1959,7 +1968,7 @@ Ezeket nem kell az első backend milestone előtt véglegesíteni:
 6. Basic compressor/limiter konkrét pluginja.
 7. muxd ring buffer végleges mérete.
 8. RDS FIFO méret az RP firmware-ben.
-9. RDS scheduler default 0A/2A arány.
+9. RDS scheduling policy is defined in [Milestone 5](milestone5.md).
 10. frontend technológia.
 
 Ezeket mérés vagy a firmware contract véglegesítése alapján lehet lezárni anélkül, hogy a fő architektúra változna.
@@ -2015,7 +2024,7 @@ A Linux V1 akkor tekinthető késznek, ha:
 - TX start/stop lifecycle korrekt;
 - RP reset után desired state recovery működik;
 - streamhiba esetén reconnect és silence működik carrier flappelés nélkül;
-- RDS PS/RT/PI/PTY/TP működik;
+- RDS PS/RT/PI/ECC/PTY/TP/AF működik;
 - metadata -> RT működik;
 - API RT override működik;
 - RDS FIFO flow control nem okoz normál üzemben overrun/underrun problémát;

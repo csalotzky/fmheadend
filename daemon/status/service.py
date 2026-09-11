@@ -91,6 +91,6 @@ class StatusService:
             if source_id is not None and row.source_state != "ANALOG":
                 row.source_state = self.sources.status(source_id).state.value
             rows.append(row)
-        if system.last_error or any(r.tx_state == TxState.ERROR or r.source_state == "ERROR" for r in rows):
+        if system.last_error or any(r.tx_state == TxState.ERROR or r.source_state == "ERROR" or r.rds_last_error for r in rows):
             system.system_state = "DEGRADED"
         return HeadendStatus(system=system, modulators=rows)

@@ -41,6 +41,10 @@ class ModulatorStatus(Model):
     overruns: int = 0
     pcm_bytes_received: int = 0
     pcm_bytes_consumed: int = 0
+    rds_state: str = "DISABLED"
+    rds_last_error: str | None = None
+    rds_groups_accepted: int = 0
+    rds_text_ab: int = 0
     hardware_tx_state: str | None = None
     audio_underrun_count: int | None = None
     rds_underrun_count: int | None = None

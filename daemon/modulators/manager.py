@@ -11,6 +11,7 @@ class ModulatorManager:
     def __init__(self, database, sources, rp, mux, settings):
         self.database, self.sources, self.rp, self.mux = database, sources, rp, mux
         self.settings = settings
+        self.rds = None
         self.statuses = {i: ModulatorStatus(id=i) for i in range(8)}
         self.active_sources: dict[int, int] = {}
 
@@ -108,6 +109,8 @@ class ModulatorManager:
         except DependencyUnavailable as exc:
             status.tx_state, status.last_error = TxState.ERROR, str(exc)
             raise DomainError(503, "DEPENDENCY_UNAVAILABLE", str(exc)) from exc
+        if self.rds is not None:
+            self.rds.stop(modulator_id)
         self.mux.detach(modulator_id)
         source_id = self.active_sources.get(modulator_id)
         if source_id is not None:

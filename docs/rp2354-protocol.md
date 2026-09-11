@@ -5,8 +5,8 @@ This is the authoritative V1 binary protocol specification and Milestone 4 contr
 The architecture defines command semantics and envelopes, but leaves numeric IDs,
 field widths and bus transaction details open in sections 11 and 27. The choices
 below resolve those points for V1; they are not claims about existing firmware.
-The future RP firmware must implement this same contract. No firmware, QN driver,
-RDS encoder, scheduler or FIFO refill policy is implemented here.
+The future RP firmware must implement this same contract. This document defines only RP transport. Linux RDS construction and refill policy
+are documented in [Milestone 5](milestone5.md); no RP firmware or QN driver is implemented.
 
 ## Framing and bus transactions
 
@@ -204,7 +204,7 @@ reuses exactly the same batch. ACK: `00 00`.
 
 No payload; target is one modulator. Empties that FIFO. ACK: `00 00`.
 It does not change configuration or TX enable. This is a primitive only and is
-not automatically scheduled by the Milestone 4 daemon.
+used by the Milestone 5 service to establish clean content/lifecycle boundaries.
 
 ## QN_READ_REGISTER (0x07)
 
@@ -242,8 +242,9 @@ TX3 at 6, TX4 at 8, TX5 at 10, TX6 at 12 and TX7 at 14. Total payload: 16 bytes.
 Each capacity counts complete eight-byte RDS groups. The typed client method
 `get_rds_fifo_free()` returns eight integers in channel order.
 
-This primitive permits frequent capacity queries by a future scheduler; GET_STATUS
-remains the full diagnostic snapshot. No scheduler/refill policy is added now.
+The Milestone 5 Linux refill service uses this primitive for capacity queries;
+GET_STATUS remains the full diagnostic snapshot. Scheduling policy is not part
+of this RP transport protocol.
 RDS_PUSH still acknowledges with an empty payload; `fifo_free_after` is not V1.
 
 ## Linux timing, retry and integration behavior

@@ -3,11 +3,13 @@
 Eight-channel FM headend for Raspberry Pi Zero 2 W. The canonical design is
 [docs/fmheadend-software-architecture.md](docs/fmheadend-software-architecture.md).
 
-Milestones 1-4 provide the Python control backend, real GStreamer ingest, and
+Milestones 1-5 provide the Python control backend, real GStreamer ingest, and
 the independent C++ PCM mux daemon with mock and Linux spidev transports.
 Configuration remains in SQLite; Milestone 4 adds real Linux RP2354 I2C control.
 See [Milestone 4 setup, tests and hardware smoke procedure](docs/milestone4.md)
 and the [exact V1 RP protocol](docs/rp2354-protocol.md).
+[Milestone 5](docs/milestone5.md) adds Linux RDS 0A/1A/2A, ECC, fixed AF Method A,
+PS/RT scheduling and acknowledged FIFO refill.
 See [Milestone 3 build, run, wire format and verification](docs/milestone3.md).
 See [Milestone 2 setup and verification](docs/milestone2.md) for transport details,
 dependency installation, integration tests and smoke tests.
@@ -64,7 +66,7 @@ curl -X POST http://127.0.0.1:8080/api/v1/sources \
 # Substitute the returned source ID if it is not 1.
 curl -X PATCH http://127.0.0.1:8080/api/v1/modulators/0 \
   -H 'Content-Type: application/json' \
-  -d '{"input_source_id":1,"frequency_khz":98100,"rds_rt":"Fallback text"}'
+  -d '{"input_source_id":1,"frequency_khz":98100,"rds_pi":4660,"rds_ecc":224,"rds_af_khz":[101100],"rds_rt":"Fallback text"}'
 
 curl -X POST http://127.0.0.1:8080/api/v1/modulators/0/start
 curl http://127.0.0.1:8080/api/v1/status
@@ -122,7 +124,8 @@ missing routes, resource conflicts and unavailable dependencies.
   never measured RF power. See the [canonical protocol](docs/rp2354-protocol.md).
 - PI is represented as a uint16 integer. PS entries contain up to eight printable
   characters and a positive duration; RT allows up to 64 printable characters.
-  Actual character encoding and RDS group generation are deferred to Milestone 5.
+  ECC is a nullable integer byte, with no inferred country. Schema 3 backfills
+  ECC=null and AF=[]; see M5 for deterministic character conversion and scheduling.
 - RT priority is override, then enabled stream metadata, then persistent fallback.
   TTL uses monotonic time and expires automatically. Without TTL it lasts until
   deletion or restart; an empty override is valid. The additional
@@ -153,8 +156,8 @@ Milestone 2 adds HTTP/HLS, raw UDP, RTP and ALSA ingest, appsink output, GStream
 gain, metadata and source reconnects. See [details and test results](docs/milestone2.md).
 Milestone 3 adds the Unix PCM/control sockets, bounded C++ rings, fixed frame
 builder, mock capture and Linux spidev transport. Milestone 4 adds RP2354 I2C protocol/client primitives and hardware status.
-No RDS encoder/FIFO scheduler, firmware, web UI, systemd integration or automatic
-desired-state restoration is implemented. New modulators
+M5 adds Linux RDS encoding and FIFO scheduling. Firmware, web UI, systemd
+integration and automatic desired-state restoration remain unimplemented. New modulators
 remain disabled with no frequency until explicitly configured.
 
 No architectural deviation is introduced. There is one source worker per active

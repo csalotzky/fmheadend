@@ -443,7 +443,7 @@ def test_fifo_free_exact_request_response(calls):
     replies(calls, INFO, struct.pack('<8H', *values))
     assert client().get_rds_fifo_free() == values
     assert packets(calls) == [b'\x01\xff\0', b'\x0b\xff\0']
-    assert MockRp2354Client().get_rds_fifo_free() == [0] * 8
+    assert MockRp2354Client().get_rds_fifo_free() == [64] * 8
 
 
 @pytest.mark.parametrize('data', [b'', bytes(15), bytes(17)])
@@ -484,7 +484,7 @@ def test_legacy_rf_migration_and_reopen(tmp_path):
     db.close()
     db = Database(path)
     assert all(row.rf_output_dbuv is None and row.frequency_khz == 98100 for row in db.list('modulators'))
-    assert db.connection.execute('PRAGMA user_version').fetchone()[0] == 2
+    assert db.connection.execute('PRAGMA user_version').fetchone()[0] == 3
     assert 'rf_level' not in db.connection.execute('SELECT data FROM modulators').fetchone()[0]
     config = db.get('modulators', 0).model_copy(update={'rf_output_dbuv': 96.0})
     db.save('modulators', config, 0); db.close()

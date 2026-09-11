@@ -140,6 +140,8 @@ class ModulatorConfig(Model):
     preemphasis_us: Literal[50, 75] = 50
     rf_output_dbuv: float | None = Field(default=None, ge=0, le=6553.5, multiple_of=0.1, strict=True)
     rds_enabled: bool = False
+    rds_af_khz: list[Annotated[int, Field(strict=True, ge=87600, le=107900, multiple_of=100)]] = Field(default_factory=list, max_length=25)
+    rds_ecc: int | None = Field(default=None, ge=0, le=255, strict=True)
     rds_pi: int = Field(default=0, ge=0, le=65535, strict=True)
     rds_ps: list[PsEntry] = Field(default_factory=lambda: [PsEntry(text="FMHEAD")], min_length=1)
     rds_pty: int = Field(default=0, ge=0, le=31, strict=True)

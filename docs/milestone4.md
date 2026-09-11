@@ -1,5 +1,8 @@
 # Milestone 4: real Linux RP2354 control
 
+For Linux RDS encoding, nullable ECC/AF configuration, scheduling and refill added
+after M4, see [Milestone 5](milestone5.md). The wire contract remains in the existing protocol document.
+
 Milestone 4 implements the real client in `daemon/rp2354/linux_client.py` and the
 V1 binary protocol in `daemon/rp2354/protocol.py`. The existing high-level
 `MockRp2354Client` is unchanged. There is no fake I2C subsystem: unit tests patch

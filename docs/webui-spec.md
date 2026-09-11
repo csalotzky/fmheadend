@@ -106,6 +106,8 @@ Suggested information hierarchy:
 - source name
 - PS
 - PI
+- ECC (nullable 8-bit code; integer API, hexadecimal display such as E0 is suitable)
+- Fixed AF Method A list (ordered frequencies in kHz; max 25, 87600..107900 on a 100 kHz raster)
 - nominal RF output level
 - stereo / mono
 - pre-emphasis
@@ -281,6 +283,8 @@ Fields:
 
 - RDS enabled
 - PI
+- ECC (nullable 8-bit code; integer API, hexadecimal display such as E0 is suitable)
+- Fixed AF Method A list (ordered frequencies in kHz; max 25, 87600..107900 on a 100 kHz raster)
 - PTY
 - TP
 - PS list

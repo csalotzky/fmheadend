@@ -1,4 +1,4 @@
-﻿"""Runtime RadioText selection only; no RDS encoding or FIFO scheduling."""
+﻿"""Runtime content selection shared by the API and RDS scheduler."""
 import time
 from ..models.configuration import RtStatus
 
