@@ -33,6 +33,7 @@ class InputSourceStatus(Model):
 
 
 class ModulatorStatus(Model):
+    input_saturated: bool | None = None
     id: int
     source_state: str | None = "IDLE"
     tx_state: TxState = TxState.OFF

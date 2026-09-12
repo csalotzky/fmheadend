@@ -3,11 +3,16 @@ from collections import deque
 import time
 from pydantic import Field
 
+from .protocol import PROTOCOL_VERSION
 from ..errors import DependencyUnavailable
 from ..models.configuration import Model, Modulator
 
 
 class TxConfig(Model):
+    gain_mode: Literal["AUTO", "MANUAL"] = "AUTO"
+    analog_gain_db: float = Field(default=0.0, ge=-3276.8, le=3276.7, multiple_of=0.1, strict=True)
+    digital_trim_db: int = Field(default=0, ge=0, le=1, strict=True)
+    soft_clipping: bool = Field(default=False, strict=True)
     frequency_khz: int
     rf_output_dbuv: float | None = Field(default=None, ge=0, le=6553.5, multiple_of=0.1, strict=True)
     stereo: bool
@@ -17,7 +22,7 @@ class TxConfig(Model):
 
     @classmethod
     def from_modulator(cls, modulator: Modulator):
-        return cls(**modulator.model_dump(include={"frequency_khz", "rf_output_dbuv", "stereo", "preemphasis_us", "rds_enabled", "audio_mode"}))
+        return cls(**modulator.model_dump(include={"frequency_khz", "rf_output_dbuv", "stereo", "preemphasis_us", "rds_enabled", "audio_mode", "gain_mode", "analog_gain_db", "digital_trim_db", "soft_clipping"}))
 
 
 class Rp2354Client(Protocol):
@@ -39,6 +44,7 @@ class MockRp2354Client:
         self._rds_times = [clock()] * 8
         self.available = True
         self.enabled = [False] * 8
+        self.input_saturated: list[bool | None] = [False] * 8
         self.configs: dict[int, TxConfig] = {}
         self.i2c_errors = 0
 
@@ -57,7 +63,7 @@ class MockRp2354Client:
 
     def get_info(self):
         self._check()
-        return {"rp_protocol_version": 1, "rp_firmware_version": "mock", "hardware_revision": "mock", "modulator_count": 8}
+        return {"rp_protocol_version": PROTOCOL_VERSION, "rp_firmware_version": "mock", "hardware_revision": "mock", "modulator_count": 8}
 
     def get_status(self):
         self._check()
@@ -65,6 +71,7 @@ class MockRp2354Client:
         return {"state": "OK", "i2c_errors": self.i2c_errors, "modulators": [
             {"id": i, "tx_state": "ON" if enabled else "OFF", "rf_output_dbuv": None,
              "audio_underrun_count": 0, "rds_underrun_count": 0, "rds_fifo_free": self.rds_capacity - len(self.rds_fifos[i]),
+             "input_saturated": self.input_saturated[i] if i in self.configs and self.configs[i].audio_mode == "ANALOG" else None,
              "last_error_code": None} for i, enabled in enumerate(self.enabled)]}
 
     def get_rds_fifo_free(self) -> list[int]:

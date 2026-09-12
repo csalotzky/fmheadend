@@ -63,7 +63,8 @@ UNKNOWN, never inferred IDLE. Backend loss retains configuration with a stale wa
 
 ## Model and migration corrections
 
-The canonical architecture defines the exact rules; current SQLite schema is **6**.
+The canonical architecture defines the exact rules; M7B1 introduced SQLite schema **6**. The subsequent RP audio-control prerequisite adds
+schema **7** audio-control defaults; see the canonical architecture.
 
 - Schema 5 removes legacy ANALOG InputSources. Referencing modulators select their
   own physical ANALOG jack and clear input_source_id. Shared legacy references become

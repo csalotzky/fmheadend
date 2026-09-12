@@ -33,7 +33,7 @@ class Recovery:
         self.rds.suspend()
         for row in self.modulators.statuses.values():
             row.tx_state = TxState.ERROR
-            row.hardware_tx_state = row.rf_output_dbuv = None
+            row.hardware_tx_state = row.rf_output_dbuv = row.input_saturated = None
             row.audio_underrun_count = row.rds_underrun_count = row.rds_fifo_free = None
             row.hardware_last_error = row.last_error = str(error)
         close = getattr(self.rp, 'close', None)

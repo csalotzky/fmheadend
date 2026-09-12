@@ -4,7 +4,7 @@ For Linux RDS encoding, nullable ECC/AF configuration, scheduling and refill add
 after M4, see [Milestone 5](milestone5.md). The wire contract remains in the existing protocol document.
 
 Milestone 4 implements the real client in `daemon/rp2354/linux_client.py` and the
-V1 binary protocol in `daemon/rp2354/protocol.py`. The existing high-level
+current binary protocol in `daemon/rp2354/protocol.py`. The existing high-level
 `MockRp2354Client` is unchanged. There is no fake I2C subsystem: unit tests patch
 only low-level OS calls. No new Python dependency or system package was installed.
 
@@ -78,7 +78,7 @@ documents device access and adapter discovery.
 
 ## Manual Pico 2 smoke test
 
-First load firmware that implements [this V1 protocol](rp2354-protocol.md), including
+First load firmware that implements [current V1 protocol](rp2354-protocol.md), including
 the two-part response read. Connect SDA/SCL/common ground according to the board's
 3.3 V wiring and pull-up design. Use the slave address configured in that firmware.
 Keep `fmheadendd` stopped during direct client tests so two clients do not compete.

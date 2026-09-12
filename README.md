@@ -171,7 +171,7 @@ Milestone 7A Angular Dashboard: [development and validation](docs/milestone7a.md
 
 
 Milestone 7B1 Sources UI and final validation: [documentation](docs/milestone7b1.md).
-Current SQLite schema is 6: schema 5 moves legacy analog-source assignments to
+Current SQLite schema is 7 (neutral QN gain/soft-clipping configuration defaults): schema 5 moves legacy analog-source assignments to
 Modulator.audio_mode; schema 6 preserves effective HTTP User-Agent values in
 `gst_options.source["user-agent"]`. There is no normal HTTP `config.user_agent`
 field. See the canonical architecture for migration conflict/rollback rules.

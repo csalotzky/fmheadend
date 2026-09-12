@@ -16,6 +16,10 @@ export function sample(): Snapshot {
     modulators: Array.from({ length: 8 }, (_, id) => ({
       id,
       audio_mode: 'DIGITAL',
+      gain_mode: 'AUTO',
+      analog_gain_db: 0,
+      digital_trim_db: 0,
+      soft_clipping: false,
       enabled: id === 0,
       input_source_id: 1,
       frequency_khz: id === 7 ? null : 91600 + id * 200,
@@ -57,6 +61,7 @@ export function sample(): Snapshot {
       modulators: Array.from({ length: 8 }, (_, id) => ({
         id,
         tx_state: id === 0 ? 'ON' : 'OFF',
+        input_saturated: null,
         hardware_tx_state: id === 0 ? 'ON' : 'OFF',
         source_state: id === 0 ? 'RUNNING' : 'IDLE',
         rf_output_dbuv: null,

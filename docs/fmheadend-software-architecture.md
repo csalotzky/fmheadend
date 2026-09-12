@@ -387,6 +387,10 @@ A `Modulator` a nyolc fizikai QN egyikét reprezentálja. Az `id` **fizikai azon
 | `stereo` | bool | Stereo/mono |
 | `preemphasis_us` | enum 50/75 | Pre-emphasis |
 | `rf_output_dbuv` | nullable number | Nominal RF target in dBuV, 0.1 dBuV steps; no default target |
+| `gain_mode` | AUTO / MANUAL | Default AUTO; QN AGC owns both gains in AUTO |
+| `analog_gain_db` | number | Default 0.0 dB; signed tenths, final hardware representability checked by RP |
+| `digital_trim_db` | 0 / 1 | Default 0; manual QN digital trim in dB |
+| `soft_clipping` | boolean | Default false; independent QN soft clipping enable |
 | `rds_enabled` | bool | RDS enable |
 | `rds_pi` | string/uint16 | PI |
 | `rds_ecc` | nullable uint8 | Extended Country Code; missing means unconfigured/null |
@@ -904,7 +908,7 @@ payload     length bytes
 - `0..7` - fizikai modulátor;
 - `0xFF` - global.
 
-V1 multibyte fields are little-endian as defined in [RP2354 V1 protocol](rp2354-protocol.md).
+RP protocol V1 multibyte fields are little-endian as defined in [RP2354 V1 protocol](rp2354-protocol.md).
 
 ## 11.3 Status kódok
 
@@ -944,9 +948,22 @@ Payload logikai mezői:
 - `stereo`;
 - `preemphasis_us`;
 - `audio_mode` = `DIGITAL` / `ANALOG`;
-- `rds_enabled`.
+- `rds_enabled`;
+- `gain_mode`, `analog_gain_db`, `digital_trim_db`, `soft_clipping`.
 
 A művelet **nem kapcsolja automatikusan ON állapotba a TX-et**.
+
+Pre-release protocol V1 extends SET_TX_CONFIG to 15 bytes and GET_STATUS to 130 bytes.
+The exact layouts and QN mapping contract live only in [RP protocol](rp2354-protocol.md).
+AUTO ignores the persisted manual gains; MANUAL applies them through TXAGC_GVGA
+(board-fixed RIN mapping in RP firmware) and TXAGC_GDB. Soft clipping maps to
+TX_SFTCLPEN independently. Linux validates only finite signed-tenths wire range,
+not a guessed RIN-specific range, and exposes no raw gain register codes.
+
+SQLite schema 7 adds AUTO / 0.0 dB / 0 dB / false defaults to existing Modulators
+atomically, preserving all other configuration and timestamps. No RIN is chosen.
+Startup and recovery replay these fields through the same full TxConfig path,
+before RDS synchronization and TX enable. Future firmware must advertise version 1 and implement the current expanded layouts. No M7B2 gain UI is part of this prerequisite.
 
 ### `SET_TX_ENABLED`
 
@@ -987,7 +1004,9 @@ missing sources or generated silence. Without CRC, some bit corruption is undete
 Per-channel audio_underrun_count counts detected QN8007B I2S underrun flags, cleared
 by firmware after detection. Multiple underruns between polls can collapse into one.
 Linux mux underruns, RP SPI link errors and QN I2S underruns are distinct layers.
-QN overflow and INSAT are not dedicated V1 fields; raw diagnostics remain available.
+QN overflow has no dedicated status field. Pre-release protocol V1 exposes current analog
+STATUS1.INSAT as `input_saturated: bool | null`; DIGITAL mode and unavailable RP
+state produce null. This is not a latched error or counter.
 
 ### `RDS_PUSH`
 

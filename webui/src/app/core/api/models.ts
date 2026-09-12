@@ -1,6 +1,10 @@
 // Display contracts from daemon/models/configuration.py and runtime_status.py.
 export type TxState = 'OFF' | 'STARTING' | 'ON' | 'ERROR';
 export interface Modulator {
+  gain_mode: 'AUTO' | 'MANUAL';
+  analog_gain_db: number;
+  digital_trim_db: 0 | 1;
+  soft_clipping: boolean;
   audio_mode: 'DIGITAL' | 'ANALOG';
   id: number;
   enabled: boolean;
@@ -31,6 +35,7 @@ export interface InputSource {
   timestamp: string;
 }
 export interface ModulatorStatus {
+  input_saturated: boolean | null;
   id: number;
   tx_state: TxState;
   hardware_tx_state: string | null;

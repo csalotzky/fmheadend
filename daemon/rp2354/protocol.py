@@ -65,7 +65,8 @@ GLOBAL_COMMANDS = {Command.GET_INFO, Command.GET_STATUS, Command.RESET_ERROR_COU
 # All successful responses have exact fixed sizes in V1.
 INFO = struct.Struct("<H16s16sB")
 GLOBAL_STATUS = struct.Struct("<BIIB")
-CHANNEL_STATUS = struct.Struct("<BhIIHB")
+TX_CONFIG = struct.Struct("<IHBBBBBhBB")
+CHANNEL_STATUS = struct.Struct("<BhIIHBB")
 RESPONSE_SIZES = {command: 0 for command in Command}
 RESPONSE_SIZES.update({Command.GET_INFO: INFO.size, Command.GET_STATUS: GLOBAL_STATUS.size + 8 * CHANNEL_STATUS.size,
                        Command.QN_READ_REGISTER: 1, Command.GET_RDS_FIFO_FREE: 16})
@@ -91,7 +92,7 @@ def request(command: Command, target: int, payload: bytes = b"") -> bytes:
         raise ValueError(f"Invalid target for {command.name}")
     if not isinstance(payload, bytes) or len(payload) > 255:
         raise ValueError("payload must be at most 255 bytes")
-    lengths = {Command.SET_TX_CONFIG: 10, Command.SET_TX_ENABLED: 1,
+    lengths = {Command.SET_TX_CONFIG: TX_CONFIG.size, Command.SET_TX_ENABLED: 1,
                Command.QN_READ_REGISTER: 1, Command.QN_WRITE_REGISTER: 2}
     if command == Command.RDS_PUSH:
         if not payload or not 1 <= payload[0] <= 31 or len(payload) != 1 + 8 * payload[0]:
@@ -101,8 +102,8 @@ def request(command: Command, target: int, payload: bytes = b"") -> bytes:
     if command == Command.SET_TX_ENABLED and payload[0] not in (0, 1):
         raise ValueError("SET_TX_ENABLED must be 0 or 1")
     if command == Command.SET_TX_CONFIG:
-        frequency, level, stereo, emphasis, mode, rds = struct.unpack("<IHBBBB", payload)
-        if frequency == 0 or stereo not in (0, 1) or emphasis not in (50, 75) or mode not in (0, 1) or rds not in (0, 1):
+        frequency, level, stereo, emphasis, mode, rds, gain, analog, trim, clipping = TX_CONFIG.unpack(payload)
+        if frequency == 0 or stereo not in (0, 1) or emphasis not in (50, 75) or mode not in (0, 1) or rds not in (0, 1) or gain not in (0, 1) or trim not in (0, 1) or clipping not in (0, 1):
             raise ValueError("Invalid SET_TX_CONFIG field value")
     return bytes((command, target, len(payload))) + payload
 
@@ -147,6 +148,15 @@ def parse_rds_fifo_free(payload: bytes) -> list[int]:
     return list(struct.unpack("<8H", payload))
 
 
+def analog_gain_x10(value: float) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("analog_gain_db must be a number")
+    scaled = Decimal(str(value)) * 10
+    if not scaled.is_finite() or not -32768 <= scaled <= 32767 or scaled != scaled.to_integral_value():
+        raise ValueError("analog_gain_db must be -3276.8..3276.7 in steps of 0.1 dB")
+    return int(scaled)
+
+
 def tx_config(config) -> bytes:
     frequency = uint(config.frequency_khz, 32, "frequency_khz")
     if frequency == 0:
@@ -156,8 +166,13 @@ def tx_config(config) -> bytes:
         raise ValueError("preemphasis_us must be 50 or 75")
     if config.audio_mode not in ("DIGITAL", "ANALOG"):
         raise ValueError("audio_mode must be DIGITAL or ANALOG")
-    return struct.pack("<IHBBBB", frequency, level, boolean(config.stereo, "stereo"),
-                       config.preemphasis_us, int(config.audio_mode == "ANALOG"), boolean(config.rds_enabled, "rds_enabled"))
+    if config.gain_mode not in ("AUTO", "MANUAL"):
+        raise ValueError("gain_mode must be AUTO or MANUAL")
+    trim = uint(config.digital_trim_db, 1, "digital_trim_db")
+    return TX_CONFIG.pack(frequency, level, boolean(config.stereo, "stereo"),
+        config.preemphasis_us, int(config.audio_mode == "ANALOG"), boolean(config.rds_enabled, "rds_enabled"),
+        int(config.gain_mode == "MANUAL"), analog_gain_x10(config.analog_gain_db), trim,
+        boolean(config.soft_clipping, "soft_clipping"))
 
 
 def rds_groups(groups) -> bytes:
@@ -192,7 +207,7 @@ def parse_info(payload: bytes) -> dict:
     info = {"rp_protocol_version": version, "rp_firmware_version": _text(firmware),
             "hardware_revision": _text(hardware), "modulator_count": count}
     if version != PROTOCOL_VERSION or count != 8:
-        raise IncompatibleProtocol(f"Unsupported RP protocol/count: {version}/{count}; expected 1/8")
+        raise IncompatibleProtocol(f"Unsupported RP protocol/count: {version}/{count}; expected {PROTOCOL_VERSION}/8")
     return info
 
 
@@ -219,9 +234,12 @@ def parse_status(payload: bytes) -> dict:
               "rp_spi_audio_link_error_count": spi_errors, "last_error_code": _error(error), "modulators": []}
     for channel in range(8):
         # audio counts detected QN I2S underrun flags, not missing Linux PCM.
-        tx, level, audio, rds, free, error = CHANNEL_STATUS.unpack_from(payload, GLOBAL_STATUS.size + channel * CHANNEL_STATUS.size)
+        tx, level, audio, rds, free, error, saturated = CHANNEL_STATUS.unpack_from(payload, GLOBAL_STATUS.size + channel * CHANNEL_STATUS.size)
+        if saturated not in (0, 1, 255):
+            raise ProtocolError(f"Invalid input_saturated: {saturated}")
         result["modulators"].append({"id": channel, "tx_state": _enum(tx, ("OFF", "ON", "ERROR"), "TX state"),
             "rf_output_dbuv": None if level == -32768 else level / 10,
             "audio_underrun_count": audio, "rds_underrun_count": rds,
+            "input_saturated": None if saturated == 255 else bool(saturated),
             "rds_fifo_free": free, "last_error_code": _error(error)})
     return result

@@ -17,6 +17,7 @@ def seed(path):
     db=Database(path)
     old=db.get('modulators',0)
     db.save('modulators',ModulatorConfig.model_validate(old.model_dump(exclude={'id','timestamp'}) | {
+        'gain_mode':'MANUAL','analog_gain_db':6.0,'digital_trim_db':1,'soft_clipping':True,
         'audio_mode':'ANALOG','frequency_khz':98100,'enabled':True,'rds_enabled':True,'rds_ecc':224}),0)
     db.close()
 
@@ -49,6 +50,8 @@ def test_startup_loss_recovery_order_and_shutdown(tmp_path):
         clear_index=next(i for i,e in enumerate(events) if e[:2]==('clear_rds',0))
         enable_index=events.index(('set_tx_enabled',0,True))
         assert config_index<clear_index<enable_index
+        replay = events[config_index][2]
+        assert (replay.gain_mode, replay.analog_gain_db, replay.digital_trim_db, replay.soft_clipping) == ('MANUAL',6.0,1,True)
         assert rp.enabled==[True]+[False]*7
         assert api.get(P+'/status').json()['system']['system_state']=='RUNNING'
         services=app.state.services

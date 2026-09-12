@@ -53,7 +53,7 @@ def test_legacy_analog_migration_preserves_configuration_and_is_idempotent(tmp_p
     path=tmp_path/'legacy.db';digital,expected=legacy(path)
     for _ in range(2):
         db=Database(path)
-        assert db.connection.execute('PRAGMA user_version').fetchone()[0]==6
+        assert db.connection.execute('PRAGMA user_version').fetchone()[0]==7
         assert db.list('sources')==[digital]
         for channel,data in expected.items():
             want=data | {'audio_mode':'ANALOG' if channel<2 else 'DIGITAL'}
@@ -93,7 +93,7 @@ def test_complete_m7b1_chain_preserves_unrelated_records(tmp_path):
     expected_http=json.loads(json.dumps(http));expected_http['config'].pop('user_agent')
     for _ in range(2):
         db=Database(path)
-        assert db.connection.execute('PRAGMA user_version').fetchone()[0]==6
+        assert db.connection.execute('PRAGMA user_version').fetchone()[0]==7
         assert [row.id for row in db.list('sources')]==[digital.id,hid]
         assert db.get('sources',digital.id)==digital
         assert json.loads(db.connection.execute('SELECT data FROM sources WHERE id=?',(hid,)).fetchone()[0])==expected_http

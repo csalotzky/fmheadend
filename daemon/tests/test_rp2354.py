@@ -1,4 +1,4 @@
-"""Exact V1 contract tests. Only low-level OS I2C calls are mocked."""
+"""Exact current protocol contract tests. Only low-level OS I2C calls are mocked."""
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -21,7 +21,7 @@ CONFIG = TxConfig(frequency_khz=98100, rf_output_dbuv=96.0, stereo=True, preemph
 
 def status_payload():
     return struct.pack('<BIIB', 0, 123456, 9, 0) + b''.join(
-        struct.pack('<BhIIHB', i % 2, -32768 if i == 0 else 875, i + 10, i + 20, i + 30, 0)
+        struct.pack('<BhIIHBB', i % 2, -32768 if i == 0 else 875, i + 10, i + 20, i + 30, 0, 255)
         for i in range(8))
 
 
@@ -68,7 +68,7 @@ def test_exact_targets_and_enable(calls, channel):
 def test_config_exact_and_never_enables(calls, mode, wire_mode):
     replies(calls, INFO, b'')
     client().set_tx_config(7, CONFIG.model_copy(update={'audio_mode': mode}))
-    assert packets(calls) == [b'\x01\xff\x00', b'\x02\x07\x0a\x34\x7f\x01\x00\xc0\x03\x01\x32' + bytes((wire_mode, 0))]
+    assert packets(calls) == [b'\x01\xff\x00', b'\x02\x07\x0f\x34\x7f\x01\x00\xc0\x03\x01\x32' + bytes((wire_mode, 0, 0, 0, 0, 0, 0))]
     assert all(packet[0] != p.Command.SET_TX_ENABLED for packet in packets(calls))
 
 
@@ -92,7 +92,7 @@ def test_get_status_exact_single_snapshot(calls):
     assert result['uptime_ms'] == 123456 and result['rp_spi_audio_link_error_count'] == 9
     assert result['modulators'][0]['rf_output_dbuv'] is None
     assert result['modulators'][7] == {'id': 7, 'tx_state': 'ON', 'rf_output_dbuv': 87.5,
-        'audio_underrun_count': 17, 'rds_underrun_count': 27, 'rds_fifo_free': 37, 'last_error_code': None}
+        'audio_underrun_count': 17, 'rds_underrun_count': 27, 'rds_fifo_free': 37, 'last_error_code': None, 'input_saturated': None}
 
 
 def test_debug_rds_reset_exact(calls):
@@ -300,7 +300,7 @@ def test_native_status_reaches_existing_api(calls, tmp_path):
         command = packets(calls)[-1][0]
         data = bytearray(status_payload())
         if not diagnostic[0]:
-            for i in range(8): data[10 + i * 14] = 0
+            for i in range(8): data[10 + i * 15] = 0
         payload = INFO if command == 1 else bytes(data) if command == 4 else b''
         return bytes((0, len(payload))) if size == 2 else payload
     calls[0].read.side_effect = read
@@ -326,7 +326,7 @@ def test_client_maps_protocol_failure_without_retry(calls, code):
 
 
 @pytest.mark.parametrize('command,payload', [(p.Command.SET_TX_ENABLED, b'\x02'),
-    (p.Command.SET_TX_CONFIG, struct.pack('<IHBBBB', 98100, 0, 1, 50, 2, 0))])
+    (p.Command.SET_TX_CONFIG, struct.pack('<IHBBBBBhBB', 98100, 0, 1, 50, 2, 0, 0, 0, 0, 0))])
 def test_raw_request_rejects_invalid_enum(command, payload):
     with pytest.raises(ValueError):
         p.request(command, 0, payload)
@@ -427,13 +427,13 @@ def test_cli_selects_explicit_hardware_mode(monkeypatch, tmp_path, flags, real_r
 
 def test_all_config_options_exact():
     config = CONFIG.model_copy(update={'stereo': False, 'preemphasis_us': 75, 'rds_enabled': True, 'audio_mode': 'ANALOG'})
-    assert p.tx_config(config) == b'\x34\x7f\x01\x00\xc0\x03\0\x4b\x01\x01'
+    assert p.tx_config(config) == b'\x34\x7f\x01\x00\xc0\x03\0\x4b\x01\x01' + bytes(5)
 
 @pytest.mark.parametrize('level,wire', [(0, 0), (96.0, 960), (100, 1000), (96.1, 961), (6553.5, 65535)])
 def test_review_rf_physical_units(level, wire):
     config = CONFIG.model_copy(update={'rf_output_dbuv': level})
     data = p.tx_config(config)
-    assert len(data) == 10 and data[4:6] == struct.pack('<H', wire)
+    assert len(data) == 15 and data[4:6] == struct.pack('<H', wire)
 
 
 @pytest.mark.parametrize('level', [-0.1, 6553.6, 96.01, float('nan'), float('inf'), True, '96'])
@@ -460,7 +460,7 @@ def test_fifo_free_bad_payload(data):
 @pytest.mark.parametrize('global_active,tx_active', [(False, False), (True, False), (False, True)])
 def test_latched_errors_do_not_imply_current_fault(calls, tmp_path, global_active, tx_active):
     data = bytearray(status_payload())
-    for i in range(8): data[10 + i * 14] = 0
+    for i in range(8): data[10 + i * 15] = 0
     data[9] = 5; data[23] = 5
     def read(fd, size):
         command = packets(calls)[-1][0]
@@ -492,7 +492,7 @@ def test_legacy_rf_migration_and_reopen(tmp_path):
     db.close()
     db = Database(path)
     assert all(row.rf_output_dbuv is None and row.frequency_khz == 98100 for row in db.list('modulators'))
-    assert db.connection.execute('PRAGMA user_version').fetchone()[0] == 6
+    assert db.connection.execute('PRAGMA user_version').fetchone()[0] == 7
     assert 'rf_level' not in db.connection.execute('SELECT data FROM modulators').fetchone()[0]
     config = db.get('modulators', 0).model_copy(update={'rf_output_dbuv': 96.0})
     db.save('modulators', config, 0); db.close()

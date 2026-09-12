@@ -1,6 +1,6 @@
 # RP2354 V1 Linux wire protocol
 
-This is the authoritative V1 binary protocol specification and Milestone 4 contract implemented by
+This is the authoritative V1 binary protocol specification and pre-release firmware contract implemented by
 `daemon/rp2354/protocol.py` and `daemon/rp2354/linux_client.py`.
 The architecture defines command semantics and envelopes, but leaves numeric IDs,
 field widths and bus transaction details open in sections 11 and 27. The choices
@@ -49,9 +49,9 @@ the daemon owns it. This lock does not constrain uncooperative external programs
 | ID | Command | Target | Request payload bytes | OK payload bytes |
 |---:|---|---|---:|---:|
 | 0x01 | GET_INFO | 0xFF | 0 | 35 |
-| 0x02 | SET_TX_CONFIG | 0..7 | 10 | 0 |
+| 0x02 | SET_TX_CONFIG | 0..7 | 15 | 0 |
 | 0x03 | SET_TX_ENABLED | 0..7 | 1 | 0 |
-| 0x04 | GET_STATUS | 0xFF | 0 | 122 |
+| 0x04 | GET_STATUS | 0xFF | 0 | 130 |
 | 0x05 | RDS_PUSH | 0..7 | 1 + 8*N | 0 |
 | 0x06 | RDS_CLEAR | 0..7 | 0 | 0 |
 | 0x07 | QN_READ_REGISTER | 0..7 | 1 | 1 |
@@ -77,6 +77,11 @@ unsupported version/count raises `IncompatibleProtocol`. OS/device/slave access
 failures raise `HardwareUnavailable`. Existing manager/API dependency error handling
 therefore remains applicable. Local invalid arguments raise `ValueError` before I/O.
 
+The unreleased V1 contract includes the expanded SET_TX_CONFIG and GET_STATUS
+payloads below. Protocol version remains 1; command IDs, other payloads, serialized
+request handling, and no-CRC/no-sequence rules remain unchanged. There is no released
+RP firmware and no legacy-payload compatibility path.
+
 ## GET_INFO (0x01)
 
 Request has no payload: `01 ff 00`. OK response starts `00 23`.
@@ -97,7 +102,7 @@ command and after a failed/reopened session or explicit reset.
 
 ## SET_TX_CONFIG (0x02)
 
-The payload is exactly ten bytes:
+The payload is exactly 15 bytes. The original first ten bytes retain their order:
 
 | Payload offset | Type | Field |
 |---:|---|---|
@@ -107,6 +112,24 @@ The payload is exactly ten bytes:
 | 7 | u8 | preemphasis_us: literal 50 or 75 |
 | 8 | u8 | audio_mode: 0 DIGITAL, 1 ANALOG |
 | 9 | u8 | rds_enabled: 0 or 1 |
+| 10 | u8 | gain_mode: 0 AUTO, 1 MANUAL |
+| 11 | i16 | analog_gain_db_x10, signed tenths of dB |
+| 13 | u8 | digital_trim_db: 0 (0 dB), 1 (+1 dB) |
+| 14 | u8 | soft_clipping: 0 disabled, 1 enabled |
+
+`gain_mode` maps to QN TAGC_GAIN_SEL. AUTO lets the QN AGC FSM determine both
+TXAGC_GVGA and TXAGC_GDB: persisted manual gains are carried but are not effective.
+MANUAL applies `analog_gain_db_x10` through TXAGC_GVGA using the board's fixed RIN
+mapping, and `digital_trim_db` through TXAGC_GDB. RP firmware owns that mapping and
+rejects unrepresentable hardware gains with INVALID_ARGUMENT; Linux must not invent
+RIN, round/clamp the requested gain, or transport raw GVGA codes through this field.
+`soft_clipping` independently maps to TX_SFTCLPEN in either gain mode.
+
+Linux validates finite signed tenths of dB (-3276.8..3276.7, the wire range only).
+Examples: 0.0 becomes `00 00`, +6.0 becomes `3c 00`, -1.5 becomes `f1 ff`.
+This range is not a claim of physical QN gain capability. Neutral persisted defaults
+are AUTO, analog_gain_db=0.0, digital_trim_db=0, soft_clipping=false; AUTO ignores
+both stored gain values until MANUAL is selected. No board RIN default is implied.
 
 This atomically applies configuration and **does not enable TX**. Linux/API
 configuration uses `rf_output_dbuv` in dBµV: 96.0 becomes 960, 100.0 becomes 1000.
@@ -121,8 +144,8 @@ Both frequency and RF target must be explicitly configured for a real TX config.
 Unset RF targets remain null; no physical target is inferred from legacy raw values.
 The high-level mock accepts an unset target for existing hardware-free workflows.
 
-Example, TX7, 98100 kHz, 96.0 dBµV, stereo, 50 us, DIGITAL, RDS disabled:
-`02 07 0a 34 7f 01 00 c0 03 01 32 00 00`. ACK: `00 00`.
+Example, TX7, 98100 kHz, 96.0 dBµV, stereo, 50 us, DIGITAL, RDS disabled, default audio controls:
+`02 07 0f 34 7f 01 00 c0 03 01 32 00 00 00 00 00 00 00`. ACK: `00 00`.
 
 ## SET_TX_ENABLED (0x03)
 
@@ -133,7 +156,7 @@ The Linux manager retains configuration-before-enable and RF-off-before-audio-st
 
 ## GET_STATUS (0x04)
 
-Request `04 ff 00`. Response `00 7a` followed by one coherent 122-byte snapshot.
+Request `04 ff 00`. Response `00 82` followed by one coherent 130-byte snapshot.
 Global prefix is ten bytes:
 
 | Payload offset | Type | Field |
@@ -143,8 +166,8 @@ Global prefix is ten bytes:
 | 5 | u32 | rp_spi_audio_link_error_count |
 | 9 | u8 | global last_error_code, status IDs above; 0 means none |
 
-Eight consecutive 14-byte records follow, ordered TX0..TX7. Channel `c` starts at
-payload offset `10 + 14*c`; no repeated channel ID is transmitted.
+Eight consecutive 15-byte records follow, ordered TX0..TX7. Channel `c` starts at
+payload offset `10 + 15*c`; no repeated channel ID is transmitted.
 
 | Record offset | Type | Field |
 |---:|---|---|
@@ -154,6 +177,13 @@ payload offset `10 + 14*c`; no repeated channel ID is transmitted.
 | 7 | u32 | rds_underrun_count |
 | 11 | u16 | rds_fifo_free, capacity in complete groups |
 | 13 | u8 | last_error_code, status IDs above; 0 means none |
+| 14 | u8 | input_saturated: 0 false, 1 true, 255 unavailable |
+
+Total payload is `10 + 8 * 15 = 130` bytes; all pre-existing per-TX fields retain
+their offsets. In ANALOG mode firmware reads QN STATUS1.INSAT (1 means analog input
+level too high/channel saturated). DIGITAL mode must return 255. Linux exposes
+`input_saturated: bool | null`, masks it to null for DIGITAL, and invalidates it
+on RP loss. It is a current snapshot, neither a counter nor a latched error.
 
 RF readback describes nominal configured/read-back QN output level, **not measured
 RF power**. Firmware must use the unavailable sentinel if it cannot supply a
@@ -184,8 +214,8 @@ Firmware monitors the QN underrun flag, increments the counter when observed, an
 clears the flag using the QN-supported mechanism. Several physical underruns between
 polls may collapse into one detection because the chip exposes a flag, not an event
 queue. This is separate from Linux mux underruns (missing PCM before SPI) and RP
-SPI audio link errors (transport faults). QN I2S overflow and analog saturation
-INSAT are not dedicated V1 fields; raw register diagnostics remain available.
+SPI audio link errors (transport faults). QN I2S overflow has no dedicated status field; raw register diagnostics remain available.
+Analog saturation is the current `input_saturated` snapshot defined above.
 
 ## RDS_PUSH (0x05)
 

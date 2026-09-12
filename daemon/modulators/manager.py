@@ -42,6 +42,8 @@ class ModulatorManager:
         self.validate(config)
         saved = self.database.save("modulators", config, modulator_id)
         self.statuses[modulator_id].source_state = None if config.audio_mode == "ANALOG" else "IDLE"
+        if config.audio_mode != old.audio_mode:
+            self.statuses[modulator_id].input_saturated = None
         # Commit desired config first; failed apply leaves it available for recovery.
         if modulator_id in self.active_sources or self.statuses[modulator_id].tx_state != TxState.OFF:
             self._stop(modulator_id)
