@@ -140,7 +140,7 @@ retry after 250 ms without replaying a partially written chunk. Kernel socket
 buffers are also bounded and contribute additional latency; 100 ms describes
 the ring target, not an end-to-end latency guarantee. Appsink performs no socket
 or hardware I/O. Shared sources still use one pipeline, with separate consumer
-queues. ANALOG sources create neither pipeline nor PCM producer.
+queues. ANALOG modulators create neither pipeline nor PCM producer.
 
 ## Control and API diagnostics
 

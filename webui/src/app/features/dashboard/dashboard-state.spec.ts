@@ -57,7 +57,8 @@ describe('Dashboard API composition and operations', () => {
   });
   it('keeps analog PCM bypass and latched errors distinct', () => {
     const data = sample();
-    data.sources[0].type = 'ANALOG';
+    data.modulators[0].audio_mode = 'ANALOG';
+    data.modulators[0].input_source_id = null;
     data.status.modulators[0].hardware_last_error = 'Historical QN_ERROR';
     expect(compose(data)[0].pcm).toBe('Bypass');
     expect(compose(data)[0].error).toBeNull();

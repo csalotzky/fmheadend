@@ -85,8 +85,6 @@ class GstPipeline:
     mocked = False
 
     def __init__(self, source, *, profile=None, output=None, timeout_s=None, reconnect=True):
-        if source.type == SourceType.ANALOG:
-            raise ValueError("ANALOG must bypass GStreamer")
         self.source = source
         self.profile = profile
         self.output = output or PcmOutput()
@@ -102,6 +100,7 @@ class GstPipeline:
                           "input_channels": None, "bitrate_bps": None, "stream_title": None,
                           "artist": None, "title": None, "output_caps": None,
                           "reconnect_count": 0, "last_error": None}
+        self._station_name = None
         self._callback_error = None
         self._last_sample = 0.0
         self._caps = None
@@ -163,11 +162,10 @@ class GstPipeline:
 
     def _source_setup(self, unused, element):
         try:
-            config = self.source.config
             if element.find_property("timeout"):
                 element.set_property("timeout", math.ceil(self.timeout_s))
             if element.find_property("user-agent"):
-                element.set_property("user-agent", config.get("user_agent", "fmheadend/0.1.0"))
+                element.set_property("user-agent", "fmheadend/0.1.0")
             if element.find_property("iradio-mode"):
                 element.set_property("iradio-mode", True)
             if element.find_property("retries"):
@@ -269,6 +267,30 @@ class GstPipeline:
             return Gst.FlowReturn.ERROR
         return Gst.FlowReturn.OK
 
+    def _station_headers(self, message):
+        # Only transport ICY identity, never decoded title/artist/organization tags.
+        if self.source.type != SourceType.HTTP:
+            return
+        borrowed = message.get_structure()
+        if borrowed is None:
+            return
+        with borrowed if hasattr(borrowed, "__enter__") else nullcontext(borrowed) as structure:
+            if structure.get_name() != "http-headers":
+                return
+            headers = structure.get_value("response-headers")
+            if headers is None:
+                return
+            with headers if hasattr(headers, "__enter__") else nullcontext(headers) as values:
+                for index in range(values.n_fields()):
+                    key = values.nth_field_name(index)
+                    if key.lower() == "icy-name":
+                        value = values.get_value(key)
+                        if isinstance(value, str):
+                            name = "".join(c for c in value if c.isprintable()).strip()[:200]
+                            with self._lock:
+                                self._station_name = name or None
+                        break
+
     def _tags(self, tags):
         values = {}
         for tag, key in (("audio-codec", "codec"), ("title", "title"), ("artist", "artist")):
@@ -290,6 +312,8 @@ class GstPipeline:
     def _attempt(self):
         Gst = self.Gst
         self._callback_error, self._caps, self._input_caps = None, None, None
+        with self._lock:
+            self._station_name = None
         self._last_sample = 0
         self._update(state="CONNECTING", stream_title=None, artist=None, title=None,
                      codec=None, bitrate_bps=None, input_sample_rate=None, input_channels=None, output_caps=None)
@@ -306,6 +330,8 @@ class GstPipeline:
                     raise DependencyUnavailable(error.message)
                 if message.type == Gst.MessageType.EOS:
                     raise DependencyUnavailable("Source reached end of stream")
+                if message.type == Gst.MessageType.ELEMENT:
+                    self._station_headers(message)
                 if message.type == Gst.MessageType.TAG:
                     self._tags(message.parse_tag())
                 if message.type == Gst.MessageType.BUFFERING:
@@ -363,7 +389,13 @@ class GstPipeline:
 
     def probe_result(self):
         info = self.snapshot()
-        return SourceTestResult(ok=info["state"] == "RUNNING" and info["output_caps"] is not None, mocked=False, codec=info["codec"],
+        with self._lock:
+            station_name = self._station_name if info["state"] == "RUNNING" else None
+        bitrate = info["bitrate_bps"]
+        input_bitrate = bitrate if (self.source.type == SourceType.HTTP and
+            info["state"] == "RUNNING" and info["output_caps"] is not None and
+            isinstance(bitrate, int) and not isinstance(bitrate, bool) and bitrate > 0) else None
+        return SourceTestResult(input_bitrate_bps=input_bitrate, station_name=station_name, ok=info["state"] == "RUNNING" and info["output_caps"] is not None, mocked=False, codec=info["codec"],
                                 sample_rate=info["input_sample_rate"], channels=info["input_channels"],
                                 output_caps=info["output_caps"], stream_title=info["stream_title"],
                                 message="Decoded PCM received" if info["output_caps"] else info["last_error"] or "No decoded audio")

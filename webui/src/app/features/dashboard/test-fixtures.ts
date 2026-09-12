@@ -15,6 +15,7 @@ export function sample(): Snapshot {
     ],
     modulators: Array.from({ length: 8 }, (_, id) => ({
       id,
+      audio_mode: 'DIGITAL',
       enabled: id === 0,
       input_source_id: 1,
       frequency_khz: id === 7 ? null : 91600 + id * 200,

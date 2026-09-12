@@ -38,7 +38,7 @@ Example PATCH body (configure the actual PI/ECC/frequencies for your service):
 ```
 
 Scheduling runs only for locally active modulators with RDS enabled, including
-ANALOG sources. M6A restores persistent desired TX state through the safe recovery path described
+ANALOG modulators. M6A restores persistent desired TX state through the safe recovery path described
 in [Milestone 6A](milestone6a.md). The GStreamer and mux paths are unchanged.
 
 ## Standard and information groups

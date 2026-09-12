@@ -160,7 +160,6 @@ Supported V1 source types:
 - UDP
 - RTP
 - ALSA
-- ANALOG
 
 ### 6.1 Source list
 
@@ -206,9 +205,7 @@ ALSA:
 - input format where required
 - audio profile
 
-ANALOG:
-- name
-- no GStreamer-specific configuration
+Analog input is configured on the physical Modulator, not in Sources.
 
 ### 6.3 Source test
 
@@ -216,10 +213,18 @@ The existing backend source-test functionality should have a first-class UI.
 
 A source should be testable before saving where possible.
 
+HTTP testing may fill a blank Source Name from reliable station identity, but never
+overwrites a nonblank name or saves the Source. The URL and Test stream button share
+a full-width row; other fields stay below. User-Agent is configurable only through
+the existing advanced GStreamer source property. See milestone7b1.md for implemented
+probe metadata and fallback semantics.
+
 Useful result presentation:
 
 - connection success/failure
+- reliable station identity when available (separate from now-playing title)
 - detected codec
+- approximate input bitrate when reported by GStreamer
 - detected input sample rate
 - channel count
 - normalized output caps
@@ -273,7 +278,7 @@ Fields:
 
 Audio mode is derived from the assigned Source type.
 
-Do not expose a duplicate DIGITAL / ANALOG selector if the backend already derives this from the source.
+The future Modulator editor selects audio_mode DIGITAL / ANALOG. ANALOG selects the dedicated physical jack and clears input_source_id; DIGITAL requires selecting a digital source again. Do not label this I2S. Dashboard shows Audio input: Analog without a source runtime state.
 
 ### 7.3 RDS
 

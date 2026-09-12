@@ -26,14 +26,12 @@ class SourceType(StrEnum):
     UDP = "UDP"
     RTP = "RTP"
     ALSA = "ALSA"
-    ANALOG = "ANALOG"
 
 
 class HttpConfig(Model):
     uri: str
     buffer_ms: int = Field(default=3000, ge=0)
     connect_timeout_ms: int = Field(default=10000, gt=0)
-    user_agent: Name = "fmheadend/0.1.0"
 
     @field_validator("uri")
     @classmethod
@@ -70,14 +68,9 @@ class AlsaConfig(Model):
     channels: int = Field(default=2, ge=1, le=8, strict=True)
 
 
-class AnalogConfig(Model):
-    pass
-
-
 SOURCE_CONFIGS = {
     SourceType.HTTP: HttpConfig, SourceType.UDP: UdpConfig,
     SourceType.RTP: RtpConfig, SourceType.ALSA: AlsaConfig,
-    SourceType.ANALOG: AnalogConfig,
 }
 
 
@@ -132,6 +125,7 @@ class PsEntry(Model):
 
 
 class ModulatorConfig(Model):
+    audio_mode: Literal["DIGITAL", "ANALOG"] = "DIGITAL"
     enabled: bool = False
     input_source_id: PositiveId | None = None
     frequency_khz: int | None = Field(default=None, gt=0, strict=True)
@@ -148,6 +142,12 @@ class ModulatorConfig(Model):
     rds_rt: str = Field(default="", max_length=64)
     rds_metadata_to_rt: bool = False
     _rt = field_validator("rds_rt")(validate_rds_text)
+
+    @model_validator(mode="after")
+    def analog_has_no_source(self):
+        if self.audio_mode == "ANALOG":
+            self.input_source_id = None
+        return self
 
 
 class Modulator(ModulatorConfig):
@@ -198,6 +198,8 @@ class ErrorResponse(Model):
 
 
 class SourceTestResult(Model):
+    input_bitrate_bps: int | None = Field(default=None, gt=0)
+    station_name: str | None = None
     ok: bool = True
     mocked: bool = True
     codec: str | None = None

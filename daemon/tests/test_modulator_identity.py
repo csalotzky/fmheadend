@@ -15,7 +15,7 @@ def test_legacy_names_removed_without_other_configuration_changes(tmp_path, vers
     path = tmp_path / 'legacy.db'
     db = Database(path)
     profile = db.save('audio_profiles', AudioProfileConfig(name='Audio profile'))
-    source = db.save('sources', InputSourceConfig(name='Studio source', type='ANALOG', config={}, audio_profile_id=profile.id))
+    source = db.save('sources', InputSourceConfig(name='Studio source', type='ALSA', config={'device':'hw:1,0'}, audio_profile_id=profile.id))
     expected = {}
     with db.connection:
         for channel in range(8):
@@ -31,7 +31,7 @@ def test_legacy_names_removed_without_other_configuration_changes(tmp_path, vers
     db.close()
     for _ in range(2):
         db = Database(path)
-        assert db.connection.execute('PRAGMA user_version').fetchone()[0] == 4
+        assert db.connection.execute('PRAGMA user_version').fetchone()[0] == 6
         rows = db.connection.execute('SELECT * FROM modulators ORDER BY id').fetchall()
         assert [row['id'] for row in rows] == list(range(8))
         for row in rows:

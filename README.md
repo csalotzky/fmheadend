@@ -52,7 +52,7 @@ The default database is `/var/lib/fmheadend/fmheadend.db`; use a writable path
 for local development. Run one daemon process/worker per headend.
 
 The distribution maps `fmheadendd` directly to `daemon/` without an extra nested
-source directory. `muxd/` contains the C++ daemon; `systemd/` contains M6A service units; `webui/` contains the M7A Angular shell and operational Dashboard.
+source directory. `muxd/` contains the C++ daemon; `systemd/` contains M6A service units; `webui/` contains the Angular shell, operational Dashboard and M7B1 Sources management.
 
 ## Try the API
 
@@ -85,7 +85,7 @@ In real mode, probes wait for decoded audio and report success/failure, input
 sample rate/channels, codec when available, negotiated output caps and a useful
 message. Failed connections return `ok: false`, `mocked: false`; invalid request
 models retain HTTP 422. Active saved-source tests reuse the running pipeline.
-Analog tests bypass GStreamer and do not claim to verify physical audio.
+HTTP tests additionally report reliable ICY station identity and approximate input bitrate when available. The UI can fill a blank Source Name without saving. Analog input is a Modulator audio mode, not a Source and has no source-test operation.
 
 Other endpoints cover `/audio-profiles`, `/system/config`, `/system/info`,
 `/sources/{id}/status`, `/modulators/start-all` and `/modulators/stop-all`.
@@ -105,15 +105,15 @@ missing routes, resource conflicts and unavailable dependencies.
   hardware application returns 503 and leaves desired configuration intact while
   actual state becomes ERROR. Shutdown turns RF off without changing desired state.
 - Newly created sources default to enabled. Modulators default to disabled,
-  unassigned, with `frequency_khz: null`, unset nominal RF target, stereo, 50 us pre-emphasis
+  DIGITAL and unassigned, with `frequency_khz: null`, unset nominal RF target, stereo, 50 us pre-emphasis
   and RDS disabled. A frequency must be explicitly configured before enabling
   a modulator; starting without it returns 409 `FREQUENCY_REQUIRED` without
-  changing desired state or touching hardware. Starting without an enabled
-  source also returns 409. A disabled modulator's frequency can be cleared with
+  changing desired state or touching hardware. Starting DIGITAL mode without an enabled
+  source also returns 409. ANALOG mode uses the channel's own jack, clears input_source_id, and requires no Source or Audio Profile. A disabled modulator's frequency can be cleared with
   `PATCH {"frequency_khz": null}`. Start-all attempts every ID and
   returns per-ID statuses/errors; unassigned modulators do not silently succeed.
 - One pipeline serves all consumers of a digital source. The last consumer
-  stopping releases it. Analog sources create no pipeline or PCM producer.
+  stopping releases it. ANALOG modulators create no pipeline or PCM producer.
   Source edits while active return 409; stop consumers before editing. Hardware
   stop failures retain the source until RF-off can be confirmed.
 - The default FM validation band is 87500..108000 kHz inclusive. Override it with
@@ -157,7 +157,7 @@ gain, metadata and source reconnects. See [details and test results](docs/milest
 Milestone 3 adds the Unix PCM/control sockets, bounded C++ rings, fixed frame
 builder, mock capture and Linux spidev transport. Milestone 4 adds RP2354 I2C protocol/client primitives and hardware status.
 M5 adds Linux RDS encoding and FIFO scheduling. M6A adds safe desired-state
-restoration, integration recovery and systemd deployment. M7A adds the Angular Dashboard; configuration pages and firmware
+restoration, integration recovery and systemd deployment. M7A adds the Angular Dashboard; M7B1 adds Sources management. Modulator/RDS configuration, Audio Profile management, System page contents and firmware
 remain unimplemented; Zero 2 W stress/performance validation is deferred to M6B. New modulators
 remain disabled with no frequency until explicitly configured.
 
@@ -168,3 +168,10 @@ media callbacks never access SQLite or hardware. This is not a separate service.
 Milestone 6A lifecycle recovery and systemd deployment: [documentation](docs/milestone6a.md).
 
 Milestone 7A Angular Dashboard: [development and validation](docs/milestone7a.md).
+
+
+Milestone 7B1 Sources UI and final validation: [documentation](docs/milestone7b1.md).
+Current SQLite schema is 6: schema 5 moves legacy analog-source assignments to
+Modulator.audio_mode; schema 6 preserves effective HTTP User-Agent values in
+`gst_options.source["user-agent"]`. There is no normal HTTP `config.user_agent`
+field. See the canonical architecture for migration conflict/rollback rules.

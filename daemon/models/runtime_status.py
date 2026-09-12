@@ -34,7 +34,7 @@ class InputSourceStatus(Model):
 
 class ModulatorStatus(Model):
     id: int
-    source_state: str = "IDLE"
+    source_state: str | None = "IDLE"
     tx_state: TxState = TxState.OFF
     rf_output_dbuv: float | None = None
     underruns: int = 0

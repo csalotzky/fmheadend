@@ -38,7 +38,7 @@ A successful later poll restores the display automatically.
 Desired ON/OFF is labelled separately from observed TX state. Runtime nominal RF
 readback null stays an em dash, even if a configured nominal target exists. This
 is not measured power. PCM Flowing means consumed bytes increased between received
-snapshots, not proof of sound or RF reception. ANALOG shows Bypass. No flow observed
+snapshots, not proof of sound or RF reception. ANALOG audio mode shows Audio input: Analog. No flow observed
 is descriptive, not a claim that RF has stopped. Latched hardware error codes alone
 are not treated as current faults; source ERROR is identified directly on the card.
 Mock RP/SPI operation is explicitly identified in the shell.

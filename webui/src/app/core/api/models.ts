@@ -1,6 +1,7 @@
 // Display contracts from daemon/models/configuration.py and runtime_status.py.
 export type TxState = 'OFF' | 'STARTING' | 'ON' | 'ERROR';
 export interface Modulator {
+  audio_mode: 'DIGITAL' | 'ANALOG';
   id: number;
   enabled: boolean;
   input_source_id: number | null;
@@ -22,7 +23,7 @@ export interface Modulator {
 export interface InputSource {
   id: number;
   name: string;
-  type: 'HTTP' | 'UDP' | 'RTP' | 'ALSA' | 'ANALOG';
+  type: 'HTTP' | 'UDP' | 'RTP' | 'ALSA';
   enabled: boolean;
   config: Record<string, unknown>;
   audio_profile_id: number | null;
@@ -33,7 +34,7 @@ export interface ModulatorStatus {
   id: number;
   tx_state: TxState;
   hardware_tx_state: string | null;
-  source_state: string;
+  source_state: string | null;
   rf_output_dbuv: number | null;
   underruns: number;
   overruns: number;

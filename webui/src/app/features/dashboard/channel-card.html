@@ -56,12 +56,17 @@
       >
     </div>
     <div class="runtime">
+      @if (channel().analog) {
+        <span>Audio input: <b>Analog</b></span>
+      } @else {
+        <span
+          >Source <b>{{ sourceState() }}</b></span
+        >
+        <span
+          >Digital audio <b>{{ stale() ? 'Unknown' : channel().pcm }}</b></span
+        >
+      }
       <span
-        >Source <b>{{ sourceState() }}</b></span
-      ><span
-        >{{ channel().analog ? 'Audio' : 'Digital audio' }}
-        <b>{{ stale() ? 'Unknown' : channel().analog ? 'Analog input' : channel().pcm }}</b></span
-      ><span
         >RDS <b>{{ stale() ? 'Unknown' : (channel().runtime?.rds_state ?? 'Unknown') }}</b></span
       >
     </div>

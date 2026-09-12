@@ -102,7 +102,7 @@ class StatusService:
         for status in self.modulators.statuses.values():
             row = status.model_copy(deep=True)
             source_id = self.modulators.active_sources.get(row.id)
-            if source_id is not None and row.source_state != "ANALOG":
+            if source_id is not None:
                 row.source_state = self.sources.status(source_id).state.value
             rows.append(row)
         if system.last_error or system.mux_state != "RUNNING" or any(r.tx_state == TxState.ERROR or r.source_state == "ERROR" or r.rds_last_error for r in rows):

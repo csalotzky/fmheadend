@@ -161,12 +161,9 @@ def test_analog_never_constructs_any_pipeline(services, monkeypatch):
         pytest.fail("ANALOG constructed a GStreamer pipeline")
     forbidden.mocked = False
     sources.pipeline_factory = forbidden
-    saved = db.save("sources", source("ANALOG", {}))
-    manager.update(0, ModulatorPatch(input_source_id=saved.id, frequency_khz=98100))
+    manager.update(0, ModulatorPatch(audio_mode="ANALOG", frequency_khz=98100))
     manager.start(0)
     assert rp.configs[0].audio_mode == "ANALOG"
-    assert sources.test(saved).ok
-    assert sources.test(source("ANALOG", {})).ok
     manager.stop(0)
     assert not sources.pipelines
 

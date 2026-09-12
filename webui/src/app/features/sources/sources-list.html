@@ -1,0 +1,56 @@
+<div class="page-title">
+  <h1>Sources</h1>
+  <a class="action-link" routerLink="/sources/new">Add source</a>
+</div>
+@if (shared.loading()) {
+  <p role="status">Loading Sources...</p>
+}
+@if (shared.stale() && !shared.loading()) {
+  <p class="warning" role="status">
+    Backend unavailable. Previously loaded configuration may be stale.
+  </p>
+}
+@if (!sources().length && !shared.loading() && !shared.stale()) {
+  <p>No Sources configured. Add a source to make an input available to the transmitters.</p>
+}
+@for (source of sources(); track source.id) {
+  <section class="source-row" [attr.aria-label]="source.name">
+    <div class="source-summary">
+      <div>
+        <a [routerLink]="['/sources', source.id]"
+          ><strong>{{ source.name }}</strong></a
+        ><span class="muted"> {{ source.type }}{{ source.enabled ? '' : ' / Disabled' }}</span>
+        <p class="endpoint" [title]="endpoint(source)">{{ endpoint(source) }}</p>
+      </div>
+      <div>
+        <span [class.error]="runtime()[source.id]?.state === 'ERROR'">{{
+          runtime()[source.id]?.state ?? 'UNKNOWN / Unavailable'
+        }}</span>
+        <p class="muted">{{ references(source.id) }} TX references</p>
+      </div>
+      <div class="actions">
+        <a [routerLink]="['/sources', source.id]">Edit</a
+        ><button (click)="test(source.id)" [disabled]="pending().has(source.id)">
+          {{ pending().has(source.id) ? pendingLabel()[source.id] : 'Test' }}</button
+        ><button (click)="deleting.set(source.id)" [disabled]="pending().has(source.id)">
+          Delete
+        </button>
+      </div>
+    </div>
+    @if (runtime()[source.id]?.last_error) {
+      <p class="error">{{ runtime()[source.id]?.last_error }}</p>
+    }
+    @if (deleting() === source.id) {
+      <div class="actions" role="group" [attr.aria-label]="'Delete ' + source.name">
+        <span>Delete Source &ldquo;{{ source.name }}&rdquo;?</span
+        ><button class="stop" (click)="remove(source.id)" [disabled]="pending().has(source.id)">
+          Confirm delete</button
+        ><button (click)="deleting.set(null)" [disabled]="pending().has(source.id)">Cancel</button>
+      </div>
+    }
+    @if (errors()[source.id]) {
+      <p class="error" role="alert">{{ errors()[source.id] }}</p>
+    }
+    <app-source-test-result [result]="results()[source.id] ?? null" />
+  </section>
+}

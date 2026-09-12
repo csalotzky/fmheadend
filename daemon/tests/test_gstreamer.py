@@ -249,3 +249,30 @@ def test_native_rtp_caps_fields_survive_construction(gst, codec, extra):
         assert structure.get_name() == "application/x-rtp"
         for key, expected in {"media": "audio", "payload": 96, **fields}.items():
             assert structure.get_value(key) == expected
+
+
+@pytest.mark.parametrize('agent', [None, 'Station-native/2'])
+def test_http_user_agent_on_wire(gst,tmp_path,agent):
+    require(gst,'souphttpsrc','wavparse')
+    with wave.open(str(tmp_path/'ua.wav'),'wb') as wav:
+        wav.setparams((2,2,48000,0,'NONE','not compressed'))
+        wav.writeframes(b'\0'*4*48000*10)
+    seen=[]
+    class Handler(SimpleHTTPRequestHandler):
+        def end_headers(self):
+            self.send_header('icy-name','Deterministic Station')
+            super().end_headers()
+        def do_GET(self):
+            seen.append(self.headers.get('User-Agent'))
+            super().do_GET()
+    server=ThreadingHTTPServer(('127.0.0.1',0),functools.partial(Handler,directory=str(tmp_path)))
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    source=InputSourceConfig(name='UA',type='HTTP',config={'uri':f'http://127.0.0.1:{server.server_port}/ua.wav'},
+        gst_options={} if agent is None else {'source':{'user-agent':agent}})
+    pipeline=GstPipeline(source,reconnect=False)
+    try:
+        pipeline.start()
+        assert seen and all(value==(agent or 'fmheadend/0.1.0') for value in seen)
+        assert pipeline.probe_result().station_name == 'Deterministic Station'
+    finally:
+        pipeline.stop();server.shutdown();server.server_close();thread.join()

@@ -1,0 +1,132 @@
+:host(app-sources-list) {
+  display: block;
+  width: 100%;
+  max-width: 1200px;
+}
+a {
+  color: var(--text);
+}
+.action-link {
+  border: 1px solid var(--border);
+  padding: 9px 12px;
+  text-decoration: none;
+}
+.source-row {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 16px;
+  margin-bottom: 8px;
+}
+.source-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 170px auto;
+  gap: 20px;
+  align-items: center;
+}
+.endpoint {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  margin: 8px 0 0;
+}
+.actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+form {
+  max-width: 850px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 20px;
+}
+fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0 0 20px;
+  min-width: 0;
+}
+.fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+label {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+input,
+select,
+textarea {
+  display: block;
+  width: 100%;
+  margin-top: 7px;
+  padding: 9px;
+  background: var(--background);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font: 14px var(--sans);
+}
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--warning);
+  outline-offset: 2px;
+}
+input.ng-invalid.ng-touched {
+  border-color: var(--error);
+}
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.check input {
+  width: auto;
+  margin: 0;
+}
+details {
+  margin-top: 20px;
+}
+summary {
+  cursor: pointer;
+  margin-bottom: 12px;
+}
+@media (max-width: 900px) {
+  .source-summary {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .source-summary .actions {
+    grid-column: 1/-1;
+  }
+}
+@media (max-width: 620px) {
+  .fields,
+  .source-summary {
+    grid-template-columns: 1fr;
+  }
+  form {
+    padding: 12px;
+  }
+}
+
+.stream-row {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.stream-row > label {
+  flex: 1 1 300px;
+  min-width: 0;
+}
+.stream-row > button {
+  flex: 0 0 auto;
+}

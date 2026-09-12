@@ -90,17 +90,18 @@ describe('Operational display', () => {
   it('labels analog input as Audio rather than an idle digital path', () => {
     const state = setup();
     const data = sample();
-    data.sources[0].type = 'ANALOG';
+    data.modulators[0].audio_mode = 'ANALOG';
+    data.modulators[0].input_source_id = null;
     state.channels.set(compose(data));
     const fixture = TestBed.createComponent(Dashboard);
     fixture.detectChanges();
     const el = fixture.nativeElement as HTMLElement;
-    const audio = el.querySelector('.runtime span:nth-child(2)');
-    expect(audio?.textContent?.replace(/\s+/g, ' ').trim()).toBe('Audio Analog input');
+    const audio = el.querySelector('.runtime span');
+    expect(audio?.textContent?.replace(/\s+/g, ' ').trim()).toBe('Audio input: Analog');
     expect(state.channels()[0].pcm).toBe('Bypass');
     state.stale.set(true);
     fixture.detectChanges();
-    expect(audio?.textContent?.replace(/\s+/g, ' ').trim()).toBe('Audio Unknown');
+    expect(audio?.textContent?.replace(/\s+/g, ' ').trim()).toBe('Audio input: Analog');
   });
   it('uses real START and STOP buttons without card navigation', () => {
     const state = setup();

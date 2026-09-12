@@ -9,7 +9,7 @@
         ariaCurrentWhenActive="page"
         (click)="menu.set(false)"
         >{{ link[1] }}
-        @if (link[0] !== 'dashboard') {
+        @if (link[0] !== 'dashboard' && link[0] !== 'sources') {
           <small>{{ link[0] === 'bandscan' ? 'PENDING' : 'M7B' }}</small>
         }
       </a>

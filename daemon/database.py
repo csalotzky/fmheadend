@@ -6,7 +6,7 @@ from pathlib import Path
 from .errors import DomainError
 from .models.configuration import AudioProfile, InputSource, Modulator, ModulatorConfig, SystemConfig, utcnow
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 6
 RECORDS = {"sources": InputSource, "audio_profiles": AudioProfile, "modulators": Modulator}
 
 
@@ -76,6 +76,41 @@ class Database:
                     data.pop("name", None)
                     self.connection.execute("UPDATE modulators SET data = ? WHERE id = ?", (json.dumps(data), row["id"]))
                 self.connection.execute("PRAGMA user_version = 4")
+        if version < 5:
+            self.connection.execute("BEGIN IMMEDIATE")
+            with self.connection:
+                analog_ids = {row["id"] for row in self.connection.execute("SELECT id, data FROM sources")
+                              if json.loads(row["data"]).get("type") == "ANALOG"}
+                for row in self.connection.execute("SELECT id, input_source_id, data FROM modulators").fetchall():
+                    data = json.loads(row["data"])
+                    source_id = data.get("input_source_id")
+                    if source_id != row["input_source_id"]:
+                        raise RuntimeError(f"Modulator {row['id']} has conflicting legacy source references; migration aborted")
+                    if source_id in analog_ids:
+                        data["audio_mode"] = "ANALOG"
+                        data["input_source_id"] = None
+                    else:
+                        data.setdefault("audio_mode", "DIGITAL")
+                        if data["audio_mode"] == "ANALOG" and source_id is not None:
+                            raise RuntimeError("Conflicting legacy audio mode and digital source; migration aborted")
+                    self.connection.execute("UPDATE modulators SET input_source_id = ?, data = ? WHERE id = ?",
+                                            (data.get("input_source_id"), json.dumps(data), row["id"]))
+                for source_id in analog_ids:
+                    self.connection.execute("DELETE FROM sources WHERE id = ?", (source_id,))
+                self.connection.execute("PRAGMA user_version = 5")
+        if version < 6:
+            self.connection.execute("BEGIN IMMEDIATE")
+            with self.connection:
+                for row in self.connection.execute("SELECT id, data FROM sources").fetchall():
+                    data = json.loads(row["data"])
+                    if data.get("type") != "HTTP" or "user_agent" not in data["config"]:
+                        continue
+                    legacy = data["config"].pop("user_agent")
+                    options = data.setdefault("gst_options", {}).setdefault("source", {})
+                    # Preserve the old effective value: advanced overrides were applied last.
+                    options.setdefault("user-agent", legacy)
+                    self.connection.execute("UPDATE sources SET data = ? WHERE id = ?", (json.dumps(data), row["id"]))
+                self.connection.execute("PRAGMA user_version = 6")
         ids = [row[0] for row in self.connection.execute("SELECT id FROM modulators ORDER BY id")]
         if ids != list(range(8)):
             raise RuntimeError("Database must contain exactly modulators 0..7")

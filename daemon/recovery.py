@@ -2,7 +2,6 @@
 import logging
 import time
 from .errors import DependencyUnavailable, DomainError
-from .models.configuration import SourceType
 from .models.runtime_status import TxState
 from .rp2354.client import TxConfig
 from .rp2354.protocol import IncompatibleProtocol, PROTOCOL_VERSION
@@ -79,9 +78,8 @@ class Recovery:
             self.rp.set_tx_enabled(channel, False)
         for config in self.modulators.list():
             self.modulators.validate(config)
-            source = self.modulators.database.get('sources', config.input_source_id) if config.input_source_id is not None else None
-            if config.frequency_khz is not None and source is not None:
-                self.rp.set_tx_config(config.id, TxConfig.from_modulator(config, source.type == SourceType.ANALOG))
+            if config.frequency_khz is not None:
+                self.rp.set_tx_config(config.id, TxConfig.from_modulator(config))
             self.boundary(config.id)
         for config in self.modulators.list():
             if config.enabled:

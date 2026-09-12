@@ -1,6 +1,6 @@
 from typing import Protocol
 from .output import PcmOutput
-from ..models.configuration import InputSourceConfig, SourceTestResult, SourceType
+from ..models.configuration import InputSourceConfig, SourceTestResult
 
 
 class SourcePipeline(Protocol):
@@ -22,8 +22,6 @@ class MockPipeline:
 
 
 def probe(source: InputSourceConfig) -> SourceTestResult:
-    if source.type == SourceType.ANALOG:
-        return SourceTestResult(message="Mock analog input; no pipeline or hardware probe.")
     return SourceTestResult(codec="MOCK", sample_rate=48000, channels=2)
 
 

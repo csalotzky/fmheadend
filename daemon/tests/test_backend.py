@@ -75,7 +75,7 @@ def test_crud_constraints_and_probe_isolation(client):
     ("HTTP", {"uri": "https://example.org/stream"}),
     ("UDP", {"port": 5000, "format": "S16LE", "sample_rate": 48000, "channels": 2}),
     ("RTP", {"port": 5004, "codec": "OPUS", "payload_type": 96}),
-    ("ALSA", {"device": "hw:1,0"}), ("ANALOG", {}),
+    ("ALSA", {"device": "hw:1,0"}),
 ])
 def test_source_types(client, kind, config):
     sid = source(client, {"name": kind, "type": kind, "config": config})
@@ -116,7 +116,7 @@ def test_invalid_modulator_patch_is_atomic(client, patch):
 def test_patch_revalidates_source_type(client):
     sid = source(client)
     assert client.patch(f"{P}/sources/{sid}", json={"type": "ANALOG"}).status_code == 422
-    assert client.patch(f"{P}/sources/{sid}", json={"type": "ANALOG", "config": {}}).status_code == 200
+    assert client.patch(f"{P}/sources/{sid}", json={"type": "ALSA", "config": {"device": "hw:1,0"}}).status_code == 200
 
 
 def test_profiles_and_foreign_keys(client):
@@ -205,8 +205,10 @@ def services(tmp_path):
 
 def setup_tx(services, tx=0, analog=False):
     db, _, _, _, manager = services
-    source = db.save("sources", InputSourceConfig.model_validate(
-        {"name": "Analog", "type": "ANALOG", "config": {}} if analog else HTTP))
+    if analog:
+        manager.update(tx, ModulatorPatch(audio_mode="ANALOG", frequency_khz=98100))
+        return None
+    source = db.save("sources", InputSourceConfig.model_validate(HTTP))
     manager.update(tx, ModulatorPatch(input_source_id=source.id, frequency_khz=98100))
     return source.id
 
@@ -325,7 +327,7 @@ def test_status_reads_cache_without_hardware_calls(client):
 def test_schema_version_and_fixed_rows(tmp_path):
     path = tmp_path / "schema.db"
     db = Database(path)
-    assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 6
     assert db.connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     with pytest.raises(sqlite3.IntegrityError):
         db.connection.execute("DELETE FROM modulators WHERE id=0")

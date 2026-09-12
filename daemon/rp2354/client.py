@@ -16,9 +16,8 @@ class TxConfig(Model):
     rds_enabled: bool
 
     @classmethod
-    def from_modulator(cls, modulator: Modulator, analog: bool):
-        return cls(**modulator.model_dump(include={"frequency_khz", "rf_output_dbuv", "stereo", "preemphasis_us", "rds_enabled"}),
-                   audio_mode="ANALOG" if analog else "DIGITAL")
+    def from_modulator(cls, modulator: Modulator):
+        return cls(**modulator.model_dump(include={"frequency_khz", "rf_output_dbuv", "stereo", "preemphasis_us", "rds_enabled", "audio_mode"}))
 
 
 class Rp2354Client(Protocol):

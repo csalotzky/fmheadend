@@ -319,8 +319,7 @@ def test_app_uses_existing_rds_control_path(tmp_path):
     clock=Clock();rp=MockRp2354Client(clock=clock)
     app=create_app(Settings(tmp_path/'api.db'),rp=rp,clock=clock)
     with TestClient(app) as api:
-        source=api.post('/api/v1/sources',json={'name':'mock','type':'ANALOG','config':{}}).json()['id']
-        assert api.patch('/api/v1/modulators/0',json={'input_source_id':source,'frequency_khz':98100,
+        assert api.patch('/api/v1/modulators/0',json={'audio_mode':'ANALOG','frequency_khz':98100,
             'rds_enabled':True,'rds_ecc':224,'rds_pi':4660,'rds_rt':'API text'}).status_code==200
         assert api.post('/api/v1/modulators/0/start').status_code==200
         # Execute the normal maintenance service on its owning control worker.

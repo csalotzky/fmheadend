@@ -215,7 +215,7 @@ A konkrét pipeline source típustól függően változhat, de a kimeneti caps m
 - `UDP` - raw vagy explicit formátumú UDP audio;
 - `RTP` - RTP transport a megadott codec/payload paraméterekkel;
 - `ALSA` - Linux ALSA capture device, tipikusan USB hangkártya;
-- `ANALOG` - nincs Pi PCM; a megfelelő QN közvetlen analóg bemenetet használ.
+Analog input is a per-Modulator audio mode, not an InputSource type.
 
 **HLS nem külön `InputSource.type`.** HTTP/URI source-ként kezelendő.
 
@@ -247,7 +247,7 @@ Az `InputSource` egy újrahasznosítható logikai audioforrás. Nem tartalmaz FM
 |---|---|---:|---|
 | `id` | integer | igen | SQLite primary key |
 | `name` | string | igen | Emberi név, pl. `KEXP` |
-| `type` | enum | igen | `HTTP`, `UDP`, `RTP`, `ALSA`, `ANALOG` |
+| `type` | enum | igen | `HTTP`, `UDP`, `RTP`, `ALSA` |
 | `enabled` | bool | igen | A source használható-e |
 | `config` | JSON object | igen | Type-specifikus config |
 | `audio_profile_id` | nullable integer | nem | Opcionális audio processing profil |
@@ -264,14 +264,37 @@ Javasolt mezők:
 {
   "uri": "https://example.org/stream",
   "buffer_ms": 3000,
-  "connect_timeout_ms": 10000,
-  "user_agent": "fmheadend/1.0"
+  "connect_timeout_ms": 10000
 }
 ```
 
 - A `uri` kötelező.
 - HLS `.m3u8` is ugyanebbe a típusba tartozik.
 - ICY metadata kinyerése támogatandó, ha a stream szolgáltatja.
+
+HTTP User-Agent has one configurable path: `gst_options.source["user-agent"]`.
+If absent, the existing application default is `fmheadend/0.1.0`. Example source-level
+options: `{"source": {"user-agent": "Station/2"}}`. This sets the HTTP element property
+through the existing GStreamer source-setup callback; unsupported explicit properties
+produce a probe/ingest error. No separate `config.user_agent` field is accepted.
+
+SQLite schema 6 removes legacy HTTP `config.user_agent`, moving its value to the
+advanced source property only when that property is absent. When both existed,
+the advanced value already won at runtime and remains unchanged. Other fields,
+source types, IDs, relationships and timestamps are preserved. The migration is
+transactional and idempotent; malformed legacy records abort without a version bump.
+HTTP records with neither field retain the same application default.
+
+HTTP source-test responses may include nullable `station_name`, extracted only from
+transport `icy-name` metadata exposed by GStreamer HTTP header messages. It is separate
+from now-playing `stream_title`/artist/title. Missing station identity remains null;
+no URL guessing. This runtime probe value does not change source persistence.
+
+Successful HTTP source-test responses may also include `input_bitrate_bps` from
+existing GStreamer bitrate/nominal-bitrate tags. It is a reported estimate in bits/s,
+not decoded PCM bitrate or measured download throughput. Missing/unusable metadata
+returns null; the short probe is not extended to measure a byte-rate average. The UI
+shows approximate whole decimal kb/s. No persistent configuration is introduced.
 
 ### 6.1.2 `UDP` config
 
@@ -316,19 +339,6 @@ A V1 codec lista lehet korlátozott: `PCM`, `MP3`, `AAC`, `OPUS`.
 
 A capture formátumot a GStreamer normalizálja a fix belső PCM contractra.
 
-### 6.1.5 `ANALOG` config
-
-```json
-{}
-```
-
-Jelentése: a modulátor QN8007B közvetlen analóg audio bemenetet használ. Ebben az esetben:
-
-- nincs GStreamer pipeline;
-- nincs PCM producer a modulátor Unix socketjére;
-- a digitális SPI slot ettől függetlenül létezik, a muxd csendet küld rajta;
-- RDS és FM vezérlés továbbra is teljesen aktív.
-
 ## 6.2 `AudioProfile`
 
 Az audio processinget nem az `InputSource` mezőivel kell szétszórni. Opcionális, újrahasznosítható `AudioProfile` tartozhat egy source-hoz.
@@ -371,6 +381,7 @@ A `Modulator` a nyolc fizikai QN egyikét reprezentálja. Az `id` **fizikai azon
 |---|---|---|
 | `id` | integer 0..7 | Fizikai QN index |
 | `enabled` | bool | Desired boot/runtime ON állapot |
+| `audio_mode` | enum | `DIGITAL` / `ANALOG`; default `DIGITAL` |
 | `input_source_id` | nullable FK | Hozzárendelt `InputSource` |
 | `frequency_khz` | integer | FM frekvencia kHz-ben |
 | `stereo` | bool | Stereo/mono |
@@ -387,7 +398,23 @@ A `Modulator` a nyolc fizikai QN egyikét reprezentálja. Az `id` **fizikai azon
 | `rds_metadata_to_rt` | bool | GStreamer metadata használható-e RT-nek |
 | `timestamp` | datetime | Utolsó módosítás |
 
-Az `audio_input_mode` ne legyen külön persistent mező: az `InputSource.type == ANALOG` egyértelműen meghatározza az analóg módot.
+`Modulator.audio_mode` is persistent: `DIGITAL` (default) or `ANALOG`.
+ANALOG selects this physical transmitter's dedicated analog jack, not a reusable
+InputSource. There is no routing matrix. ANALOG always clears `input_source_id`
+(including PATCH with an existing assignment); DIGITAL never restores a hidden
+assignment and requires an enabled digital source before start. Frequency validation
+is unchanged. AudioProfile belongs only to digital InputSources. Analog mode creates
+no GStreamer pipeline or PCM producer; the mux slot remains silence. RDS remains
+Modulator-owned and independent of audio mode. RP audio_mode wire values remain 0/1.
+
+SQLite schema 5 defaults existing digital/unassigned modulators to DIGITAL. Each
+modulator referencing a legacy ANALOG InputSource becomes ANALOG with a null source FK
+and JSON reference, including multiple references to one legacy record. That means
+each channel's own jack, never shared analog routing. Unused legacy ANALOG InputSource records
+are also deleted; AudioProfile records are retained. Enabled state, frequency, RF,
+RDS, timestamps and digital source records are preserved. SQL/JSON reference conflicts
+or an explicit ANALOG mode paired with a digital reference abort the transaction
+without a schema-version bump; repair inconsistent legacy data before retrying.
 
 Modulators have no separate name field; physical ID 0..7 is their identity.
 SQLite schema 4 removes legacy names without changing other configuration.
@@ -496,11 +523,8 @@ A V1 dashboardhoz szándékosan minimális.
 
 ### `source_state`
 
-Digitális source esetén az `InputSourceStatus.state` egyszerűsített tükrözése. Analóg source esetén:
-
-```text
-ANALOG
-```
+For digital input this mirrors the active InputSource state. For ANALOG mode,
+`ModulatorStatus.source_state` is null because no InputSource exists.
 
 ### `tx_state`
 
@@ -588,7 +612,7 @@ Digitális pipeline akkor fusson, ha legalább egy aktív/enabled modulátor has
 - egy consumer eltűnik -> pipeline marad, ha más használja;
 - utolsó consumer eltűnik -> pipeline leáll.
 
-`ANALOG` source soha nem hoz létre GStreamer pipeline-t.
+`ANALOG` modulator soha nem hoz létre GStreamer pipeline-t.
 
 ## 8.3 Reconnect
 
@@ -1708,7 +1732,7 @@ start TX3
 Analóg source test:
 
 ```text
-start TX3 with ANALOG source
+start TX3 with ANALOG audio mode
 -> GStreamer pipeline NEM indul
 -> SET_TX_CONFIG(ANALOG)
 -> SET_TX_ENABLED(true)
@@ -2027,7 +2051,7 @@ A Linux V1 akkor tekinthető késznek, ha:
 - Pi Zero 2 W-n stabilan indul és systemd alatt újraindítható;
 - a 8 modulátor persistent configja kezelhető REST API-ból;
 - digitális HTTP/HLS, UDP/RTP és ALSA source működik;
-- ANALOG source módban nincs felesleges GStreamer/PCM út;
+- ANALOG audio mode módban nincs felesleges GStreamer/PCM út;
 - digitális audio 48 kHz/S16LE/stereo formátumban eljut a muxd-ig;
 - muxd folyamatosan előállítja az SPI frame-eket;
 - RP I2C vezérlés működik;

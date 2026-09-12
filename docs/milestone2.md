@@ -56,8 +56,7 @@ sufficient. No Python requirement has been lowered or silently bypassed.
   outside this implementation.
 - ALSA: `alsasrc` captures the selected device at configured input rate/channels.
   Capture-device negotiation failure is reported, not converted to mock success.
-- ANALOG: source acquisition and both source probes bypass the pipeline factory,
-  even if GI is missing. No PCM queue/producer is created for an analog TX.
+- Modulator audio_mode=ANALOG bypasses source acquisition entirely, even if GI is missing. No InputSource, PCM queue or producer exists for the dedicated analog jack.
 - Every digital path uses `audioconvert`, `audioresample` and native `volume` and
   terminates in caps `audio/x-raw,format=S16LE,rate=48000,channels=2,layout=interleaved`.
   The callback checks actual sample caps before accepting PCM. No sample arithmetic

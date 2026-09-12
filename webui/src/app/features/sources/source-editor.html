@@ -1,0 +1,107 @@
+<div class="page-title">
+  <h1>{{ id === undefined ? 'Add source' : 'Edit source' }}</h1>
+  <a routerLink="/sources">Back to Sources</a>
+</div>
+@if (loading()) {
+  <p role="status">Loading source...</p>
+}
+@if (error()) {
+  <p class="error" role="alert">{{ error() }}</p>
+}
+@if (!loading() && !loadFailed()) {
+  <form [formGroup]="form" (ngSubmit)="save()">
+    <fieldset [disabled]="saving() || testing()">
+      <div class="fields">
+        <label>Name<input formControlName="name" required maxlength="200" /></label>
+        <label
+          >Source type<select formControlName="type" (change)="changeType()">
+            @for (type of types; track type) {
+              <option [value]="type">{{ type }}</option>
+            }
+          </select></label
+        >
+        <label class="check"
+          ><input type="checkbox" formControlName="enabled" />Source enabled</label
+        >
+      </div>
+      <div class="fields" [formGroup]="config">
+        @for (field of fields[form.controls.type.value]; track field.key) {
+          <div [class.stream-row]="form.controls.type.value === 'HTTP' && field.key === 'uri'">
+            <label
+              >{{ field.label }}
+              @if (field.required) {
+                <span aria-hidden="true">*</span>
+              }
+              @if (field.options) {
+                <select [formControlName]="field.key" [required]="!!field.required">
+                  <option value="">Select...</option>
+                  @for (option of field.options; track option) {
+                    <option [value]="option">{{ option }}</option>
+                  }
+                </select>
+              } @else {
+                <input
+                  [formControlName]="field.key"
+                  [type]="field.numeric ? 'number' : 'text'"
+                  [required]="!!field.required"
+                  [attr.min]="field.min ?? null"
+                  [attr.max]="field.max ?? null"
+                  [attr.step]="field.numeric ? 1 : null"
+                />
+              }
+              @if (field.help) {
+                <small>{{ field.help }}</small>
+              }
+            </label>
+            @if (form.controls.type.value === 'HTTP' && field.key === 'uri') {
+              <button type="button" (click)="test()" [disabled]="testing() || saving()">
+                {{ testing() ? 'Testing...' : 'Test stream' }}
+              </button>
+            }
+          </div>
+        }
+      </div>
+      <label
+        >Audio profile (applies to digital sources)<select formControlName="audio_profile_id">
+          <option [ngValue]="null">No profile</option>
+          @for (profile of profiles(); track profile.id) {
+            <option [ngValue]="profile.id">{{ profile.name }}</option>
+          }
+          @if (missingProfile()) {
+            <option [ngValue]="form.controls.audio_profile_id.value">
+              Current profile {{ form.controls.audio_profile_id.value }} (unavailable)
+            </option>
+          }
+        </select></label
+      >
+      @if (profileError()) {
+        <p class="warning">Audio profiles unavailable: {{ profileError() }}</p>
+      }
+      <details>
+        <summary>Advanced source options</summary>
+        <label
+          >GStreamer element properties (JSON)<textarea
+            formControlName="gst_options"
+            rows="5"
+            spellcheck="false"
+          ></textarea>
+        </label>
+        <p class="muted">
+          Optional source, queue and resample property objects. Leave blank to use the defaults.
+        </p>
+      </details>
+    </fieldset>
+    <div class="actions">
+      <button type="submit" [disabled]="saving() || testing()">
+        {{ saving() ? 'Saving...' : 'Save' }}
+      </button>
+      @if (form.controls.type.value !== 'HTTP') {
+        <button type="button" (click)="test()" [disabled]="testing() || saving()">
+          {{ testing() ? 'Testing...' : 'Test unsaved configuration' }}
+        </button>
+      }
+    </div>
+    <p class="muted">Testing does not save changes or prove RF transmission.</p>
+    <app-source-test-result [result]="result()" />
+  </form>
+}

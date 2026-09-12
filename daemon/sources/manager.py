@@ -1,6 +1,6 @@
 import logging
 from ..errors import DependencyUnavailable, DomainError
-from ..models.configuration import InputSourceConfig, SourceType, SourceTestResult
+from ..models.configuration import InputSourceConfig, SourceTestResult
 from ..models.runtime_status import InputSourceStatus, SourceState
 from .pipeline import MockPipeline, probe
 
@@ -34,8 +34,6 @@ class SourceManager:
         source = self.database.get("sources", source_id)
         if not source.enabled:
             raise DomainError(409, "SOURCE_DISABLED", "The assigned input source is disabled")
-        if source.type == SourceType.ANALOG:
-            return
         consumers = self.consumers.setdefault(source_id, set())
         if modulator_id in consumers:
             return
@@ -97,8 +95,6 @@ class SourceManager:
     def test(self, source: InputSourceConfig):
         if getattr(self.pipeline_factory, "mocked", True):
             return probe(source)
-        if source.type == SourceType.ANALOG:
-            return SourceTestResult(mocked=False, message="Analog bypass selected; no GStreamer pipeline or hardware probe.")
         # Testing an active saved source reads its existing pipeline: no duplicate
         # ingest or ALSA capture. An inactive/unsaved probe is temporary.
         active = self.pipelines.get(getattr(source, "id", None))

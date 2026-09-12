@@ -1,6 +1,6 @@
 import logging
 from ..errors import DependencyUnavailable, DomainError
-from ..models.configuration import ModulatorConfig, SourceType
+from ..models.configuration import ModulatorConfig
 from ..models.runtime_status import ModulatorStatus, TxState
 from ..rp2354.client import TxConfig
 
@@ -13,7 +13,8 @@ class ModulatorManager:
         self.settings = settings
         self.rds = None
         self.recovery = None
-        self.statuses = {i: ModulatorStatus(id=i) for i in range(8)}
+        self.statuses = {config.id: ModulatorStatus(id=config.id, source_state=None if config.audio_mode == "ANALOG" else "IDLE")
+                         for config in database.list("modulators")}
         self.active_sources: dict[int, int] = {}
 
     def list(self):
@@ -32,7 +33,7 @@ class ModulatorManager:
             source = self.database.get("sources", config.input_source_id)
             if config.enabled and not source.enabled:
                 raise DomainError(409, "SOURCE_DISABLED", "The assigned input source is disabled")
-        elif config.enabled:
+        elif config.enabled and config.audio_mode == "DIGITAL":
             raise DomainError(409, "SOURCE_REQUIRED", "Assign an input source before enabling a modulator")
 
     def update(self, modulator_id, patch):
@@ -40,6 +41,7 @@ class ModulatorManager:
         config = ModulatorConfig.model_validate(old.model_dump(exclude={"id", "timestamp"}) | patch.model_dump(exclude_unset=True))
         self.validate(config)
         saved = self.database.save("modulators", config, modulator_id)
+        self.statuses[modulator_id].source_state = None if config.audio_mode == "ANALOG" else "IDLE"
         # Commit desired config first; failed apply leaves it available for recovery.
         if modulator_id in self.active_sources or self.statuses[modulator_id].tx_state != TxState.OFF:
             self._stop(modulator_id)
@@ -61,12 +63,12 @@ class ModulatorManager:
             self.recovery.require_ready()
         config = self.get(modulator_id)
         status = self.statuses[modulator_id]
-        if status.tx_state == TxState.ON and modulator_id in self.active_sources:
+        if status.tx_state == TxState.ON and (config.audio_mode == "ANALOG" or modulator_id in self.active_sources):
             return status
         if modulator_id in self.active_sources:
             self._stop(modulator_id)
-        source = self.database.get("sources", config.input_source_id)
-        analog = source.type == SourceType.ANALOG
+        analog = config.audio_mode == "ANALOG"
+        source = None if analog else self.database.get("sources", config.input_source_id)
         status.tx_state, status.last_error = TxState.STARTING, None
         enable_attempted = False
         rp_attempted = False
@@ -75,9 +77,8 @@ class ModulatorManager:
                 self.sources.acquire(source.id, modulator_id)
                 self.active_sources[modulator_id] = source.id
                 self.mux.attach(modulator_id, source.id)
-            self.active_sources[modulator_id] = source.id
             rp_attempted = True
-            self.rp.set_tx_config(modulator_id, TxConfig.from_modulator(config, analog))
+            self.rp.set_tx_config(modulator_id, TxConfig.from_modulator(config))
             if self.recovery:
                 self.recovery.boundary(modulator_id)
             enable_attempted = True
@@ -94,14 +95,15 @@ class ModulatorManager:
                     pass
             if rf_off:
                 self.mux.detach(modulator_id)
-                self.sources.release(source.id, modulator_id)
+                if source is not None:
+                    self.sources.release(source.id, modulator_id)
                 self.active_sources.pop(modulator_id, None)
             status.tx_state, status.last_error = TxState.ERROR, str(exc)
             if self.recovery and rp_attempted:
                 self.recovery.lost(exc)
             raise DomainError(503, "DEPENDENCY_UNAVAILABLE", str(exc)) from exc
         status.tx_state = TxState.ON
-        status.source_state = "ANALOG" if analog else "RUNNING"
+        status.source_state = None if analog else "RUNNING"
         logger.info("modulator %s started at %s kHz", modulator_id, config.frequency_khz)
         return status
 
@@ -133,7 +135,7 @@ class ModulatorManager:
                 status.tx_state, status.last_error = TxState.ERROR, str(exc)
                 raise DomainError(503, "DEPENDENCY_UNAVAILABLE", str(exc)) from exc
             self.active_sources.pop(modulator_id, None)
-        status.tx_state, status.source_state, status.last_error = TxState.OFF, "IDLE", None
+        status.tx_state, status.source_state, status.last_error = TxState.OFF, (None if self.get(modulator_id).audio_mode == "ANALOG" else "IDLE"), None
         logger.info("modulator %s stopped", modulator_id)
         return status
 
@@ -156,18 +158,18 @@ class ModulatorManager:
 
 
     def restore_audio(self, config):
+        if config.audio_mode == "ANALOG":
+            self.release_audio(config.id)
+            self.statuses[config.id].source_state = None
+            return
         source = self.database.get('sources', config.input_source_id)
         existing = self.active_sources.get(config.id)
         if existing != source.id:
             self.release_audio(config.id)
-            if source.type != SourceType.ANALOG:
-                self.sources.acquire(source.id, config.id)
-                self.active_sources[config.id] = source.id
-                self.mux.attach(config.id, source.id)
+            self.sources.acquire(source.id, config.id)
             self.active_sources[config.id] = source.id
-        elif source.type != SourceType.ANALOG:
-            self.mux.attach(config.id, source.id)
-        self.statuses[config.id].source_state = 'ANALOG' if source.type == SourceType.ANALOG else 'RUNNING'
+        self.mux.attach(config.id, source.id)
+        self.statuses[config.id].source_state = 'RUNNING'
 
     def release_audio(self, channel):
         self.mux.detach(channel)
@@ -177,4 +179,4 @@ class ModulatorManager:
                 self.sources.release(source, channel)
             except DependencyUnavailable:
                 logger.exception('source cleanup failed for channel %s', channel)
-        self.statuses[channel].source_state = 'IDLE'
+        self.statuses[channel].source_state = None if self.get(channel).audio_mode == 'ANALOG' else 'IDLE'

@@ -15,10 +15,9 @@ P='/api/v1'
 
 def seed(path):
     db=Database(path)
-    source=db.save('sources', InputSourceConfig(name='analog',type='ANALOG',config={}))
     old=db.get('modulators',0)
     db.save('modulators',ModulatorConfig.model_validate(old.model_dump(exclude={'id','timestamp'}) | {
-        'input_source_id':source.id,'frequency_khz':98100,'enabled':True,'rds_enabled':True,'rds_ecc':224}),0)
+        'audio_mode':'ANALOG','frequency_khz':98100,'enabled':True,'rds_enabled':True,'rds_ecc':224}),0)
     db.close()
 
 
@@ -41,6 +40,7 @@ def test_startup_loss_recovery_order_and_shutdown(tmp_path):
         assert api.get(P+'/status').json()['system']['system_state']=='DEGRADED'
         assert api.get(P+'/modulators/0').json()['enabled']
         assert api.get(P+'/status').json()['modulators'][0]['hardware_tx_state'] is None
+        assert api.get(P+'/status').json()['modulators'][0]['source_state'] is None
         events.clear();refresh(app)
         assert not events  # Backoff: no bus traffic.
         rp.available=True;now[0]=3;refresh(app)

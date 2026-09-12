@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 from ..config import Settings
 from ..database import Database
-from ..models.configuration import InputSourceConfig, ModulatorPatch, RtOverride
+from ..models.configuration import ModulatorPatch, RtOverride
 from ..modulators.manager import ModulatorManager
 from ..mux.client import MockMuxClient
 from ..rp2354.client import MockRp2354Client
@@ -20,14 +20,13 @@ def run() -> dict:
     with tempfile.TemporaryDirectory(prefix='fm-rds-') as directory:
         db = Database(Path(directory) / 'smoke.db')
         try:
-            source = db.save('sources', InputSourceConfig(name='Analog mock', type='ANALOG', config={}))
             sources = SourceManager(db)
             rp = MockRp2354Client(clock=clock)
             manager = ModulatorManager(db, sources, rp, MockMuxClient(), Settings(Path(directory) / 'smoke.db'))
             rt = RadioTextService(db, sources, clock)
             refill = RdsRefill(db, manager, rt, rp, clock)
             manager.rds = refill
-            manager.update(0, ModulatorPatch(input_source_id=source.id, frequency_khz=98100,
+            manager.update(0, ModulatorPatch(audio_mode="ANALOG", frequency_khz=98100,
                 rf_output_dbuv=96.0, rds_enabled=True, rds_pi=0x1234, rds_ecc=0xe0,
                 rds_pty=10, rds_tp=True, rds_ps=[{'text':'RADIO FM','duration_s':5}],
                 rds_af_khz=[101100], rds_rt='Persistent fallback'))

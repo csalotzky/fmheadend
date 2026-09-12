@@ -20,7 +20,7 @@ export function compose(snapshot: Snapshot, previous?: Snapshot): ChannelView[] 
     const runtime = snapshot.status.modulators.find((m) => m.id === id);
     const source = snapshot.sources.find((s) => s.id === config?.input_source_id);
     const prior = previous?.status.modulators.find((m) => m.id === id);
-    const analog = source?.type === 'ANALOG';
+    const analog = config?.audio_mode === 'ANALOG';
     const pcm = analog
       ? 'Bypass'
       : snapshot.status.system.mux_state !== 'RUNNING'
@@ -49,10 +49,11 @@ export function compose(snapshot: Snapshot, previous?: Snapshot): ChannelView[] 
       analog,
       pcm,
       error,
-      sourceName:
-        source?.name ??
-        (config?.input_source_id == null ? 'No source assigned' : 'Source unavailable'),
-      canStart: config?.frequency_khz != null && !!source?.enabled,
+      sourceName: analog
+        ? 'Dedicated analog input'
+        : (source?.name ??
+          (config?.input_source_id == null ? 'No source assigned' : 'Source unavailable')),
+      canStart: config?.frequency_khz != null && (analog || !!source?.enabled),
     };
   });
 }
@@ -100,6 +101,10 @@ export class DashboardState {
     this.polling?.unsubscribe();
     this.polling = undefined;
     this.cancelled.next();
+  }
+  async refreshAfterMutation() {
+    await this.inFlight;
+    await this.refresh();
   }
   refresh(): Promise<void> {
     if (this.closed) return Promise.resolve();
