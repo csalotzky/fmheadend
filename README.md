@@ -52,7 +52,7 @@ The default database is `/var/lib/fmheadend/fmheadend.db`; use a writable path
 for local development. Run one daemon process/worker per headend.
 
 The distribution maps `fmheadendd` directly to `daemon/` without an extra nested
-source directory. `muxd/` contains the C++ daemon; `systemd/` contains M6A service units; `webui/` remains reserved for later work.
+source directory. `muxd/` contains the C++ daemon; `systemd/` contains M6A service units; `webui/` contains the M7A Angular shell and operational Dashboard.
 
 ## Try the API
 
@@ -157,7 +157,7 @@ gain, metadata and source reconnects. See [details and test results](docs/milest
 Milestone 3 adds the Unix PCM/control sockets, bounded C++ rings, fixed frame
 builder, mock capture and Linux spidev transport. Milestone 4 adds RP2354 I2C protocol/client primitives and hardware status.
 M5 adds Linux RDS encoding and FIFO scheduling. M6A adds safe desired-state
-restoration, integration recovery and systemd deployment. Firmware and web UI
+restoration, integration recovery and systemd deployment. M7A adds the Angular Dashboard; configuration pages and firmware
 remain unimplemented; Zero 2 W stress/performance validation is deferred to M6B. New modulators
 remain disabled with no frequency until explicitly configured.
 
@@ -166,3 +166,5 @@ digital source and a single serialized control executor inside `fmheadendd`;
 media callbacks never access SQLite or hardware. This is not a separate service.
 
 Milestone 6A lifecycle recovery and systemd deployment: [documentation](docs/milestone6a.md).
+
+Milestone 7A Angular Dashboard: [development and validation](docs/milestone7a.md).

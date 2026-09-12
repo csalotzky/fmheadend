@@ -132,7 +132,6 @@ class PsEntry(Model):
 
 
 class ModulatorConfig(Model):
-    name: Name = "Modulator"
     enabled: bool = False
     input_source_id: PositiveId | None = None
     frequency_khz: int | None = Field(default=None, gt=0, strict=True)

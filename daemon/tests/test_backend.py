@@ -325,7 +325,7 @@ def test_status_reads_cache_without_hardware_calls(client):
 def test_schema_version_and_fixed_rows(tmp_path):
     path = tmp_path / "schema.db"
     db = Database(path)
-    assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 4
     assert db.connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     with pytest.raises(sqlite3.IntegrityError):
         db.connection.execute("DELETE FROM modulators WHERE id=0")

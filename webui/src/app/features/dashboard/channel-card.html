@@ -1,0 +1,83 @@
+<article
+  class="channel"
+  [class.fault]="reportedState() === 'ERROR'"
+  [class.on]="reportedState() === 'ON'"
+>
+  <a
+    class="readout"
+    [routerLink]="['/modulators', channel().id]"
+    [attr.aria-label]="'TX ' + channel().id + ' configuration (M7B placeholder)'"
+  >
+    <div class="channel-top">
+      <span class="channel-id">TX {{ channel().id }}</span
+      ><span class="tx-state" [class.warning]="reportedState() === 'UNKNOWN'">{{
+        reportedState()
+      }}</span>
+    </div>
+    <div class="frequency">
+      @if (channel().config?.frequency_khz != null) {
+        {{ channel().config!.frequency_khz! / 1000 | number: '1.2-2' }} <small>MHz</small>
+      } @else {
+        <span class="unconfigured">Not configured</span>
+      }
+    </div>
+    <div class="source-name">{{ channel().sourceName }}</div>
+    <dl class="rds-data">
+      <div>
+        <dt>PS{{ (channel().config?.rds_ps?.length ?? 0) > 1 ? ' carousel' : '' }}</dt>
+        <dd [title]="ps()">{{ ps() }}</dd>
+      </div>
+      <div class="codes">
+        <dt>PI</dt>
+        <dd>{{ hex(channel().config?.rds_pi, 4) }}</dd>
+        <dt>ECC</dt>
+        <dd>{{ hex(channel().config?.rds_ecc, 2) }}</dd>
+      </div>
+      @if (channel().config?.rds_af_khz?.length) {
+        <div>
+          <dt>AF</dt>
+          <dd [title]="af()">{{ af() }}</dd>
+        </div>
+      }
+    </dl>
+    <div class="audio-settings">
+      {{ channel().config ? (channel().config!.stereo ? 'Stereo' : 'Mono') : '\u2014' }}
+      <span>&middot;</span> {{ channel().config?.preemphasis_us ?? '\u2014' }} &micro;s
+    </div>
+    <div class="rf">
+      <span>Nominal RF</span
+      ><strong
+        >{{
+          stale() || channel().runtime?.rf_output_dbuv == null
+            ? '\u2014'
+            : (channel().runtime!.rf_output_dbuv | number: '1.1-1')
+        }}
+        <small>dB&micro;V</small></strong
+      >
+    </div>
+    <div class="runtime">
+      <span
+        >Source <b>{{ sourceState() }}</b></span
+      ><span
+        >{{ channel().analog ? 'Audio' : 'Digital audio' }}
+        <b>{{ stale() ? 'Unknown' : channel().analog ? 'Analog input' : channel().pcm }}</b></span
+      ><span
+        >RDS <b>{{ stale() ? 'Unknown' : (channel().runtime?.rds_state ?? 'Unknown') }}</b></span
+      >
+    </div>
+  </a>
+  @if (actionError() || reportedError()) {
+    <p class="card-error" role="status">{{ actionError() || reportedError() }}</p>
+  }
+  <div class="channel-control">
+    <span class="muted">Reported state: {{ reportedState() }}</span>
+    <button
+      [class.stop]="stopping()"
+      [disabled]="locked() || (!stopping() && (stale() || !channel().canStart))"
+      [attr.aria-label]="(stopping() ? 'STOP' : 'START') + ' TX ' + channel().id"
+      (click)="operate.emit(stopping() ? 'stop' : 'start')"
+    >
+      {{ pending() ? 'WORKING\u2026' : stopping() ? 'STOP' : 'START' }}
+    </button>
+  </div>
+</article>

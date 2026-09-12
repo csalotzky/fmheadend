@@ -1,0 +1,98 @@
+<a class="skip-link" href="#main">Skip to content</a>
+<aside [class.expanded]="menu()">
+  <a class="brand" routerLink="/dashboard">fmheadend<span>8 CHANNEL FM SYSTEM</span></a>
+  <nav aria-label="Main navigation">
+    @for (link of links; track link[0]) {
+      <a
+        [routerLink]="'/' + link[0]"
+        routerLinkActive="selected"
+        ariaCurrentWhenActive="page"
+        (click)="menu.set(false)"
+        >{{ link[1] }}
+        @if (link[0] !== 'dashboard') {
+          <small>{{ link[0] === 'bandscan' ? 'PENDING' : 'M7B' }}</small>
+        }
+      </a>
+    }
+  </nav>
+  <div class="sidebar-foot">CONTROL / MONITOR<br />Linux headend</div>
+</aside>
+<div class="workspace">
+  <header>
+    <button
+      class="menu"
+      (click)="menu.set(!menu())"
+      [attr.aria-expanded]="menu()"
+      aria-label="Toggle navigation"
+    >
+      Menu
+    </button>
+    <div class="global-state">
+      <strong
+        [class.warning]="state.stale() || state.data()?.status?.system?.system_state !== 'RUNNING'"
+        >{{
+          state.loading()
+            ? 'CONNECTING'
+            : state.stale()
+              ? 'BACKEND UNAVAILABLE'
+              : state.data()?.status?.system?.system_state
+        }}</strong
+      >
+      <div class="dependencies">
+        <span
+          >RP2354
+          <b>{{ state.stale() ? 'Unknown' : state.data()?.status?.system?.rp2354_state }}</b></span
+        ><span
+          >mux
+          <b>{{ state.stale() ? 'Unknown' : state.data()?.status?.system?.mux_state }}</b></span
+        ><span>{{ state.stale() ? '\u2014' : state.activeCount() }} / 8 TX ON</span>
+      </div>
+    </div>
+    <div class="global-actions">
+      <button [disabled]="state.busy() !== null || state.stale()" (click)="state.all('start')">
+        START ALL</button
+      ><button class="stop" [disabled]="state.busy() !== null" (click)="state.all('stop')">
+        STOP ALL
+      </button>
+    </div>
+  </header>
+  <div class="connection-line">
+    <span>
+      @if (state.data()?.status?.system?.mocked) {
+        RP MOCK
+      }
+      @if (state.data()?.status?.system?.mux_mocked) {
+        &middot; SPI MOCK
+      }</span
+    ><span
+      >{{ state.updated() ? 'Last received ' : ''
+      }}{{ state.updated() | date: 'HH:mm:ss' }} &middot; 5 s refresh</span
+    >
+  </div>
+  <main id="main">
+    <div class="messages" aria-live="polite">
+      @if (state.stale()) {
+        <p class="banner warning">
+          {{
+            state.loading()
+              ? 'Connecting to fmheadendd. No hardware state is known yet.'
+              : 'Backend unavailable. Previous configuration is retained; runtime state is stale. Retrying automatically.'
+          }}
+        </p>
+      } @else if (state.data()?.status?.system?.last_error) {
+        <p class="banner warning">{{ state.data()?.status?.system?.last_error }}</p>
+      }
+      @if (state.notice()) {
+        <p class="banner">{{ state.notice() }}</p>
+      }
+      @if (state.failures().length) {
+        <ul class="banner error">
+          @for (failure of state.failures(); track failure.id) {
+            <li>TX {{ failure.id }}: {{ failure.message }}</li>
+          }
+        </ul>
+      }
+    </div>
+    <router-outlet />
+  </main>
+</div>

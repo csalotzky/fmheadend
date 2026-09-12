@@ -370,7 +370,6 @@ A `Modulator` a nyolc fizikai QN egyikét reprezentálja. Az `id` **fizikai azon
 | Mező | Típus | Jelentés |
 |---|---|---|
 | `id` | integer 0..7 | Fizikai QN index |
-| `name` | string | Emberi név |
 | `enabled` | bool | Desired boot/runtime ON állapot |
 | `input_source_id` | nullable FK | Hozzárendelt `InputSource` |
 | `frequency_khz` | integer | FM frekvencia kHz-ben |
@@ -389,6 +388,9 @@ A `Modulator` a nyolc fizikai QN egyikét reprezentálja. Az `id` **fizikai azon
 | `timestamp` | datetime | Utolsó módosítás |
 
 Az `audio_input_mode` ne legyen külön persistent mező: az `InputSource.type == ANALOG` egyértelműen meghatározza az analóg módot.
+
+Modulators have no separate name field; physical ID 0..7 is their identity.
+SQLite schema 4 removes legacy names without changing other configuration.
 
 ### 6.3.1 PS és dinamikus PS
 
@@ -1320,7 +1322,7 @@ V1 UI később lehet szándékosan fapados.
 
 8 modulátor sor/kártya:
 
-- név;
+- physical modulator ID (0..7);
 - frekvencia;
 - hozzárendelt source;
 - TX state;

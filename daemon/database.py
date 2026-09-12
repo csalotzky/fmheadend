@@ -6,7 +6,7 @@ from pathlib import Path
 from .errors import DomainError
 from .models.configuration import AudioProfile, InputSource, Modulator, ModulatorConfig, SystemConfig, utcnow
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 RECORDS = {"sources": InputSource, "audio_profiles": AudioProfile, "modulators": Modulator}
 
 
@@ -42,7 +42,7 @@ class Database:
                 ):
                     self.connection.execute(statement)
                 for modulator_id in range(8):
-                    config = ModulatorConfig(name=f"TX{modulator_id}")
+                    config = ModulatorConfig()
                     data = config.model_dump(mode="json") | {"timestamp": utcnow().isoformat()}
                     self.connection.execute("INSERT INTO modulators VALUES (?, NULL, ?)", (modulator_id, json.dumps(data)))
                 self.connection.execute("INSERT INTO system_config VALUES (1, ?)", (SystemConfig().model_dump_json(),))
@@ -66,6 +66,16 @@ class Database:
                     data.setdefault("rds_af_khz", [])
                     self.connection.execute("UPDATE modulators SET data = ? WHERE id = ?", (json.dumps(data), row["id"]))
                 self.connection.execute("PRAGMA user_version = 3")
+        if version < 4:
+            self.connection.execute("BEGIN IMMEDIATE")
+            with self.connection:
+                for row in self.connection.execute("SELECT id, data FROM modulators").fetchall():
+                    data = json.loads(row["data"])
+                    # Physical ID is the only modulator identity. Preserve every
+                    # other value, including the original configuration timestamp.
+                    data.pop("name", None)
+                    self.connection.execute("UPDATE modulators SET data = ? WHERE id = ?", (json.dumps(data), row["id"]))
+                self.connection.execute("PRAGMA user_version = 4")
         ids = [row[0] for row in self.connection.execute("SELECT id FROM modulators ORDER BY id")]
         if ids != list(range(8)):
             raise RuntimeError("Database must contain exactly modulators 0..7")

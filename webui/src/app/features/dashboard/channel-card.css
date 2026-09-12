@@ -1,0 +1,157 @@
+:host {
+  display: block;
+  min-width: 0;
+}
+.channel {
+  height: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--inactive);
+  display: flex;
+  flex-direction: column;
+}
+.channel.on {
+  border-top-color: var(--success);
+}
+.channel.fault {
+  border-top-color: var(--error);
+}
+.readout {
+  display: block;
+  padding: 12px;
+  text-decoration: none;
+  color: inherit;
+  flex: 1;
+}
+.readout:hover {
+  background: var(--hover);
+}
+.channel-top,
+.rf,
+.channel-control {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.channel-id {
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.tx-state {
+  font: 600 12px var(--mono);
+}
+.on .tx-state {
+  color: var(--success);
+}
+.fault .tx-state {
+  color: var(--error);
+}
+.frequency {
+  font: 500 clamp(25px, 2.4vw, 34px) var(--mono);
+  letter-spacing: -0.05em;
+  margin: 12px 0 4px;
+  white-space: nowrap;
+}
+.frequency small {
+  font: 12px var(--sans);
+  letter-spacing: 0;
+  color: var(--muted);
+}
+.unconfigured {
+  font: 18px var(--sans);
+  letter-spacing: 0;
+  color: var(--muted);
+}
+.source-name {
+  font-weight: 600;
+  min-height: 18px;
+  overflow-wrap: anywhere;
+}
+.rds-data {
+  border-block: 1px solid var(--border);
+  margin: 10px 0 8px;
+  padding: 5px 0;
+  font: 12px var(--mono);
+}
+.rds-data div {
+  display: flex;
+  gap: 9px;
+  line-height: 20px;
+  min-width: 0;
+}
+dt {
+  color: var(--muted);
+  min-width: 24px;
+}
+dd {
+  margin: 0;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+.codes dd {
+  flex: 1;
+}
+.audio-settings {
+  font-size: 12px;
+  color: var(--muted);
+}
+.audio-settings span {
+  margin: 0 6px;
+}
+.rf {
+  font-size: 12px;
+  margin: 6px 0 8px;
+}
+.rf span,
+.rf small {
+  color: var(--muted);
+  font-weight: 400;
+}
+.rf strong {
+  font: 13px var(--mono);
+}
+.runtime {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  display: grid;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.runtime span {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.runtime b {
+  font-weight: 500;
+  color: var(--text);
+}
+.channel-control {
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+}
+.channel-control button {
+  min-width: 78px;
+}
+.card-error {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--error);
+  padding: 0 16px;
+  overflow-wrap: anywhere;
+}
+.channel-top {
+  min-width: 0;
+}
+.channel-id {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tx-state {
+  flex-shrink: 0;
+}

@@ -100,7 +100,7 @@ Do not allow inline editing of frequency, RF level, source assignment, RDS confi
 
 Suggested information hierarchy:
 
-- modulator identifier / name
+- physical modulator ID (0..7), with no separate name
 - TX state
 - frequency — visually dominant
 - source name
