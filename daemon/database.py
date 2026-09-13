@@ -143,9 +143,18 @@ class Database:
         if ids != list(range(8)):
             raise RuntimeError("Database must contain exactly modulators 0..7")
 
+    @staticmethod
+    def _record_data(table, raw):
+        data = json.loads(raw)
+        if table == "audio_profiles" and ("processing_enabled" in data or data.get("processor") == "GSTREAMER"):
+            # Read compatibility only: modern API writes never accept the old bypass.
+            enabled = data.pop("processing_enabled", False)
+            data["processor"] = "GST_BASIC" if enabled else "NONE"
+        return data
+
     def list(self, table):
         model = RECORDS[table]  # table names are internal, never supplied by API callers
-        return [model.model_validate(json.loads(row["data"]) | {"id": row["id"]})
+        return [model.model_validate(self._record_data(table, row["data"]) | {"id": row["id"]})
                 for row in self.connection.execute(f"SELECT id, data FROM {table} ORDER BY id")]
 
     def get(self, table, record_id):
@@ -153,7 +162,7 @@ class Database:
         row = self.connection.execute(f"SELECT id, data FROM {table} WHERE id = ?", (record_id,)).fetchone()
         if row is None:
             raise DomainError(404, "NOT_FOUND", f"{table} resource {record_id} does not exist")
-        return model.model_validate(json.loads(row["data"]) | {"id": row["id"]})
+        return model.model_validate(self._record_data(table, row["data"]) | {"id": row["id"]})
 
     def save(self, table, config, record_id=None):
         if table not in RECORDS or (table == "modulators" and record_id is None):

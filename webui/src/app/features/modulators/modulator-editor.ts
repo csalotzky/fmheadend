@@ -9,7 +9,7 @@ import {
   signal,
 } from '@angular/core';
 import { FormArray, FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
-import { ActivatedRoute, CanDeactivateFn, Router, RouterLink } from '@angular/router';
+import { ActivatedRoute, CanDeactivateFn, Router } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { Modulator } from '../../core/api/models';
 import { errorMessage } from '../../core/api/headend-api';
@@ -35,8 +35,9 @@ const flag = (value = false) => new FormControl(value, { nonNullable: true });
 const psEntry = (value = '', duration = '5') =>
   new FormGroup({ text: text(value), duration_s: text(duration) });
 @Component({
+  host: { class: 'page-content editor-wide' },
   selector: 'app-modulator-editor',
-  imports: [ReactiveFormsModule, RouterLink],
+  imports: [ReactiveFormsModule],
   templateUrl: './modulator-editor.html',
   styleUrl: './modulators.css',
 })

@@ -19,6 +19,7 @@ export function endpoint(source: InputSource): string {
   return `${source.config['multicast_group'] || source.config['host'] || '0.0.0.0'}:${source.config['port'] ?? '\u2014'}`;
 }
 @Component({
+  host: { class: 'page-content' },
   selector: 'app-sources-list',
   imports: [RouterLink, TestResult],
   templateUrl: './sources-list.html',

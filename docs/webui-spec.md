@@ -316,22 +316,14 @@ See [M7B2](milestone7b2.md) for implementation and verification.
 
 ## 8. Audio Profiles
 
-Audio Profiles remain a separate page because they are reusable configuration objects.
+The Audio Profiles list/editor uses Name, Gain and Processor only. NONE is shown
+as "None (gain only)"; GST_BASIC as "GStreamer Basic", with an explicit gain-only
+limitation until additional DSP exists. No separate bypass switch or placeholder
+DSP controls are exposed. Gain applies for both processors. Used-by counts refer
+to InputSources. All edits to profiles used by running transmitters and referenced-profile deletes
+surface backend conflicts; no source restart is hidden in an edit action.
 
-Initial V1 functionality:
-
-- name
-- gain
-
-Future extensions may include:
-
-- EQ
-- compressor
-- limiter
-
-The UI should not prematurely expose controls for features that the backend does not yet implement.
-
-Sources may reference a reusable Audio Profile.
+See [M7B3](milestone7b3.md) for implemented capabilities and safety semantics.
 
 ## 10. System
 
@@ -452,3 +444,20 @@ The detailed visual design is intentionally not frozen before implementation.
 The first implementation should follow this UX structure and visual direction, then be refined after it can be evaluated in a real browser.
 
 Layout, spacing, typography, card design, form arrangement, icons, and responsive behavior may be adjusted iteratively without changing the underlying information architecture.
+
+## Shared layout conventions
+
+Routed configuration pages use the global `page-content` host class: a centered
+content container, never centered text. The standard maximum width is 1200px;
+editors select `editor-narrow` (850px, Sources/Audio Profiles) or `editor-wide`
+(1120px, Modulators). Containers remain full-width within smaller viewports.
+
+List headers use `page-header`: title left and primary action right within the
+bounded content area, wrapping naturally at narrow widths. Editors use bottom
+`editor-actions` with Save then Cancel. Cancel uses normal routing and existing
+dirty-navigation protection; a separate top Back link is unnecessary.
+
+Shared structural CSS belongs in `styles.css`; do not duplicate host centering,
+header alignment or action-row layout per feature. Keep genuinely specific form
+and channel styling local. The future System page must follow these same
+container, header and editor-action conventions, selecting the appropriate width.

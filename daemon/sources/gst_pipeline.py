@@ -197,14 +197,14 @@ class GstPipeline:
         resample = self._make("audioresample")
         self._overrides(resample, "resample")
         volume = self._make("volume")
-        if self.profile and self.profile.processing_enabled:
+        if self.profile:
             # Native volume element performs the actual processing.
             gain = 10 ** (self.profile.gain_db / 20)
             if not math.isfinite(gain) or not 0 <= gain <= 10:
                 raise DependencyUnavailable("GStreamer volume gain must be at most +20 dB")
             volume.set_property("volume", gain)
-            if any((self.profile.eq_config, self.profile.compressor_config, self.profile.limiter_config, self.profile.advanced_options)):
-                raise DependencyUnavailable("Milestone 2 AudioProfile processing supports gain only")
+            if self.profile.processor == "GST_BASIC" and any((self.profile.eq_config, self.profile.compressor_config, self.profile.limiter_config, self.profile.advanced_options)):
+                raise DependencyUnavailable("GStreamer Basic currently supports gain only; optional DSP settings are not implemented")
         capsfilter = self._make("capsfilter", caps=Gst.Caps.from_string(PCM_CAPS))
         queue = self._make("queue", max_size_buffers=8, max_size_bytes=19200, max_size_time=100000000, leaky=0)
         self._overrides(queue, "queue")

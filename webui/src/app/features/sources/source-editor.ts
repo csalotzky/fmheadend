@@ -8,6 +8,7 @@ import { TestResult } from './test-result';
 import { errorMessage } from '../../core/api/headend-api';
 import { DashboardState } from '../dashboard/dashboard-state';
 @Component({
+  host: { class: 'page-content editor-narrow' },
   selector: 'app-source-editor',
   imports: [ReactiveFormsModule, RouterLink, TestResult],
   templateUrl: './source-editor.html',

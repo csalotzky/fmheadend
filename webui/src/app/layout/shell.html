@@ -9,7 +9,12 @@
         ariaCurrentWhenActive="page"
         (click)="menu.set(false)"
         >{{ link[1] }}
-        @if (link[0] !== 'dashboard' && link[0] !== 'sources' && link[0] !== 'modulators') {
+        @if (
+          link[0] !== 'dashboard' &&
+          link[0] !== 'sources' &&
+          link[0] !== 'modulators' &&
+          link[0] !== 'audio-profiles'
+        ) {
           <small>M7B</small>
         }
       </a>

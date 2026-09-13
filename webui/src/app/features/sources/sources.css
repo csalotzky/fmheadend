@@ -1,8 +1,3 @@
-:host(app-sources-list) {
-  display: block;
-  width: 100%;
-  max-width: 1200px;
-}
 a {
   color: var(--text);
 }
@@ -30,14 +25,8 @@ a {
   color: var(--muted);
   margin: 8px 0 0;
 }
-.actions {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  flex-wrap: wrap;
-}
+
 form {
-  max-width: 850px;
   background: var(--surface);
   border: 1px solid var(--border);
   padding: 20px;

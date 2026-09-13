@@ -179,6 +179,8 @@ describe('Modulator configuration', () => {
         (el) => (el as HTMLElement).textContent,
       ),
     ).toEqual(['RF', 'Audio', 'RDS']);
+    expect(f.nativeElement.classList.contains('editor-wide')).toBe(true);
+    expect(f.nativeElement.querySelector('.editor-actions')).not.toBeNull();
     expect(f.componentInstance.form.controls.frequency_khz.value).toBe(91600);
     expect(f.componentInstance.form.pristine).toBe(true);
     expect(f.nativeElement.querySelector('[formControlName="name"]')).toBeNull();

@@ -3,6 +3,7 @@ import { RouterLink } from '@angular/router';
 import { DashboardState } from '../dashboard/dashboard-state';
 import { mhz } from './values';
 @Component({
+  host: { class: 'page-content' },
   selector: 'app-modulators-list',
   imports: [RouterLink],
   styleUrl: './modulators.css',

@@ -353,14 +353,21 @@ V1-ben a modell maradjon egyszerű:
 |---|---|
 | `id` | Primary key |
 | `name` | Profil neve |
-| `processing_enabled` | Teljes processing bypass |
-| `gain_db` | Kimeneti gain |
+| `gain_db` | Source-side gain, independent of processor; default 0 dB, maximum +20 dB |
 | `eq_config` | Opcionális JSON, kezdetben minimális |
 | `compressor_config` | Opcionális JSON |
 | `limiter_config` | Opcionális JSON |
-| `processor` | `GSTREAMER` V1-ben; később más backend |
+| `processor` | `NONE` (gain only, default) or `GST_BASIC` (currently gain only; DSP deferred) |
 | `advanced_options` | Opcionális advanced config |
 | `timestamp` | Utolsó módosítás |
+
+Legacy profile JSON is normalized on read, without a schema bump. The obsolete
+bypass flag is not part of the current API: gain always applies. Reserved DSP
+JSON is not implemented processing and is not exposed by the editor.
+All profile updates return 409 while a referencing source is assigned to a
+Modulator whose current runtime TX state is ON. Stop affected transmitters before
+saving, including renames. No live update or implicit restart is implemented. Referenced
+profiles cannot be deleted. See `docs/milestone7b3.md` for compatibility details.
 
 ### V1 processing elv
 

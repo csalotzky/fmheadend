@@ -214,14 +214,15 @@ def test_alsa_capture(gst):
         pipeline.stop()
 
 
-def test_native_gain(gst, http_files):
+@pytest.mark.parametrize("processor", ["NONE", "GST_BASIC"])
+def test_native_gain(gst, http_files, processor):
     import array
     require(gst, "souphttpsrc", "wavparse", "volume")
     folder, url = http_files
     with wave.open(str(folder / "gain.wav"), "wb") as wav:
         wav.setparams((2, 2, 48000, 0, "NONE", "not compressed"))
         wav.writeframes(b"\x10\x27" * 2 * 48000 * 5)  # constant 10000 for this test only
-    profile = AudioProfileConfig(name="gain", processing_enabled=True, gain_db=-6.020599913)
+    profile = AudioProfileConfig(name="gain", processor=processor, gain_db=-6.020599913)
     pipeline = GstPipeline(config("HTTP", {"uri": url + "/gain.wav"}), profile=profile, reconnect=False)
     pipeline.output.attach(0)
     try:

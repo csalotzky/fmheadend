@@ -96,12 +96,11 @@ class InputSource(InputSourceConfig):
 
 class AudioProfileConfig(Model):
     name: Name
-    processing_enabled: bool = False
-    gain_db: float = 0
+    gain_db: float = Field(default=0, le=20)
     eq_config: JsonObject | None = None
     compressor_config: JsonObject | None = None
     limiter_config: JsonObject | None = None
-    processor: Literal["GSTREAMER"] = "GSTREAMER"
+    processor: Literal["NONE", "GST_BASIC"] = "NONE"
     advanced_options: JsonObject | None = None
 
 

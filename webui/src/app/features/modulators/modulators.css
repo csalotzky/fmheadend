@@ -1,22 +1,7 @@
-:host {
-  display: block;
-  max-width: 1120px;
-  margin: 0 auto;
-  width: 100%;
-}
 a {
   color: var(--text);
 }
-.page-title,
-.actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-.page-title {
-  justify-content: space-between;
-}
+
 h2 {
   font-size: 17px;
   margin: 0 0 18px;
@@ -119,9 +104,6 @@ small {
 .runtime p {
   flex-basis: 100%;
   margin: 0;
-}
-.save-actions {
-  padding: 12px 0 24px;
 }
 .summary {
   display: grid;

@@ -158,7 +158,8 @@ gain, metadata and source reconnects. See [details and test results](docs/milest
 Milestone 3 adds the Unix PCM/control sockets, bounded C++ rings, fixed frame
 builder, mock capture and Linux spidev transport. Milestone 4 adds RP2354 I2C protocol/client primitives and hardware status.
 M5 adds Linux RDS encoding and FIFO scheduling. M6A adds safe desired-state
-restoration, integration recovery and systemd deployment. M7A adds the Angular Dashboard; M7B1 adds Sources management. Modulator/RDS configuration, Audio Profile management, System page contents and firmware
+restoration, integration recovery and systemd deployment. M7A adds the Angular Dashboard; M7B1 adds Sources management; M7B2 adds Modulator/RDS configuration; M7B3 adds
+[Audio Profiles management](docs/milestone7b3.md). System page contents and firmware
 remain unimplemented; Zero 2 W stress/performance validation is deferred to M6B. New modulators
 remain disabled with no frequency until explicitly configured.
 

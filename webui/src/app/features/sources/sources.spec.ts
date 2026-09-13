@@ -53,6 +53,19 @@ describe('Sources management', () => {
     c.form.controls.name.setValue('FM4');
     c.config.controls['uri'].setValue('https://example.org/live');
   }
+  it('uses the shared centered editor with bottom Save and Cancel', () => {
+    const f = editor();
+    const el = f.nativeElement as HTMLElement;
+    expect(el.classList.contains('page-content')).toBe(true);
+    expect(el.classList.contains('editor-narrow')).toBe(true);
+    expect(el.textContent).not.toContain('Back to Sources');
+    expect(
+      Array.from(el.querySelectorAll('.editor-actions button')).map((b) => b.textContent?.trim()),
+    ).toEqual(['Save', 'Cancel']);
+    f.componentInstance.form.markAsDirty();
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    expect(f.componentInstance.canLeave()).toBe(false);
+  });
   it.each<SourceType>(['HTTP', 'UDP', 'RTP', 'ALSA'])('renders only %s fields', (type) => {
     const f = editor(),
       c = f.componentInstance;
@@ -98,7 +111,7 @@ describe('Sources management', () => {
     const button = row.querySelector('button')!;
     expect(button.textContent?.trim()).toBe('Test stream');
     expect(button.type).toBe('button');
-    expect(el.querySelector('.actions')?.textContent).not.toContain('Test');
+    expect(el.querySelector('.editor-actions')?.textContent).not.toContain('Test');
     button.click();
     f.detectChanges();
     expect(button.disabled).toBe(true);

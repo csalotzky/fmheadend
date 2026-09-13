@@ -1,4 +1,5 @@
 from .errors import DomainError
+from .models.runtime_status import TxState
 from .models.configuration import AudioProfileConfig, InputSourceConfig, SystemConfig
 
 
@@ -17,6 +18,13 @@ class ConfigurationService:
 
     def update(self, table, record_id, patch):
         current = self.get(table, record_id)
+        if table == "audio_profiles":
+            source_ids = {source.id for source in self.database.list("sources")
+                          if source.audio_profile_id == record_id}
+            if any(modulator.input_source_id in source_ids
+                   and self.modulators.statuses[modulator.id].tx_state == TxState.ON
+                   for modulator in self.database.list("modulators")):
+                raise DomainError(409, "PROFILE_ACTIVE", "Stop all transmitters using this profile before saving changes")
         model = {"sources": InputSourceConfig, "audio_profiles": AudioProfileConfig}[table]
         config = model.model_validate(current.model_dump(exclude={"id", "timestamp"}) | patch.model_dump(exclude_unset=True))
         if table == "sources":
