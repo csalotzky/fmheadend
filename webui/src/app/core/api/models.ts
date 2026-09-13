@@ -28,7 +28,6 @@ export interface InputSource {
   id: number;
   name: string;
   type: 'HTTP' | 'UDP' | 'RTP' | 'ALSA';
-  enabled: boolean;
   config: Record<string, unknown>;
   audio_profile_id: number | null;
   gst_options: Record<string, unknown>;

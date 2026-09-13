@@ -6,7 +6,6 @@ export function sample(): Snapshot {
         id: 1,
         name: 'Studio feed',
         type: 'HTTP',
-        enabled: true,
         config: { uri: 'http://example.org/live' },
         audio_profile_id: null,
         gst_options: {},

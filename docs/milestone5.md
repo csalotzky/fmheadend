@@ -19,7 +19,7 @@ also load through model defaults. No database reset is needed.
 
 `rds_af_khz` is an ordered list of at most 25 integer frequencies, each exactly on
 the 100 kHz raster from 87600 through 107900 kHz. The encoder alone derives AF codes.
-There is no discovery, sorting, deduplication, bandscan or automatic AF generation.
+There is no discovery, sorting, deduplication or automatic AF generation.
 
 Example PATCH body (configure the actual PI/ECC/frequencies for your service):
 

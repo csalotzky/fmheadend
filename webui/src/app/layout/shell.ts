@@ -16,7 +16,6 @@ export class Shell implements OnInit, OnDestroy {
     ['sources', 'Sources'],
     ['modulators', 'Modulators'],
     ['audio-profiles', 'Audio Profiles'],
-    ['bandscan', 'Bandscan'],
     ['system', 'System'],
   ];
   ngOnInit() {

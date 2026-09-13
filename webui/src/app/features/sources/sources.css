@@ -82,15 +82,6 @@ summary:focus-visible {
 input.ng-invalid.ng-touched {
   border-color: var(--error);
 }
-.check {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.check input {
-  width: auto;
-  margin: 0;
-}
 details {
   margin-top: 20px;
 }

@@ -29,7 +29,8 @@ body {
   color: var(--text);
   font: 14px var(--sans);
 }
-button {
+button,
+a.button-link {
   font: 600 11px var(--sans);
   letter-spacing: 0.03em;
   color: var(--text);
@@ -39,7 +40,8 @@ button {
   padding: 9px 12px;
   cursor: pointer;
 }
-button:hover:not(:disabled) {
+button:hover:not(:disabled),
+a.button-link:hover {
   background: #3b4956;
 }
 button.stop {
@@ -109,4 +111,8 @@ h1 {
   .page-title > .muted {
     display: none;
   }
+}
+
+a.button-link {
+  text-decoration: none;
 }

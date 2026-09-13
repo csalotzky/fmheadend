@@ -20,9 +20,6 @@
             }
           </select></label
         >
-        <label class="check"
-          ><input type="checkbox" formControlName="enabled" />Source enabled</label
-        >
       </div>
       <div class="fields" [formGroup]="config">
         @for (field of fields[form.controls.type.value]; track field.key) {

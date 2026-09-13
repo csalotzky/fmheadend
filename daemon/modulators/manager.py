@@ -30,9 +30,7 @@ class ModulatorManager:
         elif not self.settings.fm_band_min_khz <= config.frequency_khz <= self.settings.fm_band_max_khz:
             raise DomainError(422, "INVALID_FREQUENCY", "Frequency must be inside the configured FM band")
         if config.input_source_id is not None:
-            source = self.database.get("sources", config.input_source_id)
-            if config.enabled and not source.enabled:
-                raise DomainError(409, "SOURCE_DISABLED", "The assigned input source is disabled")
+            self.database.get("sources", config.input_source_id)
         elif config.enabled and config.audio_mode == "DIGITAL":
             raise DomainError(409, "SOURCE_REQUIRED", "Assign an input source before enabling a modulator")
 

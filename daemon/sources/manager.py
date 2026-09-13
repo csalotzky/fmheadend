@@ -32,8 +32,6 @@ class SourceManager:
 
     def acquire(self, source_id, modulator_id):
         source = self.database.get("sources", source_id)
-        if not source.enabled:
-            raise DomainError(409, "SOURCE_DISABLED", "The assigned input source is disabled")
         consumers = self.consumers.setdefault(source_id, set())
         if modulator_id in consumers:
             return

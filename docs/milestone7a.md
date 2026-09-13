@@ -17,8 +17,7 @@ framework, authentication, WebSocket, BFF or browser-persisted desired state.
 - `src/styles.css`: local color, typography, spacing and control tokens.
 
 `/` redirects to `/dashboard`. `/sources`, `/modulators`, `/modulators/:id`,
-`/audio-profiles` and `/system` are clearly marked M7B placeholders. `/bandscan`
-is pending hardware/backend definition. There are no configuration forms.
+`/audio-profiles` and `/system` are clearly marked M7B placeholders.
 Physical IDs are shown as TX 0..7, matching backend identifiers.
 
 ## Data and status
@@ -166,7 +165,7 @@ was added to the repository. No RF hardware or physical transmission was tested.
 
 Sources management, modulator/RDS editing, Audio Profile management, System page
 contents and production hosting/deployment integration remain unimplemented.
-Bandscan remains pending hardware/backend definition. M6B performance/stress work,
+M6B performance/stress work,
 RP firmware and unrelated features remain outside this milestone.
 
 

@@ -53,7 +53,7 @@ export function compose(snapshot: Snapshot, previous?: Snapshot): ChannelView[] 
         ? 'Dedicated analog input'
         : (source?.name ??
           (config?.input_source_id == null ? 'No source assigned' : 'Source unavailable')),
-      canStart: config?.frequency_khz != null && (analog || !!source?.enabled),
+      canStart: config?.frequency_khz != null && (analog || !!source),
     };
   });
 }

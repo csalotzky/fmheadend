@@ -248,13 +248,17 @@ Az `InputSource` egy újrahasznosítható logikai audioforrás. Nem tartalmaz FM
 | `id` | integer | igen | SQLite primary key |
 | `name` | string | igen | Emberi név, pl. `KEXP` |
 | `type` | enum | igen | `HTTP`, `UDP`, `RTP`, `ALSA` |
-| `enabled` | bool | igen | A source használható-e |
 | `config` | JSON object | igen | Type-specifikus config |
 | `audio_profile_id` | nullable integer | nem | Opcionális audio processing profil |
 | `gst_options` | JSON object | igen | Haladó GStreamer property override-ok; default `{}` |
 | `timestamp` | datetime | igen | Utolsó mentés/módosítás időpontja |
 
 Csak egyetlen timestamp szükséges. Ez setup-and-forget rendszer, nem audit/CRM.
+
+InputSource configuration has no independent enable switch. Pipelines are demand-driven:
+active DIGITAL modulators acquire/share a source; the last consumer releases it.
+SQLite schema 8 removes the obsolete source flag only, preserving other fields,
+IDs, references and timestamps. Migration is transactional and normal reopen is idempotent.
 
 ### 6.1.1 `HTTP` config
 
@@ -406,7 +410,7 @@ A `Modulator` a nyolc fizikai QN egyikét reprezentálja. Az `id` **fizikai azon
 ANALOG selects this physical transmitter's dedicated analog jack, not a reusable
 InputSource. There is no routing matrix. ANALOG always clears `input_source_id`
 (including PATCH with an existing assignment); DIGITAL never restores a hidden
-assignment and requires an enabled digital source before start. Frequency validation
+assignment and requires a configured digital source before start. Frequency validation
 is unchanged. AudioProfile belongs only to digital InputSources. Analog mode creates
 no GStreamer pipeline or PCM producer; the mux slot remains silence. RDS remains
 Modulator-owned and independent of audio mode. RP audio_mode wire values remain 0/1.
@@ -1924,11 +1928,6 @@ A következők **nem részei a V1 kötelező scope-nak**:
 - Docker/Kubernetes/Redis/RabbitMQ;
 - külön logging database;
 - saját watchdog daemon;
-- QN alapú FM bandscan/RSSI adatbázis.
-
-### Bandscan megjegyzés
-
-A korábban felmerült teljes FM sáv 100 kHz-es lépésekben történő RSSI/dBµV mintavétele **nem kerül a specifikációba**, mert a QN8007B dokumentált interfésze alapján nem biztosított az egyedi frekvencián mért RSSI kiolvasása. Ha hardveres bring-upkor dokumentálatlan, megbízható RSSI readback derül ki, külön későbbi feature-ként újratervezhető.
 
 ---
 

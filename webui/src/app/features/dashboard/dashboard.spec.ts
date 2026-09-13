@@ -189,7 +189,9 @@ describe('Operational display', () => {
     const el = fixture.nativeElement as HTMLElement;
     expect(el.textContent).toContain('DEGRADED');
     expect(el.textContent).toContain('1 / 8 TX ON');
-    expect(el.textContent).toContain('PENDING');
+    expect(
+      Array.from(el.querySelectorAll('nav a')).map((link) => link.getAttribute('href')),
+    ).toEqual(['/dashboard', '/sources', '/modulators', '/audio-profiles', '/system']);
     const buttons = el.querySelectorAll('.global-actions button');
     (buttons[0] as HTMLButtonElement).click();
     expect(action).toHaveBeenCalledWith('start');
@@ -204,7 +206,7 @@ describe('Operational display', () => {
     fixture.detectChanges();
     const el = fixture.nativeElement as HTMLElement;
     expect(el.textContent).toContain('BACKEND UNAVAILABLE');
-    expect(el.querySelectorAll('nav a')).toHaveLength(6);
+    expect(el.querySelectorAll('nav a')).toHaveLength(5);
     expect(el.textContent).not.toContain('1 / 8 TX ON');
   });
 });

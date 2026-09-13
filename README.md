@@ -104,11 +104,11 @@ missing routes, resource conflicts and unavailable dependencies.
   configuration update commits first, then turns RF off and reapplies it. Failed
   hardware application returns 503 and leaves desired configuration intact while
   actual state becomes ERROR. Shutdown turns RF off without changing desired state.
-- Newly created sources default to enabled. Modulators default to disabled,
+- Sources run on demand from active DIGITAL modulators. Modulators default to disabled,
   DIGITAL and unassigned, with `frequency_khz: null`, unset nominal RF target, stereo, 50 us pre-emphasis
   and RDS disabled. A frequency must be explicitly configured before enabling
   a modulator; starting without it returns 409 `FREQUENCY_REQUIRED` without
-  changing desired state or touching hardware. Starting DIGITAL mode without an enabled
+  changing desired state or touching hardware. Starting DIGITAL mode without a configured
   source also returns 409. ANALOG mode uses the channel's own jack, clears input_source_id, and requires no Source or Audio Profile. A disabled modulator's frequency can be cleared with
   `PATCH {"frequency_khz": null}`. Start-all attempts every ID and
   returns per-ID statuses/errors; unassigned modulators do not silently succeed.
@@ -171,7 +171,7 @@ Milestone 7A Angular Dashboard: [development and validation](docs/milestone7a.md
 
 
 Milestone 7B1 Sources UI and final validation: [documentation](docs/milestone7b1.md).
-Current SQLite schema is 7 (neutral QN gain/soft-clipping configuration defaults): schema 5 moves legacy analog-source assignments to
+Current SQLite schema is 8 (removes the obsolete source enable flag; schema 7 added neutral QN audio-control defaults): schema 5 moves legacy analog-source assignments to
 Modulator.audio_mode; schema 6 preserves effective HTTP User-Agent values in
 `gst_options.source["user-agent"]`. There is no normal HTTP `config.user_agent`
 field. See the canonical architecture for migration conflict/rollback rules.

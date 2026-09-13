@@ -23,8 +23,6 @@ class ConfigurationService:
             # Preserve explicit stop-before-edit semantics; apply changes on next start.
             if record_id in self.modulators.active_sources.values():
                 raise DomainError(409, "SOURCE_ACTIVE", "Stop consumers before editing this source")
-            if not config.enabled and any(m.enabled and m.input_source_id == record_id for m in self.modulators.list()):
-                raise DomainError(409, "SOURCE_IN_USE", "Disable assigned modulators before disabling this source")
         return self.database.save(table, config, record_id)
 
     def delete(self, table, record_id):

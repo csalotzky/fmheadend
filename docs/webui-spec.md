@@ -73,10 +73,7 @@ Primary navigation:
 2. Sources
 3. Modulators
 4. Audio Profiles
-5. Bandscan
-6. System
-
-`Bandscan` is conditional and remains pending until the hardware/backend functionality is decided.
+5. System
 
 Do not create separate top-level navigation entries for RDS, logs, hardware, status, network, or low-level debug unless the product later proves that one is necessary.
 
@@ -322,23 +319,6 @@ Future extensions may include:
 The UI should not prematurely expose controls for features that the backend does not yet implement.
 
 Sources may reference a reusable Audio Profile.
-
-## 9. Bandscan
-
-Bandscan is a reserved page.
-
-Do not implement a fake or decorative Bandscan page before the hardware/backend behavior is decided.
-
-If implemented later, likely responsibilities include:
-
-- spectrum/band overview
-- detected FM carriers
-- measured/estimated signal levels
-- channel occupancy
-- candidate free frequencies
-- optional application of a selected frequency to a modulator
-
-Exact behavior depends on the eventual RF measurement implementation.
 
 ## 10. System
 

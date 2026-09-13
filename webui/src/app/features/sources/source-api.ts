@@ -7,7 +7,6 @@ export type Json = string | number | boolean | null | Json[] | { [key: string]: 
 export interface SourceDraft {
   name: string;
   type: SourceType;
-  enabled: boolean;
   config: Record<string, Json>;
   audio_profile_id: number | null;
   gst_options: Record<string, Record<string, Json>>;

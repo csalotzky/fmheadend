@@ -77,7 +77,6 @@ SOURCE_CONFIGS = {
 class InputSourceConfig(Model):
     name: Name
     type: SourceType
-    enabled: bool = True
     config: JsonObject
     audio_profile_id: PositiveId | None = None
     gst_options: dict[str, JsonObject] = Field(default_factory=dict)

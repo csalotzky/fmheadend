@@ -9,10 +9,10 @@ export const routes: Routes = [
   { path: 'sources', component: SourcesList },
   { path: 'sources/new', component: SourceEditor, canDeactivate: [sourceDirtyGuard] },
   { path: 'sources/:id', component: SourceEditor, canDeactivate: [sourceDirtyGuard] },
-  ...['modulators', 'audio-profiles', 'bandscan', 'system'].map((path, i) => ({
+  ...['modulators', 'audio-profiles', 'system'].map((path, i) => ({
     path,
     component: Placeholder,
-    data: { title: ['Modulators', 'Audio Profiles', 'Bandscan', 'System'][i] },
+    data: { title: ['Modulators', 'Audio Profiles', 'System'][i] },
   })),
   { path: 'modulators/:id', component: Placeholder, data: { title: 'Modulator configuration' } },
   { path: '**', redirectTo: 'dashboard' },

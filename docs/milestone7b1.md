@@ -38,7 +38,7 @@ sources. Save and Test prevent duplicate pending operations.
 
 ## Configuration and presentation
 
-InputSources are reusable digital inputs only. Common fields: name, type, enabled,
+InputSources are reusable digital inputs only. Common fields: name, type,
 optional existing Audio Profile and advanced source/queue/resample GStreamer options.
 
 | Type | Per-type fields |
@@ -64,7 +64,8 @@ UNKNOWN, never inferred IDLE. Backend loss retains configuration with a stale wa
 ## Model and migration corrections
 
 The canonical architecture defines the exact rules; M7B1 introduced SQLite schema **6**. The subsequent RP audio-control prerequisite adds
-schema **7** audio-control defaults; see the canonical architecture.
+schema **7** audio-control defaults. Schema **8** removes the obsolete source enable
+flag; pipeline lifecycle is driven solely by active DIGITAL consumers. See the canonical architecture.
 
 - Schema 5 removes legacy ANALOG InputSources. Referencing modulators select their
   own physical ANALOG jack and clear input_source_id. Shared legacy references become
@@ -169,7 +170,7 @@ No public internet stream is required.
 
 Modulator/RDS editing, Audio Profile management, System/Diagnostics and production UI
 hosting remain for M7B2/later. No future RDS update-from-source feature, RP firmware,
-Bandscan or M6B work was added. Physical RP/QN transmission is not tested.
+M6B work was added. Physical RP/QN transmission is not tested.
 
 
 ## Final review and validation

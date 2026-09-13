@@ -37,7 +37,6 @@ export class SourceEditor implements OnInit {
       validators: [Validators.required, Validators.maxLength(200), Validators.pattern(/\S/)],
     }),
     type: new FormControl<SourceType>('HTTP', { nonNullable: true }),
-    enabled: new FormControl(true, { nonNullable: true }),
     audio_profile_id: new FormControl<number | null>(null),
     gst_options: new FormControl('', { nonNullable: true }),
   });
@@ -56,7 +55,6 @@ export class SourceEditor implements OnInit {
       this.form.setValue({
         name: source.name,
         type: source.type,
-        enabled: source.enabled,
         audio_profile_id: source.audio_profile_id,
         gst_options: Object.keys(source.gst_options).length
           ? JSON.stringify(source.gst_options, null, 2)
@@ -179,7 +177,6 @@ export class SourceEditor implements OnInit {
     return {
       name: blankHttpName ? 'HTTP stream probe' : v.name,
       type: v.type,
-      enabled: v.enabled,
       audio_profile_id: v.audio_profile_id,
       config,
       gst_options: options,

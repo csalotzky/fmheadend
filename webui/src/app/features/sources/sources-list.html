@@ -19,7 +19,7 @@
       <div>
         <a [routerLink]="['/sources', source.id]"
           ><strong>{{ source.name }}</strong></a
-        ><span class="muted"> {{ source.type }}{{ source.enabled ? '' : ' / Disabled' }}</span>
+        ><span class="muted"> {{ source.type }}</span>
         <p class="endpoint" [title]="endpoint(source)">{{ endpoint(source) }}</p>
       </div>
       <div>
@@ -29,7 +29,7 @@
         <p class="muted">{{ references(source.id) }} TX references</p>
       </div>
       <div class="actions">
-        <a [routerLink]="['/sources', source.id]">Edit</a
+        <a class="button-link" [routerLink]="['/sources', source.id]">Edit</a
         ><button (click)="test(source.id)" [disabled]="pending().has(source.id)">
           {{ pending().has(source.id) ? pendingLabel()[source.id] : 'Test' }}</button
         ><button (click)="deleting.set(source.id)" [disabled]="pending().has(source.id)">

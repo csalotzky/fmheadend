@@ -112,7 +112,7 @@ def test_schema6_preservation_and_reopen(tmp_path):
     db.close()
     for _ in range(2):
         db = Database(path)
-        assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 7
+        assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 8
         for row in db.connection.execute("SELECT id,data FROM modulators"):
             assert json.loads(row["data"]) == before[row["id"]] | DEFAULTS
         for table, rows in other.items():

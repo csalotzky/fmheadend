@@ -6,7 +6,7 @@ from pathlib import Path
 from .errors import DomainError
 from .models.configuration import AudioProfile, InputSource, Modulator, ModulatorConfig, SystemConfig, utcnow
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 RECORDS = {"sources": InputSource, "audio_profiles": AudioProfile, "modulators": Modulator}
 
 
@@ -121,6 +121,14 @@ class Database:
                         data.setdefault(key, default)
                     self.connection.execute("UPDATE modulators SET data = ? WHERE id = ?", (json.dumps(data), row["id"]))
                 self.connection.execute("PRAGMA user_version = 7")
+        if version < 8:
+            self.connection.execute("BEGIN IMMEDIATE")
+            with self.connection:
+                for row in self.connection.execute("SELECT id, data FROM sources").fetchall():
+                    data = json.loads(row["data"])
+                    data.pop("enabled", None)
+                    self.connection.execute("UPDATE sources SET data = ? WHERE id = ?", (json.dumps(data), row["id"]))
+                self.connection.execute("PRAGMA user_version = 8")
         ids = [row[0] for row in self.connection.execute("SELECT id FROM modulators ORDER BY id")]
         if ids != list(range(8)):
             raise RuntimeError("Database must contain exactly modulators 0..7")

@@ -58,6 +58,7 @@ describe('Sources management', () => {
       c = f.componentInstance;
     c.form.controls.type.setValue(type);
     c.changeType();
+    expect(f.nativeElement.querySelector('[formControlName="enabled"]')).toBeNull();
     f.detectChanges();
     const el = f.nativeElement as HTMLElement;
     const labels = [...el.querySelectorAll('label')].map((label) => label.textContent);
@@ -269,6 +270,7 @@ describe('Sources management', () => {
     expect(f.nativeElement.textContent).toContain(state);
     expect(f.nativeElement.textContent).toContain('8 TX references');
     expect(f.nativeElement.textContent).toContain('Studio feed');
+    expect(f.nativeElement.querySelector('a.button-link')?.getAttribute('href')).toBe('/sources/1');
   });
   it('shows unavailable runtime on failed status request', () => {
     const f = list();
