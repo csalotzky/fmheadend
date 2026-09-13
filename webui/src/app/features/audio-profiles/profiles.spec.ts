@@ -1,3 +1,4 @@
+import { basicDefaults } from './basic-config';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting, HttpTestingController } from '@angular/common/http/testing';
@@ -11,6 +12,7 @@ const profile: AudioProfile = {
   gain_db: -3,
   processor: 'NONE',
   timestamp: '2026-01-01',
+  basic_config: { ...basicDefaults },
 };
 describe('Audio Profiles management', () => {
   let http: HttpTestingController;
@@ -41,11 +43,11 @@ describe('Audio Profiles management', () => {
     f.detectChanges();
     return f;
   }
-  async function editor(existing = false) {
+  async function editor(existing = false, saved = profile) {
     if (existing) route.snapshot.paramMap = convertToParamMap({ id: '1' });
     const f = TestBed.createComponent(ProfileEditor);
     f.detectChanges();
-    if (existing) http.expectOne('/api/v1/audio-profiles/1').flush(profile);
+    if (existing) http.expectOne('/api/v1/audio-profiles/1').flush(saved);
     await f.whenStable();
     f.detectChanges();
     return f;
@@ -77,12 +79,17 @@ describe('Audio Profiles management', () => {
   it.each(['NONE', 'GST_BASIC'] as const)('creates %s with independent gain', async (processor) => {
     const f = await editor();
     const c = f.componentInstance;
-    c.form.setValue({ name: 'New', gain_db: -6, processor });
+    c.form.setValue({ name: 'New', gain_db: -6, processor, basic_config: { ...basicDefaults } });
     c.form.markAsDirty();
     const pending = c.save();
     const request = http.expectOne('/api/v1/audio-profiles');
     expect(request.request.method).toBe('POST');
-    expect(request.request.body).toEqual({ name: 'New', gain_db: -6, processor });
+    expect(request.request.body).toEqual({
+      name: 'New',
+      gain_db: -6,
+      processor,
+      ...(processor === 'GST_BASIC' ? { basic_config: basicDefaults } : {}),
+    });
     request.flush({ ...profile, name: 'New', gain_db: -6, processor });
     await pending;
     expect(c.form.pristine).toBe(true);
@@ -116,7 +123,12 @@ describe('Audio Profiles management', () => {
     const pending = c.save();
     const req = http.expectOne('/api/v1/audio-profiles/1');
     expect(req.request.method).toBe('PATCH');
-    expect(Object.keys(req.request.body).sort()).toEqual(['gain_db', 'name', 'processor']);
+    expect(Object.keys(req.request.body).sort()).toEqual([
+      'basic_config',
+      'gain_db',
+      'name',
+      'processor',
+    ]);
     req.flush({ ...profile, name: 'Rename' });
     await pending;
   });
@@ -153,13 +165,123 @@ describe('Audio Profiles management', () => {
     c.cancel();
     expect(TestBed.inject(Router).navigate).toHaveBeenCalledWith(['/audio-profiles']);
   });
-  it('shows Basic limitation and only implemented controls', async () => {
+  it('shows Basic only for GST_BASIC and retains edits across processor switches', async () => {
     const f = await editor();
-    f.componentInstance.form.controls.processor.setValue('GST_BASIC');
+    const c = f.componentInstance;
+    expect(f.nativeElement.querySelector('#basic-heading')).toBeNull();
+    c.form.controls.processor.setValue('GST_BASIC');
     f.changeDetectorRef.markForCheck();
     f.detectChanges();
-    expect(f.nativeElement.textContent).toContain('Additional Basic processing is not implemented');
-    expect(f.nativeElement.querySelectorAll('input, select')).toHaveLength(3);
+    expect(f.nativeElement.querySelector('#basic-heading')?.textContent).toBe('Basic processing');
+    c.basic.controls.eq_mid_db.setValue(-2.5);
+    c.form.controls.processor.setValue('NONE');
+    f.changeDetectorRef.markForCheck();
+    f.detectChanges();
+    expect(f.nativeElement.querySelector('#basic-heading')).toBeNull();
+    c.form.controls.processor.setValue('GST_BASIC');
+    f.changeDetectorRef.markForCheck();
+    f.detectChanges();
+    expect(c.basic.controls.eq_mid_db.value).toBe(-2.5);
+  });
+  it('loads API settings, preserves disabled fields, and serializes integer Hz and conventional ratio', async () => {
+    const settings = {
+      ...basicDefaults,
+      highpass_hz: 80 as const,
+      eq_low_db: -3.5,
+      eq_mid_db: 2,
+      eq_high_db: 0.5,
+      compressor_threshold_dbfs: -18,
+      compressor_ratio: 3 as const,
+      lowpass_hz: 13000 as const,
+    };
+    const f = await editor(true, { ...profile, processor: 'GST_BASIC', basic_config: settings });
+    const c = f.componentInstance;
+    expect(c.basic.getRawValue()).toEqual(settings);
+    c.basic.controls.highpass_enabled.setValue(false);
+    c.basic.controls.compressor_enabled.setValue(false);
+    c.basic.controls.lowpass_enabled.setValue(false);
+    c.basic.controls.limiter_enabled.setValue(false);
+    f.changeDetectorRef.markForCheck();
+    f.detectChanges();
+    for (const key of [
+      'highpass_hz',
+      'compressor_threshold_dbfs',
+      'compressor_ratio',
+      'lowpass_hz',
+    ])
+      expect(
+        (f.nativeElement.querySelector(`[formControlName="${key}"]`) as HTMLSelectElement).disabled,
+      ).toBe(true);
+    expect(c.basic.getRawValue()).toEqual({
+      ...settings,
+      highpass_enabled: false,
+      compressor_enabled: false,
+      lowpass_enabled: false,
+      limiter_enabled: false,
+    });
+    c.form.controls.processor.setValue('NONE');
+    const pending = c.save();
+    const request = http.expectOne('/api/v1/audio-profiles/1');
+    expect(request.request.body.basic_config).toEqual(c.basic.getRawValue());
+    expect(request.request.body.processor).toBe('NONE');
+    request.flush(profile);
+    await pending;
+  });
+  it('offers exact cutoff, threshold and ratio options and three half-dB EQ controls', async () => {
+    const f = await editor(true, { ...profile, processor: 'GST_BASIC' });
+    const c = f.componentInstance;
+    const options = (key: string) =>
+      Array.from(
+        (f.nativeElement.querySelector(`[formControlName="${key}"]`) as HTMLSelectElement).options,
+      ).map((o) => o.textContent?.trim());
+    expect(options('highpass_hz')).toEqual([
+      '20 Hz',
+      '30 Hz',
+      '40 Hz',
+      '50 Hz',
+      '60 Hz',
+      '80 Hz',
+      '100 Hz',
+    ]);
+    expect(options('lowpass_hz')).toEqual([
+      '12.0 kHz',
+      '13.0 kHz',
+      '14.0 kHz',
+      '15.0 kHz',
+      '16.0 kHz',
+    ]);
+    expect(options('compressor_threshold_dbfs')).toEqual(
+      Array.from({ length: 28 }, (_, i) => `${i - 30} dBFS`),
+    );
+    expect(options('compressor_ratio')).toEqual(['1:1', '1.5:1', '2:1', '3:1', '4:1']);
+    const inputs = Array.from(
+      (f.nativeElement as HTMLElement).querySelectorAll<HTMLInputElement>(
+        'section input[type="number"]',
+      ),
+    );
+    expect(inputs).toHaveLength(3);
+    for (const input of inputs) {
+      expect([input.min, input.max, input.step, input.value]).toEqual(['-24', '12', '0.5', '0']);
+      input.value = '-1.5';
+      input.dispatchEvent(new Event('input'));
+    }
+    expect(c.basic.getRawValue()).toMatchObject({
+      eq_low_db: -1.5,
+      eq_mid_db: -1.5,
+      eq_high_db: -1.5,
+    });
+    for (const control of [
+      c.basic.controls.highpass_enabled,
+      c.basic.controls.compressor_enabled,
+      c.basic.controls.lowpass_enabled,
+    ]) {
+      control.setValue(false);
+      control.setValue(true);
+    }
+    expect(c.basic.controls.highpass_hz.enabled).toBe(true);
+    expect(c.basic.controls.compressor_ratio.enabled).toBe(true);
+    expect(c.basic.controls.compressor_threshold_dbfs.enabled).toBe(true);
+    expect(c.basic.controls.lowpass_hz.enabled).toBe(true);
   });
   it('confirms deletion, reports reference conflict, and refreshes after deletion', async () => {
     const f = await list();

@@ -357,13 +357,16 @@ V1-ben a modell maradjon egyszerű:
 | `eq_config` | Opcionális JSON, kezdetben minimális |
 | `compressor_config` | Opcionális JSON |
 | `limiter_config` | Opcionális JSON |
-| `processor` | `NONE` (gain only, default) or `GST_BASIC` (currently gain only; DSP deferred) |
+| `processor` | `NONE` (gain only, default) or `GST_BASIC` (native Basic DSP after common gain) |
+| `basic_config` | Typed high-pass, three-band EQ, compressor, low-pass and limiter settings; see M7B4 |
 | `advanced_options` | Opcionális advanced config |
 | `timestamp` | Utolsó módosítás |
 
 Legacy profile JSON is normalized on read, without a schema bump. The obsolete
-bypass flag is not part of the current API: gain always applies. Reserved DSP
-JSON is not implemented processing and is not exposed by the editor.
+bypass flag is not part of the current API: gain always applies. Legacy reserved DSP JSON is not interpreted. Basic uses only typed `basic_config`.
+The backend chain and defaults are defined in `docs/milestone7b4.md`; frontend
+integration is deferred. Gain is followed by Basic stages in F32LE/48 kHz/stereo,
+then converted to the unchanged S16LE output contract. Missing plugins fail clearly.
 All profile updates return 409 while a referencing source is assigned to a
 Modulator whose current runtime TX state is ON. Stop affected transmitters before
 saving, including renames. No live update or implicit restart is implemented. Referenced

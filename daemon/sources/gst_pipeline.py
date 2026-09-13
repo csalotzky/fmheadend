@@ -9,6 +9,7 @@ import time
 from ..errors import DependencyUnavailable
 from ..models.configuration import SourceType, SourceTestResult
 from .output import PCM_CAPS, PcmQueue, PcmOutput
+from .basic import PROCESSING_CAPS, basic_stages
 
 log = logging.getLogger(__name__)
 
@@ -204,14 +205,20 @@ class GstPipeline:
                 raise DependencyUnavailable("GStreamer volume gain must be at most +20 dB")
             volume.set_property("volume", gain)
             if self.profile.processor == "GST_BASIC" and any((self.profile.eq_config, self.profile.compressor_config, self.profile.limiter_config, self.profile.advanced_options)):
-                raise DependencyUnavailable("GStreamer Basic currently supports gain only; optional DSP settings are not implemented")
+                raise DependencyUnavailable("Legacy DSP property blobs are unsupported; configure Basic processing with basic_config")
         capsfilter = self._make("capsfilter", caps=Gst.Caps.from_string(PCM_CAPS))
         queue = self._make("queue", max_size_buffers=8, max_size_bytes=19200, max_size_time=100000000, leaky=0)
         self._overrides(queue, "queue")
         sink = self._make("appsink", caps=Gst.Caps.from_string(PCM_CAPS), emit_signals=True,
                           sync=True, max_buffers=2, drop=True, wait_on_eos=False, enable_last_sample=False)
         sink.connect("new-sample", self._sample)
-        self._link(self._convert, resample, volume, capsfilter, queue, sink)
+        if self.profile and self.profile.processor == "GST_BASIC":
+            domain = self._make("capsfilter", caps=Gst.Caps.from_string(PROCESSING_CAPS))
+            stages = basic_stages(self._make, self.profile.basic_config)
+            final_convert = self._make("audioconvert")
+            self._link(self._convert, resample, domain, volume, *stages, final_convert, capsfilter, queue, sink)
+        else:
+            self._link(self._convert, resample, volume, capsfilter, queue, sink)
         self.sink = sink
         config = self.source.config
         if self.source.type == SourceType.HTTP:

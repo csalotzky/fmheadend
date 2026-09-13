@@ -1,3 +1,4 @@
+import { BasicConfig } from './basic-config';
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { timeout } from 'rxjs';
@@ -6,6 +7,7 @@ export interface ProfileDraft {
   name: string;
   gain_db?: number;
   processor?: Processor;
+  basic_config?: BasicConfig;
 }
 export interface AudioProfile {
   id: number;
@@ -13,6 +15,7 @@ export interface AudioProfile {
   gain_db: number;
   processor: Processor;
   timestamp: string;
+  basic_config: BasicConfig;
 }
 export const processorLabel = (value: Processor) =>
   value === 'NONE' ? 'None (gain only)' : 'GStreamer Basic';

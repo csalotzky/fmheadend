@@ -1,5 +1,8 @@
 # Milestone 7B3 - Audio Profiles
 
+Backend processing capabilities described here are superseded by
+[M7B4](milestone7b4.md). The M7B3 UI is unchanged; Basic controls remain deferred.
+
 Audio Profiles belong to digital InputSources. A shared source has one processed
 GStreamer pipeline and fans its PCM out to its consumers. ANALOG modulators do
 not use profiles. Source gain is unrelated to QN `digital_trim_db`.

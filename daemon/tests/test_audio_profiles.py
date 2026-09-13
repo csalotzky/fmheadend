@@ -45,7 +45,7 @@ def test_active_profile_update_policy(api):
     pipeline = services.sources.pipelines[sid]
     before = api.get(f'/api/v1/audio-profiles/{pid}').json()
     try:
-        for patch in ({'name':'Renamed'}, {'gain_db':-3}, {'processor':'GST_BASIC'}, {'eq_config':{'x':1}}, {}):
+        for patch in ({'name':'Renamed'}, {'gain_db':-3}, {'processor':'GST_BASIC'}, {'eq_config':{'x':1}}, {'basic_config':{'highpass_hz':80}}, {}):
             assert api.patch(f'/api/v1/audio-profiles/{pid}', json=patch).status_code == 409
         assert api.get(f'/api/v1/audio-profiles/{pid}').json()['gain_db'] == 0
         assert api.get(f'/api/v1/audio-profiles/{pid}').json() == before
@@ -66,6 +66,7 @@ def test_legacy_read_normalization_and_reopen(tmp_path, enabled, processor):
     p = db.save('audio_profiles', AudioProfileConfig(name='Legacy',gain_db=-3))
     with db.connection:
         raw = json.loads(db.connection.execute('SELECT data FROM audio_profiles WHERE id=?',(p.id,)).fetchone()[0])
+        raw.pop('basic_config', None)
         raw.update(processing_enabled=enabled,processor='GSTREAMER')
         db.connection.execute('UPDATE audio_profiles SET data=? WHERE id=?',(json.dumps(raw),p.id))
     db.close()
@@ -73,6 +74,8 @@ def test_legacy_read_normalization_and_reopen(tmp_path, enabled, processor):
         db = Database(path)
         profile = db.get('audio_profiles',p.id)
         assert profile.processor == processor and profile.gain_db == -3
+        assert profile.basic_config.highpass_hz == 40
+        assert profile.basic_config.limiter_enabled is True
         assert db.list('audio_profiles')[0] == profile
         assert db.connection.execute('PRAGMA user_version').fetchone()[0] == 9
         db.save('audio_profiles',profile,p.id)

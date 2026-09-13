@@ -94,9 +94,24 @@ class InputSource(InputSourceConfig):
     timestamp: datetime
 
 
+class BasicConfig(Model):
+    highpass_enabled: bool = True
+    highpass_hz: Literal[20, 30, 40, 50, 60, 80, 100] = 40
+    eq_low_db: float = Field(default=0, ge=-24, le=12, multiple_of=0.5)
+    eq_mid_db: float = Field(default=0, ge=-24, le=12, multiple_of=0.5)
+    eq_high_db: float = Field(default=0, ge=-24, le=12, multiple_of=0.5)
+    compressor_enabled: bool = True
+    compressor_threshold_dbfs: int = Field(default=-12, ge=-30, le=-3, strict=True)
+    compressor_ratio: Literal[1, 1.5, 2, 3, 4] = 2
+    lowpass_enabled: bool = True
+    lowpass_hz: Literal[12000, 13000, 14000, 15000, 16000] = 15000
+    limiter_enabled: bool = True
+
+
 class AudioProfileConfig(Model):
     name: Name
     gain_db: float = Field(default=0, le=20)
+    basic_config: BasicConfig = Field(default_factory=BasicConfig)
     eq_config: JsonObject | None = None
     compressor_config: JsonObject | None = None
     limiter_config: JsonObject | None = None
