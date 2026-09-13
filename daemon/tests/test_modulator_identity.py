@@ -20,7 +20,7 @@ def test_legacy_names_removed_without_other_configuration_changes(tmp_path, vers
     with db.connection:
         for channel in range(8):
             config = ModulatorConfig(input_source_id=source.id, frequency_khz=98100 + channel * 100,
-                enabled=channel % 2 == 0, rf_output_dbuv=96.0, rds_ecc=224, rds_af_khz=[101100], rds_rt='Keep text')
+                enabled=channel % 2 == 0, rf_attenuation_db=6.0, rds_ecc=224, rds_af_khz=[101100], rds_rt='Keep text')
             data = config.model_dump(mode='json') | {'timestamp': '2025-01-01T00:00:00+00:00'}
             expected[channel] = data.copy()
             # Include missing and customized legacy names, not just generated defaults.
@@ -31,7 +31,7 @@ def test_legacy_names_removed_without_other_configuration_changes(tmp_path, vers
     db.close()
     for _ in range(2):
         db = Database(path)
-        assert db.connection.execute('PRAGMA user_version').fetchone()[0] == 8
+        assert db.connection.execute('PRAGMA user_version').fetchone()[0] == 9
         rows = db.connection.execute('SELECT * FROM modulators ORDER BY id').fetchall()
         assert [row['id'] for row in rows] == list(range(8))
         for row in rows:

@@ -107,7 +107,7 @@ The payload is exactly 15 bytes. The original first ten bytes retain their order
 | Payload offset | Type | Field |
 |---:|---|---|
 | 0 | u32 | frequency_khz, positive and explicitly configured |
-| 4 | u16 | rf_output_dbuv_x10, nominal target in tenths of dBµV |
+| 4 | u16 | rf_attenuation_db_x10: 0, 15, ... 225 (relative attenuation) |
 | 6 | u8 | stereo: 0 mono, 1 stereo |
 | 7 | u8 | preemphasis_us: literal 50 or 75 |
 | 8 | u8 | audio_mode: 0 DIGITAL, 1 ANALOG |
@@ -132,20 +132,22 @@ are AUTO, analog_gain_db=0.0, digital_trim_db=0, soft_clipping=false; AUTO ignor
 both stored gain values until MANUAL is selected. No board RIN default is implied.
 
 This atomically applies configuration and **does not enable TX**. Linux/API
-configuration uses `rf_output_dbuv` in dBµV: 96.0 becomes 960, 100.0 becomes 1000.
-Linux accepts only finite values 0..6553.5 in 0.1 dBµV steps (the wire range),
-without rounding or clamping. This is not a claim that the QN supports that entire
-range. RP firmware owns hardware-range validation, rounding and the QN PA mapping.
-The nominal approximation is `dBµV = 0.37 * PAC_TARGET + 68`; for example 96.0
-maps approximately to raw 76. Linux never performs this conversion or exposes
-PAC_TARGET in normal configuration. Invalid hardware targets are rejected by RP.
+`rf_attenuation_db` is relative attenuation: 0 is Maximum; 1.5, 3.0, ... 22.5 dB
+select the remaining 15 QN output-control steps. The wire carries nonnegative tenths
+(0, 15, ... 225), not raw register codes. Other values are invalid.
+RP firmware maps this requested attenuation to the corresponding QN output-control
+step. IPOW remains board/firmware-owned and MUST NOT be changed by this setting.
+No calibrated absolute output or dBµV conversion is defined. The former approximate
+PA-target formula is not a mapping for these steps and must not be used.
 
-Both frequency and RF target must be explicitly configured for a real TX config.
-Unset RF targets remain null; no physical target is inferred from legacy raw values.
-The high-level mock accepts an unset target for existing hardware-free workflows.
+A real SET_TX_CONFIG requires an explicitly selected attenuation. Schema 9 removes
+obsolete absolute targets and initializes relative attenuation to null; it never
+converts them to Maximum or invents a calibration. Frequency and all other settings
+are preserved. The high-level mock still permits unconfigured targets in tests.
 
-Example, TX7, 98100 kHz, 96.0 dBµV, stereo, 50 us, DIGITAL, RDS disabled, default audio controls:
-`02 07 0f 34 7f 01 00 c0 03 01 32 00 00 00 00 00 00 00`. ACK: `00 00`.
+Example TX7, 98100 kHz, 6.0 dB attenuation, stereo, 50 us, DIGITAL, RDS disabled,
+default audio controls: `02 07 0f 34 7f 01 00 3c 00 01 32 00 00 00 00 00 00 00`.
+ACK: `00 00`. Protocol version remains 1; byte sizes, command IDs and offsets are unchanged.
 
 ## SET_TX_ENABLED (0x03)
 
@@ -172,7 +174,7 @@ payload offset `10 + 15*c`; no repeated channel ID is transmitted.
 | Record offset | Type | Field |
 |---:|---|---|
 | 0 | u8 | tx_state: 0 OFF, 1 ON, 2 ERROR |
-| 1 | i16 | rf_output_dbuv_x10 in tenths of dBµV; -32768 means unavailable |
+| 1 | i16 | rf_attenuation_db_x10: 0, 15, ... 225; -32768 means unavailable |
 | 3 | u32 | audio_underrun_count |
 | 7 | u32 | rds_underrun_count |
 | 11 | u16 | rds_fifo_free, capacity in complete groups |
@@ -185,10 +187,10 @@ level too high/channel saturated). DIGITAL mode must return 255. Linux exposes
 `input_saturated: bool | null`, masks it to null for DIGITAL, and invalidates it
 on RP loss. It is a current snapshot, neither a counter nor a latched error.
 
-RF readback describes nominal configured/read-back QN output level, **not measured
-RF power**. Firmware must use the unavailable sentinel if it cannot supply a
-meaningful nominal value. Linux returns JSON null for that sentinel; otherwise
-it divides the signed integer by ten. No QN PA conversion is performed by Linux.
+RF readback is the currently configured relative attenuation, not a calibrated
+absolute output or measured RF power. Linux exposes `rf_attenuation_db` as 0..22.5
+in 1.5 dB steps, or null for unavailable (-32768). Invalid non-sentinel values are
+rejected. No absolute conversion or IPOW change is performed by Linux.
 Counters are unsigned cumulative counts; FIFO free capacity is an instantaneous
 snapshot. Linux transports these values without running a refill policy.
 

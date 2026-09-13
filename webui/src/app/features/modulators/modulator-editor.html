@@ -1,0 +1,295 @@
+<div class="page-title">
+  <h1>TX {{ id }}</h1>
+  <a routerLink="/modulators">All modulators</a>
+</div>
+@if (shared.stale()) {
+  <p class="warning" role="status">Backend status unavailable. Last observations may be stale.</p>
+}
+@if (loading()) {
+  <p role="status">Loading configuration...</p>
+}
+@if (error()) {
+  <p class="error" role="alert">{{ error() }}</p>
+}
+@if (message()) {
+  <p role="status">{{ message() }}</p>
+}
+@if (!loading() && !failed()) {
+  <aside class="runtime" aria-label="Current observations">
+    <strong [class.error]="channel()?.runtime?.hardware_tx_state === 'ERROR'"
+      >Reported state:
+      {{
+        shared.stale() ? 'UNKNOWN' : (channel()?.runtime?.hardware_tx_state ?? 'UNKNOWN')
+      }}</strong
+    >
+    @if (channel()?.error) {
+      <p class="error">{{ channel()?.error }}</p>
+    }
+    @if (channel()?.analog) {
+      <span>Audio input: Analog</span>
+      @if (!shared.stale() && channel()?.runtime?.input_saturated === true) {
+        <p class="warning" role="status">
+          Analog input overload — saturation detected. Reduce the input level.
+        </p>
+      }
+      @if (!shared.stale() && channel()?.runtime?.input_saturated === false) {
+        <span class="muted">No current input saturation</span>
+      }
+    } @else {
+      <span
+        >Source:
+        {{
+          channel()?.config?.input_source_id == null ? 'Not assigned' : channel()?.sourceName
+        }}</span
+      >
+      @if (channel()?.source) {
+        <span
+          >Source state:
+          {{
+            shared.stale() ? 'Unavailable' : (channel()?.runtime?.source_state ?? 'Unavailable')
+          }}</span
+        >
+      }
+      <span>Digital audio: {{ shared.stale() ? 'Unavailable' : channel()?.pcm }}</span>
+    }
+  </aside>
+  <p class="muted">
+    Stop the transmitter before saving configuration. Saving never starts or restarts it.
+  </p>
+  <form [formGroup]="form" (ngSubmit)="save()">
+    <fieldset [disabled]="saving()">
+      <section aria-labelledby="rf-heading">
+        <h2 id="rf-heading">RF</h2>
+        <div class="fields">
+          <label
+            >Frequency<select formControlName="frequency_khz" required>
+              <option [ngValue]="null" disabled>Select frequency…</option>
+              @for (option of frequencies; track option.value) {
+                <option [ngValue]="option.value">{{ option.label }}</option>
+              }</select
+            ><small>Required. European FM band, 100 kHz raster.</small></label
+          >
+          <label
+            >RF output<select formControlName="rf_attenuation_db" required>
+              <option [ngValue]="null" disabled>Select RF output…</option>
+              @for (option of rfLevels; track option.value) {
+                <option [ngValue]="option.value">{{ option.label }}</option>
+              }</select
+            ><small>Relative to maximum output.</small></label
+          >
+          <label
+            >Mode<select formControlName="stereo">
+              <option [ngValue]="true">Stereo</option>
+              <option [ngValue]="false">Mono</option>
+            </select></label
+          >
+          <label
+            >Pre-emphasis<select formControlName="preemphasis_us">
+              <option [ngValue]="50">50 µs</option>
+              <option [ngValue]="75">75 µs</option>
+            </select></label
+          >
+        </div>
+      </section>
+      <section aria-labelledby="audio-heading">
+        <h2 id="audio-heading">Audio</h2>
+        <div class="fields">
+          <label
+            >Audio input<select formControlName="audio_mode" (change)="changeMode()">
+              <option value="DIGITAL">Digital source</option>
+              <option value="ANALOG">Analog input</option>
+            </select></label
+          >
+          @if (form.controls.audio_mode.value === 'DIGITAL') {
+            <label
+              >Source<select formControlName="input_source_id">
+                <option [ngValue]="null">Not assigned</option>
+                @if (form.controls.input_source_id.value !== null && !selectedSource()) {
+                  <option [ngValue]="form.controls.input_source_id.value">
+                    Source unavailable
+                  </option>
+                }
+                @for (source of sources(); track source.id) {
+                  <option [ngValue]="source.id">{{ source.name }} · {{ source.type }}</option>
+                }
+              </select></label
+            >
+          } @else {
+            <p class="muted">Uses TX {{ id }}'s dedicated analog input jack.</p>
+          }
+          <label
+            >Gain control<select formControlName="gain_mode" (change)="syncGain()">
+              <option value="AUTO">Automatic</option>
+              <option value="MANUAL">Manual</option></select
+            ><small>Automatic gain control overrides the stored manual gains.</small></label
+          >
+          @if (form.controls.audio_mode.value === 'ANALOG') {
+            <label
+              >Analog input gain<select formControlName="analog_gain_db">
+                @for (option of analogGains; track option.value) {
+                  <option [value]="option.value">{{ option.label }}</option>
+                }
+              </select></label
+            >
+          }
+          <label
+            >Digital gain<select formControlName="digital_trim_db">
+              <option [ngValue]="0">0 dB</option>
+              <option [ngValue]="1">+1 dB</option>
+            </select></label
+          >
+          <label
+            >Soft clipping<select formControlName="soft_clipping">
+              <option [ngValue]="false">Off</option>
+              <option [ngValue]="true">On</option>
+            </select></label
+          >
+        </div>
+      </section>
+      <section aria-labelledby="rds-heading">
+        <h2 id="rds-heading">RDS</h2>
+        <label class="check"
+          ><input type="checkbox" formControlName="rds_enabled" />RDS enabled</label
+        >
+        <fieldset [disabled]="!form.controls.rds_enabled.value">
+          @if (form.controls.audio_mode.value === 'DIGITAL') {
+            <div class="actions">
+              <button
+                type="button"
+                (click)="fillFromSource()"
+                [disabled]="!selectedSource()?.name?.trim()"
+              >
+                Fill from source</button
+              ><span class="muted"
+                >Fill PI, PS and fallback RadioText. Changes remain unsaved.</span
+              >
+            </div>
+          }
+          <div class="fields">
+            <label
+              >PI (hex)<input class="rds-text" formControlName="pi" spellcheck="false"
+            /></label>
+            <label
+              >ECC (hex, optional)<input
+                class="rds-text"
+                formControlName="ecc"
+                spellcheck="false"
+                placeholder="Not configured"
+            /></label>
+            <label
+              >Programme type<select formControlName="rds_pty">
+                @if (form.controls.rds_pty.value === null) {
+                  <option [ngValue]="null" disabled>
+                    Existing diagnostic value — choose a programme type to change
+                  </option>
+                }
+                @for (label of labels; track $index) {
+                  <option [ngValue]="$index">{{ $index }} · {{ label }}</option>
+                }
+              </select></label
+            >
+            <label class="check"
+              ><input type="checkbox" formControlName="rds_tp" />Traffic programme (TP)</label
+            >
+          </div>
+          <h3>Programme Service (PS)</h3>
+          <p class="muted">Up to 8 characters per entry.</p>
+          <div formArrayName="rds_ps">
+            @for (entry of ps.controls; track entry; let i = $index) {
+              <div class="list-entry" [class.single-ps]="ps.length === 1" [formGroupName]="i">
+                <label
+                  >PS {{ i + 1 }}<input class="rds-text" formControlName="text" /><small
+                    >{{ textLength(entry.controls.text.value) }} / 8</small
+                  ></label
+                >
+                @if (ps.length > 1) {
+                  <label
+                    >Duration (s)<input formControlName="duration_s" inputmode="decimal"
+                  /></label>
+                }
+                <div class="actions">
+                  <button
+                    type="button"
+                    (click)="movePs(i, -1)"
+                    [disabled]="i === 0"
+                    [attr.aria-label]="'Move PS ' + (i + 1) + ' up'"
+                  >
+                    Up
+                  </button>
+                  <button
+                    type="button"
+                    (click)="movePs(i, 1)"
+                    [disabled]="i === ps.length - 1"
+                    [attr.aria-label]="'Move PS ' + (i + 1) + ' down'"
+                  >
+                    Down
+                  </button>
+                  <button
+                    type="button"
+                    (click)="removePs(i)"
+                    [disabled]="ps.length === 1"
+                    [attr.aria-label]="'Remove PS ' + (i + 1)"
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            }
+          </div>
+          <button type="button" (click)="addPs()">Add PS</button>
+          <h3>Alternative frequencies (AF)</h3>
+          <p class="muted">
+            Fixed Method A list, up to 25 frequencies. 87.6–107.9 MHz in 0.1 MHz steps. Empty means
+            no alternatives.
+          </p>
+          <div formArrayName="af">
+            @for (entry of af.controls; track entry; let i = $index) {
+              <div class="af-entry">
+                <label
+                  >AF {{ i + 1
+                  }}<select [formControlName]="i">
+                    <option value="" disabled>Select frequency...</option>
+                    @for (option of alternatives; track option.value) {
+                      <option [value]="mhz(option.value)">{{ option.label }}</option>
+                    }
+                  </select></label
+                ><button
+                  type="button"
+                  (click)="removeAf(i)"
+                  [attr.aria-label]="'Remove AF ' + (i + 1)"
+                >
+                  Remove
+                </button>
+              </div>
+            }
+          </div>
+          <button type="button" (click)="addAf()" [disabled]="af.length >= 25">
+            Add frequency
+          </button>
+          <label class="rt"
+            >Fallback RadioText<textarea
+              class="rds-text"
+              formControlName="rds_rt"
+              rows="2"
+            ></textarea
+            ><small>{{ textLength(form.controls.rds_rt.value) }} / 64</small
+            ><small
+              >Up to 64 characters. Temporary override takes priority, then selected source
+              metadata, then this fallback.</small
+            ></label
+          >
+          <label class="check"
+            ><input type="checkbox" formControlName="rds_metadata_to_rt" />Use source metadata for
+            RadioText</label
+          >
+        </fieldset>
+      </section>
+    </fieldset>
+    <div class="actions save-actions">
+      <button type="submit" [disabled]="saving() || form.invalid">
+        {{ saving() ? 'Saving…' : 'Save' }}</button
+      ><button type="button" (click)="cancel()" [disabled]="saving()">Cancel</button
+      ><span class="muted">{{ form.dirty ? 'Unsaved changes' : 'No unsaved changes' }}</span>
+    </div>
+  </form>
+}

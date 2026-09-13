@@ -45,15 +45,16 @@
       <span>&middot;</span> {{ channel().config?.preemphasis_us ?? '\u2014' }} &micro;s
     </div>
     <div class="rf">
-      <span>Nominal RF</span
+      <span>RF output</span
       ><strong
         >{{
-          stale() || channel().runtime?.rf_output_dbuv == null
+          stale() || channel().runtime?.rf_attenuation_db == null
             ? '\u2014'
-            : (channel().runtime!.rf_output_dbuv | number: '1.1-1')
+            : channel().runtime!.rf_attenuation_db === 0
+              ? 'Maximum'
+              : '-' + (channel().runtime!.rf_attenuation_db | number: '1.1-1') + ' dB'
         }}
-        <small>dB&micro;V</small></strong
-      >
+      </strong>
     </div>
     <div class="runtime">
       @if (channel().analog) {
@@ -67,7 +68,14 @@
         >
       }
       <span
-        >RDS <b>{{ stale() ? 'Unknown' : (channel().runtime?.rds_state ?? 'Unknown') }}</b></span
+        >RDS
+        <b>{{
+          stale()
+            ? 'Unknown'
+            : channel().runtime?.rds_state === 'FEEDING'
+              ? 'RUNNING'
+              : (channel().runtime?.rds_state ?? 'Unknown')
+        }}</b></span
       >
     </div>
   </a>

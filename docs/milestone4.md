@@ -38,13 +38,12 @@ The existing persistent `SystemConfig.i2c_device` and
 unset; startup reports hardware unavailable while serving the API. I2C configuration
 changes take effect on daemon restart. `--i2c-timeout-ms` defaults to 200.
 
-`rf_output_dbuv` is nominal configured/read-back QN output, not a measurement.
-It remains null when RP cannot provide a meaningful nominal value. The existing
-`rf_output_dbuv` is the nominal physical target; the RP owns QN PA conversion.
-SQLite schema 2 replaces legacy raw `rf_level` values with an unset target (null),
-because raw values cannot be reliably converted. Configure an explicit target
-before real hardware use; frequency, assignments and desired enabled state are preserved.
-The high-level mock continues accepting an unset target.
+`rf_attenuation_db` is relative configured/read-back attenuation, not measured power.
+Zero means Maximum; the other 15 levels increase attenuation by 1.5 dB through
+22.5 dB. Unavailable readback is null. RP firmware owns the QN step mapping and
+must not change IPOW. Schema 9 replaces obsolete absolute targets with null,
+preserving other configuration; no calibrated conversion is assumed. Select an
+explicit level before real hardware use. The high-level mock accepts an unset level.
 
 ## Enable and inspect I2C on Raspberry Pi OS
 
@@ -122,7 +121,7 @@ try:
     rp.get_info()
     rp.set_tx_enabled(0, False)
     for mode in ('DIGITAL', 'ANALOG'):
-        rp.set_tx_config(0, TxConfig(frequency_khz=98100, rf_output_dbuv=96.0,
+        rp.set_tx_config(0, TxConfig(frequency_khz=98100, rf_attenuation_db=6.0,
             stereo=True, preemphasis_us=50, audio_mode=mode, rds_enabled=False))
         status = rp.get_status()['modulators'][0]
         print(mode, status)

@@ -101,11 +101,11 @@ missing routes, resource conflicts and unavailable dependencies.
   Omitted fields remain unchanged. Explicit null clears nullable assignments;
   null for a required field is invalid. The merged configuration is revalidated.
 - Start/stop persist `Modulator.enabled` as the desired state. An active modulator
-  configuration update commits first, then turns RF off and reapplies it. Failed
-  hardware application returns 503 and leaves desired configuration intact while
-  actual state becomes ERROR. Shutdown turns RF off without changing desired state.
+  configuration PATCH returns 409 without persistence or hardware changes. Explicitly
+  stop, edit, then start. PATCH cannot change desired enabled state; use Start/Stop.
+  Shutdown turns RF off without changing desired state.
 - Sources run on demand from active DIGITAL modulators. Modulators default to disabled,
-  DIGITAL and unassigned, with `frequency_khz: null`, unset nominal RF target, stereo, 50 us pre-emphasis
+  DIGITAL and unassigned, with `frequency_khz: null`, unset relative RF output, stereo, 50 us pre-emphasis
   and RDS disabled. A frequency must be explicitly configured before enabling
   a modulator; starting without it returns 409 `FREQUENCY_REQUIRED` without
   changing desired state or touching hardware. Starting DIGITAL mode without a configured
@@ -118,10 +118,11 @@ missing routes, resource conflicts and unavailable dependencies.
   stop failures retain the source until RF-off can be confirmed.
 - The default FM validation band is 87500..108000 kHz inclusive. Override it with
   `--fm-band-min-khz` and `--fm-band-max-khz`. No tuning raster is assumed.
-  Configure `rf_output_dbuv` in nominal dBµV (0.1 dBµV steps) for real RP control.
-  The RP owns PA conversion and hardware range checks. Schema 2 migrates legacy
-  raw RF values to null; it does not invent a physical target. Readback is nominal,
-  never measured RF power. See the [canonical protocol](docs/rp2354-protocol.md).
+  Configure `rf_attenuation_db` as relative attenuation: 0 (Maximum), then 1.5 dB
+  steps through 22.5 dB. RP firmware maps these levels without changing IPOW.
+  Schema 9 migrates obsolete absolute RF targets to null rather than guessing an
+  uncalibrated conversion. Select a level explicitly before real hardware use.
+  See the [canonical protocol](docs/rp2354-protocol.md).
 - PI is represented as a uint16 integer. PS entries contain up to eight printable
   characters and a positive duration; RT allows up to 64 printable characters.
   ECC is a nullable integer byte, with no inferred country. Schema 3 backfills
@@ -171,7 +172,9 @@ Milestone 7A Angular Dashboard: [development and validation](docs/milestone7a.md
 
 
 Milestone 7B1 Sources UI and final validation: [documentation](docs/milestone7b1.md).
-Current SQLite schema is 8 (removes the obsolete source enable flag; schema 7 added neutral QN audio-control defaults): schema 5 moves legacy analog-source assignments to
+Current SQLite schema is 9 (RF targets now use relative attenuation; schema 8 removes the obsolete source enable flag; schema 7 added neutral QN audio-control defaults): schema 5 moves legacy analog-source assignments to
 Modulator.audio_mode; schema 6 preserves effective HTTP User-Agent values in
 `gst_options.source["user-agent"]`. There is no normal HTTP `config.user_agent`
 field. See the canonical architecture for migration conflict/rollback rules.
+
+Modulator RF/Audio/RDS editor: [Milestone 7B2](docs/milestone7b2.md).

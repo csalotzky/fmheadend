@@ -14,7 +14,7 @@ class TxConfig(Model):
     digital_trim_db: int = Field(default=0, ge=0, le=1, strict=True)
     soft_clipping: bool = Field(default=False, strict=True)
     frequency_khz: int
-    rf_output_dbuv: float | None = Field(default=None, ge=0, le=6553.5, multiple_of=0.1, strict=True)
+    rf_attenuation_db: float | None = Field(default=None, ge=0, le=22.5, multiple_of=1.5, strict=True)
     stereo: bool
     preemphasis_us: int
     audio_mode: Literal["DIGITAL", "ANALOG"]
@@ -22,7 +22,7 @@ class TxConfig(Model):
 
     @classmethod
     def from_modulator(cls, modulator: Modulator):
-        return cls(**modulator.model_dump(include={"frequency_khz", "rf_output_dbuv", "stereo", "preemphasis_us", "rds_enabled", "audio_mode", "gain_mode", "analog_gain_db", "digital_trim_db", "soft_clipping"}))
+        return cls(**modulator.model_dump(include={"frequency_khz", "rf_attenuation_db", "stereo", "preemphasis_us", "rds_enabled", "audio_mode", "gain_mode", "analog_gain_db", "digital_trim_db", "soft_clipping"}))
 
 
 class Rp2354Client(Protocol):
@@ -69,7 +69,7 @@ class MockRp2354Client:
         self._check()
         self._drain_rds()
         return {"state": "OK", "i2c_errors": self.i2c_errors, "modulators": [
-            {"id": i, "tx_state": "ON" if enabled else "OFF", "rf_output_dbuv": None,
+            {"id": i, "tx_state": "ON" if enabled else "OFF", "rf_attenuation_db": None,
              "audio_underrun_count": 0, "rds_underrun_count": 0, "rds_fifo_free": self.rds_capacity - len(self.rds_fifos[i]),
              "input_saturated": self.input_saturated[i] if i in self.configs and self.configs[i].audio_mode == "ANALOG" else None,
              "last_error_code": None} for i, enabled in enumerate(self.enabled)]}

@@ -39,7 +39,7 @@ describe('Dashboard API composition and operations', () => {
     await load();
     expect(state.channels()[7].config?.frequency_khz).toBeNull();
     expect(state.channels()[7].canStart).toBe(false);
-    expect(state.channels()[0].runtime?.rf_output_dbuv).toBeNull();
+    expect(state.channels()[0].runtime?.rf_attenuation_db).toBeNull();
   });
   it('handles missing sources without guessing', () => {
     const data = sample();

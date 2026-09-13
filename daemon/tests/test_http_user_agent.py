@@ -38,7 +38,7 @@ def test_migration_preserves_effective_value_and_timestamp(tmp_path,advanced):
         assert saved.gst_options['source']['user-agent']==(advanced or 'Legacy/2')
         assert saved.timestamp==source.timestamp
         if advanced:assert saved.gst_options['source']['timeout']==2
-        assert db.connection.execute('PRAGMA user_version').fetchone()[0]==8
+        assert db.connection.execute('PRAGMA user_version').fetchone()[0]==9
         db.close()
 
 def test_migration_rolls_back_on_invalid_record(tmp_path):

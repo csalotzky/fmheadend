@@ -105,7 +105,7 @@ Suggested information hierarchy:
 - PI
 - ECC (nullable 8-bit code; integer API, hexadecimal display such as E0 is suitable)
 - Fixed AF Method A list (ordered frequencies in kHz; max 25, 87600..107900 on a 100 kHz raster)
-- nominal RF output level
+- relative RF output level
 - stereo / mono
 - pre-emphasis
 - source/runtime status
@@ -122,7 +122,7 @@ FM4 Internet
 PS  FM4
 PI  A213
 
-Stereo · 50 µs · 96 dBµV
+Stereo · 50 µs · 6 dB below maximum
 Source RUNNING · PCM OK · RDS OK
 ```
 
@@ -244,7 +244,7 @@ This page contains persistent configuration for physical modulators.
 
 Modulators are fixed hardware resources with IDs `0..7`; the UI must not present create/delete operations for them.
 
-A modulator configuration page should be divided into logical sections or tabs.
+The Modulator editor is one page with RF, Audio and RDS sections in that order, without tabs.
 
 Recommended sections:
 
@@ -257,8 +257,9 @@ Recommended sections:
 Fields:
 
 - frequency
-- nominal RF level
-- TX enabled / desired state where appropriate
+- relative RF output: Maximum, then -1.5 dB steps through -22.5 dB
+- stereo / mono
+- pre-emphasis: 50 µs / 75 µs
 
 Frequency is required before TX can be started.
 
@@ -268,14 +269,16 @@ Do not invent a default frequency.
 
 Fields:
 
-- assigned Source
-- stereo / mono
-- pre-emphasis: 50 µs / 75 µs
-- Audio Profile
+- Digital source / Analog input (`audio_mode`), with reusable source selector only for DIGITAL
+- Gain control: Automatic / Manual
+- Analog input gain in dB, visible only for ANALOG
+- Digital trim: 0 / +1 dB
+- Soft clipping: On / Off
 
-Audio mode is derived from the assigned Source type.
-
-The future Modulator editor selects audio_mode DIGITAL / ANALOG. ANALOG selects the dedicated physical jack and clears input_source_id; DIGITAL requires selecting a digital source again. Do not label this I2S. Dashboard shows Audio input: Analog without a source runtime state.
+AUTO keeps both manual gains visible where applicable but disabled, preserving stored values.
+Soft clipping is independent. No raw QN gain mapping is exposed. Analog saturation is a
+current read-only warning; DIGITAL/unavailable observations do not imply input health.
+ANALOG selects the dedicated jack and clears input_source_id. Audio Profiles belong to Sources.
 
 ### 7.3 RDS
 
@@ -287,10 +290,11 @@ Fields:
 - PI
 - ECC (nullable 8-bit code; integer API, hexadecimal display such as E0 is suitable)
 - Fixed AF Method A list (ordered frequencies in kHz; max 25, 87600..107900 on a 100 kHz raster)
-- PTY
+- PTY 0..29 with European labels only
 - TP
 - PS list
 - fallback RadioText
+- Use source metadata for RadioText
 
 PS behavior:
 
@@ -300,6 +304,15 @@ PS behavior:
 - PS length is limited to 8 characters
 
 Runtime RadioText override and metadata-derived RadioText may be displayed where useful, but the persistent fallback RT should remain clearly distinguishable from runtime content.
+
+Manual Fill from source sets PI to FF00 + physical TX ID, replaces PS with one
+static entry, and sets fallback RT. It uses the current conservative RDS conversion,
+with 8/64-character limits, and confirms before replacing a carousel. Nothing follows
+source changes automatically; values remain unsaved until Save. There is no Station entity.
+
+Save/Cancel use a common action area and protect dirty navigation. Active-TX PATCH
+returns 409 without saving/stopping/restarting; lifecycle remains explicit.
+See [M7B2](milestone7b2.md) for implementation and verification.
 
 ## 8. Audio Profiles
 

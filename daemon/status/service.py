@@ -41,7 +41,7 @@ class StatusService:
                 row = self.modulators.statuses[channel["id"]]
                 row.hardware_tx_state = channel["tx_state"]
                 row.tx_state = TxState(channel["tx_state"])
-                row.rf_output_dbuv = channel["rf_output_dbuv"]
+                row.rf_attenuation_db = channel["rf_attenuation_db"]
                 row.input_saturated = channel.get("input_saturated") if self.modulators.get(row.id).audio_mode == "ANALOG" else None
                 row.audio_underrun_count = channel["audio_underrun_count"]
                 row.rds_underrun_count = channel["rds_underrun_count"]
@@ -60,7 +60,7 @@ class StatusService:
                 for row in self.modulators.statuses.values():
                     row.hardware_tx_state = None
                     row.tx_state = TxState.ERROR
-                    row.rf_output_dbuv = None
+                    row.rf_attenuation_db = None
                     row.input_saturated = None
                     row.audio_underrun_count = row.rds_underrun_count = row.rds_fifo_free = None
                     row.hardware_last_error = str(exc)

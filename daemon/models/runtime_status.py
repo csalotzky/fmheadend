@@ -37,7 +37,7 @@ class ModulatorStatus(Model):
     id: int
     source_state: str | None = "IDLE"
     tx_state: TxState = TxState.OFF
-    rf_output_dbuv: float | None = None
+    rf_attenuation_db: float | None = None
     underruns: int = 0
     overruns: int = 0
     pcm_bytes_received: int = 0

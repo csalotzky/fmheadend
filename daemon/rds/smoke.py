@@ -27,7 +27,7 @@ def run() -> dict:
             refill = RdsRefill(db, manager, rt, rp, clock)
             manager.rds = refill
             manager.update(0, ModulatorPatch(audio_mode="ANALOG", frequency_khz=98100,
-                rf_output_dbuv=96.0, rds_enabled=True, rds_pi=0x1234, rds_ecc=0xe0,
+                rf_attenuation_db=6.0, rds_enabled=True, rds_pi=0x1234, rds_ecc=0xe0,
                 rds_pty=10, rds_tp=True, rds_ps=[{'text':'RADIO FM','duration_s':5}],
                 rds_af_khz=[101100], rds_rt='Persistent fallback'))
             manager.start(0)

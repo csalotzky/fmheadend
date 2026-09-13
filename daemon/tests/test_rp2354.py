@@ -15,13 +15,13 @@ from fmheadendd.rp2354 import linux_client as linux
 from fmheadendd.rp2354.client import MockRp2354Client, TxConfig
 
 INFO = struct.pack('<H16s16sB', 1, b'0.1.0', b'Pico2', 8)
-CONFIG = TxConfig(frequency_khz=98100, rf_output_dbuv=96.0, stereo=True, preemphasis_us=50,
+CONFIG = TxConfig(frequency_khz=98100, rf_attenuation_db=6.0, stereo=True, preemphasis_us=50,
                   audio_mode='DIGITAL', rds_enabled=False)
 
 
 def status_payload():
     return struct.pack('<BIIB', 0, 123456, 9, 0) + b''.join(
-        struct.pack('<BhIIHBB', i % 2, -32768 if i == 0 else 875, i + 10, i + 20, i + 30, 0, 255)
+        struct.pack('<BhIIHBB', i % 2, -32768 if i == 0 else 60, i + 10, i + 20, i + 30, 0, 255)
         for i in range(8))
 
 
@@ -68,7 +68,7 @@ def test_exact_targets_and_enable(calls, channel):
 def test_config_exact_and_never_enables(calls, mode, wire_mode):
     replies(calls, INFO, b'')
     client().set_tx_config(7, CONFIG.model_copy(update={'audio_mode': mode}))
-    assert packets(calls) == [b'\x01\xff\x00', b'\x02\x07\x0f\x34\x7f\x01\x00\xc0\x03\x01\x32' + bytes((wire_mode, 0, 0, 0, 0, 0, 0))]
+    assert packets(calls) == [b'\x01\xff\x00', b'\x02\x07\x0f\x34\x7f\x01\x00\x3c\x00\x01\x32' + bytes((wire_mode, 0, 0, 0, 0, 0, 0))]
     assert all(packet[0] != p.Command.SET_TX_ENABLED for packet in packets(calls))
 
 
@@ -90,8 +90,8 @@ def test_get_status_exact_single_snapshot(calls):
     result = client().get_status()
     assert packets(calls) == [b'\x01\xff\x00', b'\x04\xff\x00']
     assert result['uptime_ms'] == 123456 and result['rp_spi_audio_link_error_count'] == 9
-    assert result['modulators'][0]['rf_output_dbuv'] is None
-    assert result['modulators'][7] == {'id': 7, 'tx_state': 'ON', 'rf_output_dbuv': 87.5,
+    assert result['modulators'][0]['rf_attenuation_db'] is None
+    assert result['modulators'][7] == {'id': 7, 'tx_state': 'ON', 'rf_attenuation_db': 6.0,
         'audio_underrun_count': 17, 'rds_underrun_count': 27, 'rds_fifo_free': 37, 'last_error_code': None, 'input_saturated': None}
 
 
@@ -150,7 +150,7 @@ def test_global_command_rejects_channel(command, target):
 
 
 @pytest.mark.parametrize('changes', [{'frequency_khz': 0}, {'frequency_khz': None}, {'frequency_khz': 2**32},
-    {'rf_output_dbuv': -1}, {'rf_output_dbuv': 6553.6}, {'preemphasis_us': 25}, {'audio_mode': 'bad'},
+    {'rf_attenuation_db': -1}, {'rf_attenuation_db': 6553.6}, {'preemphasis_us': 25}, {'audio_mode': 'bad'},
     {'stereo': 2}, {'rds_enabled': 'yes'}])
 def test_invalid_config_does_not_touch_i2c(calls, changes):
     with pytest.raises(ValueError):
@@ -289,7 +289,7 @@ def test_http_stays_available_when_real_i2c_fails(calls, tmp_path):
         assert status['system']['system_state'] == 'DEGRADED'
         assert status['system']['mocked'] is False
         assert status['modulators'][0]['hardware_tx_state'] is None
-        assert status['modulators'][0]['rf_output_dbuv'] is None
+        assert status['modulators'][0]['rf_attenuation_db'] is None
         info = api.get('/api/v1/system/info').json()
         assert info['rp_firmware_version'] is None and info['mocked'] is False
 
@@ -310,7 +310,7 @@ def test_native_status_reaches_existing_api(calls, tmp_path):
         api.app.state.control.executor.submit(api.app.state.services.status.refresh).result()
         status = api.get('/api/v1/status').json()
         assert status['modulators'][1]['hardware_tx_state'] == 'ON'
-        assert status['modulators'][1]['rf_output_dbuv'] == 87.5
+        assert status['modulators'][1]['rf_attenuation_db'] == 6.0
         assert status['modulators'][1]['audio_underrun_count'] == 11
         assert status['modulators'][1]['underruns'] == 0  # Separate mux count.
         assert api.get('/api/v1/system/info').json()['rp_firmware_version'] == '0.1.0'
@@ -402,8 +402,8 @@ def test_config_encoding_failure_releases_source(tmp_path):
         sources = SourceManager(db)
         rp = client()
         manager = ModulatorManager(db, sources, rp, MockMuxClient(), Settings(tmp_path / 'range.db'))
-        manager.update(0, ModulatorPatch(input_source_id=source.id, frequency_khz=98100, rf_output_dbuv=None))
-        with pytest.raises(DomainError, match='rf_output_dbuv'):
+        manager.update(0, ModulatorPatch(input_source_id=source.id, frequency_khz=98100, rf_attenuation_db=None))
+        with pytest.raises(DomainError, match='rf_attenuation_db'):
             manager.start(0)
         assert not manager.active_sources and not sources.pipelines
     finally:
@@ -427,21 +427,21 @@ def test_cli_selects_explicit_hardware_mode(monkeypatch, tmp_path, flags, real_r
 
 def test_all_config_options_exact():
     config = CONFIG.model_copy(update={'stereo': False, 'preemphasis_us': 75, 'rds_enabled': True, 'audio_mode': 'ANALOG'})
-    assert p.tx_config(config) == b'\x34\x7f\x01\x00\xc0\x03\0\x4b\x01\x01' + bytes(5)
+    assert p.tx_config(config) == b'\x34\x7f\x01\x00\x3c\x00\0\x4b\x01\x01' + bytes(5)
 
-@pytest.mark.parametrize('level,wire', [(0, 0), (96.0, 960), (100, 1000), (96.1, 961), (6553.5, 65535)])
-def test_review_rf_physical_units(level, wire):
-    config = CONFIG.model_copy(update={'rf_output_dbuv': level})
+@pytest.mark.parametrize('level,wire', [(i * 1.5, i * 15) for i in range(16)])
+def test_rf_attenuation_steps(level, wire):
+    config = CONFIG.model_copy(update={'rf_attenuation_db': level})
     data = p.tx_config(config)
     assert len(data) == 15 and data[4:6] == struct.pack('<H', wire)
 
 
-@pytest.mark.parametrize('level', [-0.1, 6553.6, 96.01, float('nan'), float('inf'), True, '96'])
+@pytest.mark.parametrize('level', [-0.1, 24, 1, float('nan'), float('inf'), True, '6'])
 def test_review_rf_model_validation(level):
     from pydantic import ValidationError
     from fmheadendd.models.configuration import ModulatorConfig
-    with pytest.raises(ValidationError): ModulatorConfig(rf_output_dbuv=level)
-    with pytest.raises(ValidationError): TxConfig(**(CONFIG.model_dump() | {'rf_output_dbuv': level}))
+    with pytest.raises(ValidationError): ModulatorConfig(rf_attenuation_db=level)
+    with pytest.raises(ValidationError): TxConfig(**(CONFIG.model_dump() | {'rf_attenuation_db': level}))
 
 
 def test_fifo_free_exact_request_response(calls):
@@ -485,17 +485,17 @@ def test_legacy_rf_migration_and_reopen(tmp_path):
     db = Database(path)
     with db.connection:
         for row in db.connection.execute('SELECT id, data FROM modulators').fetchall():
-            data = json.loads(row['data']); data.pop('rf_output_dbuv'); data['rf_level'] = 76
+            data = json.loads(row['data']); data.pop('rf_attenuation_db'); data['rf_level'] = 76
             data['frequency_khz'] = 98100
             db.connection.execute('UPDATE modulators SET data=? WHERE id=?', (json.dumps(data), row['id']))
         db.connection.execute('PRAGMA user_version=1')
     db.close()
     db = Database(path)
-    assert all(row.rf_output_dbuv is None and row.frequency_khz == 98100 for row in db.list('modulators'))
-    assert db.connection.execute('PRAGMA user_version').fetchone()[0] == 8
+    assert all(row.rf_attenuation_db is None and row.frequency_khz == 98100 for row in db.list('modulators'))
+    assert db.connection.execute('PRAGMA user_version').fetchone()[0] == 9
     assert 'rf_level' not in db.connection.execute('SELECT data FROM modulators').fetchone()[0]
-    config = db.get('modulators', 0).model_copy(update={'rf_output_dbuv': 96.0})
+    config = db.get('modulators', 0).model_copy(update={'rf_attenuation_db': 6.0})
     db.save('modulators', config, 0); db.close()
     db = Database(path)
-    assert db.get('modulators', 0).rf_output_dbuv == 96.0
+    assert db.get('modulators', 0).rf_attenuation_db == 6.0
     db.close()

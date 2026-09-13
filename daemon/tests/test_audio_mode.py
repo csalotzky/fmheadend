@@ -24,8 +24,9 @@ def test_api_mode_transition_and_digital_validation(tmp_path):
         assert row['input_source_id'] is None
         assert api.post(p+'/modulators/0/start').status_code==200
         assert api.get(p+'/status').json()['modulators'][0]['source_state'] is None
-        assert api.patch(p+'/modulators/0',json={'input_source_id':source['id']}).json()['input_source_id'] is None
+        assert api.patch(p+'/modulators/0',json={'input_source_id':source['id']}).status_code == 409
         assert api.post(p+'/modulators/0/stop').status_code==200
+        assert api.patch(p+'/modulators/0',json={'input_source_id':source['id']}).json()['input_source_id'] is None
         row=api.patch(p+'/modulators/0',json={'audio_mode':'DIGITAL'}).json()
         assert row['input_source_id'] is None
         assert api.post(p+'/modulators/0/start').status_code==409
@@ -53,7 +54,7 @@ def test_legacy_analog_migration_preserves_configuration_and_is_idempotent(tmp_p
     path=tmp_path/'legacy.db';digital,expected=legacy(path)
     for _ in range(2):
         db=Database(path)
-        assert db.connection.execute('PRAGMA user_version').fetchone()[0]==8
+        assert db.connection.execute('PRAGMA user_version').fetchone()[0]==9
         assert db.list('sources')==[digital]
         for channel,data in expected.items():
             want=data | {'audio_mode':'ANALOG' if channel<2 else 'DIGITAL'}
@@ -93,7 +94,7 @@ def test_complete_m7b1_chain_preserves_unrelated_records(tmp_path):
     expected_http=json.loads(json.dumps(http));expected_http['config'].pop('user_agent');expected_http.pop('enabled')
     for _ in range(2):
         db=Database(path)
-        assert db.connection.execute('PRAGMA user_version').fetchone()[0]==8
+        assert db.connection.execute('PRAGMA user_version').fetchone()[0]==9
         assert [row.id for row in db.list('sources')]==[digital.id,hid]
         assert db.get('sources',digital.id)==digital
         assert json.loads(db.connection.execute('SELECT data FROM sources WHERE id=?',(hid,)).fetchone()[0])==expected_http

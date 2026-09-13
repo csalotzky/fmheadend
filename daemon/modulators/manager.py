@@ -36,19 +36,17 @@ class ModulatorManager:
 
     def update(self, modulator_id, patch):
         old = self.get(modulator_id)
+        status = self.statuses[modulator_id]
+        if old.enabled or modulator_id in self.active_sources or status.tx_state in (TxState.ON, TxState.STARTING):
+            raise DomainError(409, "MODULATOR_ACTIVE", "Stop the transmitter before editing its configuration")
         config = ModulatorConfig.model_validate(old.model_dump(exclude={"id", "timestamp"}) | patch.model_dump(exclude_unset=True))
         self.validate(config)
+        if config.enabled != old.enabled:
+            raise DomainError(409, "LIFECYCLE_REQUIRED", "Use the explicit Start or Stop operation to change TX state")
         saved = self.database.save("modulators", config, modulator_id)
         self.statuses[modulator_id].source_state = None if config.audio_mode == "ANALOG" else "IDLE"
         if config.audio_mode != old.audio_mode:
             self.statuses[modulator_id].input_saturated = None
-        # Commit desired config first; failed apply leaves it available for recovery.
-        if modulator_id in self.active_sources or self.statuses[modulator_id].tx_state != TxState.OFF:
-            self._stop(modulator_id)
-            if config.enabled:
-                self._start(modulator_id)
-        elif config.enabled and "enabled" in patch.model_fields_set:
-            self._start(modulator_id)
         return saved
 
     def start(self, modulator_id):

@@ -141,9 +141,9 @@ def test_start_stop_status_active_edit_and_bulk(client):
     assert client.patch(f"{P}/sources/{sid}", json={"name": "Busy"}).status_code == 409
     status = client.get(P + "/status").json()
     assert status["modulators"][0]["tx_state"] == "ON"
-    assert status["modulators"][0]["rf_output_dbuv"] is None
+    assert status["modulators"][0]["rf_attenuation_db"] is None
     assert "text" not in status["modulators"][0]
-    assert client.patch(P + "/modulators/0", json={"frequency_khz": 99500}).status_code == 200
+    assert client.patch(P + "/modulators/0", json={"frequency_khz": 99500}).status_code == 409
     assert client.post(P + "/modulators/0/stop").json()["tx_state"] == "OFF"
     assert client.get(f"{P}/sources/{sid}/status").json()["state"] == "IDLE"
     assert len(client.post(P + "/modulators/start-all").json()) == 8
@@ -281,16 +281,16 @@ def test_rt_priority_and_exact_expiry(services):
     assert db.get("modulators", 0).rds_rt == "Fallback"
 
 
-def test_failed_apply_preserves_desired_and_audio_until_rf_off(services):
+def test_active_edit_rejection_preserves_config_and_audio_without_rp_access(services):
     db, rp, mux, sources, manager = services
     sid = setup_tx(services)
     manager.start(0)
     rp.available = False
     with pytest.raises(Exception) as error:
         manager.update(0, ModulatorPatch(frequency_khz=99900))
-    assert error.value.status == 503
-    assert db.get("modulators", 0).frequency_khz == 99900
-    assert manager.statuses[0].tx_state == "ERROR"
+    assert error.value.status == 409
+    assert db.get("modulators", 0).frequency_khz == 98100
+    assert manager.statuses[0].tx_state == "ON"
     assert sources.pipelines[sid].running
     rp.available = True
     manager.stop(0)
@@ -327,7 +327,7 @@ def test_status_reads_cache_without_hardware_calls(client):
 def test_schema_version_and_fixed_rows(tmp_path):
     path = tmp_path / "schema.db"
     db = Database(path)
-    assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 8
+    assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 9
     assert db.connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     with pytest.raises(sqlite3.IntegrityError):
         db.connection.execute("DELETE FROM modulators WHERE id=0")

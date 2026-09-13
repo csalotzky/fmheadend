@@ -17,7 +17,7 @@ MANUAL = dict(gain_mode="MANUAL", analog_gain_db=-1.5, digital_trim_db=1, soft_c
 
 
 def config(**changes):
-    return TxConfig(frequency_khz=98100, rf_output_dbuv=96.0, stereo=True,
+    return TxConfig(frequency_khz=98100, rf_attenuation_db=6.0, stereo=True,
                     preemphasis_us=50, audio_mode="ANALOG", rds_enabled=True, **changes)
 
 
@@ -26,10 +26,10 @@ def config(**changes):
                                          (-3276.8, "0080"), (3276.7, "ff7f")])
 def test_exact_config(mode, code, gain, encoded):
     body = p.tx_config(config(gain_mode=mode, analog_gain_db=gain, digital_trim_db=1, soft_clipping=True))
-    expected = bytes.fromhex("347f0100c00301320101") + bytes([code]) + bytes.fromhex(encoded) + b"\x01\x01"
+    expected = bytes.fromhex("347f01003c0001320101") + bytes([code]) + bytes.fromhex(encoded) + b"\x01\x01"
     assert body == expected and len(body) == 15
     assert p.request(p.Command.SET_TX_CONFIG, 7, body) == b"\x02\x07\x0f" + expected
-    assert struct.unpack("<IHBBBBBhBB", body) == (98100, 960, 1, 50, 1, 1, code, int(gain * 10), 1, 1)
+    assert struct.unpack("<IHBBBBBhBB", body) == (98100, 60, 1, 50, 1, 1, code, int(gain * 10), 1, 1)
 
 
 @pytest.mark.parametrize("field,value", [("gain_mode", "invalid"), ("gain_mode", 0),
@@ -62,7 +62,7 @@ def test_config_wrong_lengths(size):
 
 def status_payload():
     prefix = bytes.fromhex("00010000000200000000")
-    return prefix + b"".join(bytes.fromhex("01c0030300000004000000200000") + bytes([sat])
+    return prefix + b"".join(bytes.fromhex("013c000300000004000000200000") + bytes([sat])
                              for sat in (0, 1, 255, 0, 1, 255, 0, 1))
 
 
@@ -73,7 +73,7 @@ def test_status_exact_layout_and_saturation():
     status = p.parse_status(payload)
     assert status["uptime_ms"] == 1 and status["rp_spi_audio_link_error_count"] == 2
     for index, expected in enumerate((False, True, None, False, True, None, False, True)):
-        assert status["modulators"][index] == dict(id=index, tx_state="ON", rf_output_dbuv=96.0,
+        assert status["modulators"][index] == dict(id=index, tx_state="ON", rf_attenuation_db=6.0,
             audio_underrun_count=3, rds_underrun_count=4, rds_fifo_free=32,
             last_error_code=None, input_saturated=expected)
 
@@ -112,7 +112,7 @@ def test_schema6_preservation_and_reopen(tmp_path):
     db.close()
     for _ in range(2):
         db = Database(path)
-        assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 8
+        assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 9
         for row in db.connection.execute("SELECT id,data FROM modulators"):
             assert json.loads(row["data"]) == before[row["id"]] | DEFAULTS
         for table, rows in other.items():
@@ -144,7 +144,7 @@ def test_api_recovery_replays_full_config_and_current_saturation(tmp_path, setti
         assert api.get(prefix + "/system/info").json()["rp_protocol_version"] == 1
         original = api.get(prefix + "/modulators/0").json()
         assert {key:original[key] for key in DEFAULTS} == DEFAULTS
-        body = dict(audio_mode="ANALOG", frequency_khz=98100, rf_output_dbuv=96.0, rds_enabled=True, **settings)
+        body = dict(audio_mode="ANALOG", frequency_khz=98100, rf_attenuation_db=6.0, rds_enabled=True, **settings)
         result = api.patch(prefix + "/modulators/0", json=body)
         assert result.status_code == 200
         assert {key:result.json()[key] for key in settings} == settings

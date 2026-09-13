@@ -26,7 +26,7 @@ def test_schema7_source_flag_removal_preserves_records(tmp_path):
     db.close()
     for _ in range(2):
         db = Database(path)
-        assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 8
+        assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 9
         for row in db.connection.execute("SELECT id,data FROM sources"):
             assert json.loads(row["data"]) == expected[row["id"]]
         for table, rows in others.items():

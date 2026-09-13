@@ -134,7 +134,7 @@ class ModulatorConfig(Model):
     frequency_khz: int | None = Field(default=None, gt=0, strict=True)
     stereo: bool = True
     preemphasis_us: Literal[50, 75] = 50
-    rf_output_dbuv: float | None = Field(default=None, ge=0, le=6553.5, multiple_of=0.1, strict=True)
+    rf_attenuation_db: float | None = Field(default=None, ge=0, le=22.5, multiple_of=1.5, strict=True)
     rds_enabled: bool = False
     rds_af_khz: list[Annotated[int, Field(strict=True, ge=87600, le=107900, multiple_of=100)]] = Field(default_factory=list, max_length=25)
     rds_ecc: int | None = Field(default=None, ge=0, le=255, strict=True)

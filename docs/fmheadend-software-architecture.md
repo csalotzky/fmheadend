@@ -390,7 +390,7 @@ A `Modulator` a nyolc fizikai QN egyikét reprezentálja. Az `id` **fizikai azon
 | `frequency_khz` | integer | FM frekvencia kHz-ben |
 | `stereo` | bool | Stereo/mono |
 | `preemphasis_us` | enum 50/75 | Pre-emphasis |
-| `rf_output_dbuv` | nullable number | Nominal RF target in dBuV, 0.1 dBuV steps; no default target |
+| `rf_attenuation_db` | nullable number | Relative attenuation 0..22.5 dB in 1.5 dB steps; null until selected |
 | `gain_mode` | AUTO / MANUAL | Default AUTO; QN AGC owns both gains in AUTO |
 | `analog_gain_db` | number | Default 0.0 dB; signed tenths, final hardware representability checked by RP |
 | `digital_trim_db` | 0 / 1 | Default 0; manual QN digital trim in dB |
@@ -423,6 +423,13 @@ are also deleted; AudioProfile records are retained. Enabled state, frequency, R
 RDS, timestamps and digital source records are preserved. SQL/JSON reference conflicts
 or an explicit ANALOG mode paired with a digital reference abort the transaction
 without a schema-version bump; repair inconsistent legacy data before retrying.
+
+Configuration PATCH is separate from lifecycle for all clients. A desired ON,
+STARTING/ON, or active-source channel returns 409 MODULATOR_ACTIVE before any
+configuration mutation or hardware action. Stop explicitly before editing and
+start explicitly afterward. A PATCH attempting to change desired enabled state
+returns 409 LIFECYCLE_REQUIRED; dedicated Start/Stop remain authoritative.
+Stopped configuration changes are persisted for the next explicit start/recovery.
 
 Modulators have no separate name field; physical ID 0..7 is their identity.
 SQLite schema 4 removes legacy names without changing other configuration.
@@ -523,7 +530,7 @@ A V1 dashboardhoz szándékosan minimális.
   "id": 0,
   "source_state": "RUNNING",
   "tx_state": "ON",
-  "rf_output_dbuv": 121.0,
+  "rf_attenuation_db": 6.0,
   "underruns": 0,
   "last_error": null
 }
@@ -543,9 +550,13 @@ For digital input this mirrors the active InputSource state. For ANALOG mode,
 
 Nincs külön `qn_ok` mező. A hardverhiba a `tx_state` és `last_error` segítségével jelenik meg.
 
-### `rf_output_dbuv`
+### `rf_attenuation_db`
 
-Ez a kimeneti RF beállítás/névleges hardveres output readback reprezentációja. Nem laboratóriumi RF teljesítménymérés. Ha nincs külön power detector, a UI ezt nem nevezheti ténylegesen mért teljesítménynek.
+Relative RF attenuation: 0 is Maximum, followed by 15 levels in 1.5 dB steps
+through 22.5 dB. This is configured/read-back attenuation, not an absolute or
+measured RF output. Unavailable readback is null. RP firmware maps QN steps
+without changing IPOW. Schema 9 replaces obsolete absolute RF targets with null;
+other configuration is preserved and users must explicitly select a level.
 
 ### Tudatosan NINCS a V1 státuszban
 
@@ -948,7 +959,7 @@ Egy modulátor teljes, konzisztens hardverconfigja egy műveletben.
 Payload logikai mezői:
 
 - `frequency_khz`;
-- `rf_output_dbuv` (wire: `rf_output_dbuv_x10:u16`);
+- `rf_attenuation_db` (wire: `rf_attenuation_db_x10:u16`);
 - `stereo`;
 - `preemphasis_us`;
 - `audio_mode` = `DIGITAL` / `ANALOG`;
@@ -981,7 +992,7 @@ Egy hívással célszerű a globális és a 8 modulátor státuszt visszaadni.
 A Linux számára modulátoronként szükséges minimum:
 
 - `tx_state`;
-- `rf_output_dbuv` vagy ennek reprezentálható hardveres megfelelője;
+- `rf_attenuation_db` vagy ennek reprezentálható hardveres megfelelője;
 - `audio_underrun_count`;
 - `rds_underrun_count`;
 - `rds_fifo_free`;
@@ -1283,7 +1294,7 @@ Példa:
       "id": 0,
       "source_state": "RUNNING",
       "tx_state": "ON",
-      "rf_output_dbuv": 121.0,
+      "rf_attenuation_db": 6.0,
       "underruns": 0,
       "last_error": null
     }
@@ -1374,7 +1385,7 @@ V1 UI később lehet szándékosan fapados.
 - hozzárendelt source;
 - TX state;
 - source state;
-- RF output dBµV;
+- relative RF attenuation;
 - underrun count;
 - last error;
 - start/stop.
@@ -2015,7 +2026,7 @@ Ezeket nem kell az első backend milestone előtt véglegesíteni:
 1. RP2354 I2C slave cím konkrét értéke.
 2. I2C IDs and layouts are defined in [RP2354 V1 protocol](rp2354-protocol.md).
 3. SPI frame pontos wire header véglegesítése.
-4. RF units resolved: nominal `rf_output_dbuv`; QN PA conversion belongs to RP firmware.
+4. RF units: relative `rf_attenuation_db`, 16 levels; QN step mapping belongs to RP firmware without changing IPOW.
 5. GStreamer alapértelmezett resampler quality mérés Pi Zero 2-n.
 6. Basic compressor/limiter konkrét pluginja.
 7. muxd ring buffer végleges mérete.

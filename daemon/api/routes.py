@@ -124,7 +124,7 @@ def get_modulator(id: int, request: Request):
 @router.patch("/modulators/{id}", response_model=Modulator, tags=["modulators"])
 @control_route
 def update_modulator(id: int, body: ModulatorPatch, request: Request):
-    """Commit desired config, then reapply an active TX. Apply failures preserve config."""
+    """Update a stopped TX configuration. Active TX returns 409 without side effects; use explicit Start/Stop operations."""
     return request.app.state.services.modulators.update(id, body)
 
 

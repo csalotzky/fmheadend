@@ -12,7 +12,7 @@ export interface Modulator {
   frequency_khz: number | null;
   stereo: boolean;
   preemphasis_us: 50 | 75;
-  rf_output_dbuv: number | null;
+  rf_attenuation_db: number | null;
   rds_enabled: boolean;
   rds_pi: number;
   rds_ecc: number | null;
@@ -39,7 +39,7 @@ export interface ModulatorStatus {
   tx_state: TxState;
   hardware_tx_state: string | null;
   source_state: string | null;
-  rf_output_dbuv: number | null;
+  rf_attenuation_db: number | null;
   underruns: number;
   overruns: number;
   pcm_bytes_received: number;

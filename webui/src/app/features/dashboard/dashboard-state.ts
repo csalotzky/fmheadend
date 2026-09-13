@@ -190,9 +190,7 @@ export class DashboardState {
       }
       this.notice.set(
         `${action.toUpperCase()} ALL: ${accepted} accepted, ${failed.length} failed.` +
-          (skipped.length
-            ? ` Skipped unconfigured/disabled-source channels: ${skipped.join(', ')}.`
-            : ''),
+          (skipped.length ? ` Skipped unconfigured channels: ${skipped.join(', ')}.` : ''),
       );
     } catch (error) {
       for (let id = 0; id < 8; id++) failed.push({ id, message: errorMessage(error) });

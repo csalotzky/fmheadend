@@ -22,6 +22,24 @@ describe('Operational display', () => {
     state.loading.set(false);
     return state;
   }
+  it('presents feeding RDS as RUNNING without changing other states', () => {
+    const state = setup(),
+      data = sample();
+    const states = ['FEEDING', 'DISABLED', 'ERROR', 'IDLE'] as const;
+    states.forEach((value, i) => (data.status.modulators[i].rds_state = value));
+    state.channels.set(compose(data));
+    const fixture = TestBed.createComponent(Dashboard);
+    fixture.detectChanges();
+    const cards = (fixture.nativeElement as HTMLElement).querySelectorAll('app-channel-card');
+    const label = (i: number) =>
+      cards[i].querySelector('.runtime span:last-child')?.textContent?.replace(/\s+/g, ' ').trim();
+    expect(label(0)).toBe('RDS RUNNING');
+    states.slice(1).forEach((value, i) => expect(label(i + 1)).toBe(`RDS ${value}`));
+    expect(data.status.modulators[0].rds_state).toBe('FEEDING');
+    state.stale.set(true);
+    fixture.detectChanges();
+    expect(label(0)).toBe('RDS Unknown');
+  });
   it('renders eight cards, prominent frequencies, PS/PI/ECC and null RF', () => {
     setup();
     const fixture = TestBed.createComponent(Dashboard);

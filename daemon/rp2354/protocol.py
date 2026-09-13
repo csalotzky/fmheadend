@@ -1,7 +1,7 @@
 """RP2354 V1 wire contract. See docs/rp2354-protocol.md; no device access here."""
 from enum import IntEnum
 import struct
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 
 from ..errors import DependencyUnavailable
 
@@ -103,7 +103,7 @@ def request(command: Command, target: int, payload: bytes = b"") -> bytes:
         raise ValueError("SET_TX_ENABLED must be 0 or 1")
     if command == Command.SET_TX_CONFIG:
         frequency, level, stereo, emphasis, mode, rds, gain, analog, trim, clipping = TX_CONFIG.unpack(payload)
-        if frequency == 0 or stereo not in (0, 1) or emphasis not in (50, 75) or mode not in (0, 1) or rds not in (0, 1) or gain not in (0, 1) or trim not in (0, 1) or clipping not in (0, 1):
+        if level > 225 or level % 15 != 0 or frequency == 0 or stereo not in (0, 1) or emphasis not in (50, 75) or mode not in (0, 1) or rds not in (0, 1) or gain not in (0, 1) or trim not in (0, 1) or clipping not in (0, 1):
             raise ValueError("Invalid SET_TX_CONFIG field value")
     return bytes((command, target, len(payload))) + payload
 
@@ -130,16 +130,13 @@ def response(command: Command, data: bytes) -> bytes:
     return data[2:]
 
 
-def rf_dbuv_x10(value: float | None) -> int:
-    if value is None or isinstance(value, bool):
-        raise ValueError("Configure rf_output_dbuv explicitly in nominal dBµV")
-    try:
-        scaled = Decimal(str(value)) * 10
-        if not scaled.is_finite() or not 0 <= scaled <= 65535 or scaled != scaled.to_integral_value():
-            raise ValueError("rf_output_dbuv must be 0..6553.5 in steps of 0.1 dBµV")
-        return int(scaled)
-    except InvalidOperation as exc:
-        raise ValueError("Invalid rf_output_dbuv") from exc
+def rf_attenuation_x10(value: float | None) -> int:
+    if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("Configure rf_attenuation_db explicitly")
+    scaled = Decimal(str(value)) * 10
+    if not scaled.is_finite() or not 0 <= scaled <= 225 or scaled % 15 != 0:
+        raise ValueError("rf_attenuation_db must be 0..22.5 in steps of 1.5 dB")
+    return int(scaled)
 
 
 def parse_rds_fifo_free(payload: bytes) -> list[int]:
@@ -161,7 +158,7 @@ def tx_config(config) -> bytes:
     frequency = uint(config.frequency_khz, 32, "frequency_khz")
     if frequency == 0:
         raise ValueError("frequency_khz must be explicitly configured and positive")
-    level = rf_dbuv_x10(config.rf_output_dbuv)
+    level = rf_attenuation_x10(config.rf_attenuation_db)
     if config.preemphasis_us not in (50, 75) or type(config.preemphasis_us) is not int:
         raise ValueError("preemphasis_us must be 50 or 75")
     if config.audio_mode not in ("DIGITAL", "ANALOG"):
@@ -235,10 +232,12 @@ def parse_status(payload: bytes) -> dict:
     for channel in range(8):
         # audio counts detected QN I2S underrun flags, not missing Linux PCM.
         tx, level, audio, rds, free, error, saturated = CHANNEL_STATUS.unpack_from(payload, GLOBAL_STATUS.size + channel * CHANNEL_STATUS.size)
+        if level != -32768 and (level < 0 or level > 225 or level % 15 != 0):
+            raise ProtocolError(f"Invalid RF attenuation: {level}")
         if saturated not in (0, 1, 255):
             raise ProtocolError(f"Invalid input_saturated: {saturated}")
         result["modulators"].append({"id": channel, "tx_state": _enum(tx, ("OFF", "ON", "ERROR"), "TX state"),
-            "rf_output_dbuv": None if level == -32768 else level / 10,
+            "rf_attenuation_db": None if level == -32768 else level / 10,
             "audio_underrun_count": audio, "rds_underrun_count": rds,
             "input_saturated": None if saturated == 255 else bool(saturated),
             "rds_fifo_free": free, "last_error_code": _error(error)})
