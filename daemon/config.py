@@ -1,13 +1,13 @@
-﻿from dataclasses import dataclass
+from dataclasses import dataclass
 from pathlib import Path
-
+from .regions import PLANS
 
 @dataclass(frozen=True)
 class Settings:
     database_path: str | Path = "/var/lib/fmheadend/fmheadend.db"
-    fm_band_min_khz: int = 87500
-    fm_band_max_khz: int = 108000
+    region: int = 1
+    webui_dir: str | Path | None = None
 
     def __post_init__(self):
-        if not 0 < self.fm_band_min_khz < self.fm_band_max_khz:
-            raise ValueError("Invalid FM band limits")
+        if type(self.region) is not int or self.region not in PLANS:
+            raise ValueError("Unknown region: choose 0, 1, 2 or 3")

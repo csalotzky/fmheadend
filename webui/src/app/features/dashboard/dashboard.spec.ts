@@ -1,7 +1,8 @@
 import { TestBed } from '@angular/core/testing';
-import { provideRouter } from '@angular/router';
+import { provideRouter, Router, NavigationEnd } from '@angular/router';
 import { provideHttpClient } from '@angular/common/http';
-import { provideHttpClientTesting } from '@angular/common/http/testing';
+import { provideHttpClientTesting, HttpTestingController } from '@angular/common/http/testing';
+import { ChannelCard } from './channel-card';
 import { Dashboard } from './dashboard';
 import { DashboardState, compose } from './dashboard-state';
 import { Shell } from '../../layout/shell';
@@ -22,7 +23,7 @@ describe('Operational display', () => {
     state.loading.set(false);
     return state;
   }
-  it('presents feeding RDS as RUNNING without changing other states', () => {
+  it('presents feeding RDS as Running without changing other states', () => {
     const state = setup(),
       data = sample();
     const states = ['FEEDING', 'DISABLED', 'ERROR', 'IDLE'] as const;
@@ -33,12 +34,27 @@ describe('Operational display', () => {
     const cards = (fixture.nativeElement as HTMLElement).querySelectorAll('app-channel-card');
     const label = (i: number) =>
       cards[i].querySelector('.runtime span:last-child')?.textContent?.replace(/\s+/g, ' ').trim();
-    expect(label(0)).toBe('RDS RUNNING');
-    states.slice(1).forEach((value, i) => expect(label(i + 1)).toBe(`RDS ${value}`));
+    expect(label(0)).toBe('RDS Running');
+    states
+      .slice(1)
+      .forEach((value, i) =>
+        expect(label(i + 1)).toBe(`RDS ${value[0] + value.slice(1).toLowerCase()}`),
+      );
     expect(data.status.modulators[0].rds_state).toBe('FEEDING');
     state.stale.set(true);
     fixture.detectChanges();
     expect(label(0)).toBe('RDS Unknown');
+  });
+  it.each([
+    ['RUNNING', 'Running'],
+    ['FLOWING', 'Flowing'],
+    ['ERROR', 'Error'],
+    ['RECONNECT_PENDING', 'Reconnect pending'],
+    ['Not assigned', 'Not assigned'],
+    ['No flow observed', 'No flow observed'],
+  ])('humanizes runtime status %s without changing prose', (raw, expected) => {
+    const card = TestBed.createComponent(ChannelCard);
+    expect(card.componentInstance.humanizeStatus(raw)).toBe(expected);
   });
   it('renders eight cards, prominent frequencies, PS/PI/ECC and null RF', () => {
     setup();
@@ -75,8 +91,8 @@ describe('Operational display', () => {
     expect(cards[0].querySelector('.source-name')?.textContent).toBe('No source assigned');
     expect(sourceState(1)).toBe('Source Unavailable');
     expect(cards[1].querySelector('.source-name')?.textContent).toBe('Source unavailable');
-    expect(sourceState(2)).toBe('Source IDLE');
-    expect(sourceState(3)).toBe('Source RUNNING');
+    expect(sourceState(2)).toBe('Source Idle');
+    expect(sourceState(3)).toBe('Source Running');
     expect(cards[2].querySelector('.source-name')?.textContent).toBe('Studio feed');
     // Staleness hides runtime observations, not known assignment distinctions.
     state.stale.set(true);
@@ -87,7 +103,7 @@ describe('Operational display', () => {
     expect(data.status.modulators[0].source_state).toBe('IDLE');
   });
   it.each(['Flowing', 'Idle', 'Unavailable'] as const)(
-    'labels the existing %s counter state as Digital audio',
+    'labels the existing %s counter state as Digital Audio',
     (expected) => {
       const state = setup();
       const previous = sample();
@@ -100,7 +116,7 @@ describe('Operational display', () => {
       fixture.detectChanges();
       const el = fixture.nativeElement as HTMLElement;
       const audio = el.querySelector('.runtime span:nth-child(2)');
-      expect(audio?.textContent?.replace(/\s+/g, ' ').trim()).toBe(`Digital audio ${expected}`);
+      expect(audio?.textContent?.replace(/\s+/g, ' ').trim()).toBe(`Digital Audio ${expected}`);
       expect(el.textContent).not.toContain('PCM');
       expect(state.channels()[0].pcm).toBe(expected);
     },
@@ -188,12 +204,44 @@ describe('Operational display', () => {
     expect(cards[2].querySelector('.fault')).not.toBeNull();
     expect(cards[2].querySelector('.card-error')?.textContent).toContain('QN_ERROR');
     expect(el.textContent).not.toContain('Desired');
-    // Desired state remains available for the existing STOP behavior.
-    expect(cards[1].querySelector('button')?.getAttribute('aria-label')).toBe('STOP TX 1');
+    // A bulk-stopped channel remains desired-enabled but offers START while OFF.
+    expect(cards[1].querySelector('button')?.getAttribute('aria-label')).toBe('START TX 1');
     state.stale.set(true);
     fixture.detectChanges();
     expect(reported(0)).toBe('Reported state: UNKNOWN');
     expect(cards[0].querySelector('.on')).toBeNull();
+  });
+  it('shows profile names only for digital sources with a profile', () => {
+    const state = setup();
+    const data = sample();
+    data.sources[0].audio_profile_id = 4;
+    data.modulators[1].audio_mode = 'ANALOG';
+    state.channels.set(compose(data));
+    state.profileNames.set({ 4: 'Studio processing' });
+    const f = TestBed.createComponent(Dashboard);
+    f.detectChanges();
+    const cards = f.nativeElement.querySelectorAll('app-channel-card');
+    expect(cards[0].textContent).toContain('Audio Profile Studio processing');
+    expect(cards[1].textContent).not.toContain('Audio Profile');
+    expect(f.nativeElement.textContent).not.toContain('8 physical channels');
+  });
+  it('loads real version branding and clears transient messages on navigation', () => {
+    const state = setup();
+    vi.spyOn(state, 'start').mockImplementation(() => {});
+    state.notice.set('Operation accepted');
+    const f = TestBed.createComponent(Shell);
+    f.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/v1/system/info').flush({ fmheadend_version: '1.2.3' });
+    http.expectOne('/api/v1/audio-profiles').flush([]);
+    f.detectChanges();
+    expect(f.nativeElement.textContent).toContain('Version 1.2.3');
+    expect(f.nativeElement.textContent).toContain('MULTI-CHANNEL FM MODULATOR');
+    const events = TestBed.inject(Router).events as import('rxjs').Subject<
+      import('@angular/router').Event
+    >;
+    events.next(new NavigationEnd(1, '/sources', '/sources'));
+    expect(state.notice()).toBe('');
   });
   it('shows DEGRADED and global operations in the persistent shell', () => {
     const state = setup();

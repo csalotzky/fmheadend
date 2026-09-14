@@ -5,7 +5,7 @@ FIFO refill on Linux. RP firmware remains a transport endpoint. No checkwords or
 CRC are generated: each group is exactly four unsigned 16-bit information words.
 The [RP2354 protocol](rp2354-protocol.md) remains the only RP wire specification.
 
-## Configuration and migration
+## Configuration
 
 Per-modulator fields are `rds_enabled`, `rds_pi`, `rds_ecc`, `rds_pty`, `rds_tp`,
 `rds_ps`, `rds_af_khz`, `rds_rt` and `rds_metadata_to_rt`. PI remains an integer
@@ -13,9 +13,7 @@ uint16 in the API; ECC follows that style as nullable integer uint8. For example
 PI 4660 represents hex 1234 and ECC 224 represents hex E0. Hex strings are not
 accepted in JSON. No country code is inferred. Null ECC means no ECC group is sent.
 
-SQLite schema 3 backfills `rds_ecc: null` and `rds_af_khz: []`; existing records,
-frequencies, RF targets and desired enabled state remain intact. Missing fields
-also load through model defaults. No database reset is needed.
+Fresh pre-V1 schema-1 databases seed rds_ecc=null and rds_af_khz=[] from the current model. Old development databases are unsupported and may be recreated; see architecture section 16.4.
 
 `rds_af_khz` is an ordered list of at most 25 integer frequencies, each exactly on
 the 100 kHz raster from 87600 through 107900 kHz. The encoder alone derives AF codes.

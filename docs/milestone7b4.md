@@ -59,13 +59,7 @@ replaces that object; omitted fields within it take model defaults. Omitting the
 whole object retains the current settings on PATCH, so clients that omit Basic settings retain compatibility. Settings persist independently of processor
 choice. NONE ignores them without erasing them.
 
-Existing JSON without the object gets defaults on read; the next save persists
-it. SQLite remains schema 9, with no schema rewrite needed. Legacy GST_BASIC
-profiles now activate the documented default stages instead of gain only.
-Legacy GSTREAMER/bypass normalization follows M7B3. Legacy EQ/compressor/limiter/
-advanced blobs remain preserved, not guessed into settings; nonempty blobs with
-GST_BASIC fail explicitly until cleared through the existing API. They have no
-second effective DSP configuration path.
+Current AudioProfiles persist typed basic_config defaults in pre-V1 schema 1. Old development databases are unsupported and may be recreated; see architecture section 16.4. Reserved EQ/compressor/limiter/advanced blobs are not interpreted as Basic settings; nonempty blobs with GST_BASIC fail explicitly until cleared through the existing API. They have no second effective DSP configuration path.
 
 All existing-profile saves still return 409 when any referencing InputSource is
 assigned to a Modulator whose current runtime state is ON, including name, gain,

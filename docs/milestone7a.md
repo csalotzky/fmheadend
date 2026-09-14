@@ -2,7 +2,7 @@
 
 M7A implements the Web UI foundation and operational Dashboard only. The canonical
 visual/interaction specification remains [webui-spec.md](webui-spec.md). The focused Modulator identity correction removes the redundant `name` field
-from backend/API/frontend contracts and adds SQLite schema 4. RP/mux/RDS behavior
+from backend/API/frontend contracts in the current pre-V1 schema 1. RP/mux/RDS behavior
 is unchanged.
 
 ## Structure and routes
@@ -183,7 +183,7 @@ RP firmware and unrelated features remain outside this milestone.
 The production build emitted no warnings. npm installation warnings and the
 network-share esbuild limitation are documented above. The test/build ran from
 a clean local temporary copy with `npm ci`; source and lockfile remain in `webui/`.
-The original M7A pass changed no backend files. Focused backend migration/API tests
+The original M7A pass changed no backend files. Focused backend/API tests
 were subsequently run for the Modulator identity correction documented below.
 Smoke processes/tunnels were stopped and the isolated Pi test database was removed
 by its temporary-directory cleanup. All project changes are uncommitted. No
@@ -197,16 +197,7 @@ response and PATCH schemas and frontend types/cards have no `name` field. PATCH
 requests containing `name` are rejected as unknown fields. Source and Audio Profile
 names remain unchanged.
 
-SQLite schema 4 atomically removes only the `name` key from each stored modulator
-JSON record. IDs, source foreign keys, timestamps, enabled state, RF/audio/RDS
-configuration and unrelated records are preserved. The migration is idempotent on
-reopen; older schema versions first run their existing migrations. Fresh databases
-contain no generated TX0/TX1 name values. No replacement naming field is introduced.
+Fresh schema-1 databases store physical Modulator IDs without a name field. No replacement naming field is introduced. Old development databases are unsupported and may be recreated; see architecture section 16.4.
 
 
-Correction validation: 9 focused backend tests passed on Raspberry Pi OS (legacy
-schemas 1/2/3, atomic rollback, API/OpenAPI field removal, fixed IDs, persistence,
-RF and ECC migrations); 20 frontend Dashboard/API tests passed and TypeScript
-checking passed. No failures or skips. Only the two existing backend dependency
-deprecation warnings were reported. No unrelated regression suite or UI redesign
-was run/performed for this correction.
+Historical correction validation covered backend identity/API behavior and 20 frontend Dashboard/API tests, with TypeScript checking. The unreleased migration tests have since been removed; current database coverage tests direct schema-1 initialization, reopen, version rejection, and integrity.

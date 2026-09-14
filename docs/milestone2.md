@@ -61,11 +61,9 @@ sufficient. No Python requirement has been lowered or silently bypassed.
   terminates in caps `audio/x-raw,format=S16LE,rate=48000,channels=2,layout=interleaved`.
   The callback checks actual sample caps before accepting PCM. No sample arithmetic
   occurs in production Python code.
-- AudioProfile `processing_enabled=false` bypasses gain. Enabled profiles apply
-  `gain_db` with GStreamer's volume element (maximum +20 dB). Configured EQ,
-  compressor, limiter or advanced processing is rejected explicitly when enabled;
-  these model hooks remain available but are not silently represented as applied.
-  Profile edits are applied on the source's next start.
+- AudioProfile gain always applies through the native volume element (maximum
+  +20 dB). The current NONE/GST_BASIC processors and typed Basic settings are
+  documented in M7B3/M7B4. Profile edits are applied on the source's next start.
 - `gst_options` supports controlled `source` (`timeout`, `user-agent`,
   `buffer-size`), `queue` (`max-size-time`) and `resample` (`quality`,
   `sinc-filter-mode`) properties where the selected element supports them.

@@ -140,10 +140,7 @@ step. IPOW remains board/firmware-owned and MUST NOT be changed by this setting.
 No calibrated absolute output or dBµV conversion is defined. The former approximate
 PA-target formula is not a mapping for these steps and must not be used.
 
-A real SET_TX_CONFIG requires an explicitly selected attenuation. Schema 9 removes
-obsolete absolute targets and initializes relative attenuation to null; it never
-converts them to Maximum or invents a calibration. Frequency and all other settings
-are preserved. The high-level mock still permits unconfigured targets in tests.
+A real SET_TX_CONFIG requires an explicitly selected attenuation. Fresh schema-1 databases initialize relative attenuation to null. The high-level mock still permits unconfigured targets in tests.
 
 Example TX7, 98100 kHz, 6.0 dB attenuation, stereo, 50 us, DIGITAL, RDS disabled,
 default audio controls: `02 07 0f 34 7f 01 00 3c 00 01 32 00 00 00 00 00 00 00`.

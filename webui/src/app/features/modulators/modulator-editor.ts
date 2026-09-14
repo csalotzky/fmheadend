@@ -1,3 +1,4 @@
+import { SystemApi, FrequencyPlan, planOptions, frequencyLabel } from '../../core/api/system-api';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import {
   Component,
@@ -10,7 +11,7 @@ import {
 } from '@angular/core';
 import { FormArray, FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ActivatedRoute, CanDeactivateFn, Router } from '@angular/router';
-import { firstValueFrom } from 'rxjs';
+import { firstValueFrom, forkJoin } from 'rxjs';
 import { Modulator } from '../../core/api/models';
 import { errorMessage } from '../../core/api/headend-api';
 import { DashboardState } from '../dashboard/dashboard-state';
@@ -24,7 +25,6 @@ import {
   rdsText,
   checkText,
   decimal,
-  frequencyOptions,
   rfOutputOptions,
   analogGainOptions,
   afOptions,
@@ -54,7 +54,11 @@ export class ModulatorEditor implements OnInit {
   readonly error = signal('');
   readonly message = signal('');
   readonly labels = ptyLabels;
-  readonly frequencies = frequencyOptions;
+  private systemApi = inject(SystemApi);
+  frequencies: { value: number; label: string }[] = [];
+  plan: FrequencyPlan | null = null;
+  storedFrequency: number | null = null;
+  outsidePlan = false;
   readonly rfLevels = rfOutputOptions;
   readonly analogGains = analogGainOptions;
   readonly alternatives = afOptions;
@@ -109,8 +113,13 @@ export class ModulatorEditor implements OnInit {
       return;
     }
     try {
-      const config = await firstValueFrom(this.api.get(requestedId));
-      if (requestedId === this.id) this.load(config);
+      const { config, info } = await firstValueFrom(
+        forkJoin({ config: this.api.get(requestedId), info: this.systemApi.info() }),
+      );
+      if (requestedId === this.id) {
+        this.plan = info.frequency_plan;
+        this.load(config);
+      }
     } catch (e) {
       if (requestedId === this.id) {
         this.failed.set(true);
@@ -122,13 +131,20 @@ export class ModulatorEditor implements OnInit {
   }
   load(m: Modulator) {
     this.storedPty = m.rds_pty;
+    this.storedFrequency = m.frequency_khz;
+    this.frequencies = this.plan ? planOptions(this.plan) : [];
+    this.outsidePlan =
+      m.frequency_khz !== null && !this.frequencies.some((o) => o.value === m.frequency_khz);
+    if (this.outsidePlan)
+      this.frequencies.unshift({
+        value: m.frequency_khz!,
+        label: frequencyLabel(m.frequency_khz!) + ' (stored, outside plan)',
+      });
     this.form.patchValue({
       ...m,
       rds_ps: [],
       rds_pty: m.rds_pty <= 29 ? m.rds_pty : null,
-      frequency_khz: frequencyOptions.some((o) => o.value === m.frequency_khz)
-        ? m.frequency_khz
-        : null,
+      frequency_khz: m.frequency_khz,
       rf_attenuation_db: m.rf_attenuation_db,
       analog_gain_db: String(m.analog_gain_db),
       pi: hex(m.rds_pi, 4),
@@ -202,7 +218,7 @@ export class ModulatorEditor implements OnInit {
   }
   draft(): ModulatorDraft {
     const v = this.form.getRawValue();
-    if (!frequencyOptions.some((o) => o.value === v.frequency_khz))
+    if (!this.frequencies.some((o) => o.value === v.frequency_khz))
       throw new Error('Select a frequency.');
     if (!rfOutputOptions.some((o) => o.value === v.rf_attenuation_db))
       throw new Error('Select RF output.');

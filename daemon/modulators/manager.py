@@ -1,4 +1,5 @@
 import logging
+from ..regions import HARDWARE_MIN_KHZ, HARDWARE_MAX_KHZ, HARDWARE_STEP_KHZ
 from ..errors import DependencyUnavailable, DomainError
 from ..models.configuration import ModulatorConfig
 from ..models.runtime_status import ModulatorStatus, TxState
@@ -16,6 +17,7 @@ class ModulatorManager:
         self.statuses = {config.id: ModulatorStatus(id=config.id, source_state=None if config.audio_mode == "ANALOG" else "IDLE")
                          for config in database.list("modulators")}
         self.active_sources: dict[int, int] = {}
+        self.bulk_stopped: set[int] = set()
 
     def list(self):
         return self.database.list("modulators")
@@ -27,8 +29,8 @@ class ModulatorManager:
         if config.frequency_khz is None:
             if config.enabled:
                 raise DomainError(409, "FREQUENCY_REQUIRED", "Configure a transmitter frequency before enabling a modulator")
-        elif not self.settings.fm_band_min_khz <= config.frequency_khz <= self.settings.fm_band_max_khz:
-            raise DomainError(422, "INVALID_FREQUENCY", "Frequency must be inside the configured FM band")
+        elif not HARDWARE_MIN_KHZ <= config.frequency_khz <= HARDWARE_MAX_KHZ or config.frequency_khz % HARDWARE_STEP_KHZ:
+            raise DomainError(422, "INVALID_FREQUENCY", "Frequency must be 76000..108000 kHz on the 50 kHz hardware raster")
         if config.input_source_id is not None:
             self.database.get("sources", config.input_source_id)
         elif config.enabled and config.audio_mode == "DIGITAL":
@@ -54,6 +56,7 @@ class ModulatorManager:
         config = ModulatorConfig.model_validate(current.model_dump(exclude={"id", "timestamp"}) | {"enabled": True})
         self.validate(config)
         self.database.save("modulators", config, modulator_id)
+        self.bulk_stopped.discard(modulator_id)
         return self._start(modulator_id)
 
     def _start(self, modulator_id):
@@ -137,11 +140,27 @@ class ModulatorManager:
         logger.info("modulator %s stopped", modulator_id)
         return status
 
+    def desired_on(self, channel):
+        return self.get(channel).enabled and channel not in self.bulk_stopped
+
     def all(self, start):
         results = []
+        if not start:
+            # Session-only operational hold; recovery must not undo STOP ALL.
+            self.bulk_stopped.update(range(8))
         for modulator_id in range(8):
             try:
-                results.append((self.start if start else self.stop)(modulator_id).model_dump(mode="json"))
+                config = self.get(modulator_id)
+                if start:
+                    if not config.enabled or config.frequency_khz is None or (config.audio_mode == "DIGITAL" and config.input_source_id is None):
+                        results.append(self.statuses[modulator_id].model_dump(mode="json"))
+                        continue
+                    self.validate(config)
+                    self.bulk_stopped.discard(modulator_id)
+                    result = self._start(modulator_id)
+                else:
+                    result = self._stop(modulator_id)
+                results.append(result.model_dump(mode="json"))
             except DomainError as exc:
                 results.append({"id": modulator_id, "error": exc.error, "message": exc.message})
         return results

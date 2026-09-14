@@ -257,8 +257,6 @@ Csak egyetlen timestamp szükséges. Ez setup-and-forget rendszer, nem audit/CRM
 
 InputSource configuration has no independent enable switch. Pipelines are demand-driven:
 active DIGITAL modulators acquire/share a source; the last consumer releases it.
-SQLite schema 8 removes the obsolete source flag only, preserving other fields,
-IDs, references and timestamps. Migration is transactional and normal reopen is idempotent.
 
 ### 6.1.1 `HTTP` config
 
@@ -281,13 +279,6 @@ If absent, the existing application default is `fmheadend/0.1.0`. Example source
 options: `{"source": {"user-agent": "Station/2"}}`. This sets the HTTP element property
 through the existing GStreamer source-setup callback; unsupported explicit properties
 produce a probe/ingest error. No separate `config.user_agent` field is accepted.
-
-SQLite schema 6 removes legacy HTTP `config.user_agent`, moving its value to the
-advanced source property only when that property is absent. When both existed,
-the advanced value already won at runtime and remains unchanged. Other fields,
-source types, IDs, relationships and timestamps are preserved. The migration is
-transactional and idempotent; malformed legacy records abort without a version bump.
-HTTP records with neither field retain the same application default.
 
 HTTP source-test responses may include nullable `station_name`, extracted only from
 transport `icy-name` metadata exposed by GStreamer HTTP header messages. It is separate
@@ -362,8 +353,7 @@ V1-ben a modell maradjon egyszerű:
 | `advanced_options` | Opcionális advanced config |
 | `timestamp` | Utolsó módosítás |
 
-Legacy profile JSON is normalized on read, without a schema bump. The obsolete
-bypass flag is not part of the current API: gain always applies. Legacy reserved DSP JSON is not interpreted. Basic uses only typed `basic_config`.
+Gain always applies. Reserved DSP JSON is not interpreted. Basic uses only typed `basic_config`.
 The backend chain and defaults are defined in `docs/milestone7b4.md`; frontend
 integration is deferred. Gain is followed by Basic stages in F32LE/48 kHz/stereo,
 then converted to the unchanged S16LE output contract. Missing plugins fail clearly.
@@ -425,15 +415,6 @@ is unchanged. AudioProfile belongs only to digital InputSources. Analog mode cre
 no GStreamer pipeline or PCM producer; the mux slot remains silence. RDS remains
 Modulator-owned and independent of audio mode. RP audio_mode wire values remain 0/1.
 
-SQLite schema 5 defaults existing digital/unassigned modulators to DIGITAL. Each
-modulator referencing a legacy ANALOG InputSource becomes ANALOG with a null source FK
-and JSON reference, including multiple references to one legacy record. That means
-each channel's own jack, never shared analog routing. Unused legacy ANALOG InputSource records
-are also deleted; AudioProfile records are retained. Enabled state, frequency, RF,
-RDS, timestamps and digital source records are preserved. SQL/JSON reference conflicts
-or an explicit ANALOG mode paired with a digital reference abort the transaction
-without a schema-version bump; repair inconsistent legacy data before retrying.
-
 Configuration PATCH is separate from lifecycle for all clients. A desired ON,
 STARTING/ON, or active-source channel returns 409 MODULATOR_ACTIVE before any
 configuration mutation or hardware action. Stop explicitly before editing and
@@ -442,7 +423,8 @@ returns 409 LIFECYCLE_REQUIRED; dedicated Start/Stop remain authoritative.
 Stopped configuration changes are persisted for the next explicit start/recovery.
 
 Modulators have no separate name field; physical ID 0..7 is their identity.
-SQLite schema 4 removes legacy names without changing other configuration.
+
+Fresh database seeding assigns one static PS entry FM TX <id> to each physical Modulator (IDs 0..7), with the model-default 5-second duration. The generic model uses neutral FM TX text; only the seed knows the physical ID. Reopening preserves stored PS configuration and timestamps without normalization.
 
 ### 6.3.1 PS és dinamikus PS
 
@@ -565,8 +547,7 @@ Nincs külön `qn_ok` mező. A hardverhiba a `tx_state` és `last_error` segíts
 Relative RF attenuation: 0 is Maximum, followed by 15 levels in 1.5 dB steps
 through 22.5 dB. This is configured/read-back attenuation, not an absolute or
 measured RF output. Unavailable readback is null. RP firmware maps QN steps
-without changing IPOW. Schema 9 replaces obsolete absolute RF targets with null;
-other configuration is preserved and users must explicitly select a level.
+without changing IPOW. Fresh Modulators have null attenuation; users must explicitly select a level.
 
 ### Tudatosan NINCS a V1 státuszban
 
@@ -985,8 +966,7 @@ AUTO ignores the persisted manual gains; MANUAL applies them through TXAGC_GVGA
 TX_SFTCLPEN independently. Linux validates only finite signed-tenths wire range,
 not a guessed RIN-specific range, and exposes no raw gain register codes.
 
-SQLite schema 7 adds AUTO / 0.0 dB / 0 dB / false defaults to existing Modulators
-atomically, preserving all other configuration and timestamps. No RIN is chosen.
+Fresh Modulators use AUTO / 0.0 dB / 0 dB / false model defaults. No RIN is chosen.
 Startup and recovery replay these fields through the same full TxConfig path,
 before RDS synchronization and TX enable. Future firmware must advertise version 1 and implement the current expanded layouts. No M7B2 gain UI is part of this prerequisite.
 
@@ -1138,7 +1118,7 @@ in [Milestone 5](milestone5.md). Baseline PS/RT weighted rates are 4.5/s and 6.7
 short RT-change priority and five-second ECC deadlines. The 100 ms refill loop and
 0.5 s lookahead are internal policy, independent of UI polling and GStreamer callbacks.
 Null ECC emits no 1A ECC. AF is a fixed user-ordered frequency list, never discovered.
-Schema 3 backfills ECC=null and AF=[] without changing other desired configuration.
+Fresh Modulators default to ECC=null and AF=[].
 
 ## 12.4 Miért nem teljes offline carousel?
 
@@ -1360,7 +1340,7 @@ Javasolt forma:
 ```json
 {
   "error": "INVALID_FREQUENCY",
-  "message": "Frequency must be inside the configured FM band."
+  "message": "Frequency must be 76000..108000 kHz on the 50 kHz hardware raster."
 }
 ```
 
@@ -1599,7 +1579,30 @@ Ajánlott:
 
 ## 16.4 Schema version
 
-A DB-nek legyen egyszerű schema version/migration mechanizmusa már V1-től. Nem kell bonyolult framework, de a későbbi mezőbővítések ne kézi DB-törlést igényeljenek.
+The current pre-V1 SQLite format is schema version 1. There is no released database
+format and no supported external legacy database. Startup reads PRAGMA user_version:
+0 creates the complete current schema and model-default seeds in one atomic
+transaction, then sets version 1; 1 opens normally without rewriting configuration;
+any other nonzero version fails with "Unsupported pre-release database schema <n>.
+Recreate the database." No downgrade, recovery, or historical migration runs.
+
+The current tables are audio_profiles, sources, modulators, and system_config
+(with SQLite's internal sqlite_sequence for generated profile/source IDs).
+Sources reference AudioProfiles and Modulators reference Sources, both with
+ON DELETE RESTRICT. Modulator IDs are constrained to 0..7; triggers prohibit
+deletion and ID updates. Every open validates exactly the eight required IDs.
+Initialization seeds those Modulators and SystemConfig directly from current
+models; it creates no AudioProfiles or Sources.
+
+Before the first supported release, incompatible changes may reset this pre-release
+format and development databases may need recreation. Developers/operators may
+delete old development DB files; startup never silently resets them. Do not
+accumulate permanent compatibility migrations for unreleased formats.
+
+After a released database format exists, increment schema versions normally,
+preserve supported user data, and write explicit tested migrations between released
+formats. Backward-compatible migrations have not started yet; no migration framework
+is required now.
 
 ---
 
@@ -1796,7 +1799,7 @@ Kötelező eredmény:
 
 - `fmheadendd` Python package;
 - FastAPI server;
-- SQLite schema és migration/version alap;
+- SQLite schema initialization és version check;
 - `InputSource` CRUD;
 - 8 fix `Modulator` config;
 - `AudioProfile` alapmodell;
@@ -2112,3 +2115,26 @@ A Linux V1 akkor tekinthető késznek, ha:
 ## Záró megjegyzés
 
 A `fmheadend` Linux architektúra szándékosan két processzre oszlik: a Python `fmheadendd` végzi a magas szintű, jól fejleszthető control/media orchestrationt, míg a C++ `fmheadend-muxd` a kiszámítható PCM/SPI adatpumpát. A QN/RP hardver részletei contract mögött maradnak. Ez az elválasztás lehetővé teszi, hogy a rendszer Pi Zero 2-n is takarékos legyen, miközben a source-, RDS- és API-logika később Linux oldalon firmware módosítás nélkül fejleszthető.
+
+## V1 System and deployment (M7B5)
+
+`--region` selects only the Modulator editor frequency plan, default 1. The
+single authoritative plan table is `daemon/regions.py`; `/api/v1/system/info`
+exposes it alongside real backend/media/schema/RP identity information.
+Hardware tuning validation is independently 76000..108000 kHz, 50 kHz raster.
+Region never changes other settings or stored frequencies. AF remains independent.
+
+System is a read-only diagnostics page using existing status snapshots. Production
+Angular assets may be served by fmheadendd with `--webui-dir`; API 404s remain API
+responses and known browser routes get SPA fallback. No Node runtime or extra
+service is required. See `docs/milestone7b5.md` for the region table and deployment.
+
+### Bulk operational controls
+
+Individual START/STOP persist the channel's desired enabled/disabled state.
+STOP ALL disables RF and releases consumers without changing any persistent
+Modulator configuration. START ALL starts only configured desired-enabled channels.
+A runtime-only set of bulk-stopped channels prevents RP reconnect recovery from
+undoing STOP ALL during the current daemon session. Explicit START releases its
+channel hold; START ALL releases eligible holds. Daemon restart uses the existing
+persistent desired-state restoration. No second persistent enabled flag is added.

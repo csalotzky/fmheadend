@@ -22,13 +22,7 @@ Gain uses the existing native GStreamer volume element, linear factor
 is also validated at the API boundary. Finite negative gain has no imposed lower
 bound; no artificial precision/raster is added. Both processors apply gain.
 
-Legacy records are normalized at the repository read boundary: old
-`processing_enabled=true` maps to GST_BASIC, false/absent maps to NONE, and
-`GSTREAMER` is no longer a current API choice. Stored gain and reserved fields
-are retained. **Previously bypassed nonzero gain now applies**, as required by
-the processor-independent model; inspect legacy profiles before starting audio.
-The next save writes the current shape. SQLite remains schema 9, with no physical
-schema change or startup rewrite. Current API requests reject the obsolete flag.
+The current pre-V1 schema is 1. Profiles are stored and read in the current model shape, without compatibility normalization. API requests reject processing_enabled and GSTREAMER. Old development databases are unsupported and may be recreated; see architecture section 16.4.
 
 ## Safety and UI
 

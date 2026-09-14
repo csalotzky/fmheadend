@@ -15,7 +15,9 @@ from . import __version__
 from .api.routes import router
 from .config import Settings
 from .control import ControlExecutor
-from .database import Database
+from .database import Database, SCHEMA_VERSION
+from .regions import PLANS
+from .webui import mount_webui
 from .errors import DomainError
 from .modulators.manager import ModulatorManager
 from .mux.client import MockMuxClient
@@ -55,6 +57,9 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
             rds.on_failure = recovery.lost
             rds.suspended = True
             status = StatusService(modulators, sources, rp_client, mux_client, clock, recovery)
+            status.info.update(frequency_plan=PLANS[settings.region].as_dict(),
+                               database_schema_version=SCHEMA_VERSION,
+                               media_backend="MOCK" if getattr(pipeline_factory, "mocked", True) else "GStreamer")
             config = ConfigurationService(database, sources, modulators)
             return SimpleNamespace(
                 database=database, rp=rp_client, mux=mux_client, config=config, sources=sources, modulators=modulators, rt=rt, rds=rds, status=status, recovery=recovery,
@@ -119,7 +124,7 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
                 logger.info("fmheadendd shutdown completed")
 
     app = FastAPI(title="fmheadend", version=__version__, lifespan=lifespan,
-                  description="Milestone 6A lifecycle and dependency recovery.")
+                  description="V1 headend configuration, runtime status and diagnostics.")
 
     @app.exception_handler(DomainError)
     async def domain_error(request, exc):
@@ -143,10 +148,12 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
         return JSONResponse(status_code=500, content={"error": "INTERNAL_ERROR", "message": "Internal server error"})
 
     app.include_router(router)
+    if settings.webui_dir is not None:
+        mount_webui(app, settings.webui_dir)
     return app
 
 
-def main():
+def argument_parser():
     parser = argparse.ArgumentParser(description="fmheadendd media and RP2354 control")
     parser.add_argument("--database", default="/var/lib/fmheadend/fmheadend.db")
     parser.add_argument("--host", help="Override persistent web_listen_address")
@@ -158,10 +165,15 @@ def main():
     parser.add_argument("--i2c-timeout-ms", type=int, default=200)
     parser.add_argument("--mock-mux", action="store_true", help="Use real sources with the M2 mock mux")
     parser.add_argument("--mux-runtime-dir", default="/run/fmheadend")
-    parser.add_argument("--fm-band-min-khz", type=int, default=87500)
-    parser.add_argument("--fm-band-max-khz", type=int, default=108000)
+    parser.add_argument("--region", type=int, choices=sorted(PLANS), default=1, help="Frequency selection plan: 0 Expert, 1 Europe (default), 2 US, 3 Japan")
+    parser.add_argument("--webui-dir", help="Production Angular browser assets directory (optional)")
+    return parser
+
+
+def main():
+    parser = argument_parser()
     args = parser.parse_args()
-    settings = Settings(args.database, args.fm_band_min_khz, args.fm_band_max_khz)
+    settings = Settings(args.database, args.region, args.webui_dir)
     database = Database(args.database)
     try:
         config = database.get_system()

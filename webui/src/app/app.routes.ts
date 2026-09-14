@@ -6,7 +6,7 @@ import { SourcesList } from './features/sources/sources-list';
 import { SourceEditor, sourceDirtyGuard } from './features/sources/source-editor';
 import { Routes } from '@angular/router';
 import { Dashboard } from './features/dashboard/dashboard';
-import { Placeholder } from './layout/placeholder';
+import { SystemPage } from './features/system/system-page';
 export const routes: Routes = [
   { path: '', pathMatch: 'full', redirectTo: 'dashboard' },
   { path: 'dashboard', component: Dashboard, title: 'Dashboard | fmheadend' },
@@ -18,10 +18,6 @@ export const routes: Routes = [
   { path: 'audio-profiles', component: ProfilesList },
   { path: 'audio-profiles/new', component: ProfileEditor, canDeactivate: [profileDirtyGuard] },
   { path: 'audio-profiles/:id', component: ProfileEditor, canDeactivate: [profileDirtyGuard] },
-  ...['system'].map((path, i) => ({
-    path,
-    component: Placeholder,
-    data: { title: ['System'][i] },
-  })),
+  { path: 'system', component: SystemPage },
   { path: '**', redirectTo: 'dashboard' },
 ];

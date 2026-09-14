@@ -104,26 +104,35 @@ describe('Dashboard API composition and operations', () => {
     respond();
     await done;
   });
-  it('START ALL runs eligible channels sequentially and reports partial failures', async () => {
+  it('START ALL uses desired-enabled bulk semantics and reports failures', async () => {
     await load();
     const done = state.all('start');
     await Promise.resolve();
-    for (let id = 0; id < 7; id++) {
-      const request = http.expectOne(`/api/v1/modulators/${id}/start`);
-      http.expectNone(`/api/v1/modulators/${id + 1}/start`);
-      if (id === 2)
-        request.flush(
-          { error: 'DEPENDENCY_UNAVAILABLE', message: 'RP unavailable' },
-          { status: 503, statusText: 'Unavailable' },
-        );
-      else request.flush(sample().status.modulators[id]);
-      await Promise.resolve();
-    }
+    http
+      .expectOne('/api/v1/modulators/start-all')
+      .flush(
+        sample().status.modulators.map((m) =>
+          m.id === 0 ? { id: 0, error: 'ERROR', message: 'RP unavailable' } : m,
+        ),
+      );
+    await Promise.resolve();
     respond();
     await done;
-    expect(state.notice()).toContain('6 accepted, 1 failed');
-    expect(state.notice()).toContain('7');
-    expect(state.failures()).toEqual([{ id: 2, message: 'RP unavailable' }]);
+    expect(state.notice()).toContain('0 accepted, 1 failed');
+    expect(state.notice()).toContain('Skipped disabled or unconfigured');
+    expect(state.failures()).toEqual([{ id: 0, message: 'RP unavailable' }]);
+  });
+  it('navigation clears pending messages and prevents late result messages returning', async () => {
+    await load();
+    const done = state.operate(0, 'start');
+    await Promise.resolve();
+    state.clearMessages();
+    http.expectOne('/api/v1/modulators/0/start').flush(sample().status.modulators[0]);
+    await Promise.resolve();
+    respond();
+    await done;
+    expect(state.notice()).toBe('');
+    expect(state.failures()).toEqual([]);
   });
   it('STOP ALL uses the bulk endpoint and preserves per-ID failures', async () => {
     await load();

@@ -18,6 +18,11 @@ export class HeadendApi {
       .post<ModulatorStatus>(`/api/v1/modulators/${id}/${action}`, {})
       .pipe(timeout(120000));
   }
+  startAll() {
+    return this.http
+      .post<LifecycleResult[]>('/api/v1/modulators/start-all', {})
+      .pipe(timeout(120000));
+  }
   stopAll() {
     return this.http
       .post<LifecycleResult[]>('/api/v1/modulators/stop-all', {})

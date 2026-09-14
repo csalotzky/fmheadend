@@ -1,0 +1,148 @@
+import { Component, computed, effect, inject, signal } from '@angular/core';
+import { DashboardState } from '../dashboard/dashboard-state';
+import { SystemApi, SystemInfo, frequencyLabel } from '../../core/api/system-api';
+import { errorMessage } from '../../core/api/headend-api';
+@Component({
+  selector: 'app-system-page',
+  host: { class: 'page-content' },
+  styleUrl: './system-page.css',
+  template: `
+    <header class="page-header">
+      <h1>System</h1>
+    </header>
+    @if (shared.stale()) {
+      <p class="warning" role="status">
+        Backend unavailable. Observations are unavailable until the next successful refresh.
+      </p>
+    }
+    @if (error()) {
+      <p class="warning" role="status">System information unavailable: {{ error() }}</p>
+    }
+    <div class="system-sections">
+      <section>
+        <h2>Backend</h2>
+        <dl>
+          <dt>Status</dt>
+          <dd>{{ runtime()?.system_state ?? 'Unavailable' }}</dd>
+          <dt>Version</dt>
+          <dd>{{ info()?.fmheadend_version ?? 'Unavailable' }}</dd>
+          <dt>Media backend</dt>
+          <dd>{{ info()?.media_backend ?? 'Unavailable' }}</dd>
+        </dl>
+      </section>
+      <section>
+        <h2>RP2354</h2>
+        <dl>
+          <dt>State</dt>
+          <dd>
+            {{ runtime()?.rp2354_state ?? 'Unavailable' }}{{ runtime()?.mocked ? ' (mock)' : '' }}
+          </dd>
+          <dt>Protocol</dt>
+          <dd>
+            {{ rpAvailable() ? (info()?.rp_protocol_version ?? 'Unavailable') : 'Unavailable' }}
+          </dd>
+          <dt>Firmware</dt>
+          <dd>
+            {{ rpAvailable() ? (info()?.rp_firmware_version ?? 'Unavailable') : 'Unavailable' }}
+          </dd>
+          <dt>Hardware</dt>
+          <dd>
+            {{ rpAvailable() ? (info()?.hardware_revision ?? 'Unavailable') : 'Unavailable' }}
+          </dd>
+        </dl>
+      </section>
+      <section>
+        <h2>Multiplexer</h2>
+        <dl>
+          <dt>State</dt>
+          <dd>{{ runtime()?.mux_state ?? 'Unavailable' }}</dd>
+          <dt>Transport</dt>
+          <dd>
+            {{ runtime()?.mux_transport ?? 'Unavailable'
+            }}{{ runtime()?.mux_mocked ? ' (mock)' : '' }}
+          </dd>
+          <dt>Transport state</dt>
+          <dd>{{ runtime()?.mux_transport_state ?? 'Unavailable' }}</dd>
+          <dt>Frames sent</dt>
+          <dd>
+            {{ runtime()?.mux_state === 'RUNNING' ? runtime()?.mux_frames_sent : 'Unavailable' }}
+          </dd>
+        </dl>
+      </section>
+      <section>
+        <h2>FM frequency plan</h2>
+        @if (info(); as data) {
+          <dl>
+            <dt>Region</dt>
+            <dd>{{ data.frequency_plan.region }} - {{ data.frequency_plan.region_name }}</dd>
+            <dt>FM band</dt>
+            <dd>
+              {{ frequency(data.frequency_plan.fm_min_khz).replace(' MHz', '') }}-{{
+                frequency(data.frequency_plan.fm_max_khz)
+              }}
+            </dd>
+            <dt>Step</dt>
+            <dd>{{ data.frequency_plan.fm_step_khz }} kHz</dd>
+          </dl>
+        } @else {
+          <p>Unavailable</p>
+        }
+      </section>
+      <section class="diagnostics">
+        <h2>Diagnostics</h2>
+        @if (runtime(); as status) {
+          @if (status.last_error) {
+            <p class="error" role="status">{{ status.last_error }}</p>
+          }
+          <dl>
+            <dt>I2C errors</dt>
+            <dd>{{ status.i2c_errors }}</dd>
+            <dt>SPI errors</dt>
+            <dd>{{ status.spi_errors }}</dd>
+            <dt>RP audio-link errors</dt>
+            <dd>{{ status.rp_spi_audio_link_error_count ?? 'Unavailable' }}</dd>
+            <dt>Last RP error (history)</dt>
+            <dd>{{ status.rp_last_error_code ?? 'Unavailable' }}</dd>
+          </dl>
+          @for (channel of shared.channels(); track channel.id) {
+            @if (channel.error) {
+              <p class="error">TX {{ channel.id }}: {{ channel.error }}</p>
+            }
+          }
+        } @else {
+          <p>Runtime diagnostics unavailable.</p>
+        }
+      </section>
+    </div>
+  `,
+})
+export class SystemPage {
+  readonly shared = inject(DashboardState);
+  private api = inject(SystemApi);
+  readonly info = signal<SystemInfo | null>(null);
+  readonly error = signal('');
+  readonly runtime = computed(() =>
+    this.shared.stale() ? null : this.shared.data()?.status.system,
+  );
+  readonly rpAvailable = computed(
+    () =>
+      !!this.runtime() && !['UNRESPONSIVE', 'INCOMPATIBLE'].includes(this.runtime()!.rp2354_state),
+  );
+  readonly frequency = frequencyLabel;
+  constructor() {
+    effect((cleanup) => {
+      this.shared.data();
+      const sub = this.api.info().subscribe({
+        next: (value) => {
+          this.info.set(value);
+          this.error.set('');
+        },
+        error: (e) => {
+          this.info.set(null);
+          this.error.set(errorMessage(e));
+        },
+      });
+      cleanup(() => sub.unsubscribe());
+    });
+  }
+}

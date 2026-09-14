@@ -4,9 +4,9 @@ import sqlite3
 from pathlib import Path
 
 from .errors import DomainError
-from .models.configuration import AudioProfile, InputSource, Modulator, ModulatorConfig, SystemConfig, utcnow
+from .models.configuration import AudioProfile, InputSource, Modulator, ModulatorConfig, PsEntry, SystemConfig, utcnow
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 1
 RECORDS = {"sources": InputSource, "audio_profiles": AudioProfile, "modulators": Modulator}
 
 
@@ -19,15 +19,15 @@ class Database:
         self.connection.execute("PRAGMA foreign_keys = ON")
         self.connection.execute("PRAGMA busy_timeout = 5000")
         try:
-            self._migrate()
+            self._initialize()
         except Exception:
             self.close()
             raise
 
-    def _migrate(self):
+    def _initialize(self):
         version = self.connection.execute("PRAGMA user_version").fetchone()[0]
-        if version > SCHEMA_VERSION:
-            raise RuntimeError(f"Database schema {version} is newer than supported {SCHEMA_VERSION}")
+        if version not in (0, SCHEMA_VERSION):
+            raise RuntimeError(f"Unsupported pre-release database schema {version}. Recreate the database.")
         if version == 0:
             # Explicit transaction includes all DDL, seeds and the version bump.
             self.connection.execute("BEGIN IMMEDIATE")
@@ -42,119 +42,18 @@ class Database:
                 ):
                     self.connection.execute(statement)
                 for modulator_id in range(8):
-                    config = ModulatorConfig()
+                    config = ModulatorConfig(rds_ps=[PsEntry(text=f"FM TX {modulator_id}")])
                     data = config.model_dump(mode="json") | {"timestamp": utcnow().isoformat()}
                     self.connection.execute("INSERT INTO modulators VALUES (?, NULL, ?)", (modulator_id, json.dumps(data)))
                 self.connection.execute("INSERT INTO system_config VALUES (1, ?)", (SystemConfig().model_dump_json(),))
                 self.connection.execute("PRAGMA user_version = 1")
-        if version < 2:
-            self.connection.execute("BEGIN IMMEDIATE")
-            with self.connection:
-                for row in self.connection.execute("SELECT id, data FROM modulators").fetchall():
-                    data = json.loads(row["data"])
-                    # Legacy raw values have no reliable physical-unit conversion.
-                    data.pop("rf_level", None)
-                    data.setdefault("rf_output_dbuv", None)
-                    self.connection.execute("UPDATE modulators SET data = ? WHERE id = ?", (json.dumps(data), row["id"]))
-                self.connection.execute("PRAGMA user_version = 2")
-        if version < 3:
-            self.connection.execute("BEGIN IMMEDIATE")
-            with self.connection:
-                for row in self.connection.execute("SELECT id, data FROM modulators").fetchall():
-                    data = json.loads(row["data"])
-                    data.setdefault("rds_ecc", None)
-                    data.setdefault("rds_af_khz", [])
-                    self.connection.execute("UPDATE modulators SET data = ? WHERE id = ?", (json.dumps(data), row["id"]))
-                self.connection.execute("PRAGMA user_version = 3")
-        if version < 4:
-            self.connection.execute("BEGIN IMMEDIATE")
-            with self.connection:
-                for row in self.connection.execute("SELECT id, data FROM modulators").fetchall():
-                    data = json.loads(row["data"])
-                    # Physical ID is the only modulator identity. Preserve every
-                    # other value, including the original configuration timestamp.
-                    data.pop("name", None)
-                    self.connection.execute("UPDATE modulators SET data = ? WHERE id = ?", (json.dumps(data), row["id"]))
-                self.connection.execute("PRAGMA user_version = 4")
-        if version < 5:
-            self.connection.execute("BEGIN IMMEDIATE")
-            with self.connection:
-                analog_ids = {row["id"] for row in self.connection.execute("SELECT id, data FROM sources")
-                              if json.loads(row["data"]).get("type") == "ANALOG"}
-                for row in self.connection.execute("SELECT id, input_source_id, data FROM modulators").fetchall():
-                    data = json.loads(row["data"])
-                    source_id = data.get("input_source_id")
-                    if source_id != row["input_source_id"]:
-                        raise RuntimeError(f"Modulator {row['id']} has conflicting legacy source references; migration aborted")
-                    if source_id in analog_ids:
-                        data["audio_mode"] = "ANALOG"
-                        data["input_source_id"] = None
-                    else:
-                        data.setdefault("audio_mode", "DIGITAL")
-                        if data["audio_mode"] == "ANALOG" and source_id is not None:
-                            raise RuntimeError("Conflicting legacy audio mode and digital source; migration aborted")
-                    self.connection.execute("UPDATE modulators SET input_source_id = ?, data = ? WHERE id = ?",
-                                            (data.get("input_source_id"), json.dumps(data), row["id"]))
-                for source_id in analog_ids:
-                    self.connection.execute("DELETE FROM sources WHERE id = ?", (source_id,))
-                self.connection.execute("PRAGMA user_version = 5")
-        if version < 6:
-            self.connection.execute("BEGIN IMMEDIATE")
-            with self.connection:
-                for row in self.connection.execute("SELECT id, data FROM sources").fetchall():
-                    data = json.loads(row["data"])
-                    if data.get("type") != "HTTP" or "user_agent" not in data["config"]:
-                        continue
-                    legacy = data["config"].pop("user_agent")
-                    options = data.setdefault("gst_options", {}).setdefault("source", {})
-                    # Preserve the old effective value: advanced overrides were applied last.
-                    options.setdefault("user-agent", legacy)
-                    self.connection.execute("UPDATE sources SET data = ? WHERE id = ?", (json.dumps(data), row["id"]))
-                self.connection.execute("PRAGMA user_version = 6")
-        if version < 7:
-            self.connection.execute("BEGIN IMMEDIATE")
-            with self.connection:
-                for row in self.connection.execute("SELECT id, data FROM modulators").fetchall():
-                    data = json.loads(row["data"])
-                    for key, default in {"gain_mode": "AUTO", "analog_gain_db": 0.0,
-                                         "digital_trim_db": 0, "soft_clipping": False}.items():
-                        data.setdefault(key, default)
-                    self.connection.execute("UPDATE modulators SET data = ? WHERE id = ?", (json.dumps(data), row["id"]))
-                self.connection.execute("PRAGMA user_version = 7")
-        if version < 8:
-            self.connection.execute("BEGIN IMMEDIATE")
-            with self.connection:
-                for row in self.connection.execute("SELECT id, data FROM sources").fetchall():
-                    data = json.loads(row["data"])
-                    data.pop("enabled", None)
-                    self.connection.execute("UPDATE sources SET data = ? WHERE id = ?", (json.dumps(data), row["id"]))
-                self.connection.execute("PRAGMA user_version = 8")
-        if version < 9:
-            self.connection.execute("BEGIN IMMEDIATE")
-            with self.connection:
-                for row in self.connection.execute("SELECT id, data FROM modulators").fetchall():
-                    data = json.loads(row["data"])
-                    # No calibrated/lossless conversion from the obsolete absolute target.
-                    data.pop("rf_output_dbuv", None)
-                    data.setdefault("rf_attenuation_db", None)
-                    self.connection.execute("UPDATE modulators SET data = ? WHERE id = ?", (json.dumps(data), row["id"]))
-                self.connection.execute("PRAGMA user_version = 9")
         ids = [row[0] for row in self.connection.execute("SELECT id FROM modulators ORDER BY id")]
         if ids != list(range(8)):
             raise RuntimeError("Database must contain exactly modulators 0..7")
 
-    @staticmethod
-    def _record_data(table, raw):
-        data = json.loads(raw)
-        if table == "audio_profiles" and ("processing_enabled" in data or data.get("processor") == "GSTREAMER"):
-            # Read compatibility only: modern API writes never accept the old bypass.
-            enabled = data.pop("processing_enabled", False)
-            data["processor"] = "GST_BASIC" if enabled else "NONE"
-        return data
-
     def list(self, table):
         model = RECORDS[table]  # table names are internal, never supplied by API callers
-        return [model.model_validate(self._record_data(table, row["data"]) | {"id": row["id"]})
+        return [model.model_validate(json.loads(row["data"]) | {"id": row["id"]})
                 for row in self.connection.execute(f"SELECT id, data FROM {table} ORDER BY id")]
 
     def get(self, table, record_id):
@@ -162,7 +61,7 @@ class Database:
         row = self.connection.execute(f"SELECT id, data FROM {table} WHERE id = ?", (record_id,)).fetchone()
         if row is None:
             raise DomainError(404, "NOT_FOUND", f"{table} resource {record_id} does not exist")
-        return model.model_validate(self._record_data(table, row["data"]) | {"id": row["id"]})
+        return model.model_validate(json.loads(row["data"]) | {"id": row["id"]})
 
     def save(self, table, config, record_id=None):
         if table not in RECORDS or (table == "modulators" and record_id is None):

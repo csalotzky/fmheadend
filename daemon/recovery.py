@@ -82,14 +82,14 @@ class Recovery:
                 self.rp.set_tx_config(config.id, TxConfig.from_modulator(config))
             self.boundary(config.id)
         for config in self.modulators.list():
-            if config.enabled:
+            if self.modulators.desired_on(config.id):
                 self.modulators.restore_audio(config)
                 self.rp.set_tx_enabled(config.id, True)
             else:
                 self.modulators.release_audio(config.id)
         observed = self.rp.get_status()
         if observed['state'] != 'OK' or any(
-            channel['tx_state'] != ('ON' if self.modulators.get(channel['id']).enabled else 'OFF')
+            channel['tx_state'] != ('ON' if self.modulators.desired_on(channel['id']) else 'OFF')
             for channel in observed['modulators']
         ):
             raise DependencyUnavailable('RP restore read-back does not match desired TX state')

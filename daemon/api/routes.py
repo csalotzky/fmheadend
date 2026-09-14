@@ -104,7 +104,7 @@ def list_modulators(request: Request):
 @router.post("/modulators/start-all", tags=["modulators"])
 @control_route
 def start_all(request: Request):
-    """Attempt every modulator; return per-ID status or error, including missing assignments."""
+    """Start configured, desired-enabled modulators only; return per-ID status or error."""
     return request.app.state.services.modulators.all(True)
 
 
@@ -112,6 +112,7 @@ def start_all(request: Request):
 @control_route
 def stop_all(request: Request):
     """Attempt every modulator even if one dependency operation fails."""
+    # Operational stop preserves persistent desired-enabled flags.
     return request.app.state.services.modulators.all(False)
 
 

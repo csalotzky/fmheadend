@@ -9,12 +9,16 @@ import { ChannelCard } from './channel-card';
         <p class="eyebrow">OPERATIONS</p>
         <h1>Dashboard</h1>
       </div>
-      <span class="muted">8 physical channels &middot; 48 kHz digital audio</span>
     </div>
     <div class="channel-grid">
       @for (channel of state.channels(); track channel.id) {
         <app-channel-card
           [channel]="channel"
+          [profileName]="
+            channel.source?.audio_profile_id
+              ? state.profileNames()[channel.source!.audio_profile_id!]
+              : null
+          "
           [stale]="state.stale()"
           [locked]="state.busy() !== null"
           [pending]="state.busy() === channel.id"

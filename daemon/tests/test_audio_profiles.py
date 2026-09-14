@@ -1,11 +1,8 @@
 """AudioProfile configuration safety; hardware-independent except native tests elsewhere."""
-import json
 import pytest
 from fastapi.testclient import TestClient
 from fmheadendd.app import create_app
 from fmheadendd.config import Settings
-from fmheadendd.database import Database
-from fmheadendd.models.configuration import AudioProfileConfig
 
 @pytest.fixture
 def api(tmp_path):
@@ -58,27 +55,3 @@ def test_active_profile_update_policy(api):
         for tx in (0, 1):
             assert api.post(f'/api/v1/modulators/{tx}/stop').status_code == 200
     assert api.patch(f'/api/v1/audio-profiles/{pid}', json={'name':'Stopped', 'gain_db':-3}).status_code == 200
-
-@pytest.mark.parametrize('enabled,processor', [(False,'NONE'),(True,'GST_BASIC')])
-def test_legacy_read_normalization_and_reopen(tmp_path, enabled, processor):
-    path = tmp_path/'legacy.db'
-    db = Database(path)
-    p = db.save('audio_profiles', AudioProfileConfig(name='Legacy',gain_db=-3))
-    with db.connection:
-        raw = json.loads(db.connection.execute('SELECT data FROM audio_profiles WHERE id=?',(p.id,)).fetchone()[0])
-        raw.pop('basic_config', None)
-        raw.update(processing_enabled=enabled,processor='GSTREAMER')
-        db.connection.execute('UPDATE audio_profiles SET data=? WHERE id=?',(json.dumps(raw),p.id))
-    db.close()
-    for _ in range(2):
-        db = Database(path)
-        profile = db.get('audio_profiles',p.id)
-        assert profile.processor == processor and profile.gain_db == -3
-        assert profile.basic_config.highpass_hz == 40
-        assert profile.basic_config.limiter_enabled is True
-        assert db.list('audio_profiles')[0] == profile
-        assert db.connection.execute('PRAGMA user_version').fetchone()[0] == 9
-        db.save('audio_profiles',profile,p.id)
-        saved = json.loads(db.connection.execute('SELECT data FROM audio_profiles WHERE id=?',(p.id,)).fetchone()[0])
-        assert 'processing_enabled' not in saved
-        db.close()

@@ -1,6 +1,6 @@
 <a class="skip-link" href="#main">Skip to content</a>
 <aside [class.expanded]="menu()">
-  <a class="brand" routerLink="/dashboard">fmheadend<span>8 CHANNEL FM SYSTEM</span></a>
+  <a class="brand" routerLink="/dashboard">fmheadend<span>MULTI-CHANNEL FM MODULATOR</span></a>
   <nav aria-label="Main navigation">
     @for (link of links; track link[0]) {
       <a
@@ -9,18 +9,12 @@
         ariaCurrentWhenActive="page"
         (click)="menu.set(false)"
         >{{ link[1] }}
-        @if (
-          link[0] !== 'dashboard' &&
-          link[0] !== 'sources' &&
-          link[0] !== 'modulators' &&
-          link[0] !== 'audio-profiles'
-        ) {
-          <small>M7B</small>
-        }
       </a>
     }
   </nav>
-  <div class="sidebar-foot">CONTROL / MONITOR<br />Linux headend</div>
+  @if (version()) {
+    <div class="sidebar-foot">Version {{ version() }}</div>
+  }
 </aside>
 <div class="workspace">
   <header>

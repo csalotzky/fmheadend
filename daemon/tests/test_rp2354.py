@@ -475,27 +475,3 @@ def test_latched_errors_do_not_imply_current_fault(calls, tmp_path, global_activ
         assert status['modulators'][0]['hardware_last_error'] == 'QN_ERROR'
         assert status['system']['system_state'] == ('DEGRADED' if global_active or tx_active else 'RUNNING')
         assert status['system']['rp_spi_audio_link_error_count'] == 9
-
-
-def test_legacy_rf_migration_and_reopen(tmp_path):
-    import json
-    from fmheadendd.database import Database
-    from fmheadendd.models.configuration import ModulatorPatch
-    path = tmp_path / 'legacy.db'
-    db = Database(path)
-    with db.connection:
-        for row in db.connection.execute('SELECT id, data FROM modulators').fetchall():
-            data = json.loads(row['data']); data.pop('rf_attenuation_db'); data['rf_level'] = 76
-            data['frequency_khz'] = 98100
-            db.connection.execute('UPDATE modulators SET data=? WHERE id=?', (json.dumps(data), row['id']))
-        db.connection.execute('PRAGMA user_version=1')
-    db.close()
-    db = Database(path)
-    assert all(row.rf_attenuation_db is None and row.frequency_khz == 98100 for row in db.list('modulators'))
-    assert db.connection.execute('PRAGMA user_version').fetchone()[0] == 9
-    assert 'rf_level' not in db.connection.execute('SELECT data FROM modulators').fetchone()[0]
-    config = db.get('modulators', 0).model_copy(update={'rf_attenuation_db': 6.0})
-    db.save('modulators', config, 0); db.close()
-    db = Database(path)
-    assert db.get('modulators', 0).rf_attenuation_db == 6.0
-    db.close()

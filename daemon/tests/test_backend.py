@@ -99,7 +99,7 @@ def test_invalid_sources(client, body):
 
 
 @pytest.mark.parametrize("patch", [
-    {"frequency_khz": 80000}, {"frequency_khz": 98000.5}, {"preemphasis_us": 25},
+    {"frequency_khz": 75950}, {"frequency_khz": 98000.5}, {"preemphasis_us": 25},
     {"rds_pi": 65536}, {"rds_pty": 32}, {"rds_ps": []},
     {"rds_ps": [{"text": "TOO LONG!", "duration_s": 5}]},
     {"rds_ps": [{"text": "ABC", "duration_s": 0}]},
@@ -327,7 +327,7 @@ def test_status_reads_cache_without_hardware_calls(client):
 def test_schema_version_and_fixed_rows(tmp_path):
     path = tmp_path / "schema.db"
     db = Database(path)
-    assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 9
+    assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 1
     assert db.connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     with pytest.raises(sqlite3.IntegrityError):
         db.connection.execute("DELETE FROM modulators WHERE id=0")
@@ -337,7 +337,7 @@ def test_schema_version_and_fixed_rows(tmp_path):
     assert len(db.list("modulators")) == 8
     db.connection.execute("PRAGMA user_version = 99")
     db.close()
-    with pytest.raises(RuntimeError, match="newer"):
+    with pytest.raises(RuntimeError, match="Unsupported pre-release database schema 99. Recreate the database."):
         Database(path)
 
 
@@ -458,7 +458,7 @@ def test_unconfigured_frequency_blocks_enable_without_side_effects(tmp_path):
             assert not any(rp.enabled) and not rp.configs and not mux.producers
             assert client.get(f"{P}/sources/{sid}/status").json()["state"] == "IDLE"
         results = client.post(P + "/modulators/start-all").json()
-        assert all(row["error"] == "FREQUENCY_REQUIRED" for row in results)
+        assert all(row["tx_state"] == "OFF" for row in results)
         assert not any(rp.enabled)
     with TestClient(create_app(settings)) as client:
         assert all(row["frequency_khz"] is None and not row["enabled"]

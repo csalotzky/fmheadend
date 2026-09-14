@@ -11,14 +11,15 @@ import { ChannelView } from './dashboard-state';
 export class ChannelCard {
   readonly channel = input.required<ChannelView>();
   readonly stale = input(false);
+  readonly profileName = input<string | null | undefined>(null);
   readonly locked = input(false);
   readonly pending = input(false);
   readonly actionError = input<string | null>(null);
   readonly operate = output<'start' | 'stop'>();
   readonly stopping = computed(
     () =>
-      this.channel().config?.enabled ||
-      ['ON', 'STARTING'].includes(this.channel().runtime?.tx_state ?? ''),
+      ['ON', 'STARTING'].includes(this.channel().runtime?.tx_state ?? '') ||
+      (this.channel().runtime?.tx_state === 'ERROR' && !!this.channel().config?.enabled),
   );
   readonly reportedState = computed(() => {
     if (this.stale()) return 'UNKNOWN';
@@ -38,6 +39,13 @@ export class ChannelCard {
     if (channel.config.input_source_id === null) return 'Not assigned';
     if (!channel.source) return 'Unavailable';
     return this.stale() ? 'Unknown' : (channel.runtime?.source_state ?? 'Unknown');
+  }
+  humanizeStatus(value: string) {
+    // Preserve prose labels; normalize enum tokens, including future multiword states.
+    return value.replace(/\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*\b/g, (token) => {
+      const words = token.toLowerCase().replace(/_/g, ' ');
+      return words.charAt(0).toUpperCase() + words.slice(1);
+    });
   }
   hex(value: number | null | undefined, length: number) {
     return value == null ? '\u2014' : value.toString(16).toUpperCase().padStart(length, '0');

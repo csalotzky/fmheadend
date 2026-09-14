@@ -1,3 +1,5 @@
+> M7B5 supersedes the initial European-only frequency selector with startup region plans.
+
 # Milestone 7B2: Modulator configuration
 
 `/modulators` summarizes the eight fixed TX IDs 0..7 with frequency, audio input,
@@ -34,8 +36,7 @@ Frequency is a required select generated from integer kHz: 87500..108000 inclusi
 out-of-raster saved values have a disabled Select frequency placeholder, never an
 automatically selected default. Region-dependent limits/raster are a future policy TODO.
 RF output offers exactly 16 relative levels: Maximum, -1.5, -3.0, ... -22.5 dB.
-`rf_attenuation_db` stores positive attenuation (0 means Maximum). Schema 9 migrates
-obsolete absolute RF targets to null because no lossless calibrated mapping exists.
+`rf_attenuation_db` stores positive attenuation (0 means Maximum). Fresh schema-1 Modulators have null attenuation.
 Users must explicitly select a level; the UI does not display uncalibrated dBµV.
 The pre-release RP protocol remains 1 with unchanged sizes and relative tenths at
 the existing RF offsets. IPOW is unchanged; final board calibration is future work.

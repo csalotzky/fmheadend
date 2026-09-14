@@ -1,16 +1,17 @@
-# fmheadend Web UI (M7A)
+# fmheadend V1 WebUI
 
-Standalone Angular operational Dashboard. See [Milestone 7A](../docs/milestone7a.md)
-for structure, status semantics, test results and real-backend smoke instructions.
+Dashboard, Sources, Modulators, Audio Profiles and System. Shared layouts and
+read-only diagnostics follow [the WebUI specification](../docs/webui-spec.md).
 
 ```sh
-# Node 24.15+ (24 LTS), npm 11/12
+# Node/npm versions: package.json
 npm ci
 npm start
 npm test
-npm run typecheck
 npm run build
 ```
 
-Development UI: http://localhost:4200. The dev proxy forwards relative `/api/**`
-to http://127.0.0.1:8080. Production hosting is deferred to M7B.
+Development serves localhost:4200 and proxies relative `/api` to localhost:8080.
+Production uses built `dist/fmheadend-ui/browser` assets via daemon `--webui-dir`;
+Node is not a runtime dependency. [M7B5](../docs/milestone7b5.md) documents startup
+region plans and production deployment. No automatic transmitter frequency exists.

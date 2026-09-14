@@ -41,8 +41,7 @@ changes take effect on daemon restart. `--i2c-timeout-ms` defaults to 200.
 `rf_attenuation_db` is relative configured/read-back attenuation, not measured power.
 Zero means Maximum; the other 15 levels increase attenuation by 1.5 dB through
 22.5 dB. Unavailable readback is null. RP firmware owns the QN step mapping and
-must not change IPOW. Schema 9 replaces obsolete absolute targets with null,
-preserving other configuration; no calibrated conversion is assumed. Select an
+must not change IPOW. Fresh schema-1 Modulators have null attenuation. Select an
 explicit level before real hardware use. The high-level mock accepts an unset level.
 
 ## Enable and inspect I2C on Raspberry Pi OS

@@ -111,11 +111,6 @@ export function decimal(
   return n;
 }
 
-// TODO: Make FM band limits and raster region-dependent in a later regional policy.
-export const frequencyOptions = Array.from({ length: 206 }, (_, i) => {
-  const khz = 87500 + i * 100;
-  return { value: khz, label: `${Math.floor(khz / 1000)}.${(khz % 1000) / 100} MHz` };
-});
 export const rfOutputOptions = Array.from({ length: 16 }, (_, i) => ({
   value: (i * 15) / 10,
   label: i === 0 ? 'Maximum' : `-${Math.floor((i * 15) / 10)}.${(i * 15) % 10} dB`,
@@ -127,8 +122,10 @@ export const analogGainOptions = [-1.5, 0, 1.5, 3, 4.5, 6, 7.5, 9, 10.5, 12, 13.
     label: `${value > 0 ? '+' : ''}${value.toFixed(1)} dB`,
   }),
 );
-export const afOptions = frequencyOptions.filter(
-  (option) => option.value >= 87600 && option.value <= 107900,
-);
+// RDS Method A is independent of the startup tuning plan.
+export const afOptions = Array.from({ length: 204 }, (_, i) => {
+  const value = 87600 + i * 100;
+  return { value, label: `${Math.floor(value / 1000)}.${(value % 1000) / 100} MHz` };
+});
 // Match checkText's Unicode code-point length validation, without truncation.
 export const textLength = (value: string): number => Array.from(value).length;

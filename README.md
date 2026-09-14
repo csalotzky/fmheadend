@@ -52,7 +52,7 @@ The default database is `/var/lib/fmheadend/fmheadend.db`; use a writable path
 for local development. Run one daemon process/worker per headend.
 
 The distribution maps `fmheadendd` directly to `daemon/` without an extra nested
-source directory. `muxd/` contains the C++ daemon; `systemd/` contains M6A service units; `webui/` contains the Angular shell, operational Dashboard and M7B1 Sources management.
+source directory. `muxd/` contains the C++ daemon; `systemd/` contains M6A service units; `webui/` contains the V1 Dashboard, Sources, Modulators, Audio Profiles and read-only System UI.
 
 ## Try the API
 
@@ -95,7 +95,7 @@ missing routes, resource conflicts and unavailable dependencies.
 ## Configuration and lifecycle semantics
 
 - SQLite uses transactional schema initialization and `PRAGMA user_version`.
-  A newer unsupported schema is rejected. Foreign keys prevent deleting assigned
+  Current pre-V1 schema is version 1; any other nonzero version is rejected with instructions to recreate the database. Foreign keys prevent deleting assigned
   sources or referenced audio profiles; these deletions return HTTP 409.
 - PATCH replaces supplied fields, including entire JSON configuration objects.
   Omitted fields remain unchanged. Explicit null clears nullable assignments;
@@ -116,17 +116,16 @@ missing routes, resource conflicts and unavailable dependencies.
   stopping releases it. ANALOG modulators create no pipeline or PCM producer.
   Source edits while active return 409; stop consumers before editing. Hardware
   stop failures retain the source until RF-off can be confirmed.
-- The default FM validation band is 87500..108000 kHz inclusive. Override it with
-  `--fm-band-min-khz` and `--fm-band-max-khz`. No tuning raster is assumed.
+- Startup `--region` selects the UI frequency plan (default 1, Europe). Hardware
+  validation is independently 76000..108000 kHz on a 50 kHz raster. See
+  [M7B5](docs/milestone7b5.md) for all four regions and production static hosting.
   Configure `rf_attenuation_db` as relative attenuation: 0 (Maximum), then 1.5 dB
   steps through 22.5 dB. RP firmware maps these levels without changing IPOW.
-  Schema 9 migrates obsolete absolute RF targets to null rather than guessing an
-  uncalibrated conversion. Select a level explicitly before real hardware use.
+  Fresh Modulators have null attenuation. Select a level explicitly before real hardware use.
   See the [canonical protocol](docs/rp2354-protocol.md).
 - PI is represented as a uint16 integer. PS entries contain up to eight printable
   characters and a positive duration; RT allows up to 64 printable characters.
-  ECC is a nullable integer byte, with no inferred country. Schema 3 backfills
-  ECC=null and AF=[]; see M5 for deterministic character conversion and scheduling.
+  ECC is a nullable integer byte, with no inferred country. Fresh defaults are  ECC=null and AF=[]; see M5 for deterministic character conversion and scheduling.
 - RT priority is override, then enabled stream metadata, then persistent fallback.
   TTL uses monotonic time and expires automatically. Without TTL it lasts until
   deletion or restart; an empty override is valid. The additional
@@ -147,7 +146,7 @@ python -m pytest daemon/tests -q
 
 Tests use temporary SQLite databases, injected mock clients/pipelines and a fake
 monotonic clock for TTL boundary checks. They cover API validation and errors,
-CRUD, foreign keys, migration/reopen, restart persistence, source test isolation,
+CRUD, foreign keys, atomic initialization, unchanged reopen, unsupported-version rejection, restart persistence, source test isolation,
 shared pipelines, analog bypass, RF/audio ordering, failure cleanup, desired vs
 actual state, concurrent requests, and RadioText priority/expiry.
 
@@ -159,8 +158,8 @@ Milestone 3 adds the Unix PCM/control sockets, bounded C++ rings, fixed frame
 builder, mock capture and Linux spidev transport. Milestone 4 adds RP2354 I2C protocol/client primitives and hardware status.
 M5 adds Linux RDS encoding and FIFO scheduling. M6A adds safe desired-state
 restoration, integration recovery and systemd deployment. M7A adds the Angular Dashboard; M7B1 adds Sources management; M7B2 adds Modulator/RDS configuration; M7B3 adds
-[Audio Profiles management](docs/milestone7b3.md). System page contents and firmware
-remain unimplemented; Zero 2 W stress/performance validation is deferred to M6B. New modulators
+[Audio Profiles management](docs/milestone7b3.md). M7B5 completes System diagnostics and production WebUI hosting. RP firmware
+remains unimplemented; Zero 2 W stress/performance validation is deferred to M6B. New modulators
 remain disabled with no frequency until explicitly configured.
 
 No architectural deviation is introduced. There is one source worker per active
@@ -173,9 +172,20 @@ Milestone 7A Angular Dashboard: [development and validation](docs/milestone7a.md
 
 
 Milestone 7B1 Sources UI and final validation: [documentation](docs/milestone7b1.md).
-Current SQLite schema is 9 (RF targets now use relative attenuation; schema 8 removes the obsolete source enable flag; schema 7 added neutral QN audio-control defaults): schema 5 moves legacy analog-source assignments to
-Modulator.audio_mode; schema 6 preserves effective HTTP User-Agent values in
-`gst_options.source["user-agent"]`. There is no normal HTTP `config.user_agent`
-field. See the canonical architecture for migration conflict/rollback rules.
+Current pre-V1 SQLite schema is **1**. Empty databases initialize directly from the
+current models with Modulators 0..7 (PS FM TX 0 through FM TX 7), SystemConfig, and no
+Sources or AudioProfiles. Current databases reopen without configuration rewrites.
+Other nonzero versions are unsupported: recreate old development database files.
+
+Before the first supported release, incompatible format changes may require
+development DB recreation; do not accumulate permanent compatibility migrations.
+After a released format exists, increment versions normally and preserve supported
+user data with explicit tested migrations. Backward-compatible migrations have not
+started yet. See architecture section 16.4 for startup and integrity rules.
 
 Modulator RF/Audio/RDS editor: [Milestone 7B2](docs/milestone7b2.md).
+
+Production WebUI: build with `cd webui && npm ci && npm run build`, then pass the
+browser asset directory using `fmheadendd --region 1 --host 0.0.0.0 --port 8080
+--webui-dir /opt/fmheadend/webui` (one command, plus normal hardware/database flags).
+Node is not required at runtime. See [deployment details](docs/milestone7b5.md).

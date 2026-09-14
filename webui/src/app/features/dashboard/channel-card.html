@@ -6,7 +6,7 @@
   <a
     class="readout"
     [routerLink]="['/modulators', channel().id]"
-    [attr.aria-label]="'TX ' + channel().id + ' configuration (M7B placeholder)'"
+    [attr.aria-label]="'TX ' + channel().id + ' configuration'"
   >
     <div class="channel-top">
       <span class="channel-id">TX {{ channel().id }}</span
@@ -61,20 +61,27 @@
         <span>Audio input: <b>Analog</b></span>
       } @else {
         <span
-          >Source <b>{{ sourceState() }}</b></span
+          >Source <b>{{ humanizeStatus(sourceState()) }}</b></span
         >
         <span
-          >Digital audio <b>{{ stale() ? 'Unknown' : channel().pcm }}</b></span
+          >Digital Audio <b>{{ humanizeStatus(stale() ? 'Unknown' : channel().pcm) }}</b></span
+        >
+      }
+      @if (!channel().analog && profileName()) {
+        <span
+          >Audio Profile <b>{{ profileName() }}</b></span
         >
       }
       <span
         >RDS
         <b>{{
-          stale()
-            ? 'Unknown'
-            : channel().runtime?.rds_state === 'FEEDING'
-              ? 'RUNNING'
-              : (channel().runtime?.rds_state ?? 'Unknown')
+          humanizeStatus(
+            stale()
+              ? 'Unknown'
+              : channel().runtime?.rds_state === 'FEEDING'
+                ? 'RUNNING'
+                : (channel().runtime?.rds_state ?? 'Unknown')
+          )
         }}</b></span
       >
     </div>

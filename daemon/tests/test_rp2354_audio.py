@@ -1,14 +1,11 @@
 """Current protocol audio controls: exact wire vectors and backend integration, no RP hardware."""
-import json
-import sqlite3
 import struct
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from fmheadendd.app import create_app
 from fmheadendd.config import Settings
-from fmheadendd.database import Database
-from fmheadendd.models.configuration import ModulatorConfig, InputSourceConfig, AudioProfileConfig
+from fmheadendd.models.configuration import ModulatorConfig
 from fmheadendd.rp2354.client import TxConfig, MockRp2354Client
 from fmheadendd.rp2354 import protocol as p
 
@@ -87,51 +84,6 @@ def test_status_wrong_lengths(size):
 def test_status_invalid_saturation(value):
     data = bytearray(status_payload()); data[24] = value
     with pytest.raises(p.ProtocolError, match="input_saturated"): p.parse_status(data)
-
-
-def test_schema6_preservation_and_reopen(tmp_path):
-    path = tmp_path / "legacy.db"
-    db = Database(path)
-    profile = db.save("audio_profiles", AudioProfileConfig(name="Keep", gain_db=-3))
-    source = db.save("sources", InputSourceConfig(name="Keep", type="ALSA", config={"device":"hw:2,0"}, audio_profile_id=profile.id))
-    before = {}
-    with db.connection:
-        for row in db.connection.execute("SELECT id,data FROM modulators").fetchall():
-            data = json.loads(row["data"])
-            for key in DEFAULTS: data.pop(key)
-            data.update(frequency_khz=98100 + row["id"] * 100, rds_enabled=True, rds_ecc=224,
-                        rds_rt="Keep text", enabled=row["id"] == 0,
-                        audio_mode="ANALOG" if row["id"] < 2 else "DIGITAL",
-                        input_source_id=None if row["id"] < 2 else source.id)
-            before[row["id"]] = data
-            db.connection.execute("UPDATE modulators SET data=?,input_source_id=? WHERE id=?",
-                                  (json.dumps(data),data["input_source_id"],row["id"]))
-        other = {table:list(map(tuple, db.connection.execute("SELECT * FROM " + table)))
-                 for table in ("sources", "audio_profiles", "system_config")}
-        db.connection.execute("PRAGMA user_version=6")
-    db.close()
-    for _ in range(2):
-        db = Database(path)
-        assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 9
-        for row in db.connection.execute("SELECT id,data FROM modulators"):
-            assert json.loads(row["data"]) == before[row["id"]] | DEFAULTS
-        for table, rows in other.items():
-            assert list(map(tuple,db.connection.execute("SELECT * FROM " + table))) == rows
-        assert len(db.list("modulators")) == 8
-        db.close()
-
-
-def test_schema7_failure_is_atomic(tmp_path):
-    path = tmp_path / "bad.db"; db = Database(path)
-    with db.connection:
-        db.connection.execute("UPDATE modulators SET data='invalid' WHERE id=7")
-        db.connection.execute("PRAGMA user_version=6")
-        before = list(map(tuple,db.connection.execute("SELECT * FROM modulators")))
-    db.close()
-    with pytest.raises(json.JSONDecodeError): Database(path)
-    with sqlite3.connect(path) as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 6
-        assert db.execute("SELECT * FROM modulators").fetchall() == before
 
 
 @pytest.mark.parametrize("settings", [DEFAULTS, MANUAL])

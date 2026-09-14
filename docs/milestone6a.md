@@ -221,3 +221,10 @@ was used and physical RF/RDS transmission or recovery remains unverified.
 The old architecture Requires= example was changed to Wants=/After= as explicitly
 requested for M6A, so mux failure cannot stop the HTTP service. No component-boundary
 redesign, extra worker architecture, new dependency or M6B work was introduced.
+
+### Production V1 WebUI startup arguments
+
+The existing `FMHEADEND_ARGS` environment entry can include `--region 1` and
+`--webui-dir /opt/fmheadend/webui`. Build/install the browser assets separately;
+no Node server or extra systemd service is needed. Region 1 is the default.
+See [M7B5](milestone7b5.md) for the production hosting procedure.

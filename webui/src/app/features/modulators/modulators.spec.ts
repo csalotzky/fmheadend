@@ -1,3 +1,5 @@
+import { SystemApi } from '../../core/api/system-api';
+import { systemInfo } from '../system/test-fixtures';
 import { defer, of, Subject } from 'rxjs';
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
@@ -64,6 +66,7 @@ describe('Modulator configuration', () => {
         provideRouter([]),
         provideHttpClient(),
         provideHttpClientTesting(),
+        { provide: SystemApi, useValue: { info: () => of(systemInfo) } },
         { provide: ActivatedRoute, useValue: routeStub },
       ],
     });
@@ -186,6 +189,33 @@ describe('Modulator configuration', () => {
     expect(f.nativeElement.querySelector('[formControlName="name"]')).toBeNull();
     expect(f.nativeElement.querySelector('[formControlName="enabled"]')).toBeNull();
     expect(f.nativeElement.querySelector('[formControlName="input_source_id"]')).not.toBeNull();
+  });
+  it('preserves a stored frequency outside the active plan', async () => {
+    const f = await editor({ frequency_khz: 76050 });
+    const c = f.componentInstance;
+    expect(c.form.controls.frequency_khz.value).toBe(76050);
+    expect(c.draft().frequency_khz).toBe(76050);
+    expect(f.nativeElement.textContent).toContain('outside this plan');
+    expect(c.frequencies[0].label).toContain('stored, outside plan');
+    expect(c.alternatives[0].value).toBe(87600);
+  });
+  it('uses an API supplied 50 kHz plan', async () => {
+    vi.spyOn(TestBed.inject(SystemApi), 'info').mockReturnValue(
+      of({
+        ...systemInfo,
+        frequency_plan: {
+          region: 0,
+          region_name: 'Expert',
+          fm_min_khz: 76000,
+          fm_max_khz: 108000,
+          fm_step_khz: 50,
+        },
+      }),
+    );
+    const f = await editor();
+    expect(f.componentInstance.frequencies).toHaveLength(641);
+    expect(f.componentInstance.frequencies[1]).toEqual({ value: 76050, label: '76.05 MHz' });
+    expect(f.componentInstance.alternatives).toHaveLength(204);
   });
   it('requires explicit frequency selection and offers the integer European raster', async () => {
     const f = await editor({ frequency_khz: null }),

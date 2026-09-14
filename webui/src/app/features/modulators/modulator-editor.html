@@ -59,6 +59,12 @@
     <fieldset [disabled]="saving()">
       <section aria-labelledby="rf-heading">
         <h2 id="rf-heading">RF</h2>
+        @if (outsidePlan) {
+          <p class="warning">
+            Stored frequency is outside this plan. It is preserved unless you explicitly choose
+            another frequency.
+          </p>
+        }
         <div class="fields">
           <label
             >Frequency<select formControlName="frequency_khz" required>
@@ -66,7 +72,9 @@
               @for (option of frequencies; track option.value) {
                 <option [ngValue]="option.value">{{ option.label }}</option>
               }</select
-            ><small>Required. European FM band, 100 kHz raster.</small></label
+            ><small
+              >Required. {{ plan?.region_name }}; {{ plan?.fm_step_khz }} kHz raster.</small
+            ></label
           >
           <label
             >RF output<select formControlName="rf_attenuation_db" required>

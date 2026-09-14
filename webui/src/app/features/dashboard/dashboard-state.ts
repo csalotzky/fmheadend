@@ -77,6 +77,13 @@ export class DashboardState {
   readonly updated = signal<Date | null>(null);
   readonly busy = signal<number | 'start-all' | 'stop-all' | null>(null);
   readonly notice = signal('');
+  readonly profileNames = signal<Record<number, string>>({});
+  private messageGeneration = 0;
+  clearMessages() {
+    this.messageGeneration++;
+    this.notice.set('');
+    this.failures.set([]);
+  }
   readonly failures = signal<{ id: number; message: string }[]>([]);
   readonly activeCount = computed(
     () => this.channels().filter((c) => c.runtime?.tx_state === 'ON').length,
@@ -135,16 +142,20 @@ export class DashboardState {
   }
   async operate(id: number, action: 'start' | 'stop') {
     if (this.busy() !== null) return;
+    const generation = this.messageGeneration;
     this.busy.set(id);
     this.failures.set([]);
     this.notice.set(`TX ${id}: ${action.toUpperCase()} pending`);
     try {
       await this.inFlight;
       await firstValueFrom(this.api.channel(id, action).pipe(takeUntil(this.cancelled)));
-      this.notice.set(`TX ${id}: ${action.toUpperCase()} accepted. Status refreshed below.`);
+      if (generation === this.messageGeneration)
+        this.notice.set(`TX ${id}: ${action.toUpperCase()} accepted. Status refreshed below.`);
     } catch (error) {
-      this.failures.set([{ id, message: errorMessage(error) }]);
-      this.notice.set('Operation failed or outcome unknown.');
+      if (generation === this.messageGeneration) {
+        this.failures.set([{ id, message: errorMessage(error) }]);
+        this.notice.set('Operation failed or outcome unknown.');
+      }
     } finally {
       await this.refresh();
       this.busy.set(null);
@@ -152,51 +163,42 @@ export class DashboardState {
   }
   async all(action: 'start' | 'stop') {
     if (this.busy() !== null) return;
+    const generation = this.messageGeneration;
     this.busy.set(action === 'start' ? 'start-all' : 'stop-all');
     this.failures.set([]);
     this.notice.set(`${action.toUpperCase()} ALL pending`);
-    let accepted = 0;
+    const eligible = this.channels().filter(
+      (c) => action === 'stop' || (c.config?.enabled && c.canStart),
+    );
     const failed: { id: number; message: string }[] = [];
-    let skipped: number[] = [];
+    let accepted = 0;
     try {
       await this.inFlight;
-      if (action === 'stop') {
-        const results = await firstValueFrom(this.api.stopAll().pipe(takeUntil(this.cancelled)));
-        for (let id = 0; id < 8; id++) {
-          const result = results.find((r) => r.id === id);
-          if (!result || 'error' in result)
-            failed.push({
-              id,
-              message: result && 'message' in result ? result.message : 'No result returned',
-            });
-          else accepted++;
-        }
-      } else {
-        const eligible = this.channels().filter((c) => c.canStart);
-        skipped = this.channels()
-          .filter((c) => !c.canStart)
-          .map((c) => c.id);
-        for (const channel of eligible) {
-          if (this.closed) break;
-          try {
-            await firstValueFrom(
-              this.api.channel(channel.id, 'start').pipe(takeUntil(this.cancelled)),
-            );
-            accepted++;
-          } catch (error) {
-            failed.push({ id: channel.id, message: errorMessage(error) });
-          }
-        }
-      }
-      this.notice.set(
-        `${action.toUpperCase()} ALL: ${accepted} accepted, ${failed.length} failed.` +
-          (skipped.length ? ` Skipped unconfigured channels: ${skipped.join(', ')}.` : ''),
+      const results = await firstValueFrom(
+        (action === 'start' ? this.api.startAll() : this.api.stopAll()).pipe(
+          takeUntil(this.cancelled),
+        ),
       );
+      for (const c of eligible) {
+        const result = results.find((r) => r.id === c.id);
+        if (!result || 'error' in result)
+          failed.push({
+            id: c.id,
+            message: result && 'message' in result ? result.message : 'No result returned',
+          });
+        else accepted++;
+      }
+      if (generation === this.messageGeneration)
+        this.notice.set(
+          `${action.toUpperCase()} ALL: ${accepted} accepted, ${failed.length} failed.` +
+            (eligible.length < 8 ? ' Skipped disabled or unconfigured channels.' : ''),
+        );
     } catch (error) {
-      for (let id = 0; id < 8; id++) failed.push({ id, message: errorMessage(error) });
-      this.notice.set('STOP ALL failed or outcome unknown.');
+      for (const c of eligible) failed.push({ id: c.id, message: errorMessage(error) });
+      if (generation === this.messageGeneration)
+        this.notice.set(`${action.toUpperCase()} ALL failed or outcome unknown.`);
     } finally {
-      this.failures.set(failed);
+      if (generation === this.messageGeneration) this.failures.set(failed);
       await this.refresh();
       this.busy.set(null);
     }

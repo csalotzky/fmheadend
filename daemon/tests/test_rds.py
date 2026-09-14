@@ -1,6 +1,5 @@
 """M5 exact information words, fake-time policy, and high-level mock integration."""
 from collections import Counter
-import json
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -257,14 +256,8 @@ def test_capacity_failure_preserves_config_and_can_retry(rig):
     assert r.manager.statuses[0].rds_groups_accepted>0
 
 
-def test_schema2_backfill_and_api_ecc(tmp_path):
-    path=tmp_path/'old.db';db=Database(path)
-    with db.connection:
-        for row in db.connection.execute('SELECT id,data FROM modulators').fetchall():
-            data=json.loads(row['data']);data.pop('rds_ecc');data.pop('rds_af_khz')
-            db.connection.execute('UPDATE modulators SET data=? WHERE id=?',(json.dumps(data),row['id']))
-        db.connection.execute('PRAGMA user_version=2')
-    db.close()
+def test_current_database_and_api_ecc(tmp_path):
+    path = tmp_path / 'current.db'
     with TestClient(create_app(Settings(path))) as api:
         assert all(row['rds_ecc'] is None for row in api.get('/api/v1/modulators').json())
         assert api.patch('/api/v1/modulators/0',json={'rds_ecc':224,'rds_af_khz':[98100,101100]}).status_code==200

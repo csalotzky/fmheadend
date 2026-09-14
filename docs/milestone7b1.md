@@ -61,26 +61,17 @@ credentials/query and truncate visually with an inspectable title.
 Runtime shows actual IDLE/CONNECTING/BUFFERING/RUNNING/ERROR; unavailable state is
 UNKNOWN, never inferred IDLE. Backend loss retains configuration with a stale warning.
 
-## Model and migration corrections
+## Current model
 
-The canonical architecture defines the exact rules; M7B1 introduced SQLite schema **6**. The subsequent RP audio-control prerequisite adds
-schema **7** audio-control defaults. Schema **8** removes the obsolete source enable
-flag; pipeline lifecycle is driven solely by active DIGITAL consumers. See the canonical architecture.
+The current pre-V1 SQLite format is schema 1, initialized directly. Old development
+databases are unsupported and may be recreated; see architecture section 16.4.
 
-- Schema 5 removes legacy ANALOG InputSources. Referencing modulators select their
-  own physical ANALOG jack and clear input_source_id. Shared legacy references become
-  independent physical jacks, not a routing matrix. Unreferenced analog records are
-  removed; Audio Profiles and unrelated configuration are preserved. Conflicting
-  SQL/JSON references abort that migration transaction. Digital/default modulators
-  use DIGITAL, with normal source validation and sharing. No hidden assignment returns
-  after switching back from ANALOG. RDS remains Modulator-owned and operational.
-- Schema 6 removes HTTP config.user_agent. Its value moves to the existing advanced
-  source `user-agent` property only when absent; an existing advanced value retains
-  the previous effective precedence. IDs, timestamps, relationships and other fields
-  are unchanged. New requests with the obsolete field are rejected.
-- Defaults, foreign keys, fixed physical IDs and the existing versioned migration chain
-  remain. Successful steps commit transactionally; reopening an upgraded DB is idempotent.
-
+- ANALOG is a physical Modulator audio mode with a null input_source_id, using its
+  own jack. DIGITAL uses normal source validation and sharing. No hidden assignment
+  returns after switching back from ANALOG. RDS remains Modulator-owned.
+- HTTP User-Agent is configured only through gst_options.source["user-agent"].
+- Sources have no independent enable flag; active DIGITAL consumers drive pipelines.
+- Current defaults, restricted foreign keys, and fixed physical IDs remain enforced.
 Dashboard uses audio_mode and shows Audio input: Analog without Source IDLE or Digital
 audio Idle. Analog source runtime is null, including unavailable-RP startup. RP
 SET_TX_CONFIG wire values remain DIGITAL=0 and ANALOG=1. No Modulator editor was added.
@@ -177,11 +168,7 @@ M6B work was added. Physical RP/QN transmission is not tested.
 
 Review corrected the analog startup cache (source_state is null even before an
 unavailable RP can restore configuration), removed imports made obsolete by analog
-source removal, and consolidated stale README/milestone statements. A combined
-schema-4-to-6 test verifies digital Sources, legacy shared/unused analog records,
-HTTP effective User-Agent, Audio Profiles, Modulators, RDS, timestamps and System
-configuration survive as intended. Per-step atomic rollback and idempotent reopen
-coverage passed. No migration rule or wire protocol was redesigned.
+source removal, and consolidated stale README/milestone statements. Historical migration tests have since been removed by the pre-V1 format reset. Current database tests cover direct initialization, unchanged reopen and integrity. The wire protocol is unchanged.
 
 | Check | Passed | Failed | Skipped |
 |---|---:|---:|---:|

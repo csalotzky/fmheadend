@@ -327,57 +327,17 @@ See [M7B3](milestone7b3.md) for implemented capabilities and safety semantics.
 
 ## 10. System
 
-The System page is primarily status and diagnostics, not a dumping ground for arbitrary low-level configuration.
+V1 System is a read-only overview: backend version/status and selected media
+backend, RP connection/protocol/firmware/hardware, mux status/transport, current
+region plan and database schema. Diagnostics use existing counters and current
+errors; latched codes are marked historical. Missing values are unavailable.
+No CPU/temperature claims, raw register controls, live logs or administrative
+commands are exposed. Partial dependency failure keeps the page usable.
 
-### 10.1 Normal user-facing system information
-
-Potential read-only information:
-
-- fmheadendd state/version
-- muxd state/version
-- RP2354 connection state
-- RP2354 firmware version
-- RP2354 protocol version
-- hardware revision
-- uptime
-- CPU load
-- memory use
-- temperature
-- SPI state
-- I2C state
-- global error state
-
-### 10.2 Advanced / Diagnostics
-
-Low-level information may be placed in a collapsed or clearly separated Advanced / Diagnostics section.
-
-Examples:
-
-- PCM underrun / overrun counters
-- RDS underrun counters
-- SPI error counters
-- I2C error counters
-- mux frame counters
-- raw RP2354 information
-- QN register debug functionality, if retained
-
-These are diagnostic tools, not primary navigation items.
-
-### 10.3 Configuration policy
-
-Do not expose low-level implementation parameters as normal user settings merely because they are configurable internally.
-
-Examples that should normally remain outside the standard UI:
-
-- I2C clock speed
-- I2C bus number
-- RP slave address
-- SPI clock
-- Unix socket paths
-- internal polling intervals
-- buffer sizes
-
-Such values belong in deployment/config files or advanced development tooling unless a real operational requirement appears.
+Region is a startup-only frequency selection plan returned by the backend;
+frequency choices use its integer min/max/step. Existing out-of-plan frequencies
+remain explicit and unchanged. RDS AF is independent. See [M7B5](milestone7b5.md)
+for the central plan contract, production hosting and final sitemap.
 
 ## 11. Visual direction
 
@@ -459,5 +419,5 @@ dirty-navigation protection; a separate top Back link is unnecessary.
 
 Shared structural CSS belongs in `styles.css`; do not duplicate host centering,
 header alignment or action-row layout per feature. Keep genuinely specific form
-and channel styling local. The future System page must follow these same
+and channel styling local. The System page follows these same
 container, header and editor-action conventions, selecting the appropriate width.
