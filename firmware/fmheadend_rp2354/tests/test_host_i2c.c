@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdio.h>
 #include "../host_i2c.c"
+#include "fake_qn.h"
 
 i2c_inst_t test_i2c1;
 static unsigned available;
@@ -31,6 +32,10 @@ void uart_puts(unsigned uart, const char *text)
     assert(strlen(uart_log) + strlen(text) < sizeof(uart_log));
     strcat(uart_log, text);
 }
+bool uart_is_writable(unsigned uart) { assert(uart==uart0 && !in_irq && !masked); return true; }
+void uart_putc_raw(unsigned uart,char c) { char s[]={c,0};uart_puts(uart,s); }
+static void foreground_only(void) { assert(!in_irq && !masked); }
+static void drain(void) { for(unsigned i=0;i<100;++i) host_i2c_poll(); }
 static void irq(uint32_t flags, unsigned rx, uint32_t byte)
 {
     assert(!masked);
@@ -61,6 +66,7 @@ static void finish_read(void)
 }
 int main(void)
 {
+    fake_qn_reset();fake_operation_hook=foreground_only;
     host_i2c_init(0xff);
     assert(test_i2c1.hw.enable == 1 && test_i2c1.hw.ack_general_call == 0);
     assert(test_i2c1.hw.con & I2C_IC_CON_STOP_DET_IFADDRESSED_BITS);
@@ -74,24 +80,26 @@ int main(void)
     assert(read_byte() == 1 && read_byte() == 0);
     for (unsigned i = 2; i < 35; ++i) assert(read_byte() == host.response[i + 2]);
     finish_read();
-    host_i2c_poll();
+    drain();
     assert(strstr(uart_log, "HOST RX: GET_INFO") && strstr(uart_log, "HOST TX: OK payload=35 bytes"));
 
     const uint8_t on[] = {3,3,1,1};
     write_request(on, sizeof(on));
-    assert(read_byte() == 0 && read_byte() == 0);
+    assert(host.pending); drain();
+    assert(read_byte() == HOST_INVALID_ARGUMENT && read_byte() == 0);
     finish_read();
-    host_i2c_poll();
+    drain();
     assert(strstr(uart_log, "HOST RX: SET_TX_ENABLED TX3 ON"));
-    assert(strstr(uart_log, "HOST TX: STUB OK - NOT EXECUTED"));
+    assert(strstr(uart_log, "HOST TX: INVALID_ARGUMENT"));
     const uint8_t config[] = {2,3,15,0x34,0x7f,1,0,60,0,1,50,0,0,1,0xf1,0xff,1,1};
     write_request(config, sizeof(config));
-    host_i2c_poll();
+    drain();
     assert(strstr(uart_log, "SET_TX_CONFIG TX3 frequency_khz=98100"));
     assert(strstr(uart_log, "analog_gain_x10=-15"));
 
     const uint8_t status[] = {4,255,0};
     write_request(status, sizeof(status));
+    assert(host.pending); drain();
     assert(read_byte() == 0 && read_byte() == 130);
     finish_read();
     for (unsigned i = 0; i < 130; ++i) {
@@ -99,7 +107,7 @@ int main(void)
         if (i >= 10 && (i - 10) % 15 == 0) assert(byte == 0);
     }
     finish_read();
-    host_i2c_poll();
+    drain();
 
     write_request(info, sizeof(info));
     assert(read_byte() == 0); /* Queued byte is flushed rather than sent. */
@@ -107,18 +115,18 @@ int main(void)
     irq(I2C_IC_INTR_STAT_R_TX_ABRT_BITS, 0, 0);
     assert(read_byte() == 0 && read_byte() == 35);
     finish_read();
-    host_i2c_poll();
+    drain();
 
     irq(I2C_IC_INTR_STAT_R_RX_FULL_BITS, 1, 3 | I2C_IC_DATA_CMD_FIRST_DATA_BYTE_BITS);
     irq(I2C_IC_INTR_STAT_R_RESTART_DET_BITS, 0, 0);
     assert(read_byte() == HOST_INVALID_ARGUMENT && read_byte() == 0);
     finish_read();
-    host_i2c_poll();
+    drain();
     assert(strstr(uart_log, "INVALID FRAMING"));
     irq(I2C_IC_INTR_STAT_R_RX_OVER_BITS | I2C_IC_INTR_STAT_R_STOP_DET_BITS, 0, 0);
     assert(read_byte() == HOST_INVALID_ARGUMENT);
-    host_i2c_poll();
+    drain();
     write_request(info, sizeof(info));
     assert(read_byte() == 0 && read_byte() == 35);
-    puts("I2C adapter: pins/address, RX+STOP ordering, split reads, UART outside IRQ, stubs PASS");
+    puts("I2C adapter: pins/address, RX+STOP ordering, split reads, UART/QN outside IRQ, completion PASS");
 }

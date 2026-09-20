@@ -17,7 +17,7 @@ class TxConfig(Model):
     rf_attenuation_db: float | None = Field(default=None, ge=0, le=22.5, multiple_of=1.5, strict=True)
     stereo: bool
     preemphasis_us: int
-    audio_mode: Literal["DIGITAL", "ANALOG"]
+    audio_mode: Literal["DIGITAL", "ANALOG", "SINE"]
     rds_enabled: bool
 
     @classmethod

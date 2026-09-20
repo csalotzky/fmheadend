@@ -87,8 +87,8 @@ class Rp2354Client:
                 if os.write(self._fd, packet) != len(packet):
                     raise p.ProtocolError("Short I2C request write; command outcome is unknown")
                 # Firmware must prepare a response, or BUSY without side effects,
-                # within this interval. Each transaction ends with STOP.
-                time.sleep(0.002)
+                # within the command window. Each transaction ends with STOP.
+                time.sleep(p.RESPONSE_WAIT_MS[command] / 1000)
                 header = os.read(self._fd, 2)
                 _, length = p.response_header(command, header)
                 payload = os.read(self._fd, length) if length else b""

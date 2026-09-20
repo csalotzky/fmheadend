@@ -4,8 +4,9 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "qn_control.h"
 
-#define HOST_FIRMWARE_VERSION "0.8.2-stub"
+#define HOST_FIRMWARE_VERSION "0.8.3"
 #define HOST_HARDWARE_REVISION "PCB1.0"
 #define HOST_REQUEST_MAX 258u
 #define HOST_RESPONSE_MAX 132u
@@ -23,8 +24,14 @@ typedef struct {
     bool malformed;
 } host_log_event_t;
 
-/* IRQ-owned state. Foreground accesses the log queue only with IRQs masked.
- * No QN driver dependency, heap allocation, UART or hardware side effects.
+typedef struct {
+    host_log_event_t event;
+    uint32_t generation;
+    uint8_t result[130];
+} host_work_t;
+
+/* IRQ owns framing; foreground owns QN state. Work/log handoffs use short IRQ
+ * masks. No QN execution, UART, allocation or waiting inside the IRQ.
  */
 typedef struct {
     uint8_t ready_mask;
@@ -36,7 +43,17 @@ typedef struct {
     host_log_event_t logs[HOST_LOG_CAPACITY];
     unsigned log_head, log_tail, log_count;
     uint32_t log_busy_count;
+    qn_control_t qn;
+    bool pending, running;
+    uint32_t generation;
+    host_work_t work;
 } host_protocol_t;
+
+/* Take/complete under a short IRQ mask; run WITHOUT masking interrupts. */
+bool host_protocol_take_work(host_protocol_t *host, host_work_t *work);
+void host_protocol_run_work(host_protocol_t *host, host_work_t *work, uint32_t uptime);
+void host_protocol_complete_work(host_protocol_t *host, const host_work_t *work);
+unsigned host_response_wait_ms(uint8_t command);
 
 void host_protocol_init(host_protocol_t *host, uint8_t ready_mask);
 void host_protocol_receive(host_protocol_t *host, uint8_t byte, bool first);

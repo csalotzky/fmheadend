@@ -23,6 +23,13 @@ class Command(IntEnum):
     GET_RDS_FIFO_FREE = 11
 
 
+# Approved M8.3 synchronous completion windows, milliseconds after write STOP.
+# Must match host_response_wait_ms() in production firmware.
+RESPONSE_WAIT_MS = {command: 2 for command in Command}
+RESPONSE_WAIT_MS.update({Command.SET_TX_CONFIG: 1000, Command.GET_STATUS: 850,
+    Command.SET_TX_ENABLED: 150, Command.QN_READ_REGISTER: 100, Command.QN_WRITE_REGISTER: 100})
+
+
 class Status(IntEnum):
     OK = 0
     INVALID_COMMAND = 1
@@ -103,7 +110,7 @@ def request(command: Command, target: int, payload: bytes = b"") -> bytes:
         raise ValueError("SET_TX_ENABLED must be 0 or 1")
     if command == Command.SET_TX_CONFIG:
         frequency, level, stereo, emphasis, mode, rds, gain, analog, trim, clipping = TX_CONFIG.unpack(payload)
-        if level > 225 or level % 15 != 0 or frequency == 0 or stereo not in (0, 1) or emphasis not in (50, 75) or mode not in (0, 1) or rds not in (0, 1) or gain not in (0, 1) or trim not in (0, 1) or clipping not in (0, 1):
+        if level > 225 or level % 15 != 0 or frequency == 0 or stereo not in (0, 1) or emphasis not in (50, 75) or mode not in (0, 1, 2) or rds not in (0, 1) or gain not in (0, 1) or trim not in (0, 1) or clipping not in (0, 1):
             raise ValueError("Invalid SET_TX_CONFIG field value")
     return bytes((command, target, len(payload))) + payload
 
@@ -161,13 +168,13 @@ def tx_config(config) -> bytes:
     level = rf_attenuation_x10(config.rf_attenuation_db)
     if config.preemphasis_us not in (50, 75) or type(config.preemphasis_us) is not int:
         raise ValueError("preemphasis_us must be 50 or 75")
-    if config.audio_mode not in ("DIGITAL", "ANALOG"):
-        raise ValueError("audio_mode must be DIGITAL or ANALOG")
+    if config.audio_mode not in ("DIGITAL", "ANALOG", "SINE"):
+        raise ValueError("audio_mode must be DIGITAL, ANALOG or SINE")
     if config.gain_mode not in ("AUTO", "MANUAL"):
         raise ValueError("gain_mode must be AUTO or MANUAL")
     trim = uint(config.digital_trim_db, 1, "digital_trim_db")
     return TX_CONFIG.pack(frequency, level, boolean(config.stereo, "stereo"),
-        config.preemphasis_us, int(config.audio_mode == "ANALOG"), boolean(config.rds_enabled, "rds_enabled"),
+        config.preemphasis_us, {"DIGITAL": 0, "ANALOG": 1, "SINE": 2}[config.audio_mode], boolean(config.rds_enabled, "rds_enabled"),
         int(config.gain_mode == "MANUAL"), analog_gain_x10(config.analog_gain_db), trim,
         boolean(config.soft_clipping, "soft_clipping"))
 

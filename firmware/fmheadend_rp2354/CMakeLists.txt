@@ -47,12 +47,13 @@ add_executable(fmheadend_rp2354
         fmheadend_rp2354.c
         qn_bus.c
         qn_boot.c
+        qn_control.c
         host_protocol.c
         host_i2c.c
         )
 
 pico_set_program_name(fmheadend_rp2354 "fmheadend_rp2354")
-pico_set_program_version(fmheadend_rp2354 "0.8.2-stub")
+pico_set_program_version(fmheadend_rp2354 "0.8.3")
 target_compile_definitions(fmheadend_rp2354 PRIVATE
         FMHEADEND_HOST_I2C_ADDRESS=${HOST_ADDRESS_VALUE})
 

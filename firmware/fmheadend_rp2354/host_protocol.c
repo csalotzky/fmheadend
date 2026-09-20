@@ -19,10 +19,6 @@ int host_get_i16(const uint8_t *p)
     unsigned n = host_get_u16(p);
     return n >= 0x8000u ? (int)n - 65536 : (int)n;
 }
-static void put_u32(uint8_t *p, uint32_t n)
-{
-    for (unsigned i = 0; i < 4; ++i) p[i] = n >> (8 * i);
-}
 static void reply(host_protocol_t *host, uint8_t status, uint8_t length)
 {
     host->response[0] = status;
@@ -35,6 +31,7 @@ void host_protocol_init(host_protocol_t *host, uint8_t ready_mask)
 {
     memset(host, 0, sizeof(*host));
     host->ready_mask = ready_mask;
+    qn_control_init(&host->qn, ready_mask);
     reply(host, HOST_BUSY, 0); /* A read before any request is never fake OK. */
 }
 
@@ -83,80 +80,108 @@ static uint8_t validate(const host_protocol_t *host)
     if (command == SET_TX_CONFIG &&
         (!host_get_u32(p) || host_get_u16(p + 4) > 225 ||
          host_get_u16(p + 4) % 15 || p[6] > 1 ||
-         (p[7] != 50 && p[7] != 75) || p[8] > 1 || p[9] > 1 ||
+         (p[7] != 50 && p[7] != 75) || p[8] > 2 || p[9] > 1 ||
          p[10] > 1 || p[13] > 1 || p[14] > 1)) return HOST_INVALID_ARGUMENT;
     return HOST_OK;
 }
 
-static void status_payload(host_protocol_t *host, uint32_t uptime_ms)
+unsigned host_response_wait_ms(uint8_t command)
 {
-    uint8_t *p = host->response + 2;
-    memset(p, 0, 130);
-    p[0] = host->ready_mask == 0xff ? 0 : 1;
-    put_u32(p + 1, uptime_ms);
-    p[9] = host->ready_mask == 0xff ? HOST_OK : HOST_QN_ERROR;
-    for (unsigned i = 0; i < 8; ++i) {
-        uint8_t *channel = p + 10 + 15 * i;
-        /* ALL TXs remain OFF, including failed QNs held at CEN LOW.
-         * No applied attenuation, saturation measurement or RDS FIFO exists.
-         * Zero counters mean no detected events, not implemented monitoring.
-         */
-        channel[2] = 0x80; /* i16 -32768: attenuation unavailable. */
-        channel[13] = host->ready_mask & (1u << i) ? HOST_OK : HOST_QN_ERROR;
-        channel[14] = 255;
+    switch (command) {
+    case SET_TX_CONFIG: return 1000;
+    case GET_STATUS: return 850;
+    case SET_TX_ENABLED: return 150;
+    case QN_READ_REGISTER: case QN_WRITE_REGISTER: return 100;
+    default: return 2;
     }
 }
-
+static void log_event(host_protocol_t *host, const host_log_event_t *event)
+{
+    if (host->log_count == HOST_LOG_CAPACITY) {
+        if (host->log_busy_count != UINT32_MAX) ++host->log_busy_count;
+        return;
+    }
+    host->logs[host->log_head] = *event;
+    host->log_head = (host->log_head + 1) % HOST_LOG_CAPACITY;
+    ++host->log_count;
+}
+static void cancel_pending(host_protocol_t *host)
+{
+    if (!host->pending) return;
+    host->pending = false;
+    host->work.event.status = HOST_BUSY;
+    log_event(host, &host->work.event);
+}
 void host_protocol_stop(host_protocol_t *host, uint32_t uptime_ms)
 {
-    if (!host->receiving) return; /* Header/payload read STOP preserves cursor. */
-    uint8_t status = validate(host), length = 0;
-    const uint8_t command = host->request_size ? host->request[0] : 0;
-    if (host->log_count == HOST_LOG_CAPACITY) {
-        /* No deferred command execution after BUSY; report overload later. */
-        status = HOST_BUSY;
-        if (host->log_busy_count != UINT32_MAX) ++host->log_busy_count;
-    } else {
-        if (status == HOST_OK) {
-            switch (command) {
-            case GET_INFO:
-                length = 35;
-                memset(host->response + 2, 0, length);
-                host->response[2] = 1; /* protocol_version u16 LE */
-                memcpy(host->response + 4, HOST_FIRMWARE_VERSION, sizeof(HOST_FIRMWARE_VERSION));
-                memcpy(host->response + 20, HOST_HARDWARE_REVISION, sizeof(HOST_HARDWARE_REVISION));
-                host->response[36] = 8;
-                break;
-            case GET_STATUS:
-                length = 130;
-                status_payload(host, uptime_ms);
-                break;
-            case SET_TX_CONFIG: case SET_TX_ENABLED:
-                /* M8.2 deliberate ACK stubs: no stored config, QN IO or RF. */
-                break;
-            default:
-                status = HOST_INVALID_COMMAND; /* Includes RP_SOFT_RESET. */
-                break;
-            }
+    (void)uptime_ms;
+    if (!host->receiving) return;
+    cancel_pending(host); /* New complete request abandons unstarted work. */
+    ++host->generation;
+    host_log_event_t event = {0};
+    event.status = validate(host);
+    event.command = host->request_size ? host->request[0] : 0;
+    event.target = host->request_size > 1 ? host->request[1] : 0xff;
+    event.length = host->request_size > 2 ? host->request[2] : 0;
+    event.malformed = host->malformed || host->request_size < 3 ||
+                      host->request_size != 3u + event.length;
+    if (!event.malformed && event.length <= sizeof(event.payload))
+        memcpy(event.payload, host->request + 3, event.length);
+    if (host->running || host->log_count == HOST_LOG_CAPACITY) {
+        event.status = HOST_BUSY; /* This NEW request will not execute. */
+    } else if (event.status == HOST_OK) {
+        switch (event.command) {
+        case GET_INFO:
+            event.response_length = 35;
+            memset(host->response + 2, 0, 35);
+            host->response[2] = 1;
+            memcpy(host->response + 4, HOST_FIRMWARE_VERSION, sizeof(HOST_FIRMWARE_VERSION));
+            memcpy(host->response + 20, HOST_HARDWARE_REVISION, sizeof(HOST_HARDWARE_REVISION));
+            host->response[36] = 8;
+            break;
+        case GET_STATUS: case SET_TX_CONFIG: case SET_TX_ENABLED:
+        case QN_READ_REGISTER: case QN_WRITE_REGISTER:
+            host->work = (host_work_t){.event=event, .generation=host->generation};
+            host->pending = true;
+            break;
+        default: event.status = HOST_INVALID_COMMAND; break;
         }
-        host_log_event_t *log = &host->logs[host->log_head];
-        memset(log, 0, sizeof(*log));
-        log->command = command;
-        log->target = host->request_size > 1 ? host->request[1] : 0xff;
-        log->length = host->request_size > 2 ? host->request[2] : 0;
-        log->malformed = host->malformed || host->request_size < 3 ||
-                         host->request_size != 3u + log->length;
-        log->status = status;
-        log->response_length = length;
-        if (status == HOST_OK && (command == SET_TX_CONFIG || command == SET_TX_ENABLED)) {
-            memcpy(log->payload, host->request + 3, log->length);
-        }
-        host->log_head = (host->log_head + 1) % HOST_LOG_CAPACITY;
-        ++host->log_count;
     }
-    reply(host, status, length);
+    if (!host->pending) log_event(host, &event);
+    /* Pending is not an OK response: an early read cancels it before execution,
+     * or reports INTERNAL_ERROR (unknown outcome) if execution already began.
+     */
+    reply(host, host->pending ? HOST_INTERNAL_ERROR : event.status, event.response_length);
     host->request_size = 0;
     host->receiving = host->malformed = false;
+}
+bool host_protocol_take_work(host_protocol_t *host, host_work_t *work)
+{
+    if (!host->pending || host->running) return false;
+    *work=host->work;
+    host->pending=false; host->running=true;
+    return true;
+}
+void host_protocol_run_work(host_protocol_t *host, host_work_t *work, uint32_t uptime)
+{
+    host_log_event_t *e=&work->event;
+    if (e->command==GET_STATUS) {
+        qn_control_status(&host->qn,work->result,uptime);
+        e->response_length=130;
+    } else {
+        e->status=qn_control_execute(&host->qn,e->command,e->target,e->payload,work->result);
+        e->response_length=e->status==HOST_OK && e->command==QN_READ_REGISTER ? 1 : 0;
+        if (e->response_length) e->payload[1]=work->result[0];
+    }
+}
+void host_protocol_complete_work(host_protocol_t *host, const host_work_t *work)
+{
+    host->running=false;
+    if (host->generation==work->generation) {
+        memcpy(host->response+2,work->result,work->event.response_length);
+        reply(host,work->event.status,work->event.response_length);
+    }
+    log_event(host,&work->event);
 }
 
 uint8_t host_protocol_read(host_protocol_t *host)
@@ -165,6 +190,15 @@ uint8_t host_protocol_read(host_protocol_t *host)
         /* A write followed by read without STOP cannot execute anything. */
         host->malformed = true;
         host_protocol_stop(host, 0);
+    }
+    if (host->pending) {
+        cancel_pending(host);
+        ++host->generation;
+        reply(host, HOST_BUSY, 0);
+    } else if (host->running && host->generation == host->work.generation) {
+        /* Violated the per-command wait: outcome unknown, never replay as BUSY. */
+        ++host->generation;
+        reply(host, HOST_INTERNAL_ERROR, 0);
     }
     if (host->response_cursor >= host->response_size) return 0xff;
     return host->response[host->response_cursor++];

@@ -7,6 +7,7 @@
 #include "hardware/sync.h"
 #include "hardware/uart.h"
 #include <stdio.h>
+#include <string.h>
 
 #if !defined(FMHEADEND_HOST_I2C_ADDRESS) || FMHEADEND_HOST_I2C_ADDRESS < 0x08 || FMHEADEND_HOST_I2C_ADDRESS > 0x77
 #error "Configure an unreserved 7-bit FMHEADEND_HOST_I2C_ADDRESS"
@@ -15,6 +16,20 @@
 #define HOST_I2C i2c1
 static host_protocol_t host;
 static bool last_tx_advanced;
+static char log_line[512];
+static size_t log_size, log_cursor;
+static void log_append(const char *text)
+{
+    size_t n=strlen(text);
+    if (n > sizeof(log_line)-1-log_size) n=sizeof(log_line)-1-log_size;
+    memcpy(log_line+log_size,text,n); log_size+=n;
+}
+static void log_drain(void)
+{
+    for (unsigned n=0;n<16 && log_cursor<log_size && uart_is_writable(DEBUG_UART);++n)
+        uart_putc_raw(DEBUG_UART,log_line[log_cursor++]);
+}
+bool host_i2c_led(uint64_t now_us) { return qn_control_led(&host.qn,now_us); }
 
 /* Own the IRQ so RX FIFO is drained BEFORE committing a STOP. The SDK's slave
  * helper reports FINISH before RECEIVE when both interrupt flags are pending,
@@ -74,6 +89,7 @@ void host_i2c_init(uint8_t ready_mask)
 {
     host_protocol_init(&host, ready_mask);
     last_tx_advanced = false;
+    log_size=log_cursor=0;
     i2c_init(HOST_I2C, 100000);
     gpio_set_function(HOST_I2C_SDA_PIN, GPIO_FUNC_I2C);
     gpio_set_function(HOST_I2C_SCL_PIN, GPIO_FUNC_I2C);
@@ -97,13 +113,26 @@ void host_i2c_init(uint8_t ready_mask)
     irq_set_enabled(I2C1_IRQ, true);
     hw->enable = 1;
     char line[128];
-    snprintf(line, sizeof(line), "HOST I2C1: SDA=GPIO%u SCL=GPIO%u address=0x%02X; V1 M8.2 STUBS; RF OFF\r\n",
+    snprintf(line, sizeof(line), "HOST I2C1: SDA=GPIO%u SCL=GPIO%u address=0x%02X; V1 M8.3 QN CONTROL; RF OFF\r\n",
              HOST_I2C_SDA_PIN, HOST_I2C_SCL_PIN, FMHEADEND_HOST_I2C_ADDRESS);
     uart_puts(DEBUG_UART, line);
 }
 
 void host_i2c_poll(void)
 {
+    host_work_t work;
+    uint32_t lock=save_and_disable_interrupts();
+    const bool have_work=host_protocol_take_work(&host,&work);
+    restore_interrupts(lock);
+    if (have_work) {
+        host_protocol_run_work(&host,&work,(uint32_t)(time_us_64()/1000));
+        lock=save_and_disable_interrupts();
+        host_protocol_complete_work(&host,&work);
+        restore_interrupts(lock);
+    }
+    log_drain();
+    if (log_cursor<log_size) return;
+    log_cursor=log_size=0;
     host_log_event_t event;
     const uint32_t saved = save_and_disable_interrupts();
     const bool have_event = host_protocol_pop_log(&host, &event);
@@ -112,30 +141,32 @@ void host_i2c_poll(void)
     restore_interrupts(saved);
     char line[320];
     if (busy_count) {
-        snprintf(line, sizeof(line), "HOST LOG: %lu requests returned BUSY (UART queue full); NOT EXECUTED\r\n",
+        snprintf(line, sizeof(line), "HOST LOG: %lu log events omitted (bounded UART queue)\r\n",
                  (unsigned long)busy_count);
-        uart_puts(DEBUG_UART, line);
+        log_append(line);
     }
-    if (!have_event) return;
+    if (!have_event) { log_drain(); return; }
     const uint8_t *p = event.payload;
-    if (event.command == 2 && event.status == HOST_OK) {
+    if (event.command == 2 && !event.malformed && event.length == 15) {
         snprintf(line, sizeof(line), "HOST RX: SET_TX_CONFIG TX%u frequency_khz=%lu attenuation_x10=%u stereo=%u preemphasis_us=%u audio_mode=%u rds=%u gain_mode=%u analog_gain_x10=%d digital_trim_db=%u soft_clipping=%u\r\n",
                  event.target, (unsigned long)host_get_u32(p), host_get_u16(p + 4),
                  p[6], p[7], p[8], p[9], p[10], host_get_i16(p + 11), p[13], p[14]);
-    } else if (event.command == 3 && event.status == HOST_OK) {
+    } else if (event.command == 3 && !event.malformed && event.length == 1) {
         snprintf(line, sizeof(line), "HOST RX: SET_TX_ENABLED TX%u %s\r\n",
                  event.target, p[0] ? "ON" : "OFF");
+    } else if ((event.command==7 || event.command==8) && !event.malformed &&
+               event.length==(event.command==7?1:2)) {
+        snprintf(line,sizeof(line),"HOST RX: %s TX%u reg=0x%02X value=0x%02X%s\r\n",
+            host_command_name(event.command),event.target,p[0],p[1],
+            event.command==7 && event.status!=HOST_OK ? " (read failed)" : "");
     } else {
         snprintf(line, sizeof(line), "HOST RX: %s (0x%02X) target=0x%02X length=%u%s\r\n",
                  host_command_name(event.command), event.command, event.target,
                  event.length, event.malformed ? " INVALID FRAMING" : "");
     }
-    uart_puts(DEBUG_UART, line);
-    if ((event.command == 2 || event.command == 3) && event.status == HOST_OK) {
-        uart_puts(DEBUG_UART, "HOST TX: STUB OK - NOT EXECUTED\r\n");
-    } else {
-        snprintf(line, sizeof(line), "HOST TX: %s payload=%u bytes\r\n",
-                 host_status_name(event.status), event.response_length);
-        uart_puts(DEBUG_UART, line);
-    }
+    log_append(line);
+    snprintf(line, sizeof(line), "HOST TX: %s payload=%u bytes\r\n",
+             host_status_name(event.status), event.response_length);
+    log_append(line);
+    log_drain();
 }

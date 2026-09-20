@@ -2,11 +2,20 @@
 #include <stdio.h>
 #include <string.h>
 #include "host_protocol.h"
+#include "fake_qn.h"
 
 static host_protocol_t host;
 static const uint8_t config[] = {2, 3, 15, 0x34, 0x7f, 1, 0, 60, 0,
                                1, 50, 0, 0, 1, 0xf1, 0xff, 1, 1};
 
+static void work(void)
+{
+    host_work_t w;
+    if (host_protocol_take_work(&host,&w)) {
+        host_protocol_run_work(&host,&w,0x78563412);
+        host_protocol_complete_work(&host,&w);
+    }
+}
 static void receive(const uint8_t *r, size_t n)
 {
     for (size_t i = 0; i < n; ++i) host_protocol_receive(&host, r[i], i == 0);
@@ -15,6 +24,7 @@ static host_log_event_t request(const uint8_t *r, size_t n, uint8_t expected)
 {
     receive(r, n);
     host_protocol_stop(&host, 0x78563412);
+    work();
     assert(host.response[0] == expected);
     if (expected) assert(host.response_size == 2 && host.response[1] == 0);
     host_log_event_t event;
@@ -33,7 +43,7 @@ static void status(uint8_t ready_mask)
     assert(host_get_u32(p + 5) == 0 && p[9] == (ready_mask == 0xff ? 0 : 5));
     for (unsigned i = 0; i < 8; ++i) {
         const uint8_t *c = p + 10 + i * 15;
-        assert(c[0] == 0 && host_get_i16(c + 1) == -32768);
+        assert(c[0] == (ready_mask & (1u << i) ? 0 : 2) && host_get_i16(c + 1) == -32768);
         assert(host_get_u32(c + 3) == 0 && host_get_u32(c + 7) == 0);
         assert(host_get_u16(c + 11) == 0 && c[14] == 255);
         assert(c[13] == (ready_mask & (1u << i) ? 0 : 5));
@@ -41,6 +51,7 @@ static void status(uint8_t ready_mask)
 }
 int main(void)
 {
+    fake_qn_reset();
     host_protocol_init(&host, 0xff);
     assert(host_protocol_read(&host) == HOST_BUSY && host_protocol_read(&host) == 0);
     const uint8_t info[] = {1, 0xff, 0};
@@ -69,17 +80,17 @@ int main(void)
     assert(event.command == 2 && event.target == 3 && event.length == 15);
     assert(!memcmp(event.payload, config + 3, 15));
     assert(host_get_i16(event.payload + 11) == -15);
-    for (unsigned i = 0; i < 8; ++i) {
-        uint8_t enabled[] = {3, i, 1, 1};
-        request(enabled, sizeof(enabled), HOST_OK);
-        status(0xff); /* Stub ON never changes real status or applies config. */
-        enabled[3] = 0;
-        request(enabled, sizeof(enabled), HOST_OK);
-    }
+    const uint8_t on[] = {3,3,1,1}, off[] = {3,3,1,0};
+    request(on,sizeof(on),HOST_OK);
+    assert(host.qn.channel[3].enabled);
+    request(off,sizeof(off),HOST_OK);
+    assert(!host.qn.channel[3].enabled);
+    fake_qn_reset();
     host_protocol_init(&host, 0xf7);
     status(0xf7);
-    request(config, sizeof(config), HOST_OK); /* Valid stub even with boot fault. */
+    request(config, sizeof(config), HOST_QN_ERROR);
     status(0xf7);
+    fake_qn_reset(); host_protocol_init(&host,0xff);
 
     const uint8_t bad_target[][4] = {{1,0,0}, {4,7,0}, {3,8,1,1}, {3,255,1,1}};
     for (unsigned i = 0; i < 4; ++i) request(bad_target[i], i < 2 ? 3 : 4, HOST_INVALID_TARGET);
@@ -91,7 +102,7 @@ int main(void)
     for (unsigned i = 0; i < sizeof(fields)/sizeof(fields[0]); ++i) {
         uint8_t invalid[sizeof(config)]; memcpy(invalid, config, sizeof(config));
         if (fields[i] == 3) memset(invalid + 3, 0, 4);
-        else invalid[fields[i]] = 2;
+        else invalid[fields[i]] = fields[i] == 11 ? 3 : 2;
         request(invalid, sizeof(invalid), HOST_INVALID_ARGUMENT);
     }
     const uint8_t enabled_invalid[] = {3,3,1,2};
@@ -103,7 +114,7 @@ int main(void)
         if (cmd == 5) { r[2] = 9; r[3] = 1; }
         if (cmd == 7) r[2] = 1;
         if (cmd == 8) r[2] = 2;
-        request(r, 3 + r[2], HOST_INVALID_COMMAND); /* Reset never ACKs. */
+        request(r, 3 + r[2], cmd==7 || cmd==8 ? HOST_OK : HOST_INVALID_COMMAND); /* Reset never ACKs. */
     }
     uint8_t max_frame[258] = {5,3,255};
     max_frame[3] = 31;
@@ -124,11 +135,38 @@ int main(void)
     request(info, sizeof(info), HOST_OK);
     host_protocol_init(&host, 0xff);
     for (unsigned i = 0; i <= HOST_LOG_CAPACITY; ++i) {
-        receive(config, sizeof(config)); host_protocol_stop(&host, 0);
+        receive(config, sizeof(config)); host_protocol_stop(&host, 0); work();
     }
     assert(host.response[0] == HOST_BUSY && host.log_busy_count == 1);
     while (host_protocol_pop_log(&host, &event)) assert(event.status == HOST_OK);
     assert(host.response[0] == HOST_BUSY); /* Draining logs does not execute BUSY. */
+    fake_qn_reset(); host_protocol_init(&host,0xff);
     status(0xff);
-    puts("Host V1: framing, INFO/STATUS, split reads, validation, stub ACKs, overload PASS");
+    /* Early read cancels pending work: BUSY can never execute later. */
+    receive(config,sizeof(config)); host_protocol_stop(&host,0);
+    unsigned before=fake_calls;
+    assert(host_protocol_read(&host)==HOST_BUSY);
+    work(); assert(fake_calls==before);
+    while(host_protocol_pop_log(&host,&event)) {}
+    /* Once execution starts an early read is unknown outcome, NOT BUSY. */
+    receive(config,sizeof(config));host_protocol_stop(&host,0);
+    host_work_t pending;assert(host_protocol_take_work(&host,&pending));
+    assert(host_protocol_read(&host)==HOST_INTERNAL_ERROR);
+    host_protocol_run_work(&host,&pending,0);
+    host_protocol_complete_work(&host,&pending);
+    assert(host.response[0]==HOST_INTERNAL_ERROR); /* No late OK replacement. */
+    while(host_protocol_pop_log(&host,&event)) {}
+    /* A new complete request cannot interleave a QN operation or steal reply. */
+    receive(config,sizeof(config));host_protocol_stop(&host,0);
+    assert(host_protocol_take_work(&host,&pending));
+    receive(info,sizeof(info));host_protocol_stop(&host,0);
+    assert(host_protocol_read(&host)==HOST_BUSY);
+    host_protocol_run_work(&host,&pending,0);host_protocol_complete_work(&host,&pending);
+    assert(host.response[0]==HOST_BUSY);
+    while(host_protocol_pop_log(&host,&event)) {}
+    request(info,sizeof(info),HOST_OK);
+    assert(host_response_wait_ms(1)==2 && host_response_wait_ms(2)==1000);
+    assert(host_response_wait_ms(3)==150 && host_response_wait_ms(4)==850);
+    assert(host_response_wait_ms(7)==100 && host_response_wait_ms(8)==100);
+    puts("Host V1: framing, INFO/STATUS, split reads, validation, foreground execution, early reads, overload PASS");
 }

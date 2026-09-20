@@ -59,6 +59,7 @@ void host_i2c_init(uint8_t ready_mask)
     host_started = true;
 }
 void host_i2c_poll(void) { assert(host_started); }
+bool host_i2c_led(uint64_t now) { (void)now; return boot_hardware_fault && idle_ticks % 2 == 0; }
 void uart_init(unsigned uart, unsigned baud)
 {
     assert(uart == uart0 && baud == 115200);

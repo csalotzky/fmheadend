@@ -7,7 +7,7 @@
 #include "qn_boot.h"
 #include "host_i2c.h"
 
-/* Inspectable via SWD; M8.2 host stubs never change these boot observations. */
+/* Inspectable via SWD; Boot observations remain available independently of runtime control. */
 qn_boot_result_t qn_boot_results[QN_COUNT];
 bool boot_hardware_fault;
 
@@ -33,7 +33,7 @@ int main(void)
     uart_set_format(DEBUG_UART, 8, 1, UART_PARITY_NONE);
     gpio_set_function(DEBUG_UART_TX_PIN, GPIO_FUNC_UART);
     gpio_set_function(DEBUG_UART_RX_PIN, GPIO_FUNC_UART);
-    uart_puts(DEBUG_UART, "\r\nfmheadend RP2354 M8.2; M8.1 safe boot; RF OFF\r\n");
+    uart_puts(DEBUG_UART, "\r\nfmheadend RP2354 M8.3; M8.1 safe boot; RF OFF\r\n");
 
     qn_bus_init();
     sleep_ms(100);
@@ -62,17 +62,14 @@ int main(void)
                 boot_hardware_fault ? "HARDWARE FAULT" : "IDLE");
     host_i2c_init(ready_mask);
 
-    /* Failed initialization remains an active unavailable-channel fault until
-     * reset. No recovery loop, RF enable, audio clocks, or rotation in M8.2.
-     * Steady ON is reserved for later active TX with no critical fault.
-     */
+    /* Runtime LED includes active RF and current hardware faults. */
     bool led_on = false;
     uint64_t next_led_us = time_us_64() + 250000;
     while (true) {
         host_i2c_poll();
         const uint64_t now = time_us_64();
         if (now >= next_led_us) {
-            led_on = boot_hardware_fault && !led_on;
+            led_on = host_i2c_led(now);
             gpio_put(DIAGNOSTIC_LED_PIN, led_on);
             next_led_us = now + 250000;
         }

@@ -24,15 +24,15 @@ Global commands reject channel targets and channel commands reject global target
 One request is outstanding at a time. Linux performs:
 
 1. One write containing the complete request, ending with STOP.
-2. Wait at least 2 ms for RP to prepare a response.
+2. Wait at least the command-specific response interval below for completion.
 3. One read of exactly two header bytes, ending with STOP.
 4. For a nonempty payload, one read of exactly its declared size, ending with STOP.
 
 RP must keep a response cursor across the two read transactions: the second read
 continues at the payload, not at the header. A new complete request replaces any
 abandoned response and resets the cursor. No repeated START is required. The RP
-must have a response header ready within 2 ms; when not ready to execute a command
-it returns BUSY, with no command side effects. Delayed execution after BUSY is
+must have a completed response header ready within the command-specific interval;
+when not ready to execute a command it returns BUSY, with no command side effects. Delayed execution after BUSY is
 forbidden. Each successful response size is fixed below; error payloads are empty.
 Linux rejects a wrong declared length before reading an unexpected payload, and
 rejects short/extra bytes returned by the OS. I2C is master-clocked, so bytes a
@@ -43,6 +43,34 @@ The client locks requests within its process and takes an advisory exclusive loc
 on the device while open, preventing other cooperating client instances from
 interleaving transactions. Do not run independent bus tools against the RP while
 the daemon owns it. This lock does not constrain uncooperative external programs.
+
+
+### M8.3 synchronous response intervals
+
+The operator approved these longer windows for the unreleased V1 contract. They
+replace the former universal 2 ms deadline; update the Linux client together with
+the firmware. There is no asynchronous completion command or early OK.
+
+| Command | Wait after write STOP / response deadline |
+|---|---:|
+| GET_INFO and commands not listed below | 2 ms |
+| QN_READ_REGISTER, QN_WRITE_REGISTER | 100 ms |
+| SET_TX_ENABLED | 150 ms |
+| GET_STATUS | 850 ms |
+| SET_TX_CONFIG | 1000 ms |
+
+The RP completes QN operations outside the I2C IRQ. The Linux client waits before
+starting the header read; the adapter timeout bounds that later bus transaction,
+not the preceding sleep. BUSY alone remains retryable once, with no execution
+of that rejected request. A read before foreground execution starts cancels that
+request and returns BUSY; a read while it executes returns INTERNAL_ERROR with
+unknown outcome, and the completed operation cannot overwrite that error with a
+late OK. Early reads violate the contract and are not a polling mechanism.
+
+Only one request may be outstanding. A new request during execution returns BUSY
+for the new request and abandons the previous reply; it cannot cancel hardware
+work already in progress. Do not replay a command whose outcome is unknown.
+See [M8.3](milestone8_3.md) for timing bounds and failure isolation.
 
 ## Command and response status IDs
 
@@ -110,7 +138,7 @@ The payload is exactly 15 bytes. The original first ten bytes retain their order
 | 4 | u16 | rf_attenuation_db_x10: 0, 15, ... 225 (relative attenuation) |
 | 6 | u8 | stereo: 0 mono, 1 stereo |
 | 7 | u8 | preemphasis_us: literal 50 or 75 |
-| 8 | u8 | audio_mode: 0 DIGITAL, 1 ANALOG |
+| 8 | u8 | audio_mode: 0 DIGITAL, 1 ANALOG, 2 SINE |
 | 9 | u8 | rds_enabled: 0 or 1 |
 | 10 | u8 | gain_mode: 0 AUTO, 1 MANUAL |
 | 11 | i16 | analog_gain_db_x10, signed tenths of dB |
@@ -131,7 +159,15 @@ This range is not a claim of physical QN gain capability. Neutral persisted defa
 are AUTO, analog_gain_db=0.0, digital_trim_db=0, soft_clipping=false; AUTO ignores
 both stored gain values until MANUAL is selected. No board RIN default is implied.
 
-This atomically applies configuration and **does not enable TX**. Linux/API
+This applies configuration as one validated operation and **does not enable an
+OFF transmitter**. Reconfiguration of an ON transmitter temporarily disables RF
+and restores ON only after success. A hardware failure invalidates configuration
+and isolates that QN with CEN LOW; there is no partial active configuration or
+rollback claim. Argument rejection leaves the previous configuration unchanged.
+
+SINE selects the same QN digital input as DIGITAL. It reserves the future RP
+sample source; M8.3 has no sine generator. RF enable does not require audio clocks,
+SPI input or PCM availability. Linux/API
 `rf_attenuation_db` is relative attenuation: 0 is Maximum; 1.5, 3.0, ... 22.5 dB
 select the remaining 15 QN output-control steps. The wire carries nonnegative tenths
 (0, 15, ... 225), not raw register codes. Other values are invalid.
@@ -180,7 +216,7 @@ payload offset `10 + 15*c`; no repeated channel ID is transmitted.
 
 Total payload is `10 + 8 * 15 = 130` bytes; all pre-existing per-TX fields retain
 their offsets. In ANALOG mode firmware reads QN STATUS1.INSAT (1 means analog input
-level too high/channel saturated). DIGITAL mode must return 255. Linux exposes
+level too high/channel saturated). DIGITAL and SINE modes must return 255. Linux exposes
 `input_saturated: bool | null`, masks it to null for DIGITAL, and invalidates it
 on RP loss. It is a current snapshot, neither a counter nor a latched error.
 
@@ -239,13 +275,22 @@ used by the Milestone 5 service to establish clean content/lifecycle boundaries.
 
 Request payload offset 0: `register:u8`. Response payload offset 0: `value:u8`.
 Example: read TX2 register 0x12: `07 02 01 12`; value 0xA5: `00 01 a5`.
-Firmware owns QN routing/access and may reject unsupported registers.
+Firmware owns QN routing/access. M8.3 permits all u8 register addresses, including
+SYSTEM1, and returns the actual bus result; the datasheet still governs register
+meaning. Each transaction gets at most two retries before QN_ERROR.
 
 ## QN_WRITE_REGISTER (0x08)
 
 Request payload offsets 0 and 1: `register:u8 value:u8`. ACK: `00 00`.
 Example: write TX3 register 0x34 to 0x56: `08 03 02 34 56`.
 Linux does not implement a QN driver or choose hardware register values.
+M8.3 updates reported state after relevant raw writes. A raw address change or
+SWRST is executed, then the affected QN is held at CEN LOW to avoid address
+collisions; reset the RP to reassign it. Such a successful raw command returns OK
+while GET_STATUS reports the resulting unavailable-channel fault. Other raw
+configuration overrides invalidate configuration-before-enable eligibility;
+SYSTEM1 TXREQ-only changes retain it. Raw SYSTEM1 can enable RF without a preceding
+SET_TX_CONFIG, as explicitly permitted for this diagnostic interface.
 
 ## RESET_ERROR_COUNTERS (0x09)
 
