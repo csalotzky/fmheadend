@@ -6,6 +6,7 @@
 #define GPIO_IN false
 #define GPIO_OUT true
 #define GPIO_FUNC_UART 2
+#define GPIO_FUNC_I2C 3
 void gpio_init(unsigned pin);
 void gpio_put(unsigned pin, bool value);
 void gpio_set_dir(unsigned pin, bool output);

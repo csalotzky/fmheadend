@@ -2,6 +2,8 @@
 #define FMHEADEND_BOARD_H
 
 /* Verified PCB mapping: RP GPIO numbers, not package pin numbers. */
+#define HOST_I2C_SDA_PIN 14u
+#define HOST_I2C_SCL_PIN 15u
 #define QN_SDA_PIN 16u
 #define QN_SCL_PIN 17u
 #define QN_COUNT 8u

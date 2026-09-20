@@ -5,8 +5,9 @@
 #include "hardware/uart.h"
 #include "board.h"
 #include "qn_boot.h"
+#include "host_i2c.h"
 
-/* Inspectable via SWD; no host protocol or persistent configuration in M8.1. */
+/* Inspectable via SWD; M8.2 host stubs never change these boot observations. */
 qn_boot_result_t qn_boot_results[QN_COUNT];
 bool boot_hardware_fault;
 
@@ -32,16 +33,18 @@ int main(void)
     uart_set_format(DEBUG_UART, 8, 1, UART_PARITY_NONE);
     gpio_set_function(DEBUG_UART_TX_PIN, GPIO_FUNC_UART);
     gpio_set_function(DEBUG_UART_RX_PIN, GPIO_FUNC_UART);
-    uart_puts(DEBUG_UART, "\r\nfmheadend RP2354 M8.1 safe boot; RF OFF\r\n");
+    uart_puts(DEBUG_UART, "\r\nfmheadend RP2354 M8.2; M8.1 safe boot; RF OFF\r\n");
 
     qn_bus_init();
     sleep_ms(100);
     unsigned ready_count = 0;
+    uint8_t ready_mask = 0;
     for (unsigned index = 0; index < QN_COUNT; ++index) {
         qn_boot_results[index] = qn_boot_device(index);
         const qn_boot_result_t *result = &qn_boot_results[index];
         if (result->ready) {
             ++ready_count;
+            ready_mask |= 1u << index;
             uart_printf("QN%u @ 0x%02X: CID2=0x%02X OK, RF OFF\r\n",
                         index, result->address, result->cid2);
         } else {
@@ -57,15 +60,22 @@ int main(void)
     }
     uart_printf("BOOT: %u/%u ready; RF OFF; %s\r\n", ready_count, QN_COUNT,
                 boot_hardware_fault ? "HARDWARE FAULT" : "IDLE");
+    host_i2c_init(ready_mask);
 
     /* Failed initialization remains an active unavailable-channel fault until
-     * reset. No recovery loop, RF enable, audio clocks, or rotation in M8.1.
+     * reset. No recovery loop, RF enable, audio clocks, or rotation in M8.2.
      * Steady ON is reserved for later active TX with no critical fault.
      */
     bool led_on = false;
+    uint64_t next_led_us = time_us_64() + 250000;
     while (true) {
-        sleep_ms(250);
-        led_on = boot_hardware_fault && !led_on;
-        gpio_put(DIAGNOSTIC_LED_PIN, led_on);
+        host_i2c_poll();
+        const uint64_t now = time_us_64();
+        if (now >= next_led_us) {
+            led_on = boot_hardware_fault && !led_on;
+            gpio_put(DIAGNOSTIC_LED_PIN, led_on);
+            next_led_us = now + 250000;
+        }
+        sleep_ms(1);
     }
 }

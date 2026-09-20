@@ -15,12 +15,15 @@ static int bad_index, fail_operation, invalid_cid_operation;
 static bool tx_stuck, all_missing, initialized, led_values[5];
 static char log_text[4096];
 static jmp_buf idle_done;
+static uint64_t now_us;
+static bool host_started;
 
 void gpio_init(unsigned pin) { output[pin] = latch[pin] = false; }
 void gpio_set_dir(unsigned pin, bool value) { output[pin] = value; }
 void gpio_put(unsigned pin, bool value)
 {
     if (pin == DIAGNOSTIC_LED_PIN) {
+        if (host_started && ++idle_ticks == 5) longjmp(idle_done, 1);
         assert(idle_ticks < 5);
         led_values[idle_ticks] = value;
         return;
@@ -44,10 +47,18 @@ void gpio_set_function(unsigned pin, unsigned function)
 }
 void sleep_ms(uint32_t ms)
 {
-    if (ms == 250) {
-        if (++idle_ticks == 5) longjmp(idle_done, 1);
-    } else assert(ms == 100 || ms == 10);
+    assert(ms == 1 || ms == 100 || ms == 10);
+    now_us += (uint64_t)ms * 1000;
 }
+uint64_t time_us_64(void) { return now_us; }
+void host_i2c_init(uint8_t ready_mask)
+{
+    for (unsigned i = 0; i < QN_COUNT; ++i) {
+        assert(!!(ready_mask & (1u << i)) == qn_boot_results[i].ready);
+    }
+    host_started = true;
+}
+void host_i2c_poll(void) { assert(host_started); }
 void uart_init(unsigned uart, unsigned baud)
 {
     assert(uart == uart0 && baud == 115200);
@@ -120,6 +131,8 @@ static void run(int bad, int fail, int invalid_cid, bool stuck, bool missing)
     log_text[0] = '\0';
     boot_hardware_fault = initialized = false;
     idle_ticks = 0;
+    now_us = 0;
+    host_started = false;
     bad_index = bad;
     fail_operation = fail;
     invalid_cid_operation = invalid_cid;
