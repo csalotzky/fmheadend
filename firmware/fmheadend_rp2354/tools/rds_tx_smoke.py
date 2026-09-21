@@ -1,7 +1,8 @@
 """M8.6B explicit RF bench test: Linux 0A encoder -> RP FIFO -> polling QN.
 
 This finite test repeats PS groups only; it does not replace the M5 scheduler.
-Keep other host-control clients stopped. No raw QN writes or settling sleeps.
+Keep other host-control clients stopped. Optional settling waits are Pi-side
+diagnostics only; no raw QN writes or production firmware timing changes.
 """
 import argparse
 from pathlib import Path
@@ -14,7 +15,25 @@ from daemon.rp2354.linux_client import Rp2354Client
 from daemon.rds.encoder import group_0a
 
 
-def exercise(rp, tx, *, clock=time.monotonic, sleep=time.sleep):
+def exercise(rp, tx, *, pre_tx_rds_settle_ms=0, post_tx_settle_ms=0,
+             clock=time.monotonic, sleep=time.sleep):
+    if any(type(ms) is not int or ms < 0 for ms in (pre_tx_rds_settle_ms, post_tx_settle_ms)):
+        raise ValueError("Settling delays must be nonnegative integer milliseconds")
+    started = clock()
+
+    def stamp(label, since):
+        now = clock()
+        print(f"TRACE TX{tx} monotonic_s={now:.6f} elapsed_ms={(now-started)*1000:.3f} "
+              f"interval_ms={(now-since)*1000:.3f}: {label}", flush=True)
+        return now
+
+    print(f"DIAGNOSTIC TX{tx}: pre_tx_rds_settle_ms={pre_tx_rds_settle_ms} "
+          f"post_tx_settle_ms={post_tx_settle_ms}; monotonic_s={started:.6f}", flush=True)
+    print("TRACE times are Pi-side call boundaries. Existing client waits remain: "
+          "SET_TX_CONFIG=1000 ms, SET_TX_ENABLED=150 ms; selected delays are additional.", flush=True)
+    print(f"First firmware handoff timestamp is not available in V1 status. Capture existing UART "
+          f"'RDS TX{tx} submitted' / 'accepted' / 'FAULT' lines separately; "
+          "Pi monotonic time is not the RP clock.", flush=True)
     info = rp.get_info()  # Do not hide/retry the separate first-call status-128 issue.
     print("GET_INFO:", info, flush=True)
     if info["rp_firmware_version"] != "0.8.6b":
@@ -31,7 +50,11 @@ def exercise(rp, tx, *, clock=time.monotonic, sleep=time.sleep):
         free = rp.get_rds_fifo_free()[tx]
         count = max(0, 23 - (64 - free))  # About two seconds, below 31/64 limits.
         if count:
+            if not sequence:
+                stamp("first RDS_PUSH starting (interval since post-TX settling end)", post_done)
             rp.push_rds(tx, [groups[(sequence + n) % 4] for n in range(count)])
+            if not sequence:
+                stamp("first RDS_PUSH completed (interval since TX-enable completion)", tx_done)
             sequence += count  # Advance only after the FIFO ACK.
         return free
 
@@ -57,10 +80,23 @@ def exercise(rp, tx, *, clock=time.monotonic, sleep=time.sleep):
         preemphasis_us=50, audio_mode="SINE", rds_enabled=True, gain_mode="AUTO",
         analog_gain_db=0.0, digital_trim_db=0, soft_clipping=False)
     try:
-        rp.set_tx_config(tx, config)
+        # Clear and verify while RF is OFF, before either experimental boundary.
+        # No group is queued until BOTH waits finish, including the zero/zero case.
         rp.clear_rds(tx)
-        refill()  # Queue while OFF; no consumer or artificial underrun yet.
+        if rp.get_rds_fifo_free()[tx] != 64:
+            raise RuntimeError("Expected empty target FIFO; stop all other RDS/control clients")
+        config_started = clock()
+        rp.set_tx_config(tx, config)
+        config_done = stamp("SET_TX_CONFIG completed (interval is host call duration)", config_started)
+        if pre_tx_rds_settle_ms:
+            sleep(pre_tx_rds_settle_ms / 1000)
+        stamp("pre-TX settling ended (interval since configuration completion)", config_done)
+        tx_started = clock()
         rp.set_tx_enabled(tx, True)
+        tx_done = stamp("SET_TX_ENABLED completed (interval is host call duration)", tx_started)
+        if post_tx_settle_ms:
+            sleep(post_tx_settle_ms / 1000)
+        post_done = stamp("post-TX settling ended; FIFO still unfilled (interval since TX-enable completion)", tx_done)
         print(f"TX{tx} RF ON at 87.5 MHz; PI={pi:04X}, PS={ps!r}; listen for 1 kHz.", flush=True)
         feed(60)
         before = status()["rds_underrun_count"]
@@ -98,12 +134,19 @@ def main():
     parser.add_argument("--address", required=True, type=lambda s: int(s, 0))
     parser.add_argument("--tx", type=int, choices=(0, 1), default=0)
     parser.add_argument("--rf-on", action="store_true", help="Explicitly authorize this finite RF bench run")
+    parser.add_argument("--pre-tx-rds-settle-ms", type=int, default=0,
+                        help="Diagnostic wait after RDS configuration completes, before RF ON (default: 0)")
+    parser.add_argument("--post-tx-settle-ms", type=int, default=0,
+                        help="Diagnostic wait after RF ON completes, with FIFO empty (default: 0)")
     args = parser.parse_args()
     if not args.rf_on:
         parser.error("--rf-on is required; use the terminated RF bench setup")
+    if args.pre_tx_rds_settle_ms < 0 or args.post_tx_settle_ms < 0:
+        parser.error("settling delays must be nonnegative milliseconds")
     rp = Rp2354Client(args.device, args.address)
     try:
-        exercise(rp, args.tx)
+        exercise(rp, args.tx, pre_tx_rds_settle_ms=args.pre_tx_rds_settle_ms,
+                 post_tx_settle_ms=args.post_tx_settle_ms)
     finally:
         rp.close()
 
