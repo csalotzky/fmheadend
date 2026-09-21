@@ -1,5 +1,66 @@
 # M8.6B: production RDS FIFO consumption and polling handoff
 
+## Startup and timeout hardening (physical validation pending)
+
+Subsequent operator testing physically established working M8.6B over-air RDS,
+high-byte-first words, toggle/poll handoff, sustained approximately 11.4 groups/s,
+FIFO refill, starvation and refill recovery without RF restart. A prefilled FIFO
+allowed a first handoff about 0.5 ms after TX ON and that attempt timed out. The
+later empty-FIFO 0/0 tool run worked with first PUSH after the existing roughly
+150 ms SET_TX_ENABLED host interval. These are measured findings; they do not
+prove arbitrary timeout cancellation or a maximum late acknowledgement latency.
+
+The current uncommitted follow-up implements a **nonblocking 150 ms per-TX RDS
+startup gate**, recorded after observing/verifying TXREQ ON. OFF clears it;
+OFF->ON, configuration restoring RF and an observed RDS-enable transition while
+ON re-arm it. Repeated ON does not postpone it. The consumer performs no RDS
+data/handoff work before expiry; queued data remains intact. There is no new
+sleep or Linux startup delay. SPI/I2S, host requests and other channels continue.
+
+The default `rds_tx_smoke.py` run again queues 23 groups before ON. Capture the
+first firmware `submitted` UART line and verify **`tx_age_us >= 150000`**. This
+age is from the verified/observed enable timestamp, conservatively later than
+the actual register write, and is not measured by the Pi clock. Status alone
+cannot prove this interval. To reproduce the earlier empty-FIFO A/B diagnostic,
+add `--empty-until-feed`; a nonzero `--post-tx-settle-ms` requires that option.
+
+Production build and all **20 native/tool suites pass** with the startup gate
+and timeout recovery (including the existing tool tests).
+Tests include the prefilled boundary, nonblocking behavior, independent channels,
+CLEAR during the gate, repeated ON, stop/start and reconfiguration. Physical
+acceptance of this new gate remains pending.
+
+**ACK timeout recovery is now implemented as explicitly requested.** The existing
+500 ms timeout discards the original FIFO head only if its CLEAR epoch still
+matches; it never counts that loss as acceptance or replays the group. It does
+not set QN_ERROR, change RF/audio eligibility or increment the underrun counter.
+The consumer keeps an in-flight fence while it reads SYSTEM1, clears only RDSEN,
+verifies the readback, restores the original SYSTEM1 and verifies it again.
+TXREQ and all unrelated bits are preserved. These five bounded bus operations
+stay together in foreground execution so host status cannot observe temporary
+RDS OFF and invalidate the audio source. IRQs, SPI and core1 audio remain running.
+
+On a later service visit, STATUS2 supplies a fresh baseline. A **20 ms per-TX
+nonblocking backoff** follows; IDLE then samples STATUS2 again before preparing
+the next queued group. CLEAR during reset/backoff discards waiting data without
+skipping recovery or accidentally popping a new FIFO generation. An actual bus
+failure or SYSTEM1 readback mismatch during reset/resync uses the existing CEN
+isolation and QN_ERROR path for that channel. Other channels continue.
+
+The internal saturating `timeouts` counter is separate from `accepted` and
+`rds_underrun_count`. UART reports `ACK timeout; group discarded; RF/audio retained`
+and `recovery/resync; RDSEN restored; backoff 20 ms` for the first three timeouts
+and every 64th thereafter. Real hardware failures retain a distinct `QN FAULT`
+line. Protocol V1 and all wire fields remain unchanged.
+
+The RDSEN reset and 20 ms backoff are **operator-authorized recovery design
+choices, not physically validated cancellation guarantees or datasheet timing
+requirements**. Native tests cover loss/resume, register preservation, fresh
+baseline, CLEAR, repeated timeouts and bus failures at all recovery steps.
+Updated firmware still needs the production-prefill physical smoke below; no
+new diagnostic tool or artificial timeout injection was added. The earlier
+standalone reset observer is historical and is not this production test.
+
 Firmware **0.8.6b**, host address **0x62**, protocol **V1**. The path is unchanged:
 
 Linux M5 scheduler -> RDS_PUSH -> eight independent 64-group RP FIFOs ->
@@ -46,7 +107,8 @@ Eligibility: QN passed boot, remains ready/configured, TX enabled, SYSTEM1.RDSEN
 The normal SET_TX_CONFIG/SET_TX_ENABLED lifecycle owns RDSEN and RF; the consumer
 does not change either bit or flap the carrier.
 
-Per channel, one visit executes at most one bounded QN transaction:
+Normally, one channel visit executes one bounded QN transaction; the short
+RDSEN reset sequence is the exception described above:
 
 1. **IDLE:** peek the FIFO head under a short core0 IRQ mask, copy its four u16
    words and epoch, then read **STATUS2 0x1B** as this submission's baseline.
@@ -64,7 +126,9 @@ Per channel, one visit executes at most one bounded QN transaction:
 6. On acceptance, pop **exactly one** head under a short mask, only if its FIFO
    epoch still matches. Clear the in-flight fence and return to IDLE. No second
    submission can occur until this boundary is resolved.
-7. **FAULT:** stop new submissions on that channel. See recovery below.
+7. **RESET / RESYNC / BACKOFF:** on ACK timeout, discard the group and perform
+   the recovery above before another submission.
+8. **FAULT:** real bus/control ambiguity stops new submissions. See recovery below.
 
 Register locations/bit names correspond to QN8007B/8007LB Rev.2.09 section 7,
 SYSTEM1/2 (pp.26-27), RDSD0..7 (p.36), STATUS2 (p.38). The ambiguous host-buffer
@@ -82,8 +146,11 @@ toggle interpretation and byte order follow the successful physical observations
   specification. An actual STATUS2 read is performed before declaring a timeout;
   a positive transition observed after a slow foreground command remains valid.
 - One service call visits at most eight channels in round-robin order, stopping
-  after **3 ms** elapsed work. It can overrun by at most one existing bounded QN
-  transaction (approximately 10 ms timeout plus STOP cleanup). The cursor resumes
+  after **3 ms** elapsed work. Ordinarily it can overrun by one bounded QN
+  transaction (approximately 10 ms plus STOP cleanup). Recovery groups five
+  transfers: approximately 2.1 ms healthy, or up to four successful transfers
+  plus one failing bounded transfer before isolation. There are no retries in
+  that sequence. The cursor resumes
   on the next channel; a failed QN cannot monopolize the bus. All IRQs remain enabled
   during bit-banging. Existing host response waits remain unchanged.
 - Audio/SPI remain on the existing PIO/DMA/core1 path. No new DMA, PIO, core, thread
@@ -91,7 +158,7 @@ toggle interpretation and byte order follow the successful physical observations
   several QNs; software isolation cannot fix an electrically stuck shared bus.
 - FIFO storage remains **64 x 8 x 8 = 4096 data bytes**. Metadata including a
   CLEAR epoch/alignment makes the eight FIFOs **4192 bytes**. The consumer is
-  **792 bytes** with the current ABI, plus QN channel lifecycle/error fields.
+  **856 bytes** with the current native ABI, plus QN channel lifecycle/error fields.
 - IRQ owns PUSH/CLEAR; foreground peeks/pops with short masks around RAM access
   only. Core1 never accesses RDS storage. No IRQ mask covers a bus operation.
 - Eight channels at 11.4 groups/s require about **91 handoffs/s**. Each submission
@@ -122,27 +189,29 @@ OK response without QN work. It increments that FIFO's epoch, even if already em
   before handoff. An already-started handoff retains its baseline and cannot be
   replayed or overwritten. Polling pauses while ineligible; becoming eligible
   gives that existing fence a fresh bounded observation window. Stopped time does
-  not create an acknowledgement timeout or an underrun. If it cannot reconcile,
-  the channel faults instead of guessing that restart reset the QN buffer.
+  not create an acknowledgement timeout or an underrun. A subsequent ACK timeout
+  uses the explicit RDSEN recovery above; restart alone is not acceptance.
 - As in M8.6A, SET commands do not implicitly clear RAM FIFOs. The existing Linux
   stop/start, enable/disable, content/configuration and M6A recovery paths establish
   explicit CLEAR boundaries. The 2-second lookahead does not bypass those boundaries.
 - A baseline/data/control read/write failure before handoff preserves the FIFO and
   faults the channel; explicit CLEAR discards old data and permits a fresh attempt.
 - A failed RDSTXRDY write is **ambiguous**, even if it reported NACK/STOP failure.
-  STATUS2 read failure or acknowledgement timeout also retains the pending fence.
+  A STATUS2 read failure also retains the pending fence. ACK timeout alone uses
+  the discard/reset/resync path above, not this hardware-fault path.
   No automatic group/control-write retry or subsequent submission occurs.
 - Explicit CLEAR after an ambiguous fault allows a bounded **observation-only**
   reconciliation attempt against the retained baseline. A positive bit-7 transition
   clears the current RDS fault without popping new data. No transition means fault
-  again, with no replay. If reconciliation remains impossible, physically reset
+  again on a bus/control failure, with no replay. Timeout uses RDSEN recovery;
+  no ACK is fabricated. If hardware-fault reconciliation remains impossible, reset
   the RP/QNs and run normal Linux recovery. No guessed delay/resetting of a flag
   is used as acceptance. RP_SOFT_RESET remains unimplemented.
 - Arbitrary raw QN writes during an unresolved handoff make attribution unreliable;
   that channel remains fenced until hardware reset. The standalone raw probe is
   retained for its historical M8.6A firmware; do not run it concurrently with this consumer.
 
-Transport errors set per-channel `rds_fault` and latch existing `QN_ERROR` codes.
+Bus/control faults (not ACK timeout alone) set per-channel `rds_fault` and latch existing `QN_ERROR` codes.
 GET_STATUS reports channel `tx_state=ERROR` while that fault is current; the
 internal actual RF enable and audio source stay intact. A transport-only RDS
 fault does **not** set the RP-wide critical fault, stop RF/audio or blink GPIO27.
@@ -244,7 +313,8 @@ SYSTEM2 `07 -> 03`. Events may coalesce under UART backpressure; SWD counters re
 On failure capture baseline/last STATUS2, SYSTEM2 before/after, phase, reason, bus
 code, elapsed time, submission/acceptance/poll counts, command history and receiver
 behavior. Reasons: 1=bus, 2=timeout, 3=reset/recalibration bits, 4=raw-write ambiguity.
-Phases: 0=IDLE/baseline, 1=DATA, 2=SYSTEM2 read, 3=HANDOFF, 4=WAIT, 5=FAULT.
+Phases: 0=IDLE/baseline, 1=DATA, 2=SYSTEM2 read, 3=HANDOFF, 4=WAIT, 5=FAULT,
+6=RESET, 7=RESYNC, 8=BACKOFF. ACK timeout is no longer a FAULT reason.
 Do not paper over a missing toggle with sleeps or an arbitrary FIFO pop.
 
 The separate first-call **"Unknown RP status: 128"** issue is unchanged. Retain

@@ -16,9 +16,11 @@ from daemon.rds.encoder import group_0a
 
 
 def exercise(rp, tx, *, pre_tx_rds_settle_ms=0, post_tx_settle_ms=0,
-             clock=time.monotonic, sleep=time.sleep):
+             prefill_before_tx=True, clock=time.monotonic, sleep=time.sleep):
     if any(type(ms) is not int or ms < 0 for ms in (pre_tx_rds_settle_ms, post_tx_settle_ms)):
         raise ValueError("Settling delays must be nonnegative integer milliseconds")
+    if prefill_before_tx and post_tx_settle_ms:
+        raise ValueError("Post-TX settling requires --empty-until-feed to keep the FIFO empty")
     started = clock()
 
     def stamp(label, since):
@@ -28,7 +30,8 @@ def exercise(rp, tx, *, pre_tx_rds_settle_ms=0, post_tx_settle_ms=0,
         return now
 
     print(f"DIAGNOSTIC TX{tx}: pre_tx_rds_settle_ms={pre_tx_rds_settle_ms} "
-          f"post_tx_settle_ms={post_tx_settle_ms}; monotonic_s={started:.6f}", flush=True)
+          f"post_tx_settle_ms={post_tx_settle_ms} prefill_before_tx={prefill_before_tx}; "
+          f"monotonic_s={started:.6f}", flush=True)
     print("TRACE times are Pi-side call boundaries. Existing client waits remain: "
           "SET_TX_CONFIG=1000 ms, SET_TX_ENABLED=150 ms; selected delays are additional.", flush=True)
     print(f"First firmware handoff timestamp is not available in V1 status. Capture existing UART "
@@ -44,6 +47,7 @@ def exercise(rp, tx, *, pre_tx_rds_settle_ms=0, post_tx_settle_ms=0,
     pi, ps = (0x1234, b"FMTEST  ") if tx == 0 else (0x5678, b"TEST2   ")
     groups = [group_0a(pi, 0, False, ps, segment) for segment in range(4)]
     sequence = 0
+    tx_done = post_done = None
 
     def refill():
         nonlocal sequence
@@ -51,10 +55,14 @@ def exercise(rp, tx, *, pre_tx_rds_settle_ms=0, post_tx_settle_ms=0,
         count = max(0, 23 - (64 - free))  # About two seconds, below 31/64 limits.
         if count:
             if not sequence:
-                stamp("first RDS_PUSH starting (interval since post-TX settling end)", post_done)
+                stamp("first RDS_PUSH starting (RF OFF prefill)" if tx_done is None else
+                      "first RDS_PUSH starting (interval since post-TX settling end)",
+                      config_done if tx_done is None else post_done)
             rp.push_rds(tx, [groups[(sequence + n) % 4] for n in range(count)])
             if not sequence:
-                stamp("first RDS_PUSH completed (interval since TX-enable completion)", tx_done)
+                stamp("first RDS_PUSH completed (RF OFF prefill)" if tx_done is None else
+                      "first RDS_PUSH completed (interval since TX-enable completion)",
+                      config_done if tx_done is None else tx_done)
             sequence += count  # Advance only after the FIFO ACK.
         return free
 
@@ -81,7 +89,8 @@ def exercise(rp, tx, *, pre_tx_rds_settle_ms=0, post_tx_settle_ms=0,
         analog_gain_db=0.0, digital_trim_db=0, soft_clipping=False)
     try:
         # Clear and verify while RF is OFF, before either experimental boundary.
-        # No group is queued until BOTH waits finish, including the zero/zero case.
+        # Production smoke preloads the queue; optional empty mode preserves the
+        # earlier A/B diagnostic without making firmware depend on host delays.
         rp.clear_rds(tx)
         if rp.get_rds_fifo_free()[tx] != 64:
             raise RuntimeError("Expected empty target FIFO; stop all other RDS/control clients")
@@ -91,12 +100,20 @@ def exercise(rp, tx, *, pre_tx_rds_settle_ms=0, post_tx_settle_ms=0,
         if pre_tx_rds_settle_ms:
             sleep(pre_tx_rds_settle_ms / 1000)
         stamp("pre-TX settling ended (interval since configuration completion)", config_done)
+        if prefill_before_tx:
+            refill()
+            if rp.get_rds_fifo_free()[tx] != 41:
+                raise RuntimeError("Expected 23 groups queued with RF OFF")
+            print("PREFILLED: 23 groups before TX ON. Verify first UART submission "
+                  "tx_age_us >= 150000; Pi timestamps/status cannot prove the gate.", flush=True)
         tx_started = clock()
         rp.set_tx_enabled(tx, True)
         tx_done = stamp("SET_TX_ENABLED completed (interval is host call duration)", tx_started)
         if post_tx_settle_ms:
             sleep(post_tx_settle_ms / 1000)
-        post_done = stamp("post-TX settling ended; FIFO still unfilled (interval since TX-enable completion)", tx_done)
+        post_done = stamp("post-TX settling ended; " +
+                          ("FIFO prefilled" if prefill_before_tx else "FIFO still unfilled") +
+                          " (interval since TX-enable completion)", tx_done)
         print(f"TX{tx} RF ON at 87.5 MHz; PI={pi:04X}, PS={ps!r}; listen for 1 kHz.", flush=True)
         feed(60)
         before = status()["rds_underrun_count"]
@@ -138,15 +155,19 @@ def main():
                         help="Diagnostic wait after RDS configuration completes, before RF ON (default: 0)")
     parser.add_argument("--post-tx-settle-ms", type=int, default=0,
                         help="Diagnostic wait after RF ON completes, with FIFO empty (default: 0)")
+    parser.add_argument("--empty-until-feed", action="store_true",
+                        help="Keep FIFO empty across TX ON for the earlier A/B diagnostic; default is prefill")
     args = parser.parse_args()
     if not args.rf_on:
         parser.error("--rf-on is required; use the terminated RF bench setup")
     if args.pre_tx_rds_settle_ms < 0 or args.post_tx_settle_ms < 0:
         parser.error("settling delays must be nonnegative milliseconds")
+    if args.post_tx_settle_ms and not args.empty_until_feed:
+        parser.error("--post-tx-settle-ms requires --empty-until-feed")
     rp = Rp2354Client(args.device, args.address)
     try:
         exercise(rp, args.tx, pre_tx_rds_settle_ms=args.pre_tx_rds_settle_ms,
-                 post_tx_settle_ms=args.post_tx_settle_ms)
+                 post_tx_settle_ms=args.post_tx_settle_ms, prefill_before_tx=not args.empty_until_feed)
     finally:
         rp.close()
 

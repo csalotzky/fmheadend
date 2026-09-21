@@ -7,6 +7,8 @@
 static host_protocol_t h;
 static bool masked;
 static unsigned inject_clear, inject_push;
+static bool observe_reset, saw_rds_off;
+static uint8_t reset_system1;
 static uint8_t wire[8]={0x34,0x12,0x08,0,0xcd,0xe0,0x4d,0x46};
 uint32_t save_and_disable_interrupts(void)
 { assert(!masked); masked=true; return 42; }
@@ -15,6 +17,12 @@ void restore_interrupts(uint32_t saved)
 static void bus_hook(void)
 {
     assert(!masked);
+    if (observe_reset) {
+        assert((fake_regs[0][0]&~2u)==(reset_system1&~2u));
+        assert(h.qn.channel[0].configured && h.qn.channel[0].enabled);
+        assert(qn_control_digital_mask(&h.qn)&1);
+        if (!(fake_regs[0][0]&2)) saw_rds_off=true;
+    }
     if (inject_clear) {
         inject_clear=0; rds_fifo_clear(&h.rds[0]);
         if (inject_push) { assert(rds_fifo_push(&h.rds[0],wire,1)); inject_push=0; }
@@ -24,17 +32,20 @@ static void reset(void)
 {
     fake_qn_reset(); host_protocol_init(&h,255);
     masked=false; inject_clear=inject_push=0; fake_operation_hook=bus_hook;
+    observe_reset=saw_rds_off=false;
 }
 static void config(unsigned i, bool rds)
 {
     uint8_t p[15]={0xcc,0x55,1,0,225,0,1,50,0,0,0,0,0,0,0}, out;
     p[9]=rds;
     assert(qn_control_execute(&h.qn,2,i,p,&out)==HOST_OK);
+    if(fake_now<h.qn.channel[i].rds_startup_until) fake_now=h.qn.channel[i].rds_startup_until;
 }
 static void enable(unsigned i, bool on)
 {
     uint8_t v=on,out;
     assert(qn_control_execute(&h.qn,3,i,&v,&out)==HOST_OK);
+    if(fake_now<h.qn.channel[i].rds_startup_until) fake_now=h.qn.channel[i].rds_startup_until;
 }
 static void active(unsigned i) { config(i,true); enable(i,true); }
 static void tick(void)
@@ -176,12 +187,6 @@ static void failures(void)
         until(0,RDS_WAIT);acknowledge(0);assert(h.rds[0].count==0);
         assert(h.qn.channel[0].last_error==HOST_QN_ERROR); /* Latched history. */
     }
-    first();fake_now+=RDS_ACK_TIMEOUT_US;tick();
-    assert(h.rds_tx.channel[0].phase==RDS_FAULT && h.rds[0].count==1);
-    host_command(6,0);push(0);tick();fake_now+=RDS_ACK_TIMEOUT_US;tick();
-    assert(h.qn.channel[0].rds_fault && h.rds[0].count==1); /* CLEAR is not fake acceptance. */
-    host_command(6,0);tick();acknowledge(0);
-    assert(!h.qn.channel[0].rds_fault && h.rds[0].count==0);
     /* Slow foreground host work can delay observation. A positive toggle on
      * the first late read is accepted; no false timeout before reading status. */
     first();fake_now+=2*RDS_ACK_TIMEOUT_US;acknowledge(0);
@@ -202,7 +207,8 @@ static void independent(void)
         if(i!=3) fake_regs[i][0x1b]^=128;
     }
     fake_now+=RDS_ACK_TIMEOUT_US;ticks(10);
-    assert(h.qn.channel[3].rds_fault && h.rds[3].count==1);
+    assert(!h.qn.channel[3].rds_fault && h.rds[3].count==0);
+    assert(h.rds_tx.channel[3].timeouts==1 && !h.rds_tx.channel[3].accepted);
     assert(!qn_control_fault(&h.qn) && qn_control_digital_mask(&h.qn)==255);
     for(unsigned i=0;i<8;++i) if(i!=3) {
         assert(!h.rds[i].count && !h.qn.channel[i].rds_fault);
@@ -213,7 +219,7 @@ static void independent(void)
     fake_now+=RDS_POLL_US;ticks(10);
     for(unsigned i=0;i<8;++i) if(i!=3) assert(h.rds_tx.channel[i].accepted==2);
     host_command(4,255);assert(h.response[1]==130 && !h.response[2]);
-    assert(h.response[2+10+15*3]==2 && h.response[2+10+15*3+13]==HOST_QN_ERROR);
+    assert(h.response[2+10+15*3]==1 && h.response[2+10+15*3+13]==HOST_OK);
     assert(h.qn.channel[3].enabled && qn_control_led(&h.qn,0));
 }
 static void sustained_model(void)
@@ -256,9 +262,99 @@ static void delayed_diagnostic(void)
     assert(rds_tx_diagnostic(&h.rds_tx,line,sizeof(line)));
     assert(strstr(line,"accepted (STATUS2 bit7 changed)") && strstr(line,"baseline=00 status=80"));
 }
+static void startup_gate(void)
+{
+    reset();active(1);config(0,true);push(0);push(1);
+    uint8_t on=1,off=0,out;
+    assert(qn_control_execute(&h.qn,3,0,&on,&out)==HOST_OK);
+    uint64_t until_us=h.qn.channel[0].rds_startup_until;
+    assert(until_us==fake_now+150000);
+    uint64_t before=fake_now;
+    tick();
+    assert(fake_now-before<2000); /* No sleep, busy-wait or blocked other TX. */
+    assert(h.rds_tx.channel[0].phase==RDS_IDLE && h.rds[0].count==1);
+    assert(h.rds_tx.channel[1].phase==RDS_DATA);
+    until(1,RDS_WAIT);assert(!h.rds_tx.channel[0].submitted);
+    host_command(1,255);assert(h.response[1]==35); /* Host remains usable. */
+    fake_now=until_us-1;
+    rds_tx_service(&h.rds_tx,&h.qn,h.rds);
+    assert(!h.rds_tx.channel[0].submitted && !fake_regs[0][0x10]);
+    fake_now=until_us;until(0,RDS_WAIT);
+    assert(h.rds_tx.channel[0].submitted_at>=until_us);
+    assert(h.rds_tx.channel[0].submit_tx_age_us>=150000);
+    acknowledge(0);assert(!h.rds[0].count);
+    /* Repeated ON does not postpone the gate. OFF/ON and reconfiguration do. */
+    assert(qn_control_execute(&h.qn,3,0,&on,&out)==HOST_OK);
+    assert(h.qn.channel[0].rds_startup_until==until_us);
+    assert(qn_control_execute(&h.qn,3,0,&off,&out)==HOST_OK);
+    assert(!h.qn.channel[0].rds_startup_until);
+    assert(qn_control_execute(&h.qn,3,0,&on,&out)==HOST_OK);
+    assert(h.qn.channel[0].rds_startup_until==fake_now+150000);
+    push(0);host_command(6,0);fake_now+=150000;tick();
+    assert(!h.rds[0].count && !h.qn.channel[0].rds_underruns);
+    const uint8_t p[]={0xcc,0x55,1,0,225,0,1,50,0,1,0,0,0,0,0};
+    assert(qn_control_execute(&h.qn,2,0,p,&out)==HOST_OK);
+    assert(h.qn.channel[0].enabled && h.qn.channel[0].rds_startup_until==fake_now+150000);
+    /* RDS disabled -> enabled while ON also uses a new deadline. */
+    uint8_t disabled[15];memcpy(disabled,p,15);disabled[9]=0;
+    assert(qn_control_execute(&h.qn,2,0,disabled,&out)==HOST_OK);
+    assert(qn_control_execute(&h.qn,2,0,p,&out)==HOST_OK);
+    push(0);before=fake_now;tick();
+    assert(fake_now-before<2000 && h.rds_tx.channel[0].phase==RDS_IDLE);
+}
+static void timeout_recovery(void)
+{
+    first();
+    uint8_t later[8]={0x78,0x56,0,0,0,0,0,0};
+    assert(rds_fifo_push(&h.rds[0],later,1));
+    fake_now+=RDS_ACK_TIMEOUT_US;tick();
+    rds_tx_channel_t *s=&h.rds_tx.channel[0];
+    assert(s->phase==RDS_RESET && s->timeouts==1 && !s->accepted);
+    assert(h.rds[0].count==1 && !h.qn.channel[0].rds_fault);
+    assert(h.qn.channel[0].enabled && !h.qn.channel[0].rds_underruns);
+    host_command(4,255);assert(h.response[2+10]==1 && !h.response[2+10+13]);
+    reset_system1=fake_regs[0][0];observe_reset=true;tick();observe_reset=false;
+    assert(saw_rds_off && fake_regs[0][0]==reset_system1 && s->phase==RDS_RESYNC);
+    fake_regs[0][0x1b]=0x80; /* A transition before resync becomes the new baseline. */
+    tick();assert(s->phase==RDS_BACKOFF && s->baseline==0x80);
+    unsigned calls=fake_calls;uint64_t end=s->next_poll;
+    tick();assert(fake_calls==calls); /* Backoff performs no bus work or sleep. */
+    host_command(1,255);assert(h.response[1]==35);
+    fake_now=end;until(0,RDS_WAIT);
+    assert(fake_regs[0][0x10]==0x56 && fake_regs[0][0x11]==0x78);
+    assert(s->baseline==0x80 && !s->accepted && h.rds[0].count==1);
+    ticks(15);assert(!s->accepted); /* Resync value itself is not a new ACK. */
+    acknowledge(0);assert(s->accepted==1 && !h.rds[0].count);
+    ticks(15);assert(h.qn.channel[0].rds_underruns==1);
+
+    /* CLEAR during recovery never discards a new generation a second time. */
+    first();fake_now+=RDS_ACK_TIMEOUT_US;tick();host_command(6,0);push(0);
+    until(0,RDS_BACKOFF);fake_now+=RDS_RECOVERY_BACKOFF_US;until(0,RDS_WAIT);
+    assert(h.rds[0].count==1);acknowledge(0);assert(!h.rds[0].count);
+
+    /* Repeated absent ACKs are bounded losses, not starvation/QN faults. */
+    first();
+    for(unsigned n=1;n<=4;++n) {
+        fake_now+=RDS_ACK_TIMEOUT_US;tick();until(0,RDS_BACKOFF);
+        assert(h.rds_tx.channel[0].timeouts==n && !h.qn.channel[0].rds_fault);
+        assert(!h.rds[0].count && !h.qn.channel[0].rds_underruns);
+        push(0);fake_now+=RDS_RECOVERY_BACKOFF_US;until(0,RDS_WAIT);
+    }
+    /* All five SYSTEM1 operations and STATUS2 resync fail closed on bus error. */
+    for(unsigned op=0;op<6;++op) {
+        first();fake_now+=RDS_ACK_TIMEOUT_US;tick();
+        fake_fail_at=fake_calls+op+1;fake_fail_count=1;
+        tick();if(op==5) tick();
+        assert(h.rds_tx.channel[0].phase==RDS_FAULT);
+        assert(h.qn.channel[0].fault && h.qn.channel[0].last_error==HOST_QN_ERROR);
+        assert(!h.qn.channel[0].enabled && !fake_cen[0]);
+        assert(fake_cen[1] && !h.qn.channel[1].fault);
+        assert(!h.rds[0].count && !h.rds_tx.channel[0].accepted);
+    }
+}
 int main(void)
 {
-    exact_order();starvation_and_lifecycle();clear_races();failures();independent();sustained_model();delayed_diagnostic();
+    exact_order();starvation_and_lifecycle();clear_races();failures();independent();sustained_model();delayed_diagnostic();startup_gate();timeout_recovery();
     printf("RDS polling: byte order, XOR, acceptance, lifecycle, IRQ CLEAR races, faults, fairness/status PASS; FIFO=%zu consumer=%zu bytes\n",
            sizeof(h.rds),sizeof(h.rds_tx));
 }

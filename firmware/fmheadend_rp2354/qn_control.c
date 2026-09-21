@@ -53,9 +53,13 @@ static bool checked_write(qn_control_t *q, unsigned i, uint8_t reg, uint8_t v, u
     uint8_t actual;
     return write_reg(q,i,reg,v) && read_reg(q,i,reg,&actual) && !((actual^v)&mask);
 }
+void qn_control_isolate_channel(qn_control_t *q, unsigned i) { (void)isolate(q,i); }
 static void observed_system1(qn_control_t *q, unsigned i, uint8_t v)
 {
     qn_channel_t *c=&q->channel[i];
+    if (!(v&TXREQ)) c->rds_startup_until=0;
+    else if (!(c->system1&TXREQ) || (!(c->system1&2) && (v&2)))
+        c->rds_startup_until=time_us_64()+QN_RDS_STARTUP_US;
     if ((c->system1^v)&~TXREQ) c->configured=false;
     if ((c->system1^v)&0x46u) ++c->rds_session;
     c->system1=v; c->enabled=(v&TXREQ)!=0;

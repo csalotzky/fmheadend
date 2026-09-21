@@ -3,6 +3,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#define QN_RDS_STARTUP_US 150000u
+
 typedef struct {
     bool ready, configured, enabled, fault;
     uint8_t system1, last_error, saturated, audio_mode;
@@ -10,6 +12,7 @@ typedef struct {
     uint32_t failed_transactions;
     uint32_t rds_session, rds_raw_epoch, rds_underruns;
     bool rds_fault; /* Channel transport fault; does not disable RF/audio. */
+    uint64_t rds_startup_until; /* Monotonic, armed on actual observed TX/RDS enable. */
 } qn_channel_t;
 typedef struct {
     qn_channel_t channel[8];
@@ -30,4 +33,6 @@ uint8_t qn_control_digital_mask(const qn_control_t *q);
 uint8_t qn_control_sine_mask(const qn_control_t *q);
 void qn_control_audio_fault(qn_control_t *q, bool fault);
 void qn_control_set_audio_sink(qn_control_t *q, void (*sink)(uint8_t, uint8_t));
+/* Critical SYSTEM1 recovery failure: reuse normal CEN/channel isolation. */
+void qn_control_isolate_channel(qn_control_t *q, unsigned channel);
 #endif

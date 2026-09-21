@@ -29,7 +29,7 @@ void gpio_set_function(unsigned pin, unsigned function)
 void gpio_pull_up(unsigned pin) { assert(pin == 14 || pin == 15); }
 void irq_set_exclusive_handler(unsigned irq, void (*fn)(void)) { assert(irq == I2C1_IRQ); handler = fn; }
 void irq_set_enabled(unsigned irq, bool enabled) { assert(irq == I2C1_IRQ && enabled); }
-uint64_t time_us_64(void) { return 1234567000; }
+uint64_t time_us_64(void) { return 1234567000+fake_now; }
 uint32_t save_and_disable_interrupts(void) { assert(!in_irq && !masked); masked = true; return 42; }
 void restore_interrupts(uint32_t saved) { assert(masked && saved == 42); masked = false; }
 void uart_puts(unsigned uart, const char *text)
@@ -186,6 +186,7 @@ int main(void)
     uart_log[0]=0;
     sine_config[3+9]=1;
     write_request(sine_config,sizeof(sine_config));drain();
+    fake_now+=QN_RDS_STARTUP_US;
     write_request(rds_push,sizeof(rds_push));drain();
     assert(host.rds_tx.channel[3].phase==RDS_WAIT);
     assert(host.rds[3].count==31 && audio_mask==(1u<<3));

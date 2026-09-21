@@ -7,15 +7,18 @@
 #define RDS_ACK_TIMEOUT_US 500000u
 #define RDS_POLL_US 10000u
 #define RDS_SERVICE_BUDGET_US 3000u
+#define RDS_RECOVERY_BACKOFF_US 20000u
 
 typedef enum { RDS_IDLE, RDS_DATA, RDS_SYSTEM2, RDS_HANDOFF,
-               RDS_WAIT, RDS_FAULT } rds_phase_t;
+               RDS_WAIT, RDS_FAULT, RDS_RESET, RDS_RESYNC, RDS_BACKOFF } rds_phase_t;
 typedef struct {
     rds_phase_t phase;
     rds_group_t group;
     uint32_t epoch, seen_epoch, session, raw_epoch, submitted_session;
     uint64_t deadline, next_poll, submitted_at;
     uint32_t submitted, accepted, polls, max_ack_us, ack_us;
+    uint32_t submit_tx_age_us;
+    uint32_t timeouts; /* Diagnostic only; not FIFO starvation or acceptance. */
     uint8_t byte, baseline, status, system2, written_system2, failure_stage;
     uint8_t failure_reason, bus_status;
     uint8_t ack_baseline, ack_status, ack_system2;
@@ -32,7 +35,9 @@ typedef struct {
 
 /* Zero-initialized, core0 foreground only. FIFO accesses mask core0 IRQs briefly;
  * no QN transaction, UART operation or wait occurs with interrupts masked.
- * One bus operation per visit; round-robin service has a wall-time budget.
+ * One bus operation per visit, except the bounded RDSEN toggle/readback pair
+ * which stays together so host status cannot observe its temporary OFF state.
+ * Round-robin service has a wall-time budget; all pacing is nonblocking.
  */
 void rds_tx_service(rds_tx_t *r, qn_control_t *q, rds_fifo_t fifo[8]);
 bool rds_tx_diagnostic(rds_tx_t *r, char *line, size_t size);

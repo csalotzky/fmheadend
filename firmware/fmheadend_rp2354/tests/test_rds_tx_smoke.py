@@ -21,8 +21,9 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
 class Client:
-    def __init__(self, tx, fail=False):
+    def __init__(self, tx, fail=False, prefill=True):
         self.tx, self.fail = tx, fail
+        self.prefill = prefill
         self.now = self.last = 0.
         self.queue = []
         self.calls = []
@@ -53,7 +54,7 @@ class Client:
             for i in range(8)]}
     def get_rds_fifo_free(self):
         self.queries += 1
-        if self.fail and self.queries == 3:
+        if self.fail and self.queries == 4:
             raise RuntimeError("injected transport failure")
         self.drain()
         return [64-len(self.queue) if i == self.tx else 64 for i in range(8)]
@@ -64,9 +65,11 @@ class Client:
         self.sleep(1)
     def set_tx_enabled(self, tx, on):
         assert tx == self.tx
+        if on:
+            assert len(self.queue) == (23 if self.prefill else 0)
         self.calls.append(on)
         self.on = on
-        self.last = self.now
+        self.last = self.now + (.15 if on else 0)  # Model firmware gate, not a host sleep.
         self.sleep(.15)
     def clear_rds(self, tx):
         assert tx == self.tx
@@ -94,6 +97,13 @@ for tx in (0, 1):
     assert rp.calls == [True, False]  # Stop/resume of RDS never restarts RF.
     assert rp.underruns == 1 and rp.consumed > 800 and not rp.queue
     assert "TXREQ OFF verified" in output.getvalue()
+    assert "PREFILLED: 23 groups" in output.getvalue()
+for pre, post in ((0,0),(300,0),(0,300)):
+    rp = Client(0, prefill=False)
+    with contextlib.redirect_stdout(io.StringIO()):
+        module.exercise(rp, 0, prefill_before_tx=False, pre_tx_rds_settle_ms=pre,
+                        post_tx_settle_ms=post, clock=rp.clock, sleep=rp.sleep)
+    assert rp.calls == [True, False] and rp.underruns == 1
 rp = Client(0, fail=True)
 try:
     with contextlib.redirect_stdout(io.StringIO()):
