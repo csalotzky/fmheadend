@@ -1116,7 +1116,10 @@ Ambiguous outcomes require a successful FIFO clear before coherent segment resta
 M5 policy, character conversion, standard reference and validation are documented
 in [Milestone 5](milestone5.md). Baseline PS/RT weighted rates are 4.5/s and 6.7/s, with
 short RT-change priority and five-second ECC deadlines. The 100 ms refill loop and
-0.5 s lookahead are internal policy, independent of UI polling and GStreamer callbacks.
+2.0 s lookahead are internal policy, independent of UI polling and GStreamer callbacks.
+M8.6B increased lookahead from 0.5 s to cover the existing 850 ms GET_STATUS wait
+on the same serialized control executor, plus refill phase/jitter. It is Linux
+buffering margin, not a QN hardware requirement; group weighting is unchanged.
 Null ECC emits no 1A ECC. AF is a fixed user-ordered frequency list, never discovered.
 Fresh Modulators default to ECC=null and AF=[].
 

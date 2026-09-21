@@ -141,6 +141,9 @@ void host_i2c_poll(void)
         host_protocol_complete_work(&host,&work);
         restore_interrupts(lock);
     }
+    /* QN bus is serialized with host work on core0. Audio stays on core1;
+     * host IRQs remain enabled throughout bounded RDS register operations. */
+    rds_tx_service(&host.rds_tx,&host.qn,host.rds);
     log_drain();
     if (log_cursor<log_size) return;
     log_cursor=log_size=0;
@@ -157,7 +160,8 @@ void host_i2c_poll(void)
         log_append(line);
     }
     if (!have_event) {
-        if (spi_audio_diagnostic(line,sizeof(line),time_us_64())) log_append(line);
+        if (spi_audio_diagnostic(line,sizeof(line),time_us_64()) ||
+            rds_tx_diagnostic(&host.rds_tx,line,sizeof(line))) log_append(line);
         log_drain(); return;
     }
     const uint8_t *p = event.payload;

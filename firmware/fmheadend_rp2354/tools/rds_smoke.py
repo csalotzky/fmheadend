@@ -32,8 +32,8 @@ def main():
     try:
         info = rp.get_info()
         print("GET_INFO:", info, flush=True)
-        if info["rp_firmware_version"] != "0.8.6a":
-            raise RuntimeError("This smoke requires M8.6A firmware 0.8.6a")
+        if info["rp_firmware_version"] not in ("0.8.6a", "0.8.6b"):
+            raise RuntimeError("This RF-OFF FIFO smoke requires M8.6A/B firmware")
         check(rp, [64] * 8, "BOOT")
         groups = [(0x1234, 0xABCD, 0x8001, 0x00FF),
                   (0xFFFF, 0x0000, 0x55AA, 0xA55A)]

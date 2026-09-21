@@ -1,4 +1,4 @@
-"""M8.3-M8.6A conducted-bench test using the existing Linux RP client."""
+"""M8.3-M8.6B conducted-bench test using the existing Linux RP client."""
 import argparse
 from pathlib import Path
 import sys
@@ -32,8 +32,8 @@ def main():
     try:
         info = rp.get_info()
         print("GET_INFO:", info, flush=True)
-        if info["rp_firmware_version"] not in ("0.8.3", "0.8.4", "0.8.5", "0.8.6a"):
-            raise RuntimeError("This smoke requires M8.3-M8.6A firmware 0.8.3-0.8.6a")
+        if info["rp_firmware_version"] not in ("0.8.3", "0.8.4", "0.8.5", "0.8.6a", "0.8.6b"):
+            raise RuntimeError("This smoke requires M8.3-M8.6B firmware")
         if args.command == "status":
             print("GET_STATUS:", rp.get_status(), flush=True)
             return
@@ -82,7 +82,7 @@ def main():
             rp.set_tx_enabled(args.tx, True)
             status("ON")
             audio = ("Expect 1 kHz stereo sine, -12 dBFS PCM on this DATA lane."
-                     if info["rp_firmware_version"] in ("0.8.4", "0.8.5", "0.8.6a") and args.mode == "SINE"
+                     if info["rp_firmware_version"] in ("0.8.4", "0.8.5", "0.8.6a", "0.8.6b") and args.mode == "SINE"
                      else "DIGITAL uses SPI PCM on M8.5 and later, otherwise silence; ANALOG requires an external source.")
             print(f"TX{args.tx} RF ON: measure {args.frequency_khz} kHz carrier; LED ON. "
                   + audio, flush=True)

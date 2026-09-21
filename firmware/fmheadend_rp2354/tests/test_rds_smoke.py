@@ -10,13 +10,14 @@ import types
 class Client:
     calls = []
     fail_after_push = False
+    version = "0.8.6a"
 
     def __init__(self, device, address):
         assert device == "/dev/i2c-1" and address == 0x62
         self.free = [64] * 8
 
     def get_info(self):
-        return {"rp_firmware_version": "0.8.6a"}
+        return {"rp_firmware_version": self.version}
 
     def get_rds_fifo_free(self):
         return self.free.copy()
@@ -54,6 +55,11 @@ sys.argv = ["rds_smoke.py", "--address", "0x62"]
 with contextlib.redirect_stdout(io.StringIO()) as out:
     module.main()
 assert "PASS:" in out.getvalue()
+assert Client.calls == ["push", "clear", "close"]
+Client.calls.clear()
+Client.version = "0.8.6b"
+with contextlib.redirect_stdout(io.StringIO()):
+    module.main()
 assert Client.calls == ["push", "clear", "close"]
 Client.calls.clear()
 Client.fail_after_push = True

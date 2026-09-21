@@ -50,6 +50,7 @@ add_executable(fmheadend_rp2354
         qn_control.c
         host_protocol.c
         rds_fifo.c
+        rds_tx.c
         host_i2c.c
         audio_samples.c
         audio_engine.c
@@ -58,7 +59,7 @@ add_executable(fmheadend_rp2354
         )
 
 pico_set_program_name(fmheadend_rp2354 "fmheadend_rp2354")
-pico_set_program_version(fmheadend_rp2354 "0.8.6a")
+pico_set_program_version(fmheadend_rp2354 "0.8.6b")
 pico_generate_pio_header(fmheadend_rp2354 ${CMAKE_CURRENT_LIST_DIR}/i2s_audio.pio)
 pico_generate_pio_header(fmheadend_rp2354 ${CMAKE_CURRENT_LIST_DIR}/spi_audio.pio)
 target_compile_definitions(fmheadend_rp2354 PRIVATE

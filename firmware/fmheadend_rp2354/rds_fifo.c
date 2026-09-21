@@ -10,6 +10,7 @@ uint16_t rds_fifo_free(const rds_fifo_t *fifo)
 void rds_fifo_clear(rds_fifo_t *fifo)
 {
     fifo->read_index = fifo->write_index = fifo->count = 0;
+    ++fifo->epoch;
 }
 
 bool rds_fifo_push(rds_fifo_t *fifo, const uint8_t *wire, unsigned count)
@@ -35,5 +36,12 @@ bool rds_fifo_pop(rds_fifo_t *fifo, rds_group_t *group)
     *group = fifo->groups[fifo->read_index];
     fifo->read_index = (fifo->read_index + 1) % RDS_FIFO_CAPACITY;
     --fifo->count;
+    return true;
+}
+
+bool rds_fifo_peek(const rds_fifo_t *fifo, rds_group_t *group)
+{
+    if (!fifo->count) return false;
+    *group = fifo->groups[fifo->read_index];
     return true;
 }

@@ -13,11 +13,11 @@ from fmheadendd.errors import DependencyUnavailable
 from fmheadendd.models.configuration import ModulatorConfig, ModulatorPatch, InputSourceConfig, PsEntry, RtOverride
 from fmheadendd.models.runtime_status import ModulatorStatus
 from fmheadendd.rp2354.client import MockRp2354Client
-from fmheadendd.rp2354.protocol import Busy, Command, Status
+from fmheadendd.rp2354.protocol import Busy, Command, Status, RESPONSE_WAIT_MS
 from fmheadendd.rds.characters import convert, ps_bytes, rt_bytes
 from fmheadendd.rds.encoder import group_0a, group_1a, group_2a, af_bytes
-from fmheadendd.rds.scheduler import Scheduler, GROUP_SECONDS
-from fmheadendd.rds.refill import RdsRefill
+from fmheadendd.rds.scheduler import Scheduler, GROUP_SECONDS, LOOKAHEAD_SECONDS
+from fmheadendd.rds.refill import RdsRefill, POLL_SECONDS
 from fmheadendd.rds.radiotext import RadioTextService
 from fmheadendd.sources.manager import SourceManager
 
@@ -195,6 +195,82 @@ def test_all_eight_states_and_fifo_query_only(rig):
     r.rt.set(0,RtOverride(text='new',ttl_s=10));r.clock.advance(.2);r.refill.tick()
     assert r.refill.channels[0].scheduler.text_ab==1
     assert all(r.refill.channels[i].scheduler.text_ab==0 for i in range(1,8))
+
+
+@pytest.mark.parametrize('jitter', [0.0, 0.1, 0.25])
+@pytest.mark.parametrize('old_horizon', [False, True])
+def test_lookahead_survives_serialized_status_gap(rig, jitter, old_horizon):
+    """Real scheduler/refill, fake continuous 1187.5/104 groups/s consumption.
+
+    No refill runs while the one executor is occupied by GET_STATUS. Include
+    a full refill phase and explicit scheduling jitter, repeatedly on all TXs.
+    The old 0.5 s horizon is a negative control, not a reduced test drain rate.
+    """
+    r = rig
+    assert LOOKAHEAD_SECONDS == r.refill.horizon == 2.0
+    assert POLL_SECONDS == 0.1 and RESPONSE_WAIT_MS[Command.GET_STATUS] == 850
+    if old_horizon:
+        r.refill.horizon = 0.5
+    missed = [0] * 8
+    drain = r.rp._drain_rds
+
+    def counted_drain():
+        for channel, fifo in enumerate(r.rp.rds_fifos):
+            due = int((r.clock() - r.rp._rds_times[channel]) / GROUP_SECONDS)
+            missed[channel] += max(0, due - len(fifo))
+        drain()
+
+    r.rp._drain_rds = counted_drain
+    r.refill.tick()
+    assert [len(fifo) for fifo in r.rp.rds_fifos] == [6 if old_horizon else 23] * 8
+    gap = RESPONSE_WAIT_MS[Command.GET_STATUS] / 1000 + POLL_SECONDS + jitter
+    for _ in range(30):
+        r.clock.advance(gap)  # Executor unavailable: RP continues consuming.
+        r.rp.get_status()     # Finish that status transaction, then resume refill.
+        if not old_horizon:
+            assert all(r.rp.rds_fifos)  # Never ran out, even before replenishment.
+        r.refill.tick()
+        assert all(0 < len(fifo) <= 24 < 64 for fifo in r.rp.rds_fifos)
+    if old_horizon:
+        assert all(n > 0 for n in missed)
+    else:
+        assert missed == [0] * 8
+
+
+@pytest.mark.parametrize('boundary', ['stop', 'disable', 'configuration', 'recovery'])
+def test_two_second_queue_discarded_at_lifecycle_boundary(rig, boundary):
+    r = rig
+    r.manager.active_sources = {0: r.src.id}
+    r.refill.tick()
+    assert len(r.rp.rds_fifos[0]) == 23
+    c = r.db.get('modulators', 0)
+    if boundary == 'stop':
+        r.manager.active_sources.clear()
+        r.refill.stop(0)
+        assert not r.rp.rds_fifos[0]
+        r.manager.active_sources = {0: r.src.id}
+    elif boundary == 'disable':
+        c.rds_enabled = False
+        r.db.save('modulators', c, 0)
+        r.clock.advance(POLL_SECONDS)
+        r.refill.tick()
+        assert not r.rp.rds_fifos[0]
+        c.rds_enabled = True
+    elif boundary == 'recovery':
+        r.refill.suspend()
+        r.rp.clear_rds(0)  # Existing M6A resynchronization boundary.
+        assert not r.rp.rds_fifos[0]
+        r.refill.suspended = False
+    # Content change identifies any stale pre-boundary words unambiguously.
+    c.rds_pi = 0xabcd
+    r.db.save('modulators', c, 0)
+    r.clock.advance(POLL_SECONDS + .001)
+    r.refill.tick()
+    assert len(r.rp.rds_fifos[0]) == 23
+    assert all(group[0] == 0xabcd for group in r.rp.rds_fifos[0])
+    calls = list(r.rp.rds_calls)
+    pushes = [i for i, call in enumerate(calls) if call[0] == 'RDS_PUSH']
+    assert any(call[0] == 'RDS_CLEAR' for call in calls[pushes[0]+1:pushes[-1]])
 
 
 def test_zero_partial_and_maximum_multiple_batches(rig):

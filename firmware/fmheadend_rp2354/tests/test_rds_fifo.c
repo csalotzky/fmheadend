@@ -28,7 +28,7 @@ int main(void)
     rds_fifo_t fifo = {0};
     rds_group_t group = {{0xaaaa,0xffff,0x8000,0}};
     rds_group_t original = group;
-    assert(sizeof(group)==8 && sizeof(fifo)==518);
+    assert(sizeof(group)==8 && sizeof(fifo)==524); /* Includes CLEAR epoch/alignment. */
     assert(rds_fifo_free(&fifo)==64 && !rds_fifo_pop(&fifo,&group));
     assert(!memcmp(&group,&original,sizeof(group))); /* Empty pop never outputs garbage. */
     uint8_t wire[31*8] = {0};
@@ -48,6 +48,7 @@ int main(void)
     before=fifo;
     assert(!rds_fifo_push(&fifo,wire,3) && !memcmp(&fifo,&before,sizeof(fifo)));
     rds_fifo_clear(&fifo);
+    assert(fifo.epoch==before.epoch+1);
     assert(!fifo.read_index && !fifo.write_index && !fifo.count);
     assert(rds_fifo_free(&fifo)==64 && !rds_fifo_pop(&fifo,&group));
     push(&fifo,300,1); pop(&fifo,300); /* Cleared data cannot leak into a new queue. */

@@ -181,6 +181,21 @@ int main(void)
     assert(fake_calls==calls_before && host.qn.channel[3].enabled);
     assert(audio_mask==(1u<<3) && host_i2c_led(0));
     drain();
+    /* Exercise the actual foreground RDS adapter with IRQ guards active.
+     * A running SINE lane is unaffected by FIFO service and acknowledgement. */
+    uart_log[0]=0;
+    sine_config[3+9]=1;
+    write_request(sine_config,sizeof(sine_config));drain();
+    write_request(rds_push,sizeof(rds_push));drain();
+    assert(host.rds_tx.channel[3].phase==RDS_WAIT);
+    assert(host.rds[3].count==31 && audio_mask==(1u<<3));
+    fake_regs[3][0x1b]^=0x80;
+    host.rds_tx.channel[3].next_poll=0;
+    host_i2c_poll();
+    assert(host.rds[3].count==30 && host.qn.channel[3].enabled);
+    write_request(rds_clear,sizeof(rds_clear));drain();
+    assert(host.rds[3].count==0 && audio_mask==(1u<<3));
+    uart_log[0]=0;
     audio_state=AUDIO_STALL_FAULT;
     write_request(status,sizeof(status)); drain();
     assert(read_byte()==HOST_OK && read_byte()==130); finish_read();

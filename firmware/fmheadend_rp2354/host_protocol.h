@@ -6,8 +6,9 @@
 #include <stdint.h>
 #include "qn_control.h"
 #include "rds_fifo.h"
+#include "rds_tx.h"
 
-#define HOST_FIRMWARE_VERSION "0.8.6a"
+#define HOST_FIRMWARE_VERSION "0.8.6b"
 #define HOST_HARDWARE_REVISION "PCB1.0"
 #define HOST_REQUEST_MAX 258u
 #define HOST_RESPONSE_MAX 132u
@@ -46,6 +47,7 @@ typedef struct {
     uint32_t log_busy_count;
     qn_control_t qn;
     rds_fifo_t rds[8]; /* Core0 only; see rds_fifo.h ownership contract. */
+    rds_tx_t rds_tx; /* Foreground only; IRQ only changes the FIFO/epoch. */
     bool pending, running;
     uint32_t generation;
     host_work_t work;

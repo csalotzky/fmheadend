@@ -57,6 +57,7 @@ static void observed_system1(qn_control_t *q, unsigned i, uint8_t v)
 {
     qn_channel_t *c=&q->channel[i];
     if ((c->system1^v)&~TXREQ) c->configured=false;
+    if ((c->system1^v)&0x46u) ++c->rds_session;
     c->system1=v; c->enabled=(v&TXREQ)!=0;
     if (v&4) c->saturated=255;
     publish_sources(q);
@@ -92,6 +93,7 @@ static uint8_t configure(qn_control_t *q, unsigned i, const uint8_t *p)
     uint8_t old_system1, step, power, sys2;
     if (!read_reg(q,i,SYSTEM1,&old_system1)) return isolate(q,i);
     const bool restore_tx=(old_system1&TXREQ)!=0;
+    ++c->rds_session;
     c->configured=false;
     publish_sources(q); /* Mute this lane before reconfiguration; clocks keep running. */
     if (!checked_write(q,i,SYSTEM1,old_system1&~TXREQ,0xff)) return isolate(q,i);
@@ -145,6 +147,8 @@ uint8_t qn_control_execute(qn_control_t *q, uint8_t command, uint8_t target,
         if (p[0]==SYSTEM1) observed_system1(q,target,v);
         if (p[0]==PAG_CAL) observed_power(c,v);
     } else if (command==8) {
+        ++c->rds_session;
+        ++c->rds_raw_epoch;
         if (!write_reg(q,target,p[0],p[1])) return isolate(q,target);
         /* Raw diagnostics are allowed, including address/reset side effects.
          * Isolate after a route-changing write: never operate on the wrong QN.
@@ -219,7 +223,8 @@ void qn_control_status(qn_control_t *q, uint8_t p[130], uint32_t uptime)
             }
         }
         uint8_t *ch=p+10+15*i;
-        ch[0]=c->fault ? 2 : (c->enabled ? 1 : 0);
+        ch[0]=(c->fault || c->rds_fault) ? 2 : (c->enabled ? 1 : 0);
+        for (unsigned b=0;b<4;++b) ch[7+b]=c->rds_underruns>>(8*b);
         ch[1]=(uint16_t)c->attenuation; ch[2]=(uint16_t)c->attenuation>>8;
         ch[13]=c->last_error; ch[14]=c->saturated;
     }

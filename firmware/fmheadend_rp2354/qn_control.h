@@ -8,6 +8,8 @@ typedef struct {
     uint8_t system1, last_error, saturated, audio_mode;
     int16_t attenuation;
     uint32_t failed_transactions;
+    uint32_t rds_session, rds_raw_epoch, rds_underruns;
+    bool rds_fault; /* Channel transport fault; does not disable RF/audio. */
 } qn_channel_t;
 typedef struct {
     qn_channel_t channel[8];

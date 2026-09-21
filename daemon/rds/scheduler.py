@@ -9,7 +9,9 @@ RT_INTERVAL = 1 / 6.7
 RT_BOOST_INTERVAL = 0.125
 ECC_INTERVAL = 5.0
 GROUP_SECONDS = 104 / 1187.5
-LOOKAHEAD_SECONDS = 0.5
+# M8.6B: margin for the unchanged 850 ms GET_STATUS wait on the shared
+# control executor, plus refill phase/jitter. This is Linux buffering policy.
+LOOKAHEAD_SECONDS = 2.0
 MAX_PENDING = 31
 
 

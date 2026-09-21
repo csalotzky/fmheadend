@@ -323,12 +323,15 @@ GET_STATUS remains the full diagnostic snapshot. Scheduling policy is not part
 of this RP transport protocol.
 RDS_PUSH still acknowledges with an empty payload; `fifo_free_after` is not V1.
 
-Production M8.6A (`0.8.6a`) implements RDS_PUSH, RDS_CLEAR and GET_RDS_FIFO_FREE
-with 64 groups per TX. GET_STATUS retains its 130-byte layout and reports the
-same live free counts. No QN RDS consumer is scheduled yet: accepted groups stay
-queued until CLEAR or hardware reset, and RDS underrun counters remain zero.
-These RAM-only commands retain the 2 ms response window. See
-[M8.6A](milestone8_6a.md) for ownership and hardware checks.
+Production M8.6B (`0.8.6b`) retains M8.6A's 64-group per-TX FIFO contract and
+adds polling-only QN consumption. GET_STATUS remains 130 bytes; FIFO free counts
+increase on confirmed QN handoff acceptance (or explicit CLEAR), and genuine
+consumer starvation is counted once per episode. RDS_PUSH ACK still means queued,
+not proven on air. CLEAR discards queued data without changing RF/configuration;
+an already-started QN handoff may finish, but cannot pop post-CLEAR data.
+These RAM-only commands retain the 2 ms response window. All other response waits
+and protocol V1 framing are unchanged. See [M8.6B](milestone8_6b.md) for consumer
+ownership, fault/recovery semantics, Linux buffering and physical validation.
 
 ## Linux timing, retry and integration behavior
 

@@ -123,8 +123,11 @@ inter-group gaps; a separate test checks RT-change priority without PS starvatio
 There is no hard-coded infinite sequence. Other groups can be added as encoders
 and deadline policies rather than changing the FIFO contract.
 
-The projected FIFO timeline has 0.5 s lookahead, normally at most six newly queued
-groups. Dynamic PS switching is decided using current monotonic time, never early
+The projected FIFO timeline now has 2.0 s lookahead, normally about 23 queued
+groups. M8.6B increased the original 0.5 s / six-group horizon to cover the existing
+850 ms GET_STATUS wait on the serialized control executor, plus refill phase and
+jitter. This Linux buffering margin does not change the 100 ms cadence, group
+rates/weighting or CLEAR/lifecycle boundaries. Dynamic PS switching is decided using current monotonic time, never early
 because of lookahead; queued older segments can delay the on-air transition by
 that bounded lookahead. Actual RP consumption/timing still needs physical testing.
 An empty RT CR segment continues to clear stale receiver content.
