@@ -14,8 +14,8 @@ enum { SYSTEM1=0, SYSTEM2=1, DEV_ADD=2, ANACTL1=3, REG_VGA=4,
        I2S=7, CH=8, CH_STEP=11, GAIN=13, STATUS1=26, PAG_CAL=90 };
 #define TXREQ 0x40u
 static void publish_sources(qn_control_t *q)
-{ if (q->audio_sink) q->audio_sink(qn_control_sine_mask(q)); }
-void qn_control_set_audio_sink(qn_control_t *q, void (*sink)(uint8_t))
+{ if (q->audio_sink) q->audio_sink(qn_control_sine_mask(q),qn_control_digital_mask(q)); }
+void qn_control_set_audio_sink(qn_control_t *q, void (*sink)(uint8_t, uint8_t))
 { q->audio_sink=sink; publish_sources(q); }
 
 static bool read_reg(qn_control_t *q, unsigned i, uint8_t reg, uint8_t *v)
@@ -181,6 +181,16 @@ uint8_t qn_control_sine_mask(const qn_control_t *q)
         const qn_channel_t *c=&q->channel[i];
         if (c->ready && c->configured && c->enabled && c->audio_mode==2 && (c->system1&4))
             mask |= 1u<<i;
+    }
+    return mask;
+}
+uint8_t qn_control_digital_mask(const qn_control_t *q)
+{
+    uint8_t mask=0;
+    for (unsigned i=0;i<8;++i) {
+        const qn_channel_t *c=&q->channel[i];
+        /* Approved M8.5 bench access: configured DIGITAL PCM even with RF OFF. */
+        if (c->ready && c->configured && c->audio_mode==0 && (c->system1&4)) mask |= 1u<<i;
     }
     return mask;
 }

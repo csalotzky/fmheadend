@@ -2,6 +2,7 @@
 #include "host_protocol.h"
 #include "board.h"
 #include "audio_engine.h"
+#include "spi_audio.h"
 #include "pico/stdlib.h"
 #include "hardware/i2c.h"
 #include "hardware/irq.h"
@@ -89,7 +90,7 @@ static void host_i2c_irq(void)
 void host_i2c_init(uint8_t ready_mask)
 {
     host_protocol_init(&host, ready_mask);
-    qn_control_set_audio_sink(&host.qn,audio_engine_set_sine_mask);
+    qn_control_set_audio_sink(&host.qn,audio_engine_set_sources);
     last_tx_advanced = false;
     log_size=log_cursor=0;
     i2c_init(HOST_I2C, 100000);
@@ -133,6 +134,8 @@ void host_i2c_poll(void)
         if (work.event.command==4 && work.event.status==HOST_OK) {
             work.result[0]=qn_control_fault(&host.qn);
             work.result[9]=host.qn.last_error;
+            uint32_t errors=spi_audio_error_count();
+            for (unsigned b=0;b<4;++b) work.result[5+b]=errors>>(8*b);
         }
         lock=save_and_disable_interrupts();
         host_protocol_complete_work(&host,&work);
@@ -153,7 +156,10 @@ void host_i2c_poll(void)
                  (unsigned long)busy_count);
         log_append(line);
     }
-    if (!have_event) { log_drain(); return; }
+    if (!have_event) {
+        if (spi_audio_diagnostic(line,sizeof(line),time_us_64())) log_append(line);
+        log_drain(); return;
+    }
     const uint8_t *p = event.payload;
     if (event.command == 2 && !event.malformed && event.length == 15) {
         snprintf(line, sizeof(line), "HOST RX: SET_TX_CONFIG TX%u frequency_khz=%lu attenuation_x10=%u stereo=%u preemphasis_us=%u audio_mode=%u rds=%u gain_mode=%u analog_gain_x10=%d digital_trim_db=%u soft_clipping=%u\r\n",

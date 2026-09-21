@@ -25,3 +25,8 @@ static inline void channel_config_set_dreq(dma_channel_config *c,unsigned n) { c
 static inline void channel_config_set_chain_to(dma_channel_config *c,unsigned n) { c->chain=n; }
 static inline void channel_config_set_ring(dma_channel_config *c,bool write,unsigned n) { c->ring=n;c->write=write; }
 static inline void channel_config_set_high_priority(dma_channel_config *c,bool n) { c->priority=n; }
+
+#define DMA_CH0_CTRL_TRIG_READ_ERROR_BITS (1u<<30)
+#define DMA_CH0_CTRL_TRIG_WRITE_ERROR_BITS (1u<<29)
+#define DMA_SIZE_8 0
+void dma_channel_set_write_addr(unsigned,void *,bool);

@@ -18,7 +18,17 @@ static unsigned trigger_writes, programs_removed;
 static char uart_text[8192];
 enum { NORMAL, NO_SM, NO_PROGRAM, NO_DMA, BAD_CLOCK, NO_PRIME, STALL, DMA_ERROR,
        MISSED_BOTH, LATE_RETRIGGER, NO_PROGRESS, CORE_NOT_STARTED, LATE_REFILL,
-       PROGRAM_LOAD_ERROR, SM_CONFIG_ERROR, PINDIR_ERROR };
+       PROGRAM_LOAD_ERROR, SM_CONFIG_ERROR, PINDIR_ERROR, SPI_NORMAL };
+static uint8_t pcm[4100];
+static bool borrowed;
+void spi_audio_start(void) { assert(on_core1); }
+void spi_audio_poll(void) {}
+const uint8_t *spi_audio_take(void) {
+    assert(!borrowed);borrowed=true;
+    memset(pcm,(uint8_t)completions,sizeof(pcm));
+    return scenario==SPI_NORMAL && completions%5 ? pcm : NULL;
+}
+void spi_audio_release(void) { assert(borrowed);borrowed=false; }
 void uart_puts(unsigned uart,const char *text)
 {
     assert(uart==uart0 && !on_core1); /* Logging must never cause a refill miss. */
@@ -112,12 +122,16 @@ void tight_loop_contents(void)
      * the fill two completions earlier. Decode against uninterrupted phase. */
     uint32_t expected[AUDIO_BUFFER_WORDS];
     uint8_t mask=completions<2?0:(uint8_t)(1u<<((completions-2)%8));
-    audio_samples_fill(expected,AUDIO_BUFFER_FRAMES,mask,&rendered_phase);
+    if (scenario==SPI_NORMAL && completions>=2) {
+        uint8_t expected_pcm[4100];memset(expected_pcm,(uint8_t)(completions-1),sizeof(expected_pcm));
+        audio_samples_mix(expected,AUDIO_BUFFER_FRAMES,mask,255,
+            (completions-1)%5 ? expected_pcm : NULL,&rendered_phase);
+    } else audio_samples_fill(expected,AUDIO_BUFFER_FRAMES,mask,&rendered_phase);
     assert(!memcmp(expected,read_address[current],sizeof(expected)));
     assert(busy[current] && (fake_dma.ch[current].ctrl_trig&1));
     busy[current]=false;fake_dma.intr|=1u<<current;
     current^=1;busy[current]=true;
-    audio_engine_set_sine_mask(1u<<(completions%8));
+    audio_engine_set_sources(1u<<(completions%8),scenario==SPI_NORMAL?255:0);
     ++completions;next_complete+=2667;
     if(completions==24) longjmp(done,1);
 }
@@ -139,7 +153,7 @@ static void reset(unsigned test)
     sm=-1;channels[0]=channels[1]=-1;atomic_store(&state,AUDIO_STARTING);atomic_store(&requested_mask,0);
     atomic_store(&stage,CLOCK_CHECK);atomic_store(&milestones,0);atomic_store(&snapshot_ready,false);
     program_offset=-1;sdk_result=0;completed_buffers=0;fault_logged=false;
-    uart_text[0]=0;on_core1=false;trigger_writes=programs_removed=0;
+    borrowed=false;uart_text[0]=0;on_core1=false;trigger_writes=programs_removed=0;
 }
 int main(void)
 {
@@ -158,6 +172,8 @@ int main(void)
     assert(strstr(uart_text,"PIO program loaded offset=24") && strstr(uart_text,"FIFO primed level=8"));
     assert(strstr(uart_text,"core1 ready") && strstr(uart_text,"buffers prepared"));
     assert(!strstr(uart_text,"FAIL"));
+    reset(SPI_NORMAL);assert(audio_engine_init());
+    assert(completions==24 && starts==1 && enabled && trigger_writes==0);
     for(unsigned s=NO_SM;s<=PINDIR_ERROR;++s) {
         reset(s);
         /* Core-not-started timeout runs on core 0, without a core1 setjmp. */

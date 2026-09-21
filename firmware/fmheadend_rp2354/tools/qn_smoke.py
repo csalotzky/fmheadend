@@ -1,4 +1,4 @@
-"""M8.3/M8.4 conducted-bench test using the existing Linux RP client."""
+"""M8.3-M8.5 conducted-bench test using the existing Linux RP client."""
 import argparse
 from pathlib import Path
 import sys
@@ -16,12 +16,15 @@ def main():
     parser.add_argument("--address", required=True, type=lambda s: int(s, 0))
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("cid", help="Read CID2 from all eight QNs; never enable RF")
-    cycle = commands.add_parser("cycle", help="Configure one TX, then RF OFF/ON/OFF")
-    cycle.add_argument("--tx", type=int, choices=range(8), default=0)
-    cycle.add_argument("--frequency-khz", type=int, required=True)
-    cycle.add_argument("--attenuation-db", type=float, required=True)
-    cycle.add_argument("--mode", choices=("DIGITAL", "ANALOG", "SINE"), default="DIGITAL")
-    cycle.add_argument("--hold-seconds", type=float, default=10)
+    commands.add_parser("status", help="Read actual state and cumulative SPI errors")
+    for name in ("cycle", "configure"):
+        cmd = commands.add_parser(name, help="RF OFF/ON/OFF cycle" if name == "cycle" else "Configure with RF OFF; never enable RF")
+        cmd.add_argument("--tx", type=int, choices=range(8), default=0)
+        cmd.add_argument("--frequency-khz", type=int, required=True)
+        cmd.add_argument("--attenuation-db", type=float, required=True)
+        cmd.add_argument("--mode", choices=("DIGITAL", "ANALOG", "SINE"), default="DIGITAL")
+        if name == "cycle":
+            cmd.add_argument("--hold-seconds", type=float, default=10)
     args = parser.parse_args()
     if args.command == "cycle" and not 0 < args.hold_seconds <= 60:
         parser.error("--hold-seconds must be >0 and <=60")
@@ -29,8 +32,11 @@ def main():
     try:
         info = rp.get_info()
         print("GET_INFO:", info, flush=True)
-        if info["rp_firmware_version"] not in ("0.8.3", "0.8.4"):
-            raise RuntimeError("This smoke requires M8.3/M8.4 firmware 0.8.3/0.8.4")
+        if info["rp_firmware_version"] not in ("0.8.3", "0.8.4", "0.8.5"):
+            raise RuntimeError("This smoke requires M8.3-M8.5 firmware 0.8.3-0.8.5")
+        if args.command == "status":
+            print("GET_STATUS:", rp.get_status(), flush=True)
+            return
         for tx in range(8):
             cid = rp.qn_read_register(tx, 0x06)
             print(f"TX{tx} QN 0x{0x21 + tx:02X}: CID2=0x{cid:02X}", flush=True)
@@ -70,12 +76,14 @@ def main():
             if snapshot["modulators"][args.tx]["rf_attenuation_db"] != args.attenuation_db:
                 raise RuntimeError("Attenuation readback differs from configuration")
             print("Configured, RF OFF. Verify no carrier and LED OFF.", flush=True)
+            if args.command == "configure":
+                return
             time.sleep(args.hold_seconds)
             rp.set_tx_enabled(args.tx, True)
             status("ON")
             audio = ("Expect 1 kHz stereo sine, -12 dBFS PCM on this DATA lane."
-                     if info["rp_firmware_version"] == "0.8.4" and args.mode == "SINE"
-                     else "DIGITAL is silent; ANALOG requires an external source; M8.3 has no sine.")
+                     if info["rp_firmware_version"] in ("0.8.4", "0.8.5") and args.mode == "SINE"
+                     else "DIGITAL uses SPI PCM on M8.5, otherwise silence; ANALOG requires an external source.")
             print(f"TX{args.tx} RF ON: measure {args.frequency_khz} kHz carrier; LED ON. "
                   + audio, flush=True)
             time.sleep(args.hold_seconds)

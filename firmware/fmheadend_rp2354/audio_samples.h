@@ -13,6 +13,7 @@
  * The phase advances even during silence. No per-channel sample buffers. */
 int16_t audio_sine_sample(unsigned phase);
 void audio_samples_fill(uint32_t *out, size_t frames, uint8_t sine_mask, unsigned *phase);
+void audio_samples_mix(uint32_t *out, size_t frames, uint8_t sine_mask, uint8_t digital_mask, const uint8_t *spi, unsigned *phase);
 /* Exact average frequency only; reject unrepresentable system clocks. */
 uint32_t audio_clock_divider256(uint32_t system_hz);
 #endif

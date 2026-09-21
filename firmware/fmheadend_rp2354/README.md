@@ -1,6 +1,6 @@
-# fmheadend RP2354 firmware: M8.4 continuous I2S
+# fmheadend RP2354 firmware: M8.5 SPI PCM and continuous I2S
 
-Production firmware `0.8.4`, protocol V1, configurable host I2C address `0x62`.
+Production firmware `0.8.5`, protocol V1, configurable host I2C address `0x62`.
 The proven M8.1 software QN bus and safe boot assign eight devices to 0x21..0x28
 and leave RF OFF. GET_INFO, GET_STATUS, QN_READ_REGISTER, QN_WRITE_REGISTER,
 SET_TX_CONFIG and SET_TX_ENABLED execute real operations. ON requires prior
@@ -15,6 +15,8 @@ the M8.2 2 ms client is not compatible with lengthy QN operations.
 - `host_protocol.c/.h`: framing, validation, work handoff and response cursor.
 - `host_i2c.c/.h`: hardware I2C peripheral and nonblocking foreground diagnostics.
 - `audio_engine.c/.h`, `i2s_audio.pio`: one PIO SM, chained DMA buffers, core 1 refill.
+- `spi_audio.c/.h`, `spi_audio.pio`: PIO1 mode-0 SPI RX, one DMA channel, core1 CS IRQ.
+- `spi_stream.c/.h`: exact 4100-byte validation, counter/error tracking, bounded queue.
 - `audio_samples.c/.h`: 48 kHz stereo packing, independent lanes, 1 kHz -12 dBFS sine.
 - `fmheadend_rp2354.c`: boot orchestration, UART and GPIO27 LED.
 - `tests/`: native tests; `tools/qn_smoke.py`: real Pi bench test.
@@ -26,7 +28,10 @@ critical faults. The known-good `../fmheadend_i2ctest` is unchanged.
 
 The shared clocks run continuously after safe boot: BCLK=1.536 MHz, WS=48 kHz,
 16-bit stereo I2S. SINE=2 supplies a local tone on enabled, configured lanes;
-DIGITAL/ANALOG and OFF lanes transmit zeros. There is no SPI transport or RDS
-FIFO/scheduler. See [M8.4](../../docs/milestone8_4.md) for timing, failure handling,
-tests and the exact operator procedure. See [M8.1](../../docs/milestone8_1.md)
+configured DIGITAL lanes receive SPI PCM even with RF OFF (approved bench behavior).
+ANALOG/unconfigured lanes and DIGITAL without fresh SPI are silent. SPI never
+changes RF enable. There is no RDS FIFO/scheduler. See
+[M8.5](../../docs/milestone8_5.md) for pins, ownership, latency, tests and exact
+Pi commands; [M8.4](../../docs/milestone8_4.md) records the verified I2S timing.
+See [M8.1](../../docs/milestone8_1.md)
 and [M8.2](../../docs/milestone8_2.md) for historical bring-up records.

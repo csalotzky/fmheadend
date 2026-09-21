@@ -17,6 +17,7 @@ static char log_text[4096];
 static jmp_buf idle_done;
 static uint64_t now_us;
 static bool host_started;
+bool spi_audio_init(void) { return true; }
 bool audio_engine_init(void)
 {
     assert(!host_started);

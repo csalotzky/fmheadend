@@ -2,6 +2,10 @@
 #define FMHEADEND_BOARD_H
 
 /* Verified PCB mapping: RP GPIO numbers, not package pin numbers. */
+#define AUDIO_SPI_MOSI_PIN 0u
+#define AUDIO_SPI_CS_PIN 1u
+#define AUDIO_SPI_SCK_PIN 2u
+#define AUDIO_SPI_MISO_PIN 3u /* Left as input: RX-only audio transport. */
 #define I2S_DATA_FIRST_PIN 4u
 #define I2S_BCLK_PIN 12u
 #define I2S_WS_PIN 13u

@@ -1,0 +1,13 @@
+; RX only, mode 0. GPIO0=MOSI, 1=CSn, 2=SCK. All input synchronizers enabled.
+; 150 MHz SM: four instructions per bit, fits 25 MHz (six SM cycles/bit).
+; DMA autopushes each byte; X counts every sampled bit including partial bytes.
+; Core1's CS-rising IRQ stops/drains/rearms while CS is HIGH. No byte IRQs.
+.program spi_audio
+    wait 0 gpio 1
+.wrap_target
+    wait 1 gpio 2
+    in pins, 1
+    jmp x-- clock_low
+clock_low:
+    wait 0 gpio 2
+.wrap

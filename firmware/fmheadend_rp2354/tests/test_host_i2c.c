@@ -10,9 +10,11 @@ static bool in_irq, masked;
 static void (*handler)(void);
 static char uart_log[4096];
 static audio_state_t audio_state=AUDIO_RUNNING;
-static uint8_t audio_mask;
+static uint8_t audio_mask, digital_mask;
+uint32_t spi_audio_error_count(void) { return 0x12345678; }
+bool spi_audio_diagnostic(char *s,size_t n,uint64_t now) { (void)s;(void)n;(void)now;return false; }
 audio_state_t audio_engine_state(void) { assert(!in_irq && !masked); return audio_state; }
-void audio_engine_set_sine_mask(uint8_t mask) { assert(!in_irq && !masked); audio_mask=mask; }
+void audio_engine_set_sources(uint8_t mask, uint8_t digital) { assert(!in_irq && !masked); audio_mask=mask; digital_mask=digital; }
 i2c_hw_t *i2c_get_hw(i2c_inst_t *i2c) { assert(i2c == i2c1); return &i2c->hw; }
 unsigned i2c_get_read_available(i2c_inst_t *i2c) { assert(i2c == i2c1); return available; }
 void i2c_init(i2c_inst_t *i2c, unsigned baud) { assert(i2c == i2c1 && baud == 100000); }
@@ -100,6 +102,7 @@ int main(void)
     drain();
     assert(strstr(uart_log, "SET_TX_CONFIG TX3 frequency_khz=98100"));
     assert(strstr(uart_log, "analog_gain_x10=-15"));
+    assert(digital_mask==8 && !host.qn.channel[3].enabled);
 
     const uint8_t status[] = {4,255,0};
     write_request(status, sizeof(status));
@@ -108,6 +111,8 @@ int main(void)
     finish_read();
     for (unsigned i = 0; i < 130; ++i) {
         const uint8_t byte = read_byte();
+        if (i==0 || i==9) assert(byte==0); /* SPI errors are not a critical QN/audio fault. */
+        if (i>=5 && i<9) assert(byte==(uint8_t)(0x12345678u>>(8*(i-5))));
         if (i >= 10 && (i - 10) % 15 == 0) assert(byte == 0);
     }
     finish_read();

@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include "qn_control.h"
 
-#define HOST_FIRMWARE_VERSION "0.8.4"
+#define HOST_FIRMWARE_VERSION "0.8.5"
 #define HOST_HARDWARE_REVISION "PCB1.0"
 #define HOST_REQUEST_MAX 258u
 #define HOST_RESPONSE_MAX 132u

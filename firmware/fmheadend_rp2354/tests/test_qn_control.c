@@ -5,9 +5,9 @@
 #include "qn_control.h"
 #include "fake_qn.h"
 static qn_control_t q;
-static uint8_t published_mask;
+static uint8_t published_mask, digital_mask;
 static unsigned notifications;
-static void source_sink(uint8_t mask) { published_mask=mask; ++notifications; }
+static void source_sink(uint8_t mask, uint8_t digital) { digital_mask=digital; published_mask=mask; ++notifications; }
 static uint8_t config[15]={0x34,0x7f,1,0,60,0,1,50,0,0,1,0xf1,0xff,1,1};
 static void reset(void)
 { fake_qn_reset(); qn_control_init(&q,255); qn_control_set_audio_sink(&q,source_sink); notifications=0; }
@@ -35,6 +35,8 @@ int main(void)
         assert(fake_regs[3][13]==0xd0 && fake_regs[3][0x5a]==0xe4);
         assert(q.channel[3].configured && !q.channel[3].enabled);
         assert(qn_control_sine_mask(&q)==0);
+        assert(digital_mask==qn_control_digital_mask(&q));
+        assert(digital_mask==(mode==0 ? 8 : 0));
         assert(call(3,3,on)==0 && q.channel[3].enabled);
         assert(qn_control_sine_mask(&q)==(mode==2 ? 8 : 0));
         assert(published_mask==qn_control_sine_mask(&q));
@@ -48,6 +50,8 @@ int main(void)
         assert(status[69]==(mode==1?1:255));
         assert(call(3,3,off)==0 && !qn_control_active(&q));
         assert(qn_control_sine_mask(&q)==0);
+        assert(digital_mask==qn_control_digital_mask(&q));
+        assert(digital_mask==(mode==0 ? 8 : 0));
     }
     /* Exactly representable frequency endpoints, every RF step and manual gain. */
     for(unsigned step=0;step<16;++step) {

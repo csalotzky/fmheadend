@@ -1,5 +1,6 @@
 #include "audio_engine.h"
 #include "audio_samples.h"
+#include "spi_audio.h"
 #include "board.h"
 #include "i2s_audio.pio.h"
 #include "pico/stdlib.h"
@@ -97,7 +98,8 @@ void audio_engine_log_fault(void)
 }
 
 audio_state_t audio_engine_state(void) { return atomic_load_explicit(&state,memory_order_acquire); }
-void audio_engine_set_sine_mask(uint8_t mask) { atomic_store_explicit(&requested_mask,mask,memory_order_release); }
+void audio_engine_set_sources(uint8_t sine_mask, uint8_t digital_mask)
+{ atomic_store_explicit(&requested_mask,(unsigned)sine_mask|((unsigned)digital_mask<<8),memory_order_release); }
 const char *audio_engine_state_name(audio_state_t s)
 {
     static const char *const names[]={"STARTING","RUNNING","RESOURCE FAULT","CLOCK FAULT",
@@ -118,6 +120,7 @@ static void fail(audio_state_t reason, const char *condition)
 }
 static void core1_audio(void)
 {
+    spi_audio_start(); /* CS IRQ and queue consumption both belong to core 1. */
     atomic_fetch_or(&milestones,CORE_READY);
     atomic_store(&stage,BUFFER_PREPARE);
     unsigned phase=0, next=0;
@@ -144,6 +147,7 @@ static void core1_audio(void)
     atomic_store(&stage,REFILL);
     deadline=time_us_64()+6000;
     while (true) {
+        spi_audio_poll();
         uint32_t flags=dma_hw->intr & dma_mask;
         if (pio->fdebug & stall_bit) { fail(AUDIO_STALL_FAULT,"TXSTALL"); break; }
         if ((dma_hw->ch[channels[0]].ctrl_trig | dma_hw->ch[channels[1]].ctrl_trig) &
@@ -158,8 +162,10 @@ static void core1_audio(void)
             }
             dma_hw->intr=1u<<ch;
             ++completed_buffers;
-            audio_samples_fill(buffers[next],AUDIO_BUFFER_FRAMES,
-                atomic_load_explicit(&requested_mask,memory_order_acquire),&phase);
+            const uint8_t *pcm=spi_audio_take();
+            unsigned sources=atomic_load_explicit(&requested_mask,memory_order_acquire);
+            audio_samples_mix(buffers[next],AUDIO_BUFFER_FRAMES,sources&255,sources>>8,pcm,&phase);
+            spi_audio_release();
             dma_channel_set_read_addr(ch,buffers[next],false);
             dma_channel_set_trans_count(ch,dma_encode_transfer_count(AUDIO_BUFFER_WORDS),false);
             __dmb();
