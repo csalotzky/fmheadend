@@ -7,7 +7,11 @@
 #include "qn_control.h"
 #include "rds_fifo.h"
 
+#if defined(FMHEADEND_TX0_RDS_PROBE) && FMHEADEND_TX0_RDS_PROBE
+#define HOST_FIRMWARE_VERSION "0.8.6a-probe"
+#else
 #define HOST_FIRMWARE_VERSION "0.8.6a"
+#endif
 #define HOST_HARDWARE_REVISION "PCB1.0"
 #define HOST_REQUEST_MAX 258u
 #define HOST_RESPONSE_MAX 132u

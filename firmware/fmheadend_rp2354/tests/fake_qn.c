@@ -8,6 +8,7 @@ unsigned fake_calls, fake_fail_at, fake_fail_count, fake_writes;
 uint64_t fake_now;
 int fake_mismatch_reg;
 void (*fake_operation_hook)(void);
+void (*fake_write_hook)(unsigned target, uint8_t reg, uint8_t value);
 void fake_qn_reset(void)
 {
     memset(fake_regs,0,sizeof(fake_regs));
@@ -18,6 +19,7 @@ void fake_qn_reset(void)
     }
     fake_calls=fake_writes=fake_fail_at=fake_fail_count=0; fake_now=0;
     fake_retry_twice=false; fake_mismatch_reg=-1; fake_operation_hook=0;
+    fake_write_hook=0;
 }
 static bool transaction(uint8_t address, unsigned duration)
 {
@@ -42,6 +44,7 @@ qn_bus_status_t qn_bus_write_reg(uint8_t address,uint8_t reg,uint8_t v)
     ++fake_writes;
     if (!transaction(address,435)) return QN_BUS_NACK;
     fake_regs[address-0x21][reg]=v;
+    if (fake_write_hook) fake_write_hook(address-0x21,reg,v);
     return QN_BUS_OK;
 }
 void gpio_put(unsigned pin,bool v)
