@@ -35,7 +35,7 @@ int main(void)
     uart_set_format(DEBUG_UART, 8, 1, UART_PARITY_NONE);
     gpio_set_function(DEBUG_UART_TX_PIN, GPIO_FUNC_UART);
     gpio_set_function(DEBUG_UART_RX_PIN, GPIO_FUNC_UART);
-    uart_puts(DEBUG_UART, "\r\nfmheadend RP2354 M8.5; M8.1 safe boot; RF OFF\r\n");
+    uart_puts(DEBUG_UART, "\r\nfmheadend RP2354 M8.6A; M8.1 safe boot; RF OFF\r\n");
 
     qn_bus_init();
     sleep_ms(100);

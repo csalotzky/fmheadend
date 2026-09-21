@@ -70,8 +70,8 @@ static uint8_t validate(const host_protocol_t *host)
     case SET_TX_ENABLED: case QN_READ_REGISTER: expected = 1; break;
     case QN_WRITE_REGISTER: expected = 2; break;
     case RDS_PUSH:
-        if (!length || p[0] < 1 || p[0] > 31) return HOST_INVALID_ARGUMENT;
-        expected = 1u + 8u * p[0];
+        if (!length || p[0] < 1 || p[0] > RDS_PUSH_MAX_GROUPS) return HOST_INVALID_ARGUMENT;
+        expected = 1u + RDS_GROUP_BYTES * p[0];
         break;
     default: break;
     }
@@ -119,6 +119,7 @@ void host_protocol_stop(host_protocol_t *host, uint32_t uptime_ms)
     cancel_pending(host); /* New complete request abandons unstarted work. */
     ++host->generation;
     host_log_event_t event = {0};
+    bool quiet = false;
     event.status = validate(host);
     event.command = host->request_size ? host->request[0] : 0;
     event.target = host->request_size > 1 ? host->request[1] : 0xff;
@@ -127,7 +128,7 @@ void host_protocol_stop(host_protocol_t *host, uint32_t uptime_ms)
                       host->request_size != 3u + event.length;
     if (!event.malformed && event.length <= sizeof(event.payload))
         memcpy(event.payload, host->request + 3, event.length);
-    if (host->running || host->log_count == HOST_LOG_CAPACITY) {
+    if (event.status == HOST_OK && (host->running || host->log_count == HOST_LOG_CAPACITY)) {
         event.status = HOST_BUSY; /* This NEW request will not execute. */
     } else if (event.status == HOST_OK) {
         switch (event.command) {
@@ -139,6 +140,32 @@ void host_protocol_stop(host_protocol_t *host, uint32_t uptime_ms)
             memcpy(host->response + 20, HOST_HARDWARE_REVISION, sizeof(HOST_HARDWARE_REVISION));
             host->response[36] = 8;
             break;
+        case RDS_PUSH: {
+            rds_fifo_t *fifo = &host->rds[event.target];
+            const unsigned before = rds_fifo_free(fifo);
+            /* Use the complete request, not the small UART metadata copy. */
+            event.payload[0] = host->request[3];
+            if (!rds_fifo_push(fifo, host->request + 4, event.payload[0]))
+                event.status = HOST_BUSY;
+            event.payload[1] = rds_fifo_free(fifo);
+            /* Log empty -> nonempty and full transitions, and every error. */
+            quiet = event.status == HOST_OK && before != RDS_FIFO_CAPACITY &&
+                    event.payload[1] != 0;
+            break;
+        }
+        case RDS_CLEAR:
+            quiet = rds_fifo_free(&host->rds[event.target]) == RDS_FIFO_CAPACITY;
+            rds_fifo_clear(&host->rds[event.target]);
+            break;
+        case GET_RDS_FIFO_FREE:
+            event.response_length = 16;
+            for (unsigned i = 0; i < 8; ++i) {
+                const uint16_t free = rds_fifo_free(&host->rds[i]);
+                host->response[2 + 2*i] = free;
+                host->response[3 + 2*i] = free >> 8;
+            }
+            quiet = true; /* Polling is not a state transition. */
+            break;
         case GET_STATUS: case SET_TX_CONFIG: case SET_TX_ENABLED:
         case QN_READ_REGISTER: case QN_WRITE_REGISTER:
             host->work = (host_work_t){.event=event, .generation=host->generation};
@@ -147,7 +174,7 @@ void host_protocol_stop(host_protocol_t *host, uint32_t uptime_ms)
         default: event.status = HOST_INVALID_COMMAND; break;
         }
     }
-    if (!host->pending) log_event(host, &event);
+    if (!host->pending && !quiet) log_event(host, &event);
     /* Pending is not an OK response: an early read cancels it before execution,
      * or reports INTERNAL_ERROR (unknown outcome) if execution already began.
      */
@@ -179,6 +206,16 @@ void host_protocol_complete_work(host_protocol_t *host, const host_work_t *work)
     host->running=false;
     if (host->generation==work->generation) {
         memcpy(host->response+2,work->result,work->event.response_length);
+        if (work->event.command == GET_STATUS && work->event.status == HOST_OK) {
+            /* complete_work runs under the existing core0 IRQ mask. Snapshot
+             * transport state here, after the slow QN status reads finish. */
+            for (unsigned i = 0; i < 8; ++i) {
+                const uint16_t free = rds_fifo_free(&host->rds[i]);
+                uint8_t *channel = host->response + 2 + 10 + 15*i;
+                channel[11] = free;
+                channel[12] = free >> 8;
+            }
+        }
         reply(host,work->event.status,work->event.response_length);
     }
     log_event(host,&work->event);

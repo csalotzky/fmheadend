@@ -118,6 +118,37 @@ int main(void)
     finish_read();
     drain();
 
+    /* Maximum RDS batch ACK is ready at write STOP, without foreground work.
+     * IRQ mocks assert no UART/QN/audio calls; real source/RF state stays intact. */
+    uart_log[0]=0;
+    unsigned calls_before=fake_calls;
+    const qn_control_t qn_before=host.qn;
+    uint8_t rds_push[252]={5,3,249,31};
+    for(unsigned i=4;i<sizeof(rds_push);++i) rds_push[i]=(uint8_t)i;
+    write_request(rds_push,sizeof(rds_push));
+    assert(!host.pending && !uart_log[0]);
+    assert(read_byte()==HOST_OK && read_byte()==0);finish_read();
+    const uint8_t rds_free[]={11,255,0};
+    write_request(rds_free,sizeof(rds_free));
+    assert(read_byte()==HOST_OK && read_byte()==16);finish_read();
+    for(unsigned i=0;i<8;++i) { assert(read_byte()==(i==3?33:64));assert(read_byte()==0); }
+    finish_read();
+    assert(fake_calls==calls_before && !memcmp(&qn_before,&host.qn,sizeof(qn_before)));
+    assert(digital_mask==8 && audio_mask==0 && !host_i2c_led(0));
+    drain();
+    assert(strstr(uart_log,"RDS_PUSH TX3 groups=31 free=33"));
+    assert(!strstr(uart_log,"GET_RDS_FIFO_FREE"));
+    write_request(status,sizeof(status));drain();
+    assert(host_get_u16(host.response+2+10+15*3+11)==33);
+    assert(host_get_u32(host.response+2+10+15*3+7)==0);
+    const uint8_t rds_clear[]={6,3,0};
+    calls_before=fake_calls;
+    write_request(rds_clear,sizeof(rds_clear));
+    assert(read_byte()==HOST_OK && read_byte()==0);finish_read();
+    assert(fake_calls==calls_before && rds_fifo_free(&host.rds[3])==64);
+    assert(digital_mask==8 && !host.qn.channel[3].enabled);
+    drain();uart_log[0]=0;
+
     write_request(info, sizeof(info));
     assert(read_byte() == 0); /* Queued byte is flushed rather than sent. */
     test_i2c1.hw.tx_abrt_source = 1u << 23;
@@ -142,6 +173,14 @@ int main(void)
     sine_config[3+8]=2;
     write_request(sine_config,sizeof(sine_config)); drain(); assert(audio_mask==0);
     write_request(on,sizeof(on)); drain(); assert(audio_mask==(1u<<3));
+    calls_before=fake_calls;
+    write_request(rds_push,sizeof(rds_push));
+    assert(read_byte()==HOST_OK && read_byte()==0);finish_read();
+    write_request(rds_clear,sizeof(rds_clear));
+    assert(read_byte()==HOST_OK && read_byte()==0);finish_read();
+    assert(fake_calls==calls_before && host.qn.channel[3].enabled);
+    assert(audio_mask==(1u<<3) && host_i2c_led(0));
+    drain();
     audio_state=AUDIO_STALL_FAULT;
     write_request(status,sizeof(status)); drain();
     assert(read_byte()==HOST_OK && read_byte()==130); finish_read();

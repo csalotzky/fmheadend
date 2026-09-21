@@ -173,6 +173,12 @@ void host_i2c_poll(void)
         snprintf(line,sizeof(line),"HOST RX: %s TX%u reg=0x%02X value=0x%02X%s\r\n",
             host_command_name(event.command),event.target,p[0],p[1],
             event.command==7 && event.status!=HOST_OK ? " (read failed)" : "");
+    } else if (event.command == 5 && event.status == HOST_OK) {
+        snprintf(line, sizeof(line), "HOST RX: RDS_PUSH TX%u groups=%u free=%u (FIFO transition)\r\n",
+                 event.target, p[0], p[1]);
+    } else if (event.command == 6 && event.status == HOST_OK) {
+        snprintf(line, sizeof(line), "HOST RX: RDS_CLEAR TX%u free=%u\r\n",
+                 event.target, RDS_FIFO_CAPACITY);
     } else {
         snprintf(line, sizeof(line), "HOST RX: %s (0x%02X) target=0x%02X length=%u%s\r\n",
                  host_command_name(event.command), event.command, event.target,

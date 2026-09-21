@@ -5,8 +5,9 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "qn_control.h"
+#include "rds_fifo.h"
 
-#define HOST_FIRMWARE_VERSION "0.8.5"
+#define HOST_FIRMWARE_VERSION "0.8.6a"
 #define HOST_HARDWARE_REVISION "PCB1.0"
 #define HOST_REQUEST_MAX 258u
 #define HOST_RESPONSE_MAX 132u
@@ -20,7 +21,7 @@ enum host_status {
 
 typedef struct {
     uint8_t command, target, length, status, response_length;
-    uint8_t payload[15]; /* Only decoded SET fields, never a binary dump. */
+    uint8_t payload[15]; /* SET fields or concise command metadata, never a binary dump. */
     bool malformed;
 } host_log_event_t;
 
@@ -44,6 +45,7 @@ typedef struct {
     unsigned log_head, log_tail, log_count;
     uint32_t log_busy_count;
     qn_control_t qn;
+    rds_fifo_t rds[8]; /* Core0 only; see rds_fifo.h ownership contract. */
     bool pending, running;
     uint32_t generation;
     host_work_t work;

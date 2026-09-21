@@ -27,9 +27,9 @@ static host_log_event_t request(const uint8_t *r, size_t n, uint8_t expected)
     work();
     assert(host.response[0] == expected);
     if (expected) assert(host.response_size == 2 && host.response[1] == 0);
-    host_log_event_t event;
-    assert(host_protocol_pop_log(&host, &event));
-    assert(event.status == expected);
+    host_log_event_t event = {0};
+    if (host_protocol_pop_log(&host, &event)) assert(event.status == expected);
+    else assert(expected == HOST_OK && (r[0] == 5 || r[0] == 6 || r[0] == 11));
     return event;
 }
 static void status(uint8_t ready_mask)
@@ -45,7 +45,7 @@ static void status(uint8_t ready_mask)
         const uint8_t *c = p + 10 + i * 15;
         assert(c[0] == (ready_mask & (1u << i) ? 0 : 2) && host_get_i16(c + 1) == -32768);
         assert(host_get_u32(c + 3) == 0 && host_get_u32(c + 7) == 0);
-        assert(host_get_u16(c + 11) == 0 && c[14] == 255);
+        assert(host_get_u16(c + 11) == RDS_FIFO_CAPACITY && c[14] == 255);
         assert(c[13] == (ready_mask & (1u << i) ? 0 : 5));
     }
 }
@@ -114,13 +114,13 @@ int main(void)
         if (cmd == 5) { r[2] = 9; r[3] = 1; }
         if (cmd == 7) r[2] = 1;
         if (cmd == 8) r[2] = 2;
-        request(r, 3 + r[2], cmd==7 || cmd==8 ? HOST_OK : HOST_INVALID_COMMAND); /* Reset never ACKs. */
+        request(r, 3 + r[2], cmd==9 || cmd==10 ? HOST_INVALID_COMMAND : HOST_OK); /* Reset never ACKs. */
     }
     uint8_t max_frame[258] = {5,3,255};
     max_frame[3] = 31;
     request(max_frame, sizeof(max_frame), HOST_INVALID_ARGUMENT);
     max_frame[2] = 249;
-    request(max_frame, 252, HOST_INVALID_COMMAND); /* Valid max RDS request. */
+    request(max_frame, 252, HOST_OK); /* Valid max RDS request. */
     for (unsigned i = 0; i < 1000; ++i) host_protocol_receive(&host, 0, i == 0);
     host_protocol_stop(&host, 0);
     assert(host.response[0] == HOST_INVALID_ARGUMENT);
