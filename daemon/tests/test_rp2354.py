@@ -497,3 +497,176 @@ def test_m83_sine_is_enum_only_and_invalid_modes_rejected():
     assert p.request(p.Command.SET_TX_CONFIG, 0, payload)[11] == 2
     with pytest.raises(ValueError):
         p.request(p.Command.SET_TX_CONFIG, 0, payload[:8] + b'\x03' + payload[9:])
+
+
+@pytest.fixture
+def running_wire_backend(calls, tmp_path):
+    """Real client/coordinator/refill, eight desired ON TXs, only OS I/O faked."""
+    from fmheadendd.database import Database
+    from fmheadendd.models.configuration import ModulatorConfig
+    path = tmp_path / 'wire-recovery.db'
+    db = Database(path)
+    for i in range(8):
+        old = db.get('modulators', i)
+        db.save('modulators', ModulatorConfig.model_validate(old.model_dump(exclude={'id', 'timestamp'}) | {
+            'audio_mode': 'ANALOG', 'frequency_khz': 87500, 'rf_attenuation_db': 22.5,
+            'enabled': True, 'rds_enabled': True}), i)
+    db.close()
+    wire = SimpleNamespace(enabled=[False]*8, uptime=100000, info=INFO, state=0, faults=[], payload=b'', now=0.)
+
+    def snapshot():
+        return p.GLOBAL_STATUS.pack(wire.state, wire.uptime, 0, 0) + b''.join(
+            p.CHANNEL_STATUS.pack(int(on), 225, 0, 0, 41, 0, 255) for on in wire.enabled)
+
+    def write(fd, packet):
+        if packet[0] == p.Command.SET_TX_ENABLED:
+            wire.enabled[packet[1]] = bool(packet[3])
+        return len(packet)
+
+    def read(fd, size):
+        if size != 2:
+            return wire.payload
+        command = packets(calls)[-1][0]
+        wire.payload = (wire.info if command == p.Command.GET_INFO else snapshot() if command == p.Command.GET_STATUS
+                        else struct.pack('<8H', *([41]*8)) if command == p.Command.GET_RDS_FIFO_FREE else b'')
+        if wire.faults and command == wire.faults[0][0]:
+            _, header, wire.payload = wire.faults.pop(0)
+            return header
+        return bytes((0, len(wire.payload)))
+
+    calls[0].write.side_effect = write
+    calls[0].read.side_effect = read
+    app = create_app(Settings(path), rp=client(), clock=lambda: wire.now)
+    with TestClient(app):
+        def prime():
+            wire.now += 1
+            app.state.services.rds.tick()
+            assert app.state.services.recovery.ready and wire.enabled == [True]*8
+        app.state.control.executor.submit(prime).result()
+        yield app, wire, snapshot
+
+
+@pytest.mark.parametrize('kind', ['global128', 'tx255', 'status128', 'attenuation80e1', 'fifo_header', 'fifo_short'])
+def test_single_malformed_read_retains_all_tx_and_rds(calls, running_wire_backend, caplog, kind):
+    app, wire, snapshot = running_wire_backend
+    def check():
+        services = app.state.services
+        original_channels = list(services.rds.channels)
+        data = bytearray(snapshot())
+        command, header, field = p.Command.GET_STATUS, b'\x00\x82', ''
+        if kind == 'global128': data[9] = 128; field = 'global.last_error_code'
+        if kind == 'tx255': data[23] = 255; field = 'TX0.last_error_code'
+        if kind == 'status128': header = b'\x80\x82'; field = 'Unknown RP status: 128'
+        if kind == 'attenuation80e1': data[11:13] = b'\xe1\x80'; field = 'TX0.rf_attenuation_db_x10'
+        if kind.startswith('fifo'):
+            command = p.Command.GET_RDS_FIFO_FREE
+            header = b'\0\x0f' if kind == 'fifo_header' else b'\0\x10'
+            data = bytearray(15); field = 'GET_RDS_FIFO_FREE'
+        wire.faults = [(command, header, bytes(data))]
+        calls[0].write.reset_mock()
+        if command == p.Command.GET_STATUS:
+            services.status.refresh()
+        else:
+            wire.now += 1
+            services.rds.tick()
+        sent = packets(calls)
+        assert [packet[0] for packet in sent[:3]] == [command, p.Command.GET_INFO, p.Command.GET_STATUS]
+        assert all(packet[0] not in (2, 3, 6) for packet in sent)
+        assert services.recovery.ready and not services.rds.suspended
+        assert all(a is b for a, b in zip(original_channels, services.rds.channels))
+        assert wire.enabled == [True]*8 and all(services.modulators.desired_on(i) for i in range(8))
+        # Refill continues in the same lifecycle, including after a bad status read.
+        wire.now += 1
+        services.rds.tick()
+        assert any(packet[0] == p.Command.RDS_PUSH for packet in packets(calls))
+        logs = [r.getMessage() for r in caplog.records if 'RP malformed response' in r.getMessage()]
+        assert len(logs) == 1
+        assert f'command={command.name}' in logs[0] and f'header={header.hex()}' in logs[0] and field in logs[0]
+        if kind == 'global128': assert 'Invalid hardware error code: 128' in logs[0]
+        if kind == 'tx255': assert 'Invalid hardware error code: 255' in logs[0]
+        if kind == 'attenuation80e1': assert 'Invalid RF attenuation: -32543' in logs[0]
+        unavailable = kind in ('status128', 'fifo_header')
+        assert f"payload={'unavailable' if unavailable else bytes(data).hex()}" in logs[0]
+        assert f"payload_length={'unavailable' if unavailable else len(data)}" in logs[0]
+        assert services.rp.i2c_errors == 1
+    app.state.control.executor.submit(check).result()
+
+
+@pytest.mark.parametrize('failure', ['sustained', 'reset', 'incompatible', 'mismatch', 'attenuation', 'qn_fault', 'qn_response'])
+def test_malformed_read_does_not_hide_real_recovery(calls, running_wire_backend, caplog, failure):
+    app, wire, snapshot = running_wire_backend
+    def check():
+        services = app.state.services
+        wire.faults = [(p.Command.GET_STATUS, b'\x80\x82', b'')]
+        if failure == 'sustained': wire.faults *= 2
+        if failure == 'reset': wire.uptime = 1
+        if failure == 'incompatible': wire.info = p.INFO.pack(2, b'bad', b'hw', 8)
+        if failure == 'mismatch': wire.enabled[3] = False
+        if failure == 'attenuation':
+            mismatched = bytearray(snapshot()); mismatched[11:13] = b'\x3c\0'
+            wire.faults.append((p.Command.GET_STATUS, b'\0\x82', bytes(mismatched)))
+        if failure == 'qn_fault': wire.state = 1
+        if failure == 'qn_response': wire.faults.append((p.Command.GET_STATUS, b'\x05\0', b''))
+        calls[0].write.reset_mock()
+        services.status.refresh()
+        assert not services.recovery.ready and services.rds.suspended
+        assert all(packet[0] in (1, 4) for packet in packets(calls))
+        # Only the first malformed frame in the incident is dumped, including
+        # a second corruption/incompatible response during verification.
+        assert len([r for r in caplog.records if 'RP malformed response' in r.getMessage()]) == 1
+        wire.info = INFO; wire.state = 0; wire.now += 3
+        services.rp._retry_at = 0  # Advance the real-client backoff without sleeping in this test.
+        calls[0].write.reset_mock()
+        services.status.refresh()
+        sent = packets(calls)
+        assert sent[0][0] == p.Command.GET_INFO
+        assert sent[1:9] == [bytes((3, i, 1, 0)) for i in range(8)]
+        assert services.recovery.ready and wire.enabled == [True]*8
+    app.state.control.executor.submit(check).result()
+
+
+def test_malformed_push_is_never_verified_or_replayed(calls, running_wire_backend):
+    app, wire, _ = running_wire_backend
+    def check():
+        services = app.state.services
+        wire.faults = [(p.Command.RDS_PUSH, b'\x80\0', b'')]
+        calls[0].write.reset_mock()
+        wire.now += 1
+        services.rds.tick()
+        assert [packet[0] for packet in packets(calls)] == [p.Command.GET_RDS_FIFO_FREE, p.Command.RDS_PUSH]
+        assert services.rds.suspended and not services.recovery.ready
+        wire.now += 1; services.rds.tick()
+        assert len(packets(calls)) == 2
+    app.state.control.executor.submit(check).result()
+
+
+@pytest.mark.parametrize('pause_at', ['wait', 'header', 'payload'])
+def test_complete_two_read_transaction_cannot_interleave(calls, monkeypatch, pause_at):
+    import threading
+    entered, release, attempted = threading.Event(), threading.Event(), threading.Event()
+    rp = client(); rp.info = p.parse_info(INFO)
+    def pause(stage):
+        if pause_at == stage and packets(calls)[-1][0] == p.Command.GET_STATUS:
+            entered.set()
+            assert release.wait(2)
+    def read(fd, size):
+        if packets(calls)[-1][0] != p.Command.GET_STATUS:
+            return b'\0\0'
+        pause('header' if size == 2 else 'payload')
+        return b'\0\x82' if size == 2 else status_payload()
+    monkeypatch.setattr(linux.time, 'sleep', lambda seconds: pause('wait'))
+    calls[0].read.side_effect = read
+    def competing_write():
+        attempted.set(); rp.set_tx_enabled(0, False)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(rp.get_status)
+        try:
+            assert entered.wait(2)
+            second = executor.submit(competing_write)
+            assert attempted.wait(2)
+            assert not second.done() and len(packets(calls)) == 1
+        finally:
+            release.set()
+        assert first.result()['uptime_ms'] == 123456
+        second.result()
+    assert [call.args[1] for call in calls[0].read.call_args_list] == [2, 130, 2]

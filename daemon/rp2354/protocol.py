@@ -48,6 +48,13 @@ class IncompatibleProtocol(ProtocolError):
     pass
 
 
+class MalformedResponse(ProtocolError):
+    """An actual Linux response failed framing/decoding; command is not replayed."""
+    def __init__(self, command: Command, message: str):
+        self.command = command
+        super().__init__(message)
+
+
 class HardwareUnavailable(DependencyUnavailable):
     pass
 
@@ -191,16 +198,16 @@ def rds_groups(groups) -> bytes:
     return bytes(payload)
 
 
-def _text(data: bytes) -> str:
+def _text(data: bytes, field: str) -> str:
     raw, separator, padding = data.partition(b"\0")
     if not separator or any(padding) or not raw:
-        raise ProtocolError("Version text must be nonempty, NUL-terminated and zero padded")
+        raise ProtocolError(f"{field}: version text must be nonempty, NUL-terminated and zero padded")
     try:
         text = raw.decode("ascii")
     except UnicodeDecodeError as exc:
-        raise ProtocolError("Version text is not ASCII") from exc
+        raise ProtocolError(f"{field}: version text is not ASCII") from exc
     if not text.isprintable():
-        raise ProtocolError("Version text contains control characters")
+        raise ProtocolError(f"{field}: version text contains control characters")
     return text
 
 
@@ -208,8 +215,8 @@ def parse_info(payload: bytes) -> dict:
     if len(payload) != INFO.size:
         raise ProtocolError("Invalid GET_INFO payload size")
     version, firmware, hardware, count = INFO.unpack(payload)
-    info = {"rp_protocol_version": version, "rp_firmware_version": _text(firmware),
-            "hardware_revision": _text(hardware), "modulator_count": count}
+    info = {"rp_protocol_version": version, "rp_firmware_version": _text(firmware, "rp_firmware_version"),
+            "hardware_revision": _text(hardware, "hardware_revision"), "modulator_count": count}
     if version != PROTOCOL_VERSION or count != 8:
         raise IncompatibleProtocol(f"Unsupported RP protocol/count: {version}/{count}; expected {PROTOCOL_VERSION}/8")
     return info
@@ -221,11 +228,11 @@ def _enum(value: int, values: tuple, name: str):
     return values[value]
 
 
-def _error(value: int):
+def _error(value: int, field: str):
     try:
         code = Status(value)
     except ValueError as exc:
-        raise ProtocolError(f"Invalid hardware error code: {value}") from exc
+        raise ProtocolError(f"Invalid hardware error code: {value} ({field})") from exc
     return None if code == Status.OK else code.name
 
 
@@ -235,17 +242,17 @@ def parse_status(payload: bytes) -> dict:
     # Current state and latched error are independent. SPI count excludes silence.
     state, uptime, spi_errors, error = GLOBAL_STATUS.unpack_from(payload)
     result = {"state": _enum(state, ("OK", "ERROR"), "RP state"), "uptime_ms": uptime,
-              "rp_spi_audio_link_error_count": spi_errors, "last_error_code": _error(error), "modulators": []}
+              "rp_spi_audio_link_error_count": spi_errors, "last_error_code": _error(error, "global.last_error_code"), "modulators": []}
     for channel in range(8):
         # audio counts detected QN I2S underrun flags, not missing Linux PCM.
         tx, level, audio, rds, free, error, saturated = CHANNEL_STATUS.unpack_from(payload, GLOBAL_STATUS.size + channel * CHANNEL_STATUS.size)
         if level != -32768 and (level < 0 or level > 225 or level % 15 != 0):
-            raise ProtocolError(f"Invalid RF attenuation: {level}")
+            raise ProtocolError(f"Invalid RF attenuation: {level} (TX{channel}.rf_attenuation_db_x10)")
         if saturated not in (0, 1, 255):
-            raise ProtocolError(f"Invalid input_saturated: {saturated}")
-        result["modulators"].append({"id": channel, "tx_state": _enum(tx, ("OFF", "ON", "ERROR"), "TX state"),
+            raise ProtocolError(f"Invalid input_saturated: {saturated} (TX{channel}.input_saturated)")
+        result["modulators"].append({"id": channel, "tx_state": _enum(tx, ("OFF", "ON", "ERROR"), f"TX{channel} state"),
             "rf_attenuation_db": None if level == -32768 else level / 10,
             "audio_underrun_count": audio, "rds_underrun_count": rds,
             "input_saturated": None if saturated == 255 else bool(saturated),
-            "rds_fifo_free": free, "last_error_code": _error(error)})
+            "rds_fifo_free": free, "last_error_code": _error(error, f"TX{channel}.last_error_code")})
     return result

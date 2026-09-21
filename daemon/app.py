@@ -55,6 +55,7 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
             recovery = Recovery(modulators, rds, clock)
             modulators.recovery = recovery
             rds.on_failure = recovery.lost
+            rds.on_read_failure = recovery.verify_fifo_read
             rds.suspended = True
             status = StatusService(modulators, sources, rp_client, mux_client, clock, recovery)
             status.info.update(frequency_plan=PLANS[settings.region].as_dict(),

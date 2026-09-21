@@ -1,5 +1,6 @@
 """Real Linux RP2354 client. OS calls are patched directly in unit tests."""
 from array import array
+import logging
 import os
 import sys
 import threading
@@ -18,6 +19,7 @@ I2C_TIMEOUT = 0x0702
 I2C_SLAVE = 0x0703
 I2C_FUNCS = 0x0705
 I2C_FUNC_I2C = 1
+logger = logging.getLogger(__name__)
 
 
 class Rp2354Client:
@@ -42,6 +44,7 @@ class Rp2354Client:
         self.info: dict | None = None
         self.i2c_errors = 0
         self.last_error: str | None = None
+        self._malformed_reported = False
 
     def _open(self):
         if self._fd is not None:
@@ -77,13 +80,15 @@ class Rp2354Client:
         with self._lock:
             self._close()
 
-    def _exchange(self, command: p.Command, target: int, payload: bytes = b"") -> bytes:
+    def _exchange(self, command: p.Command, target: int, payload: bytes = b"", *, decode=None):
         packet = p.request(command, target, payload)
         if time.monotonic() < self._retry_at:
             raise p.HardwareUnavailable(self.last_error or "RP reconnect backoff")
+        header = received = None
         try:
             self._open()
             for attempt in range(2):
+                header = received = None
                 if os.write(self._fd, packet) != len(packet):
                     raise p.ProtocolError("Short I2C request write; command outcome is unknown")
                 # Firmware must prepare a response, or BUSY without side effects,
@@ -91,9 +96,13 @@ class Rp2354Client:
                 time.sleep(p.RESPONSE_WAIT_MS[command] / 1000)
                 header = os.read(self._fd, 2)
                 _, length = p.response_header(command, header)
-                payload = os.read(self._fd, length) if length else b""
+                received = os.read(self._fd, length) if length else b""
                 try:
-                    result = p.response(command, header + payload)
+                    result = p.response(command, header + received)
+                    if decode is not None:
+                        result = decode(result)
+                    if command == p.Command.GET_STATUS:
+                        self._malformed_reported = False
                     self.last_error = None
                     return result
                 except p.Busy:
@@ -104,33 +113,41 @@ class Rp2354Client:
             self.last_error = str(exc)
             raise
         except (OSError, p.ProtocolError, p.HardwareUnavailable) as exc:
+            if isinstance(exc, p.ProtocolError) and not self._malformed_reported:
+                # Log exactly what read(2)/read(length) returned, never a rebuilt
+                # snapshot. A bad header is not trusted to request more bytes.
+                logger.warning("RP malformed response command=%s header=%s payload=%s payload_length=%s error=%s",
+                    command.name, header.hex() if header is not None else "unavailable",
+                    received.hex() if received is not None else "unavailable",
+                    len(received) if received is not None else "unavailable", exc)
+                self._malformed_reported = True
             self.i2c_errors += 1
             self.last_error = f"RP2354 I2C {self.device} address {self.address}: {exc}"
             self._close()
             self._retry_at = time.monotonic() + 0.25
             if isinstance(exc, p.ProtocolError):
-                raise
+                if isinstance(exc, p.IncompatibleProtocol):
+                    raise
+                if command in (p.Command.GET_STATUS, p.Command.GET_RDS_FIFO_FREE):
+                    # Recovery may perform ONE fresh read-only health check on
+                    # the same control worker. This is not an automatic replay.
+                    self._retry_at = 0.0
+                raise p.MalformedResponse(command, str(exc)) from exc
             raise p.HardwareUnavailable(self.last_error) from exc
         raise AssertionError("Unreachable exchange state")
 
     def get_info(self) -> dict:
         with self._lock:
-            try:
-                self.info = p.parse_info(self._exchange(p.Command.GET_INFO, p.GLOBAL))
-            except p.ProtocolError as exc:
-                self.last_error = str(exc)
-                self._close()
-                self._retry_at = time.monotonic() + 0.25
-                raise
+            self.info = self._exchange(p.Command.GET_INFO, p.GLOBAL, decode=p.parse_info)
             return dict(self.info)
 
-    def _call(self, command: p.Command, target: int, payload: bytes = b"") -> bytes:
+    def _call(self, command: p.Command, target: int, payload: bytes = b"", *, decode=None):
         # Validate before opening a bus or making a startup handshake.
         p.request(command, target, payload)
         with self._lock:
             if self.info is None:
                 self.get_info()
-            return self._exchange(command, target, payload)
+            return self._exchange(command, target, payload, decode=decode)
 
     def set_tx_config(self, modulator_id: int, config: TxConfig) -> None:
         self._call(p.Command.SET_TX_CONFIG, modulator_id, p.tx_config(config))
@@ -140,18 +157,12 @@ class Rp2354Client:
 
     def get_status(self) -> dict:
         with self._lock:
-            try:
-                result = p.parse_status(self._call(p.Command.GET_STATUS, p.GLOBAL))
-            except p.ProtocolError as exc:
-                self.last_error = str(exc)
-                self._close()
-                self._retry_at = time.monotonic() + 0.25
-                raise
+            result = self._call(p.Command.GET_STATUS, p.GLOBAL, decode=p.parse_status)
             result["i2c_errors"] = self.i2c_errors
             return result
 
     def get_rds_fifo_free(self) -> list[int]:
-        return p.parse_rds_fifo_free(self._call(p.Command.GET_RDS_FIFO_FREE, p.GLOBAL))
+        return self._call(p.Command.GET_RDS_FIFO_FREE, p.GLOBAL, decode=p.parse_rds_fifo_free)
 
     def push_rds(self, modulator_id: int, groups: list[tuple[int, int, int, int]]) -> None:
         self._call(p.Command.RDS_PUSH, modulator_id, p.rds_groups(groups))

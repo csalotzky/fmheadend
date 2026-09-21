@@ -2,7 +2,7 @@
 from dataclasses import dataclass, field
 import time
 from ..errors import DependencyUnavailable
-from ..rp2354.protocol import Busy
+from ..rp2354.protocol import Busy, MalformedResponse
 from .characters import rt_bytes
 from .scheduler import Scheduler, LOOKAHEAD_SECONDS
 
@@ -30,6 +30,7 @@ class RdsRefill:
         self.next_poll = 0.0
         self.suspended = False
         self.on_failure = None
+        self.on_read_failure = None
 
     def suspend(self):
         self.suspended = True
@@ -124,7 +125,12 @@ class RdsRefill:
         if not ready:
             return
         try:
-            free = self.rp.get_rds_fifo_free()
+            try:
+                free = self.rp.get_rds_fifo_free()
+            except MalformedResponse as exc:
+                if self.on_read_failure is None:
+                    raise
+                free = self.on_read_failure(exc)
             if len(free) != 8 or any(type(n) is not int or not 0 <= n <= 65535 for n in free):
                 raise DependencyUnavailable('Invalid RDS FIFO capacity response')
         except DependencyUnavailable as exc:

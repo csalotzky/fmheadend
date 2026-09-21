@@ -4,7 +4,7 @@ import time
 from .errors import DependencyUnavailable, DomainError
 from .models.runtime_status import TxState
 from .rp2354.client import TxConfig
-from .rp2354.protocol import IncompatibleProtocol, PROTOCOL_VERSION
+from .rp2354.protocol import Command, IncompatibleProtocol, MalformedResponse, PROTOCOL_VERSION
 
 logger = logging.getLogger(__name__)
 RETRY_SECONDS = 2.0
@@ -48,13 +48,52 @@ class Recovery:
         self.rp.clear_rds(channel)
         self.rds.reset_channel(channel)
 
+    def _verify_malformed_read(self, error):
+        """One fresh, read-only check. Never recurse or replay an ambiguous write.
+
+        Called on the existing control worker, before lost()/RDS suspension.
+        A valid new snapshot is mandatory; cached status is never returned.
+        """
+        if not self.ready or self.stopping or self.uptime is None or error.command not in (
+            Command.GET_STATUS, Command.GET_RDS_FIFO_FREE
+        ):
+            raise error
+        info = self.rp.get_info()
+        if info['rp_protocol_version'] != PROTOCOL_VERSION or info['modulator_count'] != 8:
+            raise IncompatibleProtocol('Unsupported RP protocol version or modulator count')
+        status = self.rp.get_status()  # Failure escapes; no second verification loop.
+        uptime = status.get('uptime_ms')
+        if uptime is None or uptime < self.uptime:
+            raise DependencyUnavailable('RP uptime decreased/missing during read verification; reset requires resynchronization')
+        if status['state'] != 'OK':
+            raise DependencyUnavailable('RP active hardware fault during read verification')
+        for channel in status['modulators']:
+            config = self.modulators.get(channel['id'])
+            expected = 'ON' if self.modulators.desired_on(channel['id']) else 'OFF'
+            if channel['tx_state'] != expected or (
+                # An OFF channel may have edited configuration not applied yet.
+                expected == 'ON' and
+                channel['rf_attenuation_db'] != config.rf_attenuation_db
+            ):
+                raise DependencyUnavailable(f"RP TX{channel['id']} state/configuration mismatch during read verification")
+        self.uptime = uptime
+        logger.info('RP malformed %s cleared by fresh compatible status; retaining TX/RDS state', error.command.name)
+        return status
+
+    def verify_fifo_read(self, error):
+        status = self._verify_malformed_read(error)
+        return [channel['rds_fifo_free'] for channel in status['modulators']]
+
     def observe(self):
         if not self.ready and self.clock() < self.retry_at:
             raise self.error
         try:
             if not self.ready:
                 self._restore()
-            status = self.rp.get_status()
+            try:
+                status = self.rp.get_status()
+            except MalformedResponse as exc:
+                status = self._verify_malformed_read(exc)
             uptime = status.get('uptime_ms')
             if self.uptime is not None and uptime is not None and uptime < self.uptime:
                 raise DependencyUnavailable('RP uptime decreased; reset requires resynchronization')
