@@ -165,9 +165,11 @@ and restores ON only after success. A hardware failure invalidates configuration
 and isolates that QN with CEN LOW; there is no partial active configuration or
 rollback claim. Argument rejection leaves the previous configuration unchanged.
 
-SINE selects the same QN digital input as DIGITAL. It reserves the future RP
-sample source; M8.3 has no sine generator. RF enable does not require audio clocks,
-SPI input or PCM availability. Linux/API
+SINE selects the same QN digital input as DIGITAL. M8.4 supplies local 1 kHz,
+-12 dBFS stereo PCM on enabled SINE lanes; M8.3 has no generator. RF enable does not require audio clocks,
+SPI input or PCM availability. M8.5 supplies fresh SPI PCM to configured DIGITAL
+lanes even with RF OFF (approved for bench observation); absent/unusable SPI
+produces silence without changing RF state. ANALOG I2S DATA stays zero. Linux/API
 `rf_attenuation_db` is relative attenuation: 0 is Maximum; 1.5, 3.0, ... 22.5 dB
 select the remaining 15 QN output-control steps. The wire carries nonnegative tenths
 (0, 15, ... 225), not raw register codes. Other values are invalid.
@@ -320,6 +322,13 @@ The Milestone 5 Linux refill service uses this primitive for capacity queries;
 GET_STATUS remains the full diagnostic snapshot. Scheduling policy is not part
 of this RP transport protocol.
 RDS_PUSH still acknowledges with an empty payload; `fifo_free_after` is not V1.
+
+Production M8.6A (`0.8.6a`) implements RDS_PUSH, RDS_CLEAR and GET_RDS_FIFO_FREE
+with 64 groups per TX. GET_STATUS retains its 130-byte layout and reports the
+same live free counts. No QN RDS consumer is scheduled yet: accepted groups stay
+queued until CLEAR or hardware reset, and RDS underrun counters remain zero.
+These RAM-only commands retain the 2 ms response window. See
+[M8.6A](milestone8_6a.md) for ownership and hardware checks.
 
 ## Linux timing, retry and integration behavior
 
