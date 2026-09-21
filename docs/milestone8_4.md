@@ -80,6 +80,110 @@ configuration also mute its source. RF state remains the observed QN state.
 
 ## Failure and status behavior
 
+### Boot failure investigation after the first physical attempt
+
+The operator reported immediate blinking, global INTERNAL_ERROR, no observable
+BCLK/WS, and working access to all eight QNs. Physical audio acceptance has **not**
+passed. Changes in this investigation are restricted to the audio engine,
+diagnostics, its tests and this record; the working M8.3 QN controls are unchanged.
+
+A definite bug was found in DMA rearming: setting EN through `CTRL_TRIG` also
+**triggers** the channel. The inactive channel could therefore start alongside
+its active peer instead of waiting for CHAIN_TO. EN changes now use `AL1_CTRL`,
+the non-triggering alias. This is the leading code-based explanation for a very
+early stop, but it would permit a short initial clock burst; it is not proof of
+the board's exact failure stage. Capture UART and, if needed, a scope trace
+triggered on reset to distinguish an early stop from clocks never starting.
+See the [RP2350 datasheet](https://datasheets.raspberrypi.com/rp2350/rp2350-datasheet.pdf),
+section 12.6.3.1, and Pico SDK 2.3.1 `dma_channel_set_config(..., false)`, which
+likewise uses AL1_CTRL to avoid triggering. The original native mock treated
+CTRL_TRIG as ordinary RAM and missed this effect; it now models the trigger.
+
+The initialization order was compared with the known-working diagnostic:
+configure PIO and DMA, prepare data, start DMA, then enable the SM. M8.4 additionally
+primes the joined TX FIFO while the SM is disabled, with a 1 ms timeout. That is
+valid because the FIFO/DREQ can accept DMA writes while instruction execution is
+disabled. The reference sets pin directions/levels before `pio_sm_init`; M8.4
+sets them immediately afterward, while disabled. The SDK helpers save/restore
+PINCTRL/EXECCTRL, and neither ordering inherently prevents startup. X=14 must
+remain seeded after SM initialization. No speculative reordering, clock rounding,
+QN change, timeout relaxation or fault suppression was made.
+
+Every existing route to an audio fault during boot or immediately afterward is
+now distinguishable on UART:
+
+| Failed stage / reason | Condition and evidence printed |
+|---|---|
+| clock / CLOCK FAULT | Exact divider unavailable, out of range or zero system clock; sys_hz, target SM Hz, div256 |
+| SM claim / RESOURCE FAULT | No free PIO0 SM; SM=-1 |
+| program load / RESOURCE FAULT | No instruction space, or negative SDK load result; offset and sdk_rc |
+| DMA claim / RESOURCE FAULT | Either DMA allocation fails; both channel numbers |
+| SM config or pin directions / PIO CONFIG FAULT | Nonzero `pio_sm_init` or pin-direction return; distinct stage and sdk_rc (previously unchecked) |
+| core1 launch/ready or buffers / REFILL DEADLINE | Post-launch 100 ms timeout before RUNNING; last stage and milestone bits |
+| FIFO prime / DMA FAULT | TX FIFO not full within 1 ms; FIFO state, DMA counts, CTRL/error bits and addresses |
+| PIO start / REFILL DEADLINE | Core 0's startup timeout won before core 1 could publish RUNNING |
+| refill / PIO STALL | TXSTALL observed after enabling; pre-cleanup FDEBUG and PC |
+| refill / DMA FAULT | DMA READ/WRITE bus error; pre-cleanup channel CTRL/addresses |
+| refill / REFILL DEADLINE | Wrong/both completion flags, free channel already busy, peer inactive, peer finishes during refill, or no progress for 6 ms |
+
+The SDK core-launch handshake itself has no new timeout: if it hangs, UART ends
+at `core1 launch` and host initialization is never reached. That does not match
+the reported working host/QN access. DMA configuration is register writes with
+no SDK error return; FIFO priming verifies actual DMA progress before PIO starts.
+Fault snapshots precede disabling/aborting hardware, so cleanup does not erase
+the diagnostic evidence. Stage markers are published by core 1; all UART output
+is on core 0, never in the refill loop or an IRQ. The global INTERNAL_ERROR and
+blinking LED remain intact.
+
+Expected successful next boot (normally SM0, offset 24, DMA0/1; buffer addresses
+depend on the build) includes exactly these stage lines, between the QN boot
+summary and existing audio/host banners:
+
+```text
+AUDIO: init start
+AUDIO: clock sys_hz=150000000 target_sm_hz=6144000 div256=6250
+AUDIO: SM claimed PIO=0 SM=0
+AUDIO: PIO program loaded offset=24 instructions=8
+AUDIO: DMA channels claimed A=0 B=1
+AUDIO: SM configured DATA=4..11 BCLK=12 WS=13 div=24+106/256 PC=24
+AUDIO: DMA configured words=1024 ring_bytes=4096 DREQ=0 A=<address> B=<address>
+AUDIO: core1 launch
+AUDIO: core1 launched
+AUDIO: core1 ready
+AUDIO: buffers prepared frames=128 each; silence
+AUDIO: DMA started channel=0
+AUDIO: FIFO primed level=8
+AUDIO: PIO/DMA started SM=0
+AUDIO: init OK
+```
+
+A failure replaces `init OK` with `AUDIO: FAIL stage=... reason=... elapsed_us=...
+sdk_rc=...`, a specific condition plus DMA interrupt flags, resource values,
+PIO registers and one line per claimed DMA channel.
+`milestones=0x1F` proves the enable call was reached; it does not prove measured
+clock frequency. Bits 01/02/04/08/10 mean core ready, buffers prepared, DMA started,
+FIFO primed and PIO enabled respectively. `completed` counts handled DMA buffers
+before the fault. A later fault uses the same once-only dump from the main loop.
+
+Next physical attempt: Compile Project -> Flash Project (SWD), capture UART
+115200 8N1 from reset, keep every TX OFF, and check TP1/TP2 (GPIO13/12). Require
+48 kHz WS / 1.536 MHz BCLK and idle LED OFF before repeating any SINE/RF test.
+If it fails, retain the complete AUDIO block, especially FAIL, milestones and
+the register dump. No physical success is claimed for this fix.
+
+Follow-up automated results: production build and all eight firmware suites
+passed, including the assembled PIO check, initialization-order checks, every
+injected initialization failure and the CTRL_TRIG-vs-AL1_CTRL regression.
+The seven existing mux core tests also passed (native direct Zig C++ build;
+the initial CMake attempt lacked an archiver). The complete daemon suite was
+attempted: **426 passed, 23 skipped, 3 failed**. All three remaining failures
+are GStreamer environment limitations: missing `udpsink`, `udpsrc` and
+`audiocheblimit` plugins in this Windows environment. The Linux-only integration
+tests were skipped. Initial DLL/search-path and subprocess package-path issues
+were resolved using process-local settings and ignored temporary helpers, with
+no dependency installation or production Python changes. These results do not
+constitute physical validation of the audio fix.
+
 Resource/clock failure, DMA bus error, PIO TX stall, missed refill or lack of
 DMA progress latches an audio failure. FIFO priming is bounded to 1 ms and the
 post-launch boot wait to 100 ms; running progress has a 6 ms watchdog. Runtime

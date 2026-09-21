@@ -75,6 +75,7 @@ int main(void)
         if (audio_engine_state()!=audio_state) {
             audio_state=audio_engine_state();
             uart_printf("AUDIO: %s; reset required\r\n",audio_engine_state_name(audio_state));
+            audio_engine_log_fault();
         }
         const uint64_t now = time_us_64();
         if (now >= next_led_us) {

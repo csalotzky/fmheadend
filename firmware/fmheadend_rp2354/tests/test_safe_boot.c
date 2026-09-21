@@ -26,6 +26,7 @@ bool audio_engine_init(void)
     return true;
 }
 audio_state_t audio_engine_state(void) { return AUDIO_RUNNING; }
+void audio_engine_log_fault(void) { assert(false); }
 const char *audio_engine_state_name(audio_state_t s) { assert(s==AUDIO_RUNNING); return "RUNNING"; }
 
 void gpio_init(unsigned pin) { output[pin] = latch[pin] = false; }

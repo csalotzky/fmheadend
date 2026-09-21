@@ -13,32 +13,69 @@ static uint64_t now, next_complete;
 static const uint32_t *read_address[2];
 static jmp_buf done;
 static unsigned rendered_phase;
+static bool on_core1;
+static unsigned trigger_writes, programs_removed;
+static char uart_text[8192];
 enum { NORMAL, NO_SM, NO_PROGRAM, NO_DMA, BAD_CLOCK, NO_PRIME, STALL, DMA_ERROR,
-       MISSED_BOTH, LATE_RETRIGGER, NO_PROGRESS, CORE_NOT_STARTED, LATE_REFILL };
+       MISSED_BOTH, LATE_RETRIGGER, NO_PROGRESS, CORE_NOT_STARTED, LATE_REFILL,
+       PROGRAM_LOAD_ERROR, SM_CONFIG_ERROR, PINDIR_ERROR };
+void uart_puts(unsigned uart,const char *text)
+{
+    assert(uart==uart0 && !on_core1); /* Logging must never cause a refill miss. */
+    assert(strlen(uart_text)+strlen(text)<sizeof(uart_text));
+    strcat(uart_text,text);
+}
+static void control_write(uint32_t *p,uint32_t value)
+{
+    for(unsigned ch=0;ch<2;++ch) {
+        bool trigger=p==&fake_dma.ch[ch].ctrl_trig;
+        if (trigger || p==&fake_dma.ch[ch].al1_ctrl) {
+            fake_dma.ch[ch].ctrl_trig=fake_dma.ch[ch].al1_ctrl=value;
+            if (trigger && (value&1) && !busy[ch]) { busy[ch]=true; ++trigger_writes; }
+            return;
+        }
+    }
+    assert(false);
+}
+void hw_clear_bits(uint32_t *p,uint32_t bits) { control_write(p,*p&~bits); }
+void hw_set_bits(uint32_t *p,uint32_t bits) { control_write(p,*p|bits); }
 uint32_t clock_get_hz(unsigned clk) { assert(clk==clk_sys);return scenario==BAD_CLOCK?125000000:150000000; }
 int pio_claim_unused_sm(PIO p,bool required) { assert(p==pio0 && !required);return scenario==NO_SM?-1:0; }
 bool pio_can_add_program(PIO p,const pio_program_t *prog) { (void)p;(void)prog;return scenario!=NO_PROGRAM; }
-unsigned pio_add_program(PIO p,const pio_program_t *prog) { (void)p;(void)prog;return 0; }
+int pio_add_program(PIO p,const pio_program_t *prog) { (void)p;(void)prog;return scenario==PROGRAM_LOAD_ERROR?-1:24; }
+void pio_remove_program(PIO p,const pio_program_t *prog,unsigned offset)
+{ (void)p;(void)prog;assert(offset==24);++programs_removed; }
 void pio_sm_unclaim(PIO p,unsigned s) { (void)p;assert(s==0);++releases; }
 int dma_claim_unused_channel(bool required) { assert(!required);return scenario==NO_DMA && claims==1?-1:(int)claims++; }
 void dma_channel_unclaim(unsigned ch) { assert(ch<2);++releases; }
-void pio_sm_init(PIO p,unsigned s,unsigned off,const pio_sm_config *c)
+int pio_sm_init(PIO p,unsigned s,unsigned off,const pio_sm_config *c)
 {
-    (void)p;assert(s==0 && off==0 && c->out==4 && c->count==8 && c->side==12);
+    assert(s==0 && off==24 && c->out==4 && c->count==8 && c->side==12);
     assert(c->divider==6250 && c->right && c->autopull);
+    p->sm[s].addr=off;
+    return scenario==SM_CONFIG_ERROR?-2:0;
 }
 void pio_sm_exec(PIO p,unsigned s,unsigned instruction) { (void)p;(void)s;assert(instruction==46); }
 void pio_sm_set_enabled(PIO p,unsigned s,bool value)
 {
-    (void)p;(void)s;enabled=value;
+    (void)s;enabled=value;p->ctrl=value;
     if(value) { ++starts;fake_pio.fdebug=0;next_complete=now+2666; }
 }
 void pio_sm_set_pins_with_mask(PIO p,unsigned s,uint32_t value,uint32_t mask)
 { (void)p;(void)s;assert(value==0 && mask==(0x3ffu<<4)); }
-void pio_sm_set_consecutive_pindirs(PIO p,unsigned s,unsigned first,unsigned count,bool output)
-{ (void)p;(void)s;assert(first==4 && count==10 && output); }
+int pio_sm_set_consecutive_pindirs(PIO p,unsigned s,unsigned first,unsigned count,bool output)
+{ (void)p;(void)s;assert(first==4 && count==10 && output); return scenario==PINDIR_ERROR?-3:0; }
 void pio_gpio_init(PIO p,unsigned pin) { (void)p;assert(pin>=4 && pin<=13);pins|=1u<<pin; }
-bool pio_sm_is_tx_fifo_full(PIO p,unsigned s) { (void)p;(void)s;return scenario!=NO_PRIME; }
+bool pio_sm_is_tx_fifo_full(PIO p,unsigned s)
+{
+    (void)p;(void)s;
+    assert(!enabled && busy[0] && !busy[1]); /* DMA must prime BEFORE enabling PIO. */
+    assert((atomic_load(&milestones)&(CORE_READY|BUFFERS_READY|DMA_STARTED))==7);
+    for(unsigned i=0;i<2;++i) for(unsigned w=0;w<AUDIO_BUFFER_WORDS;++w)
+        assert(read_address[i][w]==0);
+    return scenario!=NO_PRIME;
+}
+unsigned pio_sm_get_tx_fifo_level(PIO p,unsigned s) { (void)p;(void)s;return scenario==NO_PRIME?0:8; }
 unsigned pio_get_dreq(PIO p,unsigned s,bool tx) { (void)p;(void)s;assert(tx);return 7; }
 void dma_channel_configure(unsigned ch,const dma_channel_config *c,volatile void *write,
                            const void *read,uint32_t count,bool trigger)
@@ -46,7 +83,9 @@ void dma_channel_configure(unsigned ch,const dma_channel_config *c,volatile void
     assert(c->chain==(ch^1) && c->ring==12 && c->dreq==7 && c->size==DMA_SIZE_32);
     assert(c->read && !c->write && c->priority && !trigger && count==1024);
     assert(write==&fake_pio.txf[0] && ((uintptr_t)read&4095)==0);
-    read_address[ch]=read;fake_dma.ch[ch].ctrl_trig=1;
+    read_address[ch]=read;fake_dma.ch[ch].ctrl_trig=fake_dma.ch[ch].al1_ctrl=1;
+    fake_dma.ch[ch].transfer_count=count;
+    fake_dma.ch[ch].read_addr=(uintptr_t)read;fake_dma.ch[ch].write_addr=(uintptr_t)write;
 }
 void dma_start_channel_mask(uint32_t mask) { assert(mask==1);busy[0]=true; }
 bool dma_channel_is_busy(unsigned ch) { return busy[ch]; }
@@ -84,9 +123,13 @@ void tight_loop_contents(void)
 }
 void multicore_launch_core1(void (*fn)(void))
 {
+    assert(atomic_load(&stage)==CORE_LAUNCH);
+    assert(strstr(uart_text,"SM configured") && strstr(uart_text,"DMA configured"));
     fake_dma.intr=0;
     if(scenario==CORE_NOT_STARTED) return;
+    on_core1=true;
     if(!setjmp(done)) fn();
+    on_core1=false;
 }
 static void reset(unsigned test)
 {
@@ -94,21 +137,45 @@ static void reset(unsigned test)
     now=next_complete=0;enabled=false;memset(busy,0,sizeof(busy));
     memset(&fake_pio,0,sizeof(fake_pio));memset(&fake_dma,0,sizeof(fake_dma));
     sm=-1;channels[0]=channels[1]=-1;atomic_store(&state,AUDIO_STARTING);atomic_store(&requested_mask,0);
+    atomic_store(&stage,CLOCK_CHECK);atomic_store(&milestones,0);atomic_store(&snapshot_ready,false);
+    program_offset=-1;sdk_result=0;completed_buffers=0;fault_logged=false;
+    uart_text[0]=0;on_core1=false;trigger_writes=programs_removed=0;
 }
 int main(void)
 {
+    /* Model the hardware effect that the original mock omitted: CTRL_TRIG
+     * starts an enabled idle channel; AL1_CTRL only arms it for chaining. */
+    reset(NORMAL); busy[1]=true;
+    hw_set_bits(&fake_dma.ch[0].ctrl_trig,1);
+    assert(busy[0] && busy[1] && trigger_writes==1);
+    reset(NORMAL); busy[1]=true;
+    hw_set_bits(&fake_dma.ch[0].al1_ctrl,1);
+    assert(!busy[0] && busy[1] && trigger_writes==0);
     reset(NORMAL); assert(audio_engine_init());
     assert(completions==24 && starts==1 && enabled && pins==(0x3ffu<<4));
-    for(unsigned s=NO_SM;s<=LATE_REFILL;++s) {
+    assert(trigger_writes==0);
+    assert(strstr(uart_text,"AUDIO: init start") && strstr(uart_text,"AUDIO: init OK"));
+    assert(strstr(uart_text,"PIO program loaded offset=24") && strstr(uart_text,"FIFO primed level=8"));
+    assert(strstr(uart_text,"core1 ready") && strstr(uart_text,"buffers prepared"));
+    assert(!strstr(uart_text,"FAIL"));
+    for(unsigned s=NO_SM;s<=PINDIR_ERROR;++s) {
         reset(s);
         /* Core-not-started timeout runs on core 0, without a core1 setjmp. */
         bool ok;
         if(s==CORE_NOT_STARTED) { if(!setjmp(done)) ok=audio_engine_init();else ok=false; }
         else ok=audio_engine_init();
+        audio_engine_log_fault();
         assert(!ok && audio_engine_state()>AUDIO_RUNNING && !enabled);
+        assert(strstr(uart_text,"AUDIO: FAIL stage=") && strstr(uart_text,"sys_hz="));
+        assert(!strstr(uart_text,"init OK"));
         if(s==NO_PROGRAM) assert(releases==1);
         if(s==NO_DMA) assert(releases==2);
-        if(s>=NO_PRIME && s!=CORE_NOT_STARTED) assert(fake_dma.abort==3);
+        if(s>=NO_PRIME && s<=LATE_REFILL && s!=CORE_NOT_STARTED) assert(fake_dma.abort==3);
+        if(s==NO_PRIME) assert(strstr(uart_text,"stage=FIFO prime") && !(atomic_load(&milestones)&PIO_STARTED));
+        if(s==STALL) assert(strstr(uart_text,"stage=refill") && strstr(uart_text,"FDEBUG=01000000"));
+        if(s==BAD_CLOCK) assert(strstr(uart_text,"stage=clock") && strstr(uart_text,"sys_hz=125000000 div256=0"));
+        if(s==SM_CONFIG_ERROR || s==PINDIR_ERROR) assert(audio_engine_state()==AUDIO_PIO_FAULT && programs_removed==1);
+        size_t size=strlen(uart_text);audio_engine_log_fault();assert(strlen(uart_text)==size);
     }
     puts("Production DMA engine: startup, pins/divider, 24 continuous buffers, lane changes, resource/stall/deadline faults PASS");
 }

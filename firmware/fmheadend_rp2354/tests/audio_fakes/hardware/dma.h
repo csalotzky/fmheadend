@@ -4,7 +4,7 @@
 #define DMA_CH0_CTRL_TRIG_EN_BITS 1u
 #define DMA_CH0_CTRL_TRIG_AHB_ERROR_BITS (1u<<31)
 #define DMA_SIZE_32 2
-typedef struct { uint32_t ctrl_trig, transfer_count; } fake_dma_channel_t;
+typedef struct { uint32_t ctrl_trig, al1_ctrl, transfer_count, read_addr, write_addr; } fake_dma_channel_t;
 typedef struct { fake_dma_channel_t ch[4]; uint32_t intr,abort; } fake_dma_t;
 extern fake_dma_t fake_dma;
 #define dma_hw (&fake_dma)
