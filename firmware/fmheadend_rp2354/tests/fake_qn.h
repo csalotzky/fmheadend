@@ -8,6 +8,5 @@ extern unsigned fake_calls, fake_fail_at, fake_fail_count, fake_writes;
 extern uint64_t fake_now;
 extern int fake_mismatch_reg;
 extern void (*fake_operation_hook)(void);
-extern void (*fake_write_hook)(unsigned target, uint8_t reg, uint8_t value);
 void fake_qn_reset(void);
 #endif

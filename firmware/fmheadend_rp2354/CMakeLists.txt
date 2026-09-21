@@ -58,14 +58,7 @@ add_executable(fmheadend_rp2354
         )
 
 pico_set_program_name(fmheadend_rp2354 "fmheadend_rp2354")
-option(FMHEADEND_TX0_RDS_PROBE "Bench-only one-shot TX0 local RDS probe (requires host RF ON)" OFF)
-if(FMHEADEND_TX0_RDS_PROBE)
-    target_sources(fmheadend_rp2354 PRIVATE qn_rds_local_probe.c)
-    target_compile_definitions(fmheadend_rp2354 PRIVATE FMHEADEND_TX0_RDS_PROBE=1)
-    pico_set_program_version(fmheadend_rp2354 "0.8.6a-probe")
-else()
-    pico_set_program_version(fmheadend_rp2354 "0.8.6a")
-endif()
+pico_set_program_version(fmheadend_rp2354 "0.8.6a")
 pico_generate_pio_header(fmheadend_rp2354 ${CMAKE_CURRENT_LIST_DIR}/i2s_audio.pio)
 pico_generate_pio_header(fmheadend_rp2354 ${CMAKE_CURRENT_LIST_DIR}/spi_audio.pio)
 target_compile_definitions(fmheadend_rp2354 PRIVATE

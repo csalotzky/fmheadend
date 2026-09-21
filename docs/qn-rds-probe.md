@@ -1,5 +1,15 @@
 # TX0 QN8007B RDS polling probe
 
+Subsequent operator test: data-register writes alone did not toggle STATUS2 bit 7;
+each RDSTXRDY toggle did, repeatedly. Polling handoff is now physically established.
+No receiver RDS indication was seen with this slow host-driven probe. A subsequent
+operator-run sustained test decoded PS "R D S", with RDS indication, approximately
+11.4 accepted groups/s, maximum observed acknowledgement about 88 ms, TX0 ON/OK
+throughout and clean timed RF OFF. The temporary firmware experiment has been
+removed; production remains M8.6A FIFO transport only. These results establish the
+polling direction, not a requirement for the diagnostic settling delays. GPIO26
+remains unused. Settling requirements are still to be validated during M8.6B.
+
 Standalone `firmware/fmheadend_rp2354/tools/qn_rds_probe.py`, using the existing
 Linux `Rp2354Client` against **unchanged production firmware 0.8.6a**, host I2C
 address **0x62**. No RP consumer, FIFO access, scheduler, GPIO26 use or firmware

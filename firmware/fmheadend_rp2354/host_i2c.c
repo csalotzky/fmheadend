@@ -10,10 +10,6 @@
 #include "hardware/uart.h"
 #include <stdio.h>
 #include <string.h>
-#if defined(FMHEADEND_TX0_RDS_PROBE) && FMHEADEND_TX0_RDS_PROBE
-#include "qn_rds_local_probe.h"
-static qn_rds_local_probe_t local_probe;
-#endif
 
 #if !defined(FMHEADEND_HOST_I2C_ADDRESS) || FMHEADEND_HOST_I2C_ADDRESS < 0x08 || FMHEADEND_HOST_I2C_ADDRESS > 0x77
 #error "Configure an unreserved 7-bit FMHEADEND_HOST_I2C_ADDRESS"
@@ -123,10 +119,6 @@ void host_i2c_init(uint8_t ready_mask)
     snprintf(line, sizeof(line), "HOST I2C1: SDA=GPIO%u SCL=GPIO%u address=0x%02X; V1 M8.3 QN CONTROL; RF OFF\r\n",
              HOST_I2C_SDA_PIN, HOST_I2C_SCL_PIN, FMHEADEND_HOST_I2C_ADDRESS);
     uart_puts(DEBUG_UART, line);
-#if defined(FMHEADEND_TX0_RDS_PROBE) && FMHEADEND_TX0_RDS_PROBE
-    memset(&local_probe,0,sizeof(local_probe));
-    uart_puts(DEBUG_UART,"LOCAL RDS: 0.8.6a-probe ARMED; boot RF OFF; host must configure/enable TX0; one run per reset\r\n");
-#endif
 }
 
 void host_i2c_poll(void)
@@ -137,10 +129,6 @@ void host_i2c_poll(void)
     const bool have_work=host_protocol_take_work(&host,&work);
     restore_interrupts(lock);
     if (have_work) {
-#if defined(FMHEADEND_TX0_RDS_PROBE) && FMHEADEND_TX0_RDS_PROBE
-        if (work.event.target==0 && (work.event.command==2 || work.event.command==3 || work.event.command==8))
-            qn_rds_local_probe_cancel(&local_probe);
-#endif
         host_protocol_run_work(&host,&work,(uint32_t)(time_us_64()/1000));
         qn_control_audio_fault(&host.qn,audio_engine_state()!=AUDIO_RUNNING);
         if (work.event.command==4 && work.event.status==HOST_OK) {
@@ -153,10 +141,6 @@ void host_i2c_poll(void)
         host_protocol_complete_work(&host,&work);
         restore_interrupts(lock);
     }
-#if defined(FMHEADEND_TX0_RDS_PROBE) && FMHEADEND_TX0_RDS_PROBE
-    /* Same core0 bus owner, outside IRQ/masks. Host work takes priority. */
-    if (!have_work) qn_rds_local_probe_poll(&local_probe,&host.qn);
-#endif
     log_drain();
     if (log_cursor<log_size) return;
     log_cursor=log_size=0;
@@ -173,11 +157,6 @@ void host_i2c_poll(void)
         log_append(line);
     }
     if (!have_event) {
-#if defined(FMHEADEND_TX0_RDS_PROBE) && FMHEADEND_TX0_RDS_PROBE
-        if (qn_rds_local_probe_log(&local_probe,line,sizeof(line))) {
-            log_append(line); log_drain(); return;
-        }
-#endif
         if (spi_audio_diagnostic(line,sizeof(line),time_us_64())) log_append(line);
         log_drain(); return;
     }
