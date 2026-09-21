@@ -5,8 +5,12 @@
 #include "qn_control.h"
 #include "fake_qn.h"
 static qn_control_t q;
+static uint8_t published_mask;
+static unsigned notifications;
+static void source_sink(uint8_t mask) { published_mask=mask; ++notifications; }
 static uint8_t config[15]={0x34,0x7f,1,0,60,0,1,50,0,0,1,0xf1,0xff,1,1};
-static void reset(void) { fake_qn_reset(); qn_control_init(&q,255); }
+static void reset(void)
+{ fake_qn_reset(); qn_control_init(&q,255); qn_control_set_audio_sink(&q,source_sink); notifications=0; }
 static uint8_t call(unsigned cmd,unsigned ch,const uint8_t *p)
 { uint8_t out; return qn_control_execute(&q,cmd,ch,p,&out); }
 static void set_frequency(uint8_t *p,unsigned freq)
@@ -30,7 +34,10 @@ int main(void)
         assert(fake_regs[3][8]==0xba && (fake_regs[3][11]&3)==1);
         assert(fake_regs[3][13]==0xd0 && fake_regs[3][0x5a]==0xe4);
         assert(q.channel[3].configured && !q.channel[3].enabled);
+        assert(qn_control_sine_mask(&q)==0);
         assert(call(3,3,on)==0 && q.channel[3].enabled);
+        assert(qn_control_sine_mask(&q)==(mode==2 ? 8 : 0));
+        assert(published_mask==qn_control_sine_mask(&q));
         assert(qn_control_led(&q,0));
         assert(fake_regs[3][0]==(mode==1?0x41:0x45));
         assert(call(2,3,config)==0 && q.channel[3].enabled);
@@ -40,6 +47,7 @@ int main(void)
         assert(status[55]==1 && host_get_i16(status+56)==60);
         assert(status[69]==(mode==1?1:255));
         assert(call(3,3,off)==0 && !qn_control_active(&q));
+        assert(qn_control_sine_mask(&q)==0);
     }
     /* Exactly representable frequency endpoints, every RF step and manual gain. */
     for(unsigned step=0;step<16;++step) {
@@ -59,9 +67,10 @@ int main(void)
     fake_regs[0][1]=4; /* Preserve the existing RDS-ready handshake bit. */
     assert(call(2,0,p)==0 && fake_regs[0][1]==0x1f && fake_regs[0][0]==3);
     assert(call(3,0,on)==0 && fake_regs[0][0]==0x43);
-    unsigned before_invalid=fake_calls;p[7]=51;
+    unsigned before_invalid=fake_calls, before_notify=notifications;p[7]=51;
     assert(call(2,0,p)==HOST_INVALID_ARGUMENT && fake_calls==before_invalid);
     assert(q.channel[0].configured && q.channel[0].enabled); /* Old valid config. */
+    assert(notifications==before_notify); /* Invalid config cannot glitch DATA. */
     reset();memcpy(p,config,15);p[10]=0;p[14]=1;
     assert(call(2,0,p)==0 && (fake_regs[0][13]&0xc0)==0x80); /* AUTO + clipping. */
     reset();memcpy(p,config,15);p[14]=0;p[13]=0;
@@ -93,6 +102,7 @@ int main(void)
         fake_calls=0;fake_fail_at=op;fake_fail_count=3;
         assert(call(2,0,config)==HOST_QN_ERROR);
         assert(!q.channel[0].configured && !q.channel[0].enabled && !fake_cen[0]);
+        assert(published_mask==0);
         assert(qn_control_fault(&q) && !qn_control_led(&q,0) && qn_control_led(&q,250000));
     }
     for(unsigned enabled=0;enabled<2;++enabled) for(unsigned op=1;op<=3;++op) {
@@ -122,5 +132,23 @@ int main(void)
     reset();for(unsigned i=0;i<8;++i) {q.channel[i].configured=true;fake_regs[i][0]=1;}
     fake_retry_twice=true;qn_control_status(&q,status,0);assert(fake_now<850000);
     assert(q.last_error==0); /* Recovered attempts are history, not active faults. */
-    puts("QN control: routes, config, gain, RF lifecycle, raw access, failures, LED and timing PASS");
+    reset(); config[8]=2;
+    for(unsigned i=0;i<8;++i) { assert(call(2,i,config)==0); assert(call(3,i,on)==0); }
+    assert(qn_control_sine_mask(&q)==255);
+    config[8]=0; assert(call(2,3,config)==0 && qn_control_sine_mask(&q)==247);
+    config[8]=1; assert(call(2,6,config)==0 && qn_control_sine_mask(&q)==183);
+    config[8]=2; assert(call(3,0,off)==0 && qn_control_sine_mask(&q)==182);
+    fake_fail_at=fake_calls+1; fake_fail_count=3;
+    assert(call(2,1,config)==HOST_QN_ERROR && qn_control_sine_mask(&q)==180);
+    reset(); qn_control_audio_fault(&q,true); qn_control_status(&q,status,0);
+    assert(status[0]==1 && status[9]==HOST_INTERNAL_ERROR && !qn_control_led(&q,0));
+    assert(qn_control_led(&q,250000));
+    for(unsigned i=5;i<9;++i) assert(status[i]==0); /* No invented SPI errors. */
+    for(unsigned i=0;i<8;++i) {
+        assert(status[10+15*i]==0);
+        for(unsigned b=3;b<13;++b) assert(status[10+15*i+b]==0);
+    }
+    qn_control_audio_fault(&q,false); qn_control_status(&q,status,0);
+    assert(status[0]==0 && status[9]==HOST_INTERNAL_ERROR); /* Latched history. */
+    puts("QN control: routes, config, RF lifecycle, source masks, real faults, LED and timing PASS");
 }

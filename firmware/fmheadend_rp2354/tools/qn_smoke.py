@@ -1,4 +1,4 @@
-"""M8.3 conducted-bench test, using the existing Linux RP client (no audio needed)."""
+"""M8.3/M8.4 conducted-bench test using the existing Linux RP client."""
 import argparse
 from pathlib import Path
 import sys
@@ -29,8 +29,8 @@ def main():
     try:
         info = rp.get_info()
         print("GET_INFO:", info, flush=True)
-        if info["rp_firmware_version"] != "0.8.3":
-            raise RuntimeError("This smoke requires M8.3 firmware 0.8.3")
+        if info["rp_firmware_version"] not in ("0.8.3", "0.8.4"):
+            raise RuntimeError("This smoke requires M8.3/M8.4 firmware 0.8.3/0.8.4")
         for tx in range(8):
             cid = rp.qn_read_register(tx, 0x06)
             print(f"TX{tx} QN 0x{0x21 + tx:02X}: CID2=0x{cid:02X}", flush=True)
@@ -73,8 +73,11 @@ def main():
             time.sleep(args.hold_seconds)
             rp.set_tx_enabled(args.tx, True)
             status("ON")
+            audio = ("Expect 1 kHz stereo sine, -12 dBFS PCM on this DATA lane."
+                     if info["rp_firmware_version"] == "0.8.4" and args.mode == "SINE"
+                     else "DIGITAL is silent; ANALOG requires an external source; M8.3 has no sine.")
             print(f"TX{args.tx} RF ON: measure {args.frequency_khz} kHz carrier; LED ON. "
-                  "No digital audio is generated.", flush=True)
+                  + audio, flush=True)
             time.sleep(args.hold_seconds)
         finally:
             # Best effort on exceptions/Ctrl-C; an I2C failure cannot prove RF OFF.

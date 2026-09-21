@@ -1,0 +1,17 @@
+; Eight simultaneous lane bits. BCLK = side bit 0, WS = side bit 1.
+; 2 cycles LOW + 2 HIGH per bit; 16 bits/channel; 128 cycles/frame.
+; WS changes with the PREVIOUS channel's LSB, one full bit before the MSB.
+.program i2s_audio
+.side_set 2
+.wrap_target
+left_bits:
+    out pins, 8     side 0b00 [1]
+    jmp x-- left_bits side 0b01 [1]
+    out pins, 8     side 0b10 [1]
+    set x, 14       side 0b11 [1]
+right_bits:
+    out pins, 8     side 0b10 [1]
+    jmp x-- right_bits side 0b11 [1]
+    out pins, 8     side 0b00 [1]
+    set x, 14       side 0b01 [1]
+.wrap

@@ -5,11 +5,16 @@
 
 typedef struct {
     bool ready, configured, enabled, fault;
-    uint8_t system1, last_error, saturated;
+    uint8_t system1, last_error, saturated, audio_mode;
     int16_t attenuation;
     uint32_t failed_transactions;
 } qn_channel_t;
-typedef struct { qn_channel_t channel[8]; uint8_t last_error; } qn_control_t;
+typedef struct {
+    qn_channel_t channel[8];
+    uint8_t last_error;
+    bool audio_fault;
+    void (*audio_sink)(uint8_t mask); /* Optional foreground source notification. */
+} qn_control_t;
 
 /* Foreground owner only. Wire statuses are the existing HOST_* values. */
 void qn_control_init(qn_control_t *q, uint8_t ready_mask);
@@ -19,4 +24,7 @@ void qn_control_status(qn_control_t *q, uint8_t payload[130], uint32_t uptime);
 bool qn_control_fault(const qn_control_t *q);
 bool qn_control_active(const qn_control_t *q);
 bool qn_control_led(const qn_control_t *q, uint64_t now_us);
+uint8_t qn_control_sine_mask(const qn_control_t *q);
+void qn_control_audio_fault(qn_control_t *q, bool fault);
+void qn_control_set_audio_sink(qn_control_t *q, void (*sink)(uint8_t));
 #endif

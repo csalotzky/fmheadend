@@ -1,6 +1,6 @@
-# fmheadend RP2354 firmware: M8.3 QN control
+# fmheadend RP2354 firmware: M8.4 continuous I2S
 
-Production firmware `0.8.3`, protocol V1, configurable host I2C address `0x62`.
+Production firmware `0.8.4`, protocol V1, configurable host I2C address `0x62`.
 The proven M8.1 software QN bus and safe boot assign eight devices to 0x21..0x28
 and leave RF OFF. GET_INFO, GET_STATUS, QN_READ_REGISTER, QN_WRITE_REGISTER,
 SET_TX_CONFIG and SET_TX_ENABLED execute real operations. ON requires prior
@@ -14,6 +14,8 @@ the M8.2 2 ms client is not compatible with lengthy QN operations.
 - `qn_control.c/.h`: bounded foreground QN operations, state, safety and LED policy.
 - `host_protocol.c/.h`: framing, validation, work handoff and response cursor.
 - `host_i2c.c/.h`: hardware I2C peripheral and nonblocking foreground diagnostics.
+- `audio_engine.c/.h`, `i2s_audio.pio`: one PIO SM, chained DMA buffers, core 1 refill.
+- `audio_samples.c/.h`: 48 kHz stereo packing, independent lanes, 1 kHz -12 dBFS sine.
 - `fmheadend_rp2354.c`: boot orchestration, UART and GPIO27 LED.
 - `tests/`: native tests; `tools/qn_smoke.py`: real Pi bench test.
 
@@ -22,6 +24,9 @@ Project (SWD) continue to use the normal `build` target. UART remains 115200 8N1
 on GPIO28/29. GPIO27 is OFF at healthy idle, ON for active TX, blinking on active
 critical faults. The known-good `../fmheadend_i2ctest` is unchanged.
 
-There is no audio engine, sine generator, SPI transport or RDS FIFO/scheduler.
-SINE=2 selects the QN digital input only. See [M8.1](../../docs/milestone8_1.md)
+The shared clocks run continuously after safe boot: BCLK=1.536 MHz, WS=48 kHz,
+16-bit stereo I2S. SINE=2 supplies a local tone on enabled, configured lanes;
+DIGITAL/ANALOG and OFF lanes transmit zeros. There is no SPI transport or RDS
+FIFO/scheduler. See [M8.4](../../docs/milestone8_4.md) for timing, failure handling,
+tests and the exact operator procedure. See [M8.1](../../docs/milestone8_1.md)
 and [M8.2](../../docs/milestone8_2.md) for historical bring-up records.

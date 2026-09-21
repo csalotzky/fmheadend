@@ -13,6 +13,10 @@
 enum { SYSTEM1=0, SYSTEM2=1, DEV_ADD=2, ANACTL1=3, REG_VGA=4,
        I2S=7, CH=8, CH_STEP=11, GAIN=13, STATUS1=26, PAG_CAL=90 };
 #define TXREQ 0x40u
+static void publish_sources(qn_control_t *q)
+{ if (q->audio_sink) q->audio_sink(qn_control_sine_mask(q)); }
+void qn_control_set_audio_sink(qn_control_t *q, void (*sink)(uint8_t))
+{ q->audio_sink=sink; publish_sources(q); }
 
 static bool read_reg(qn_control_t *q, unsigned i, uint8_t reg, uint8_t *v)
 {
@@ -41,6 +45,7 @@ static uint8_t isolate(qn_control_t *q, unsigned i)
     c->ready=c->configured=c->enabled=false;
     c->fault=true; c->attenuation=INT16_MIN; c->saturated=255;
     c->last_error=q->last_error=HOST_QN_ERROR;
+    publish_sources(q);
     return HOST_QN_ERROR;
 }
 static bool checked_write(qn_control_t *q, unsigned i, uint8_t reg, uint8_t v, uint8_t mask)
@@ -48,11 +53,13 @@ static bool checked_write(qn_control_t *q, unsigned i, uint8_t reg, uint8_t v, u
     uint8_t actual;
     return write_reg(q,i,reg,v) && read_reg(q,i,reg,&actual) && !((actual^v)&mask);
 }
-static void observed_system1(qn_channel_t *c, uint8_t v)
+static void observed_system1(qn_control_t *q, unsigned i, uint8_t v)
 {
+    qn_channel_t *c=&q->channel[i];
     if ((c->system1^v)&~TXREQ) c->configured=false;
     c->system1=v; c->enabled=(v&TXREQ)!=0;
     if (v&4) c->saturated=255;
+    publish_sources(q);
 }
 static void observed_power(qn_channel_t *c, uint8_t v)
 {
@@ -86,8 +93,9 @@ static uint8_t configure(qn_control_t *q, unsigned i, const uint8_t *p)
     if (!read_reg(q,i,SYSTEM1,&old_system1)) return isolate(q,i);
     const bool restore_tx=(old_system1&TXREQ)!=0;
     c->configured=false;
+    publish_sources(q); /* Mute this lane before reconfiguration; clocks keep running. */
     if (!checked_write(q,i,SYSTEM1,old_system1&~TXREQ,0xff)) return isolate(q,i);
-    observed_system1(c,old_system1&~TXREQ);
+    observed_system1(q,i,old_system1&~TXREQ);
     c->attenuation=INT16_MIN;
     if (!read_reg(q,i,CH_STEP,&step) || !read_reg(q,i,PAG_CAL,&power) ||
         !read_reg(q,i,SYSTEM2,&sys2)) return isolate(q,i);
@@ -110,8 +118,10 @@ static uint8_t configure(qn_control_t *q, unsigned i, const uint8_t *p)
     if (!checked_write(q,i,SYSTEM2,sys2,0xff)) return isolate(q,i);
     sleep_ms(20); /* Proven board settling interval, not a PLL-lock measurement. */
     if (!checked_write(q,i,SYSTEM1,system1|(restore_tx?TXREQ:0),0xff)) return isolate(q,i);
-    observed_system1(c,system1|(restore_tx?TXREQ:0));
+    observed_system1(q,i,system1|(restore_tx?TXREQ:0));
     c->configured=true; c->attenuation=(int16_t)attenuation;
+    c->audio_mode=p[8];
+    publish_sources(q);
     c->saturated=255;
     return HOST_OK;
 }
@@ -128,11 +138,11 @@ uint8_t qn_control_execute(qn_control_t *q, uint8_t command, uint8_t target,
         if (!read_reg(q,target,SYSTEM1,&v)) return isolate(q,target);
         v=(v&~TXREQ)|(p[0]?TXREQ:0);
         if (!checked_write(q,target,SYSTEM1,v,0xff)) return isolate(q,target);
-        observed_system1(c,v);
+        observed_system1(q,target,v);
     } else if (command==7) {
         if (!read_reg(q,target,p[0],&v)) return isolate(q,target);
         *result=v;
-        if (p[0]==SYSTEM1) observed_system1(c,v);
+        if (p[0]==SYSTEM1) observed_system1(q,target,v);
         if (p[0]==PAG_CAL) observed_power(c,v);
     } else if (command==8) {
         if (!write_reg(q,target,p[0],p[1])) return isolate(q,target);
@@ -148,16 +158,32 @@ uint8_t qn_control_execute(qn_control_t *q, uint8_t command, uint8_t target,
              */
             if (p[0]==SYSTEM1 && ((v^p[1])&0x46)) return isolate(q,target);
             if (p[0]==PAG_CAL && (p[1]&0x40) && ((v^p[1])&0x7f)) return isolate(q,target);
-            if (p[0]==SYSTEM1) observed_system1(c,v);
+            if (p[0]==SYSTEM1) observed_system1(q,target,v);
             else observed_power(c,v);
         }
         /* A raw override no longer has a complete validated SET configuration. */
         if (p[0]!=SYSTEM1) c->configured=false;
+        publish_sources(q);
     } else return HOST_INVALID_COMMAND;
     return HOST_OK;
 }
 bool qn_control_fault(const qn_control_t *q)
-{ for (unsigned i=0;i<8;++i) if (q->channel[i].fault) return true; return false; }
+{ for (unsigned i=0;i<8;++i) if (q->channel[i].fault) return true; return q->audio_fault; }
+void qn_control_audio_fault(qn_control_t *q, bool fault)
+{
+    if (fault && !q->audio_fault) q->last_error=HOST_INTERNAL_ERROR;
+    q->audio_fault=fault;
+}
+uint8_t qn_control_sine_mask(const qn_control_t *q)
+{
+    uint8_t mask=0;
+    for (unsigned i=0;i<8;++i) {
+        const qn_channel_t *c=&q->channel[i];
+        if (c->ready && c->configured && c->enabled && c->audio_mode==2 && (c->system1&4))
+            mask |= 1u<<i;
+    }
+    return mask;
+}
 bool qn_control_active(const qn_control_t *q)
 { for (unsigned i=0;i<8;++i) if (q->channel[i].enabled) return true; return false; }
 bool qn_control_led(const qn_control_t *q, uint64_t now_us)
@@ -171,7 +197,7 @@ void qn_control_status(qn_control_t *q, uint8_t p[130], uint32_t uptime)
         if (c->ready) {
             if (!read_reg(q,i,SYSTEM1,&v)) isolate(q,i);
             else {
-                observed_system1(c,v);
+                observed_system1(q,i,v);
                 if (c->configured || c->attenuation!=INT16_MIN) {
                     if (!read_reg(q,i,PAG_CAL,&v)) isolate(q,i);
                     else observed_power(c,v);

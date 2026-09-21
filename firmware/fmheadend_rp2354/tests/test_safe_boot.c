@@ -17,6 +17,16 @@ static char log_text[4096];
 static jmp_buf idle_done;
 static uint64_t now_us;
 static bool host_started;
+bool audio_engine_init(void)
+{
+    assert(!host_started);
+    assert(initialized);
+    for (unsigned i=0;i<QN_COUNT;++i)
+        assert(!qn_boot_results[i].ready || addresses[i]==QN_FIRST_ADDR+i);
+    return true;
+}
+audio_state_t audio_engine_state(void) { return AUDIO_RUNNING; }
+const char *audio_engine_state_name(audio_state_t s) { assert(s==AUDIO_RUNNING); return "RUNNING"; }
 
 void gpio_init(unsigned pin) { output[pin] = latch[pin] = false; }
 void gpio_set_dir(unsigned pin, bool value) { output[pin] = value; }

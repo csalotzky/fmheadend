@@ -27,6 +27,7 @@ def status_payload():
 
 @pytest.fixture
 def calls(monkeypatch):
+    monkeypatch.setattr(linux.time, "sleep", Mock())
     os_calls = SimpleNamespace(open=Mock(return_value=42), close=Mock(),
         write=Mock(side_effect=lambda fd, packet: len(packet)), read=Mock(), O_RDWR=2, O_CLOEXEC=0)
     def ioctl(fd, command, value, *args):
@@ -64,7 +65,7 @@ def test_exact_targets_and_enable(calls, channel):
     calls[0].close.assert_called_once_with(42)
 
 
-@pytest.mark.parametrize('mode,wire_mode', [('DIGITAL', 0), ('ANALOG', 1)])
+@pytest.mark.parametrize('mode,wire_mode', [('DIGITAL', 0), ('ANALOG', 1), ('SINE', 2)])
 def test_config_exact_and_never_enables(calls, mode, wire_mode):
     replies(calls, INFO, b'')
     client().set_tx_config(7, CONFIG.model_copy(update={'audio_mode': mode}))
@@ -326,7 +327,7 @@ def test_client_maps_protocol_failure_without_retry(calls, code):
 
 
 @pytest.mark.parametrize('command,payload', [(p.Command.SET_TX_ENABLED, b'\x02'),
-    (p.Command.SET_TX_CONFIG, struct.pack('<IHBBBBBhBB', 98100, 0, 1, 50, 2, 0, 0, 0, 0, 0))])
+    (p.Command.SET_TX_CONFIG, struct.pack('<IHBBBBBhBB', 98100, 0, 1, 50, 3, 0, 0, 0, 0, 0))])
 def test_raw_request_rejects_invalid_enum(command, payload):
     with pytest.raises(ValueError):
         p.request(command, 0, payload)
@@ -475,3 +476,24 @@ def test_latched_errors_do_not_imply_current_fault(calls, tmp_path, global_activ
         assert status['modulators'][0]['hardware_last_error'] == 'QN_ERROR'
         assert status['system']['system_state'] == ('DEGRADED' if global_active or tx_active else 'RUNNING')
         assert status['system']['rp_spi_audio_link_error_count'] == 9
+
+
+def test_m83_command_waits_and_two_read_cursor(calls):
+    replies(calls, INFO, b'\x11', b'', b'', status_payload())
+    rp = client()
+    rp.get_info()
+    assert rp.qn_read_register(7, 6) == 0x11
+    rp.set_tx_config(0, CONFIG.model_copy(update={"audio_mode": "SINE"}))
+    rp.set_tx_enabled(0, True)
+    rp.get_status()
+    assert [c.args[0] for c in linux.time.sleep.call_args_list] == [0.002, 0.1, 1.0, 0.15, 0.85]
+    assert [c.args[1] for c in calls[0].read.call_args_list] == [2, 35, 2, 1, 2, 2, 2, 130]
+
+
+def test_m83_sine_is_enum_only_and_invalid_modes_rejected():
+    sine = TxConfig(**{**CONFIG.model_dump(), "audio_mode": "SINE"})
+    payload = p.tx_config(sine)
+    assert len(payload) == 15 and payload[8] == 2
+    assert p.request(p.Command.SET_TX_CONFIG, 0, payload)[11] == 2
+    with pytest.raises(ValueError):
+        p.request(p.Command.SET_TX_CONFIG, 0, payload[:8] + b'\x03' + payload[9:])

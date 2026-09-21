@@ -9,6 +9,10 @@ static unsigned available;
 static bool in_irq, masked;
 static void (*handler)(void);
 static char uart_log[4096];
+static audio_state_t audio_state=AUDIO_RUNNING;
+static uint8_t audio_mask;
+audio_state_t audio_engine_state(void) { assert(!in_irq && !masked); return audio_state; }
+void audio_engine_set_sine_mask(uint8_t mask) { assert(!in_irq && !masked); audio_mask=mask; }
 i2c_hw_t *i2c_get_hw(i2c_inst_t *i2c) { assert(i2c == i2c1); return &i2c->hw; }
 unsigned i2c_get_read_available(i2c_inst_t *i2c) { assert(i2c == i2c1); return available; }
 void i2c_init(i2c_inst_t *i2c, unsigned baud) { assert(i2c == i2c1 && baud == 100000); }
@@ -128,5 +132,18 @@ int main(void)
     drain();
     write_request(info, sizeof(info));
     assert(read_byte() == 0 && read_byte() == 35);
-    puts("I2C adapter: pins/address, RX+STOP ordering, split reads, UART/QN outside IRQ, completion PASS");
+    finish_read(); drain(); uart_log[0]=0;
+    uint8_t sine_config[sizeof(config)]; memcpy(sine_config,config,sizeof(config));
+    sine_config[3+8]=2;
+    write_request(sine_config,sizeof(sine_config)); drain(); assert(audio_mask==0);
+    write_request(on,sizeof(on)); drain(); assert(audio_mask==(1u<<3));
+    audio_state=AUDIO_STALL_FAULT;
+    write_request(status,sizeof(status)); drain();
+    assert(read_byte()==HOST_OK && read_byte()==130); finish_read();
+    assert(read_byte()==1);
+    for (unsigned i=1;i<9;++i) (void)read_byte();
+    assert(read_byte()==HOST_INTERNAL_ERROR);
+    assert(host.qn.channel[3].enabled); /* Audio failure never fabricates RF OFF. */
+    assert(!host_i2c_led(0) && host_i2c_led(250000));
+    puts("I2C adapter: pins/address, split reads, foreground QN/audio, source selection, real audio fault PASS");
 }

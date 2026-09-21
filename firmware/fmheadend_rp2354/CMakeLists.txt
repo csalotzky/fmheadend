@@ -50,10 +50,13 @@ add_executable(fmheadend_rp2354
         qn_control.c
         host_protocol.c
         host_i2c.c
+        audio_samples.c
+        audio_engine.c
         )
 
 pico_set_program_name(fmheadend_rp2354 "fmheadend_rp2354")
-pico_set_program_version(fmheadend_rp2354 "0.8.3")
+pico_set_program_version(fmheadend_rp2354 "0.8.4")
+pico_generate_pio_header(fmheadend_rp2354 ${CMAKE_CURRENT_LIST_DIR}/i2s_audio.pio)
 target_compile_definitions(fmheadend_rp2354 PRIVATE
         FMHEADEND_HOST_I2C_ADDRESS=${HOST_ADDRESS_VALUE})
 
@@ -66,7 +69,10 @@ pico_enable_stdio_usb(fmheadend_rp2354 0)
 target_link_libraries(fmheadend_rp2354
         pico_stdlib
         hardware_uart
-        hardware_i2c)
+        hardware_i2c
+        hardware_pio
+        hardware_dma
+        pico_multicore)
 
 # Add the standard include files to the build
 target_include_directories(fmheadend_rp2354 PRIVATE

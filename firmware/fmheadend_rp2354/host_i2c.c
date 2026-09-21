@@ -1,6 +1,7 @@
 #include "host_i2c.h"
 #include "host_protocol.h"
 #include "board.h"
+#include "audio_engine.h"
 #include "pico/stdlib.h"
 #include "hardware/i2c.h"
 #include "hardware/irq.h"
@@ -88,6 +89,7 @@ static void host_i2c_irq(void)
 void host_i2c_init(uint8_t ready_mask)
 {
     host_protocol_init(&host, ready_mask);
+    qn_control_set_audio_sink(&host.qn,audio_engine_set_sine_mask);
     last_tx_advanced = false;
     log_size=log_cursor=0;
     i2c_init(HOST_I2C, 100000);
@@ -120,12 +122,18 @@ void host_i2c_init(uint8_t ready_mask)
 
 void host_i2c_poll(void)
 {
+    qn_control_audio_fault(&host.qn,audio_engine_state()!=AUDIO_RUNNING);
     host_work_t work;
     uint32_t lock=save_and_disable_interrupts();
     const bool have_work=host_protocol_take_work(&host,&work);
     restore_interrupts(lock);
     if (have_work) {
         host_protocol_run_work(&host,&work,(uint32_t)(time_us_64()/1000));
+        qn_control_audio_fault(&host.qn,audio_engine_state()!=AUDIO_RUNNING);
+        if (work.event.command==4 && work.event.status==HOST_OK) {
+            work.result[0]=qn_control_fault(&host.qn);
+            work.result[9]=host.qn.last_error;
+        }
         lock=save_and_disable_interrupts();
         host_protocol_complete_work(&host,&work);
         restore_interrupts(lock);
