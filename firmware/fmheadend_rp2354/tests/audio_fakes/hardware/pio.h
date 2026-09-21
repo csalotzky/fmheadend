@@ -40,6 +40,7 @@ static inline void sm_config_set_clkdiv_int_frac8(pio_sm_config *c,unsigned i,un
 void pio_sm_clear_fifos(PIO,unsigned);
 void pio_sm_restart(PIO,unsigned);
 bool pio_sm_is_rx_fifo_empty(PIO,unsigned);
+unsigned pio_sm_get_rx_fifo_level(PIO,unsigned);
 uint32_t pio_sm_get(PIO,unsigned);
 static inline unsigned pio_encode_mov_not(unsigned d,unsigned s) { return 0x1000|d<<4|s; }
 static inline unsigned pio_encode_mov(unsigned d,unsigned s) { return 0x2000|d<<4|s; }

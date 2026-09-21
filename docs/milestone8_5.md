@@ -133,6 +133,149 @@ nonblocking UART queue: `first valid frame`, `stream lost`, `stream recovered`,
 `receive/DMA error`, `queue overflow`, followed by cumulative `errors=N`.
 No per-frame printing. Multiple events may share a line.
 
+### Physical failure follow-up: first five invalid receive snapshots
+
+The operator observed continuous `invalid length` errors with muxd sending
+silence, at both 25 MHz and 16 MHz, before starting a PCM producer. The initial
+diagnostic-only revision captured five identical conditions: bytes=4101,
+bits=32800, DMA remaining=1->0 and busy=1->0. The EOF accounting fix below
+retains bounded diagnostics. `SPI_LENGTH` still means **either bytes !=4100 or
+the PIO X-derived bit count !=32800**; neither check has been weakened.
+
+#### EOF accounting fix after the physical trace
+
+The precise defect was calculating `4101 - TRANS_COUNT` **after ABORT**.
+RP2350 ABORT holds the transfer counter at zero. Thus a fully received 4100-byte
+frame with one unused capture byte was reported as 4101 bytes merely because
+the channel was aborted. The `1->0` count transition did not prove a 4101st byte
+or an extra SPI clock. The old `progressed` and `complete` diagnostic labels,
+derived from that count transition, were misleading after abort.
+
+The current receiver stops PIO, clears DMA EN through AL1_CTRL, and waits for
+**both ABORT and BUSY to clear**, under the existing 20 us deadline. It then
+counts retired SRAM writes using `WRITE_ADDR - capture_buffer_start`. This DMA
+uses byte transfers and incrementing writes without an address ring. WRITE_ADDR
+advances on completed writes; it is read only after in-flight writes retire.
+Software then appends only bytes still in the RX FIFO. A byte already popped
+by DMA is counted through its completed write, never read again by software.
+The formula is now **retired DMA bytes + residual FIFO bytes**, independent of
+the abort-cleared count and independent of the bit count used for validation.
+
+Using the pre-abort count instead would also be unsafe: a last write can retire
+after that snapshot. The post-retirement write pointer handles both the observed
+abort-zero case and that race. A stuck BUSY/abort rejects the frame, without
+draining FIFO, reading X, or re-arming while DMA might still own a byte.
+
+References: [RP2350 datasheet](https://datasheets.raspberrypi.com/rp2350/rp2350-datasheet.pdf),
+section 12.6 DMA, CHn_WRITE_ADDR register description (Table 1149, p.1126), and
+erratum RP2350-E5 (p.1365), which describes the counter held at zero during ABORT.
+The installed Pico SDK 2.3.1 `hardware_dma/dma.h` abort helper likewise waits
+for BUSY to clear. The existing EN-clear workaround remains in place.
+
+No PIO program, SPI clock, muxd, wire format, I2S, QN or RF change. A genuinely
+received 4101-byte frame is still rejected, even if its bit count claims 32800;
+a short frame is never padded. Error counting and next-CS recovery are retained.
+
+The new boot marker is:
+
+```text
+SPI RX DIAG: first 5 rejected length/hardware frames; entry -> stopped; details capped until reset
+SPI RX EOF: retired WRITE_ADDR + FIFO tail; exact 4100 bytes / 32800 bits
+```
+
+Core1 records the first five CS-rising length/bit-count/hardware rejections in
+fixed immutable slots. Counter-gap/duplicate errors and the separate missed-CS
+or already-dropping paths do not consume these slots. Core0 prints three lines
+per record through the existing nonblocking UART queue, outside IRQ/refill work:
+
+```text
+SPI RX BAD #N: bytes=.../4100 bits=.../32800 rem=A->B dma_bytes=... drained=... abort_ok=... hw_fault=... armed=... active=... cs=A->B
+SPI RX BAD #N DMA: ctrl=...->... busy=...->... count_zero=...->... write_off=...->... irq_latched=...->... progressed=... tail_pending=... race_hint=...
+SPI RX BAD #N PIO: pc=...->... base=... fifo=A->B->C fstat=...->... fdebug=...->... shift=... end_us=...
+SPI RX DIAG: 5/5 captured; detailed capture/logging stopped until reset
+```
+
+`N` runs from 1 to 5; the limit message appears once after all 15 detail lines.
+Existing once-per-second aggregate events/error counts continue. Reset the RP
+to capture another five. One additional summary is printed for the first
+**accepted** frame per boot, independently of the five rejected-frame records:
+
+```text
+SPI RX FIRST OK: bytes=4100/4100 bits=32800/32800 dma_bytes=4100 drained=0 rem_after_abort=0
+```
+
+This is the expected observed-case result with the fix. If some bytes remained
+in FIFO, `dma_bytes` can be less than 4100, but `dma_bytes + drained` must equal
+4100 exactly. No OK summary is emitted for a rejected frame. Formatting remains
+on core0, with no UART output inside IRQ/refill work.
+
+Interpretation:
+
+- `entry` is the software observation at the CS-rising callback, **before**
+  stopping PIO/DMA; `stopped` is **after** the existing DMA abort attempt.
+  These are sequential register reads, not a hardware-latched edge snapshot.
+- `bytes` is the actual count passed to validation: retired `dma_bytes` plus
+  `drained` residual FIFO bytes. `bits` is the existing X-derived count; with
+  `abort_ok=0`, X was not read and the logged zero is not a wire measurement.
+- `rem` shows raw DMA transfer counts at the two observation points.
+  **Normal 4100-byte reception may have remaining=1, busy=1, complete=0** at
+  entry: DMA is armed for 4101 bytes to detect oversized transactions.
+  `count_zero` means remaining==0, not "all programmed bytes received" or
+  "valid frame". ABORT itself can cause this. `write_off` shows completed-write
+  offsets relative to the capture buffer. `irq_latched` is the RX channel's raw
+  DMA interrupt bit; it can be historical or abort-related.
+- `fifo=A->B->C` means RX FIFO occupancy at entry, after abort, and after the
+  bounded drain (before the existing forced X read). FSTAT/FDEBUG are raw PIO
+  registers. `shift` is SM SHIFTCTRL, not the hidden input shift counter.
+  PC is absolute: subtract `base`; offsets 0/1/2/3/4 are WAIT CS LOW, WAIT SCK
+  HIGH, IN, X decrement, WAIT SCK LOW respectively.
+- `progressed=1` now means WRITE_ADDR advanced between snapshots; a count-only
+  `1->0` transition no longer produces this flag. `tail_pending=1`
+  means FIFO data or DMA progress was seen. `race_hint=possible` additionally
+  includes a PC on IN/X-decrement at entry. This indicates activity worth
+  correlating with CS, **not proof of the cause**. `not_observed` cannot exclude
+  a race before IRQ entry. `end_us` covers the instrumented stop/drain/count
+  path after the entry snapshot, not edge-to-IRQ latency.
+- **bytes=4100 with bits!=32800** isolates the rejection to the bit-count check
+  when hw_fault=0. An advancing write offset shows retired DMA writes across the
+  stop boundary; residual FIFO bytes show whether the drain accounted for them.
+  Keep all three lines, including abort/fault flags, when interpreting a sample.
+
+Next physical run, with RF OFF and no PCM producer:
+
+1. Compile/flash through the normal Pico VS Code SWD workflow. Capture UART at
+   115200 8N1 **before reset**. Require the new marker and unchanged successful
+   QN/I2S boot. Confirm WS=48 kHz and BCLK=1.536 MHz.
+2. Run the existing muxd (no Linux rebuild needed for this diagnostic change):
+
+   ```sh
+   "$HOME/build/fmheadend-muxd-m85/fmheadend-muxd" --transport spidev \
+     --runtime-dir "$HOME/run/fmheadend-m85" --spi-device /dev/spidev0.0 \
+     --spi-clock-hz 25000000 --spi-mode 0
+   ```
+
+3. Require `SPI RX FIRST OK` with bytes=4100, bits=32800, followed by `first valid
+   frame ... errors=0`. Confirm the link error count stays zero, RF stays OFF,
+   and WS/BCLK continue. No `SPI RX BAD` is expected for normal silent mux frames.
+   If errors remain, save all three BAD lines per record and the cap marker.
+   Keep the existing SPI clock for this fix test; no Linux change is required.
+4. If available, capture CS/GPIO1 and SCK/GPIO2 at the RP side, including the
+   final clocks and CS rising edge. Count 32800 clocks per assertion. This is
+   needed to distinguish exact edge timing from delayed software observations.
+   Report if instrumentation changes the failure rate; even read-only snapshots
+   add a small amount of time before the existing stop operation.
+
+Fix verification: changing the native hardware model to zero COUNT on ABORT
+first reproduced a valid-frame failure in the old code. With the fix, production
+Debug ELF built successfully and **13/13 native tests passed**. Regression cases
+cover the observed 1->0 count transition with 4100 retired bytes, a final byte
+already popped by DMA but not yet written, a byte retiring from FIFO during
+abort, an eight-byte software tail, and all payload/guard bytes. Genuine short,
+oversized and partial-bit frames still fail; abort/BUSY timeout, recovery,
+counter/error semantics, five-record capping and the single valid-frame summary
+are tested. No new physical test was performed by the implementation agent.
+Hardware confirmation is still required. No commit was made.
+
 ## Build and automated verification
 
 Normal Pico VS Code **Compile Project -> Flash Project (SWD)** remains usable.
