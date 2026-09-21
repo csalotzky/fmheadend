@@ -25,6 +25,10 @@ def run(rp, *, clock=time.monotonic, sleep=time.sleep):
         rp.set_tx_config(0, TxConfig(frequency_khz=87500, rf_attenuation_db=22.5,
             stereo=True, preemphasis_us=50, audio_mode="DIGITAL", rds_enabled=True,
             gain_mode="AUTO", analog_gain_db=0.0, digital_trim_db=0, soft_clipping=False))
+        # Diagnostic-only settling after the successful configuration response.
+        # The firmware independently delays its first group after RF ON.
+        print("Diagnostic settling: 300 ms after SET_TX_CONFIG, before RF ON.", flush=True)
+        sleep(0.3)
         rp.set_tx_enabled(0, True)
         started = clock()
         print("TX0 RF ON: 87.5 MHz, attenuation 22.5 dB, PI=FFFF, PS=' R D S  '. "

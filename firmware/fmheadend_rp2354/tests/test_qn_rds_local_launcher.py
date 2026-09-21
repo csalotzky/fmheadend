@@ -41,10 +41,13 @@ class Hardware:
             stereo=True,preemphasis_us=50,audio_mode="DIGITAL",rds_enabled=True,
             gain_mode="AUTO",analog_gain_db=0.0,digital_trim_db=0,soft_clipping=False)
         self.calls.append("config")
+        self.configured_at=self.now
     def set_tx_enabled(self, tx, enabled):
         assert tx==0
         self.calls.append("on" if enabled else "off");self.enabled=enabled
-        if enabled: self.started=self.now
+        if enabled:
+            assert self.now-self.configured_at>=0.3
+            self.started=self.now
     def close(self): self.calls.append("close")
 
 
@@ -58,7 +61,7 @@ class Tests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             launcher.run(hw,clock=hw.clock,sleep=hw.sleep)
         self.assertEqual(hw.calls,["off","config","on","off","close"])
-        self.assertFalse(hw.enabled);self.assertEqual(hw.now,60)
+        self.assertFalse(hw.enabled);self.assertAlmostEqual(hw.now,60.3)
     def test_wrong_build_never_enables(self):
         hw=Hardware(version="0.8.6a")
         with contextlib.redirect_stdout(io.StringIO()),self.assertRaisesRegex(RuntimeError,"Flash"):

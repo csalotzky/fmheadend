@@ -8,8 +8,9 @@
 #include <string.h>
 
 #define RUN_US 60000000u
-#define ACCEPT_TIMEOUT_US 250000u
+#define ACCEPT_TIMEOUT_US 500000u
 #define POLL_US 2000u
+#define RF_SETTLE_US 300000u /* Temporary diagnostic delay before the FIRST group only. */
 
 /* Generated with daemon.rds.encoder.group_0a(0xffff,0,False,b" R D S  ",n).
  * Fixed BENCH content, not a production scheduler. All words high byte first.
@@ -93,7 +94,7 @@ static void submit(qn_rds_local_probe_t *p, qn_control_t *q)
 
 void qn_rds_local_probe_cancel(qn_rds_local_probe_t *p)
 {
-    if (p->state!=QN_PROBE_WAIT) return;
+    if (p->state!=QN_PROBE_WAIT && p->state!=QN_PROBE_SETTLING) return;
     /* The following host command owns RF. Do not add another OFF transaction
      * to its approved response deadline. The probe cannot re-arm afterward. */
     p->state=QN_PROBE_DONE;
@@ -107,6 +108,16 @@ void qn_rds_local_probe_poll(qn_rds_local_probe_t *p, qn_control_t *q)
     if (p->state==QN_PROBE_DONE) return;
     if (p->state==QN_PROBE_ARMED) {
         if (!c->ready || !c->configured || !c->enabled || !(c->system1&2)) return;
+        p->settle_until_us=time_us_64()+RF_SETTLE_US;
+        p->state=QN_PROBE_SETTLING;
+        return;
+    }
+    if (p->state==QN_PROBE_SETTLING) {
+        if (!c->ready || !c->configured || !c->enabled || !(c->system1&2) || qn_control_fault(q)) {
+            finish(p,q,"STATE CHANGED",false); return;
+        }
+        /* No blocking sleep: host control, SPI and I2S continue to run. */
+        if (time_us_64()<p->settle_until_us) return;
         uint8_t system1, channel, step, i2s, pilot;
         if (!read_reg(p,q,0,&system1) || !read_reg(p,q,8,&channel) ||
             !read_reg(p,q,11,&step) || !read_reg(p,q,7,&i2s) ||

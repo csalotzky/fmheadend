@@ -40,7 +40,7 @@ static void written(unsigned target, uint8_t reg, uint8_t value)
         bytes_written=0;
         ++handoffs;
         pending=true;
-        due=last_due+87580;
+        due=(last_due?last_due:fake_now)+87580;
         if (due<=fake_now) due=fake_now+1000;
     }
 }
@@ -67,13 +67,24 @@ static void step(void)
     char line[192];
     while(qn_rds_local_probe_log(&probe,line,sizeof(line))) assert(strstr(line,"LOCAL RDS:"));
 }
+static void start_probe(void)
+{
+    step();
+    assert(probe.state==QN_PROBE_SETTLING && fake_calls==0);
+    const uint64_t observed_on=fake_now;
+    fake_now=probe.settle_until_us-1;
+    qn_rds_local_probe_poll(&probe,&qn);
+    assert(fake_calls==0 && handoffs==0); /* Nothing on the QN bus before 300 ms. */
+    step();
+    assert(fake_now-observed_on>=300000);
+}
 int main(void)
 {
     setup();qn.channel[0].enabled=false;
     for(unsigned n=0;n<20;++n) step();
     assert(probe.state==QN_PROBE_ARMED && fake_calls==0); /* Safe RF-OFF idle. */
     qn.channel[0].enabled=true;
-    step();assert(handoffs==1 && probe.accepted==0 && qn.channel[0].configured);
+    start_probe();assert(handoffs==1 && probe.accepted==0 && qn.channel[0].configured);
     for(unsigned n=0;n<20;++n) step();
     assert(handoffs==1 && probe.accepted==0); /* No next group before bit toggle. */
     while(probe.accepted<1) step();
@@ -89,11 +100,11 @@ int main(void)
     for(unsigned n=0;n<10;++n) step();
     assert(fake_calls==before); /* One-shot; RF changes cannot re-arm it. */
 
-    setup();ack_enabled=false;step();
+    setup();ack_enabled=false;start_probe();
     while(probe.state!=QN_PROBE_DONE) step();
     assert(probe.accepted==0 && handoffs==1 && !qn.channel[0].enabled);
     assert(qn.channel[0].last_error==HOST_QN_ERROR && qn_control_fault(&qn));
-    assert(fake_now-probe.handoff_us<260000);
+    assert(fake_now-probe.handoff_us>=500000 && fake_now-probe.handoff_us<510000);
 
     /* Fail each data write, the ready toggle and the initial/acceptance reads.
      * No retry/replay of a possibly accepted write. Cleanup uses existing OFF. */
@@ -102,22 +113,26 @@ int main(void)
         setup();fake_fail_at=fail_calls[i];fake_fail_count=1;
         while(probe.state!=QN_PROBE_DONE) {
             fake_now+=1000;qn_rds_local_probe_poll(&probe,&qn);
-            assert(fake_now<300000);
+            assert(fake_now<610000);
         }
         assert(!qn.channel[0].enabled && qn_control_fault(&qn) && probe.accepted==0);
         before=fake_calls;
         qn_rds_local_probe_poll(&probe,&qn);
         assert(fake_calls==before && handoffs<=1);
     }
-    setup();fake_regs[0][8]=231;step();
+    setup();fake_regs[0][8]=231;start_probe();
     assert(probe.state==QN_PROBE_DONE && !handoffs && !qn.channel[0].enabled);
-    setup();fake_regs[0][15]|=2;step();
+    setup();fake_regs[0][15]|=2;start_probe();
     assert(probe.state==QN_PROBE_DONE && !handoffs); /* Never enables interrupt output. */
-    setup();step();before=fake_calls;
+    setup();start_probe();before=fake_calls;
     qn_rds_local_probe_cancel(&probe);
     assert(probe.state==QN_PROBE_DONE && fake_calls==before); /* Host deadline unchanged. */
     uint8_t off=0, result=0;
     assert(qn_control_execute(&qn,3,0,&off,&result)==HOST_OK && !qn.channel[0].enabled);
+    setup();step();assert(probe.state==QN_PROBE_SETTLING);
+    before=fake_calls;qn_rds_local_probe_cancel(&probe);
+    fake_now+=400000;qn_rds_local_probe_poll(&probe,&qn);
+    assert(probe.state==QN_PROBE_DONE && fake_calls==before && !handoffs);
     setup();step();qn.channel[0].configured=false;step();
     assert(probe.state==QN_PROBE_DONE && !qn.channel[0].enabled);
     puts("Local TX0 RDS: safe arm, exact high-first groups/order, toggle pace, 60s OFF, failures, one-shot PASS");

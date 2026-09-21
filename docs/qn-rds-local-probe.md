@@ -36,6 +36,13 @@ probe source is not compiled and firmware remains 0.8.6a. With it ON:
   verified TX0 OFF operation. It does not automatically restart. The deadline is
   checked by the foreground loop, so bounded bus/host work can delay the OFF
   operation slightly. Keep all other control clients stopped during the test.
+- Temporary diagnostic settling: the Pi launcher waits **300 ms after successful
+  SET_TX_CONFIG** before issuing SET_TX_ENABLED ON. This is additional to the
+  existing client's command-response wait. On observing RF ON, the firmware waits
+  **300 ms before the first group**, using a nonblocking deadline. The 60-second
+  group-transfer window starts afterward (RF is ON for roughly 60.3 seconds).
+  Subsequent groups have no settling delay. These two diagnostic intervals can
+  later be removed independently; neither changes normal production behavior.
 - A host TX0 SET_CONFIG/SET_ENABLED/raw-write request cancels the probe before
   executing that command; that command owns the subsequent RF state. This adds
   no extra QN transaction to the host command deadline. GET_INFO/GET_STATUS remain
@@ -81,7 +88,7 @@ resource ownership and clocks do not change. Local RDS writes preserve the
 production TX configuration record, unlike the raw diagnostic host commands.
 
 A failed bus transaction stops immediately: no probe retry, replay or guessed
-acceptance. If bit 7 remains unchanged for **250 ms**, report the baseline/latest
+acceptance. If bit 7 remains unchanged for **500 ms**, report the baseline/latest
 STATUS2 and SYSTEM2, stop and attempt normal RF OFF. A fault latches existing
 QN_ERROR and marks TX0 faulted (LED blinks); explicit hardware reset is required
 for another probe. Existing QN OFF failure isolation remains in force. No RDS
