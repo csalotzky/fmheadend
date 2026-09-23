@@ -10,6 +10,8 @@
 
 static bool output[32], latch[32];
 static uint8_t addresses[QN_COUNT];
+static uint8_t vga[QN_COUNT];
+static bool vga_mismatch;
 static unsigned operation, enabled_index, idle_ticks;
 static int bad_index, fail_operation, invalid_cid_operation;
 static bool tx_stuck, all_missing, initialized, led_values[5];
@@ -50,6 +52,7 @@ void gpio_put(unsigned pin, bool value)
             assert(!latch[18 + i] || addresses[i] != QN_DEFAULT_ADDR);
         }
         addresses[enabled_index] = QN_DEFAULT_ADDR;
+        vga[enabled_index] = 0x60;
     }
     latch[pin] = value;
 }
@@ -99,9 +102,9 @@ const char *qn_bus_status_name(qn_bus_status_t status)
 
 static qn_bus_status_t check_operation(uint8_t address, uint8_t reg, bool write)
 {
-    static const uint8_t registers[] = {6, 0, 2, 6, 0, 0};
-    static const bool writes[] = {false, true, true, false, true, false};
-    assert(operation < 6 && reg == registers[operation] && write == writes[operation]);
+    static const uint8_t registers[] = {6, 0, 2, 6, 0, 0, 4, 4};
+    static const bool writes[] = {false, true, true, false, true, false, true, false};
+    assert(operation < 8 && reg == registers[operation] && write == writes[operation]);
     assert(address == addresses[enabled_index]);
     const bool fail = all_missing || ((int)enabled_index == bad_index &&
                                       (int)operation == fail_operation);
@@ -116,6 +119,8 @@ qn_bus_status_t qn_bus_read_reg(uint8_t address, uint8_t reg, uint8_t *value)
     if (reg == 6) {
         *value = ((int)enabled_index == bad_index &&
                   (int)(operation - 1) == invalid_cid_operation) ? 0xff : 0x11;
+    } else if (reg == 4) {
+        *value = vga[enabled_index] ^ (vga_mismatch && (int)enabled_index == bad_index ? 1 : 0);
     } else {
         *value = tx_stuck && (int)enabled_index == bad_index ? 0x45 : 0x05;
     }
@@ -129,6 +134,9 @@ qn_bus_status_t qn_bus_write_reg(uint8_t address, uint8_t reg, uint8_t value)
         assert(value == QN_FIRST_ADDR + enabled_index);
         /* Deliberately model a write that takes effect even when ACK is lost. */
         addresses[enabled_index] = value;
+    } else if (reg == 4) {
+        assert(value == 0x45 && value == QN_REG_VGA_DEFAULT);
+        vga[enabled_index] = value;
     } else {
         assert(reg == 0 && value == 0x05); /* No RF-enable/SWRST writes. */
     }
@@ -164,6 +172,7 @@ static void run(int bad, int fail, int invalid_cid, bool stuck, bool missing)
         char expected[64];
         if (ready) {
             assert(addresses[i] == 0x21 + i);
+            assert(vga[i] == 0x45);
             snprintf(expected, sizeof(expected), "QN%u @ 0x%02X: CID2=0x11 OK, RF OFF", i, 0x21 + i);
         } else snprintf(expected, sizeof(expected), "QN%u target 0x%02X: FAIL", i, 0x21 + i);
         assert(strstr(log_text, expected));
@@ -177,12 +186,16 @@ int main(void)
 {
     run(-1, -1, -1, false, false);
     for (int index = 0; index < 8; ++index) {
-        for (int op = 0; op < 6; ++op) run(index, op, -1, false, false);
+        for (int op = 0; op < 8; ++op) run(index, op, -1, false, false);
         run(index, -1, 0, false, false);
         run(index, -1, 3, false, false);
         run(index, -1, -1, true, false);
+        vga_mismatch = true;
+        run(index, -1, -1, false, false);
+        assert(strstr(log_text, "crystal load verification"));
+        vga_mismatch = false;
     }
     run(-1, -1, -1, false, true);
     assert(!qn_boot_device(8).ready);
-    puts("Safe boot: 74 scenarios; CEN isolation, RF OFF, failures, UART and LED PASS");
+    puts("Safe boot: 98 scenarios; crystal load, CEN isolation, RF OFF, failures, UART and LED PASS");
 }

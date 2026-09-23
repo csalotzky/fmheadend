@@ -126,8 +126,9 @@ only after every operation succeeds. Invalid requests leave the previous valid
 configuration and RF state unchanged.
 
 ANACTL1 `0x2b` selects the board's 26 MHz crystal, normal baseband operation and
-unmuted/noninverted input. REG_VGA `0x60` preserves the working RIN/crystal-load
-choice. SYSTEM2 preserves the RDS handshake, selects stereo/emphasis and disables
+unmuted/noninverted input. REG_VGA now uses the board-calibrated `0x45` from
+`QN_REG_VGA_DEFAULT` in `board.h`, retaining RIN=01 (20 kohm) and setting XCSEL=5.
+SYSTEM2 preserves the RDS handshake, selects stereo/emphasis and disables
 idle timeout; it never uses SWRST. PAG_CAL preserves IPOW and its reserved bit,
 sets PAG_DIS and maps attenuation to PAGAIN. No PAC_TARGET or invented RF
 calibration is used. AUTO gain readback ignores AGC-owned gain bits; clipping and
@@ -135,6 +136,46 @@ manual selection are still verified. The register definitions above and the
 unchanged reference establish these choices; oscillator/PLL/RF behavior still
 requires the bench test. The 20 ms delay is a proven reference interval, not a
 newly claimed datasheet maximum or a measured PLL-lock indication.
+
+### Crystal-load calibration
+
+Each of the eight QN8007B devices has its own XTM32026000GT00351001 crystal:
+26 MHz, specified CL=10 pF, with no external crystal-load capacitors. The operator
+reported these RTL-SDR measurements:
+
+| REG_VGA (04h) | Carrier | Observed error |
+|---|---|---|
+| Previous `0x60` | Before calibration | Approximately -5 to -6 kHz |
+| Calibrated `0x45`, all eight TXs | 87.50 MHz | Approximately -130 to -616 Hz |
+| Calibrated `0x45`, TX1 | 91.60 MHz | -278 Hz |
+
+These are operator-reported physical measurements, not results of the native
+tests or a new measurement by the implementation agent. No per-channel offsets,
+frequency compensation, automatic calibration, or pF-per-code assumption is used.
+The requested RF frequency and CH/CH_STEP mapping remain unchanged.
+
+Datasheet rev 2.09, section 7, page 29 defines REG_VGA[7:6] as RIN and [5:0] as
+XCSEL. `0x60 -> 0x45` changes only XCSEL (`0x20 -> 0x05`); RIN remains `01`, so
+the existing 20 kohm analog-gain mapping is unchanged. Both boot initialization
+and every SET_TX_CONFIG/reconfiguration write the same board constant and verify
+the complete byte by readback. Boot failures follow the existing per-QN CEN
+isolation/failed-boot path; configuration failures follow existing QN_ERROR
+isolation. RF stays OFF during initialization.
+
+SET_TX_CONFIG intentionally establishes RIN=01 along with XCSEL: preserving a raw
+diagnostic RIN override would invalidate its gain table. AUTO/MANUAL gain, digital
+trim and clipping remain in register 0Dh; they do not modify XCSEL. The static
+assertion guards the required RIN bits. Explicit raw-register diagnostic writes
+remain allowed; the next normal configuration restores `0x45`. No independent
+QN restoration path bypasses boot/configuration.
+
+Native coverage checks all eight boot routes, crystal-load write/read/mismatch
+failures, all audio modes and both gain modes, active-TX reconfiguration, raw
+override restoration, unchanged channel encoding and existing RF-safe failure
+handling. Final physical verification of this firmware build is still pending.
+The production Pico SDK build passed; all 12 native C firmware tests passed,
+including 98 safe-boot scenarios and the existing host, RDS and audio regressions.
+No firmware was flashed as part of this change.
 
 ANALOG selects the chip's analog input; on PCB1.0 external audio exists only on
 TX0..TX3. Selection is accepted on all eight chips, but TX4..TX7 have no connected

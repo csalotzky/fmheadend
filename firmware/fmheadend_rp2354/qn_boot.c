@@ -5,6 +5,7 @@
 
 #define QN_SYSTEM1 0x00u
 #define QN_DEV_ADD 0x02u
+#define QN_REG_VGA 0x04u
 #define QN_CID2 0x06u
 #define QN_SYSTEM1_TX_OFF 0x05u /* Reference value, with TXREQ clear. */
 #define QN_SYSTEM1_TXREQ 0x40u
@@ -69,6 +70,19 @@ qn_boot_result_t qn_boot_device(unsigned index)
     if (result.bus_status != QN_BUS_OK) goto failed;
     result.stage = "RF OFF verification";
     if (system1 & QN_SYSTEM1_TXREQ) goto failed;
+
+    /* Same board setting as SET_TX_CONFIG, before declaring this QN ready.
+     * RIN stays 01; only XCSEL differs from the previous 0x60 setting.
+     */
+    uint8_t vga;
+    result.stage = "crystal load write";
+    result.bus_status = qn_bus_write_reg(result.address, QN_REG_VGA, QN_REG_VGA_DEFAULT);
+    if (result.bus_status != QN_BUS_OK) goto failed;
+    result.stage = "crystal load readback";
+    result.bus_status = qn_bus_read_reg(result.address, QN_REG_VGA, &vga);
+    if (result.bus_status != QN_BUS_OK) goto failed;
+    result.stage = "crystal load verification";
+    if (vga != QN_REG_VGA_DEFAULT) goto failed;
 
     result.stage = "ready";
     result.ready = true;

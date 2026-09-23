@@ -4,6 +4,7 @@
 #include "host_protocol.h"
 #include "qn_control.h"
 #include "fake_qn.h"
+#include "board.h"
 static qn_control_t q;
 static uint8_t published_mask, digital_mask;
 static unsigned notifications;
@@ -29,7 +30,7 @@ int main(void)
     for(unsigned mode=0;mode<3;++mode) {
         reset(); config[8]=mode;
         assert(call(2,3,config)==0);
-        assert(fake_regs[3][7]==0x71 && fake_regs[3][4]==0x60);
+        assert(fake_regs[3][7]==0x71 && fake_regs[3][4]==QN_REG_VGA_DEFAULT);
         assert(fake_regs[3][0]==(mode==1?1:5));
         assert(fake_regs[3][8]==0xba && (fake_regs[3][11]&3)==1);
         assert(fake_regs[3][13]==0xd0 && fake_regs[3][0x5a]==0xe4);
@@ -116,6 +117,28 @@ int main(void)
     }
     reset();fake_mismatch_reg=7;
     assert(call(2,0,config)==HOST_QN_ERROR && !fake_cen[0]);
+    /* Every route/configuration restores the calibrated load. AUTO/MANUAL gain
+     * and audio-mode changes must leave XCSEL intact, including active TXs.
+     */
+    assert(QN_REG_VGA_DEFAULT==0x45);
+    for(unsigned i=0;i<8;++i) {
+        reset(); memcpy(p,config,15); set_frequency(p,87500);
+        fake_regs[i][4]=0x60;
+        for(unsigned mode=0;mode<3;++mode) for(unsigned manual=0;manual<2;++manual) {
+            p[8]=mode; p[10]=manual;
+            assert(call(2,i,p)==HOST_OK && fake_regs[i][4]==0x45);
+            assert((fake_regs[i][4]&0xc0)==0x40); /* Original RIN/gain table. */
+            assert(fake_regs[i][8]==230 && (fake_regs[i][11]&3)==0);
+            assert(call(3,i,on)==HOST_OK && fake_regs[i][4]==0x45);
+        }
+        /* A deliberate raw diagnostic override is allowed; SET restores it. */
+        uint8_t override[]={4,0xe0}; assert(call(8,i,override)==HOST_OK);
+        assert(fake_regs[i][4]==0xe0);
+        assert(call(2,i,p)==HOST_OK && fake_regs[i][4]==0x45);
+        assert(q.channel[i].enabled);
+        reset(); fake_mismatch_reg=4;
+        assert(call(2,i,p)==HOST_QN_ERROR && !fake_cen[i]);
+    }
     /* Raw SYSTEM1 bypasses configuration prerequisite but status stays honest. */
     reset();uint8_t raw[]={0,0x41};assert(call(8,2,raw)==0 && q.channel[2].enabled);
     uint8_t status[130];qn_control_status(&q,status,1);assert(status[40]==1);

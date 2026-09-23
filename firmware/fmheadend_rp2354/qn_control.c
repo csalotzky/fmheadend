@@ -8,11 +8,13 @@
 
 /* Quintic QN8007B/8007LB rev 2.09, section 7, pp.26-43.
  * Board/reference: 26 MHz / 10 pF crystal, RIN=01 (20 kohm).
- * REG_VGA=60h retains the proven oscillator load setting, not a user default.
+ * REG_VGA uses the board-calibrated XCSEL, not a user gain default.
  */
 enum { SYSTEM1=0, SYSTEM2=1, DEV_ADD=2, ANACTL1=3, REG_VGA=4,
        I2S=7, CH=8, CH_STEP=11, GAIN=13, STATUS1=26, PAG_CAL=90 };
 #define TXREQ 0x40u
+_Static_assert((QN_REG_VGA_DEFAULT & 0xc0u) == 0x40u,
+               "QN gain mapping requires RIN=01 (20 kohm)");
 static void publish_sources(qn_control_t *q)
 { if (q->audio_sink) q->audio_sink(qn_control_sine_mask(q),qn_control_digital_mask(q)); }
 void qn_control_set_audio_sink(qn_control_t *q, void (*sink)(uint8_t, uint8_t))
@@ -112,7 +114,7 @@ static uint8_t configure(qn_control_t *q, unsigned i, const uint8_t *p)
     const uint8_t agc=(p[14]<<7) | (p[10]<<6) |
                       (p[10] ? ((p[13]<<4) | (unsigned)((gain+15)/15)) : 1u);
     const uint8_t regs[]={SYSTEM1,ANACTL1,REG_VGA,I2S,CH,CH_STEP,GAIN,PAG_CAL};
-    const uint8_t vals[]={system1,0x2b,0x60,0x71,(uint8_t)channel,
+    const uint8_t vals[]={system1,0x2b,QN_REG_VGA_DEFAULT,0x71,(uint8_t)channel,
         (uint8_t)((step&0xfc)|(channel>>8)),agc,(uint8_t)((power&0xb0)|0x40|(attenuation/15))};
     /* Recalibrate while RF is OFF; preserve DEV_ADD and IPOW. */
     if (!checked_write(q,i,SYSTEM2,sys2|0x40,0xff)) return isolate(q,i);

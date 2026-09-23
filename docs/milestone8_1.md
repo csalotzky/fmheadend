@@ -46,8 +46,10 @@ inspection and compiled code are not that measurement.
    read CID2 at the new address. Require the product nibble and the same CID2
    byte observed before assignment.
 6. Write `SYSTEM1=0x05` at the assigned address and read it back. Require TXREQ
-   (bit 6) clear. Only then report the device ready and leave its CEN HIGH.
-7. Any bus, identity, assignment or RF-OFF failure immediately lowers that
+   (bit 6) clear. The later board crystal-load correction also writes/readbacks
+   `REG_VGA=0x45` before reporting ready; see [calibration](milestone8_3.md#crystal-load-calibration).
+   Only then report the device ready and leave its CEN HIGH.
+7. Any bus, identity, assignment, RF-OFF or crystal-load failure immediately lowers that
    device's CEN. Continue with the other indices; addresses never compact around
    a missing device. Even an ambiguous address write cannot leave that failed
    device enabled at `0x2A` to collide with the next device.
@@ -57,8 +59,9 @@ inspection and compiled code are not that measurement.
    and reset to retry; there is no automatic recovery or runtime polling yet.
 
 `SYSTEM1=0x05` is the RF-OFF value from the reference, not a complete digital
-audio configuration. No SWRST, RF enable, calibration, frequency, gain, I2S or
-other TX configuration is performed. Register readback confirms the requested
+audio configuration. Apart from the board crystal-load setting, no SWRST, RF
+enable, automatic calibration, frequency, gain or I2S configuration is performed.
+Register readback confirms the requested
 control state; physical absence of RF needs measurement. `qn_boot_results[8]`
 and `boot_hardware_fault` are available as debug symbols through SWD.
 

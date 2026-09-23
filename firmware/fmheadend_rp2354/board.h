@@ -14,6 +14,11 @@
 #define QN_SDA_PIN 16u
 #define QN_SCL_PIN 17u
 #define QN_COUNT 8u
+/* XTM32026000GT00351001: 26 MHz, CL=10 pF, no external load capacitors.
+ * Board-calibrated REG_VGA: RIN[7:6]=01 (20 kohm, unchanged), XCSEL[5:0]=5.
+ * See docs/milestone8_3.md, Crystal-load calibration.
+ */
+#define QN_REG_VGA_DEFAULT 0x45u
 #define QN_CEN_FIRST_PIN 18u
 #define DIAGNOSTIC_LED_PIN 27u
 #define DEBUG_UART uart0

@@ -10,7 +10,10 @@
             "servertype": "openocd",
             "serverpath": "${userHome}/.pico-sdk/openocd/0.12.0+dev/openocd.exe",
             "gdbPath": "${command:raspberry-pi-pico.getGDBPath}",
-            "debuggerArgs": ["-ex", "set debug-file-directory /debug"],
+            "debuggerArgs": [
+                "-ex",
+                "set debug-file-directory /debug"
+            ],
             "device": "${command:raspberry-pi-pico.getChipUppercase}",
             "configFiles": [
                 "interface/cmsis-dap.cfg",
@@ -25,7 +28,7 @@
                 "load \"${command:raspberry-pi-pico.launchTargetPath}\""
             ],
             "openOCDLaunchCommands": [
-                "adapter speed 5000"
+                "adapter speed 1000"
             ]
         },
         {
@@ -37,7 +40,10 @@
             "servertype": "external",
             "gdbTarget": "localhost:3333",
             "gdbPath": "${command:raspberry-pi-pico.getGDBPath}",
-            "debuggerArgs": ["-ex", "set debug-file-directory /debug"],
+            "debuggerArgs": [
+                "-ex",
+                "set debug-file-directory /debug"
+            ],
             "device": "${command:raspberry-pi-pico.getChipUppercase}",
             "svdFile": "${userHome}/.pico-sdk/sdk/2.3.1/src/${command:raspberry-pi-pico.getChip}/hardware_regs/${command:raspberry-pi-pico.getChipUppercase}.svd",
             "runToEntryPoint": "main",
