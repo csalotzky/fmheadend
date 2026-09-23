@@ -332,6 +332,84 @@ def test_capacity_failure_preserves_config_and_can_retry(rig):
     assert r.manager.statuses[0].rds_groups_accepted>0
 
 
+def test_ambiguous_push_clear_and_immediate_full_lookahead(rig):
+    r = rig
+    r.manager.active_sources = {0:r.src.id}
+    original = r.rp.push_rds
+    uncertain = []
+    def lost_ack(channel, groups):
+        original(channel, groups)
+        uncertain.append(tuple(groups))
+        raise DependencyUnavailable('lost ACK after acceptance')
+    r.rp.push_rds = Mock(side_effect=lost_ack)
+    r.refill.tick()
+    assert len(r.rp.rds_fifos[0]) == 23
+    assert r.refill.channels[0].pending is None and r.refill.channels[0].needs_clear
+    r.clock.advance(.249); r.refill.tick()
+    assert r.rp.push_rds.call_count == 1
+    r.rp.push_rds.side_effect = original
+    r.clock.advance(.001)
+    r.refill.next_poll = r.clock() + 100
+    r.refill.tick()  # No extra 1-second or 100-ms wait after transport backoff.
+    assert not r.refill.channels[0].needs_clear
+    assert len(r.rp.rds_fifos[0]) == 23
+    assert r.manager.statuses[0].rds_groups_accepted == 23
+    calls = list(r.rp.rds_calls)
+    pushes = [i for i,c in enumerate(calls) if c[0] == 'RDS_PUSH']
+    assert any(c[0] == 'RDS_CLEAR' for c in calls[pushes[0]+1:pushes[1]])
+
+
+def test_not_sent_push_keeps_exact_pending_batch_without_clear(rig):
+    from fmheadendd.rp2354.protocol import HardwareUnavailable, Outcome
+    r = rig; r.manager.active_sources = {0:r.src.id}
+    error = HardwareUnavailable('open failed')
+    error.command, error.outcome = Command.RDS_PUSH, Outcome.NOT_SENT
+    original = r.rp.push_rds
+    r.rp.push_rds = Mock(side_effect=error)
+    r.refill.tick()
+    pending = r.refill.channels[0].pending
+    assert pending and not r.refill.channels[0].needs_clear
+    clears = len([c for c in r.rp.rds_calls if c[0] == 'RDS_CLEAR'])
+    r.rp.push_rds.side_effect = original
+    r.clock.advance(.25); r.refill.tick()
+    assert r.rp.push_rds.call_args_list[1].args[1] == pending[0]
+    assert len([c for c in r.rp.rds_calls if c[0] == 'RDS_CLEAR']) == clears
+
+
+def test_failed_clear_fences_one_channel_healthy_channels_continue(rig):
+    from fmheadendd.rp2354.protocol import QnError
+    r = rig; r.refill.tick()
+    original = r.rp.clear_rds
+    r.refill.fence(0)
+    def failed_clear(channel):
+        if channel == 0: raise QnError(Command.RDS_CLEAR, Status.QN_ERROR)
+        return original(channel)
+    r.rp.clear_rds = Mock(side_effect=failed_clear)
+    before = [r.manager.statuses[i].rds_groups_accepted for i in range(8)]
+    r.clock.advance(.2); r.refill.tick()
+    after = [r.manager.statuses[i].rds_groups_accepted for i in range(8)]
+    assert after[0] == before[0] and r.refill.channels[0].needs_clear
+    assert all(a > b for a,b in zip(after[1:],before[1:]))
+    r.rp.clear_rds.side_effect = original
+    r.clock.advance(1.01); r.refill.tick()
+    assert not r.refill.channels[0].needs_clear
+    assert r.manager.statuses[0].rds_groups_accepted > before[0]
+
+
+def test_capacity_failure_preserves_every_pending_scheduler(rig):
+    r = rig; r.refill.tick()
+    schedulers = [c.scheduler for c in r.refill.channels]
+    pending = [c.scheduler.prepare(31,r.clock(),2) for c in r.refill.channels]
+    for c,pending_batch in zip(r.refill.channels,pending): c.pending = pending_batch
+    original = r.rp.get_rds_fifo_free
+    r.rp.get_rds_fifo_free = Mock(side_effect=DependencyUnavailable('capacity unavailable'))
+    r.clock.advance(.2); r.refill.tick()
+    assert all(c.scheduler is s for c,s in zip(r.refill.channels,schedulers))
+    assert all(c.pending is p for c,p in zip(r.refill.channels,pending))
+    assert not any(c.needs_clear for c in r.refill.channels)
+    r.rp.get_rds_fifo_free = original
+
+
 def test_current_database_and_api_ecc(tmp_path):
     path = tmp_path / 'current.db'
     with TestClient(create_app(Settings(path))) as api:

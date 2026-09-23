@@ -55,16 +55,16 @@ def test_startup_loss_recovery_order_and_shutdown(tmp_path):
         assert rp.enabled==[True]+[False]*7
         assert api.get(P+'/status').json()['system']['system_state']=='RUNNING'
         services=app.state.services
-        services.rds.channels[0].pending=('stale',None)
+        previous_channels=list(services.rds.channels)
         rp.available=False;refresh(app)
-        assert all(c.pending is None for c in services.rds.channels)
-        assert services.rds.suspended
-        assert api.get(P+'/status').json()['modulators'][0]['hardware_tx_state'] is None
+        assert all(a is b for a,b in zip(previous_channels, services.rds.channels))
+        assert not services.rds.suspended
+        assert api.get(P+'/status').json()['modulators'][0]['hardware_tx_state'] == 'ON'
+        assert api.get(P+'/status').json()['system']['rp_observation_stale']
         rp.available=True;now[0]=6;events.clear();refresh(app)
-        assert ('clear_rds',0) in events
-        assert not any(e[0]=='push_rds' for e in events)
+        assert events == [('get_status',), ('get_info',)]  # Mock info refresh; no writes.
         assert services.recovery.ready
-        services.recovery.lost(ValueError('invalid hardware configuration'))
+        services.recovery.communication_failed(DependencyUnavailable('transport failure'))
         refresh(app)
         assert api.get(P+'/status').json()['system']['system_state']=='DEGRADED'
     assert not any(rp.enabled)
@@ -110,6 +110,24 @@ def test_mux_loss_does_not_reconfigure_rp(tmp_path):
         s.rp.set_tx_config.assert_not_called()
 
 
+def test_bad_final_startup_read_retries_observation_not_hardware(tmp_path):
+    path = tmp_path/'startup.db'; seed(path); now = [0.]
+    rp = MockRp2354Client(clock=lambda:now[0])
+    original = rp.get_status
+    rp.get_status = Mock(side_effect=[DependencyUnavailable('lost status'), original()])
+    rp.set_tx_enabled = Mock(wraps=rp.set_tx_enabled)
+    rp.set_tx_config = Mock(wraps=rp.set_tx_config)
+    rp.clear_rds = Mock(wraps=rp.clear_rds)
+    app = create_app(Settings(path), rp=rp, clock=lambda:now[0])
+    with TestClient(app):
+        assert not app.state.services.recovery.ready
+        counts = [m.call_count for m in (rp.set_tx_enabled,rp.set_tx_config,rp.clear_rds)]
+        rp.get_status.side_effect = original
+        now[0] += .3; refresh(app)
+        assert app.state.services.recovery.ready
+        assert counts == [m.call_count for m in (rp.set_tx_enabled,rp.set_tx_config,rp.clear_rds)]
+
+
 def test_unavailable_shutdown_preserves_desired_and_cleans_workers(tmp_path):
     path=tmp_path/'config.db';seed(path);rp=MockRp2354Client()
     app=create_app(Settings(path),rp=rp)
@@ -136,7 +154,7 @@ def test_systemd_contract():
         assert 'TimeoutStopSec=30' in unit
 
 
-def test_rds_transport_failure_suspends_all_channels(tmp_path):
+def test_rds_transport_failure_fences_only_target(tmp_path):
     path=tmp_path/'config.db';seed(path);now=[0.0]
     app=create_app(Settings(path),clock=lambda:now[0])
     with TestClient(app):
@@ -144,15 +162,16 @@ def test_rds_transport_failure_suspends_all_channels(tmp_path):
         s.rp.push_rds=Mock(side_effect=DependencyUnavailable('ambiguous push'))
         now[0]=1
         app.state.control.executor.submit(s.rds.tick).result()
-        assert not s.recovery.ready and s.rds.suspended
-        assert all(c.pending is None for c in s.rds.channels)
+        assert s.recovery.ready and not s.rds.suspended
+        assert s.rds.channels[0].needs_clear and s.rds.channels[0].pending is None
+        assert not any(c.needs_clear for c in s.rds.channels[1:])
         assert s.rp.push_rds.call_count==1
         app.state.control.executor.submit(s.rds.tick).result()
         assert s.rp.push_rds.call_count==1
         assert s.status.snapshot().system.system_state=='DEGRADED'
 
 
-def test_rp_reset_detected_by_uptime(tmp_path):
+def test_uptime_decrease_alone_does_not_restore_hardware(tmp_path):
     now=[0.0];rp=MockRp2354Client();uptime=[1000]
     original=rp.get_status
     def status():
@@ -160,12 +179,14 @@ def test_rp_reset_detected_by_uptime(tmp_path):
     rp.get_status=status
     app=create_app(Settings(tmp_path/'config.db'),rp=rp,clock=lambda:now[0])
     with TestClient(app):
-        rp.get_info=Mock(wraps=rp.get_info)
+        rp.set_tx_enabled=Mock(wraps=rp.set_tx_enabled)
+        rp.set_tx_config=Mock(wraps=rp.set_tx_config)
         uptime[0]=10;refresh(app)
-        assert not app.state.services.recovery.ready
+        assert app.state.services.recovery.ready
         now[0]=3;refresh(app)
         assert app.state.services.recovery.ready
-        assert rp.get_info.called
+        rp.set_tx_enabled.assert_not_called()
+        rp.set_tx_config.assert_not_called()
 
 
 def test_stream_error_keeps_rf_and_pipeline_during_rp_recovery(tmp_path):

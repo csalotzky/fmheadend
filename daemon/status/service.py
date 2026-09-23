@@ -4,11 +4,18 @@ import logging
 from ..errors import DependencyUnavailable
 from .. import __version__
 from ..rp2354.linux_client import Rp2354Client
-from ..rp2354.protocol import IncompatibleProtocol
+from ..rp2354.protocol import IncompatibleProtocol, RpResponseError
 from ..models.runtime_status import HeadendStatus, SystemStatus, TxState
 
 
 logger = logging.getLogger(__name__)
+
+
+def communication_state(error):
+    if isinstance(error, IncompatibleProtocol):
+        return 'INCOMPATIBLE'
+    # An explicit error reply proves communication, not a valid status snapshot.
+    return 'AVAILABLE' if isinstance(error, RpResponseError) else 'UNAVAILABLE'
 
 
 class StatusService:
@@ -17,6 +24,7 @@ class StatusService:
         self.clock, self.started = clock, clock()
         self.recovery = recovery
         self._mux_state = None
+        self._observed_at = None
         self.real_rp = isinstance(rp, Rp2354Client)
         self.system = SystemStatus(mocked=not self.real_rp)
         self.info = {"fmheadend_version": __version__, "rp_protocol_version": None,
@@ -31,6 +39,9 @@ class StatusService:
             self.system.rp2354_state = rp_status["state"]
             self.system.i2c_errors = rp_status["i2c_errors"]
             self.info.update((self.rp.info or self.rp.get_info()) if self.real_rp else self.rp.get_info())
+            self._observed_at = self.clock()
+            self.system.rp_observation_stale = False
+            self.system.rp_communication_state = 'AVAILABLE'
             if self.real_rp:
                 self.system.rp_uptime_ms = rp_status["uptime_ms"]
                 self.system.rp_spi_audio_link_error_count = rp_status["rp_spi_audio_link_error_count"]
@@ -49,21 +60,16 @@ class StatusService:
                 row.hardware_last_error = channel["last_error_code"]
                 if row.hardware_tx_state == "ERROR":
                     errors.append(f"RP TX{row.id}: {row.hardware_last_error}")
+                elif row.hardware_tx_state != ('ON' if self.modulators.desired_on(row.id) else 'OFF'):
+                    errors.append(f"RP TX{row.id}: observed state differs from desired state")
+                elif row.hardware_tx_state == 'ON' and row.rf_attenuation_db != self.modulators.get(row.id).rf_attenuation_db:
+                    errors.append(f"RP TX{row.id}: observed attenuation differs from desired configuration")
         except DependencyUnavailable as exc:
-            self.system.rp2354_state = "INCOMPATIBLE" if isinstance(exc, IncompatibleProtocol) else "UNRESPONSIVE"
-            if self.real_rp or self.recovery:
-                self.system.i2c_errors = self.rp.i2c_errors
-                self.system.rp_uptime_ms = self.system.rp_spi_audio_link_error_count = None
-                self.system.rp_last_error_code = None
-                for key in ("rp_protocol_version", "rp_firmware_version", "hardware_revision"):
-                    self.info[key] = None
-                for row in self.modulators.statuses.values():
-                    row.hardware_tx_state = None
-                    row.tx_state = TxState.ERROR
-                    row.rf_attenuation_db = None
-                    row.input_saturated = None
-                    row.audio_underrun_count = row.rds_underrun_count = row.rds_fifo_free = None
-                    row.hardware_last_error = str(exc)
+            self.system.rp_communication_state = communication_state(exc)
+            self.system.rp_observation_stale = True
+            self.system.i2c_errors = self.rp.i2c_errors
+            if self._observed_at is None:
+                self.system.rp2354_state = 'UNKNOWN'
             errors.append(str(exc))
         try:
             mux_status = self.mux.get_status()
@@ -95,10 +101,11 @@ class StatusService:
     def snapshot(self):
         # No dependency IO in the HTTP request path; refresh runs periodically.
         system = self.system.model_copy(deep=True)
-        if self.recovery and not self.recovery.ready:
-            system.rp2354_state = 'INCOMPATIBLE' if isinstance(self.recovery.error, IncompatibleProtocol) else 'UNRESPONSIVE'
-            system.rp_uptime_ms = system.rp_spi_audio_link_error_count = None
+        if self.recovery and self.recovery.error is not None:
+            system.rp_communication_state = communication_state(self.recovery.error)
+            system.rp_observation_stale = True
             system.last_error = str(self.recovery.error)
+        system.rp_observation_age_s = None if self._observed_at is None else max(0, self.clock() - self._observed_at)
         system.uptime_s = max(0, self.clock() - self.started)
         rows = []
         for status in self.modulators.statuses.values():

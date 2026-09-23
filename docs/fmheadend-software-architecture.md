@@ -1448,10 +1448,15 @@ RestartSec=2
 A `fmheadendd` **nem spawnolja** a muxd-t.
 
 M6A clarification: Wants/After deliberately keeps the HTTP service alive when
-muxd stops. Startup and RP reconnect share one serialized recovery path: GET_INFO,
+muxd stops. Application startup uses a serialized hardware synchronization: GET_INFO,
 disable all channels, apply configured TX settings, clear/reset RDS boundaries,
 restore desired ON channels, then verify current status. Unconfigured channels
-remain OFF. Shutdown never overwrites persistent desired enabled state.
+remain OFF. Reconnect does not imply hardware state loss and never automatically
+replays this sequence. Read failures retain stale observations; uncertain RDS
+commands recover only the affected FIFO, uncertain enable writes reapply only
+the target state, and uncertain configuration writes reconcile only their TX.
+Suspicious uptime values or status mismatches do not justify global restoration.
+Shutdown never overwrites persistent desired enabled state.
 See [Milestone 6A](milestone6a.md) for deployment and exact lifecycle semantics;
 Zero 2 W stress/performance validation is deferred to M6B.
 
@@ -1472,23 +1477,26 @@ Javasolt:
 
 A HTTP API indulhat a startup alatt is; ilyenkor `system_state = STARTING`.
 
-## 15.3 RP kiesés és recovery
+## 15.3 RP communication loss and scoped recovery
 
-Ha az RP nem válaszol:
+Communication health is separate from hardware synchronization. Transport loss
+marks observations stale and the system DEGRADED, while RF/audio and persistent
+desired state remain unchanged. A shared bounded backoff coalesces retries.
 
-- `rp2354_state = UNRESPONSIVE`;
-- megfelelő system `DEGRADED`/`ERROR`;
-- periodikus reconnect/retry.
+After communication returns, GET_INFO checks compatibility and fresh reads update
+observations. Reconnect never implies OFF/config/CLEAR/ON replay. GET_STATUS or
+GET_RDS_FIFO_FREE failures perform no hardware restoration. Suspicious uptime
+values and per-TX mismatches do not prove global state loss.
 
-Ha visszatér:
+Uncertain RDS_PUSH/CLEAR fences only that TX's RDS until an acknowledged CLEAR,
+then immediately refills its existing two-second lookahead. NOT_SENT keeps the
+batch; ambiguous PUSH is never replayed. Uncertain SET_TX_ENABLED reapplies only
+the target's desired ON/OFF. Uncertain SET_TX_CONFIG reconciles only that TX.
 
-1. `GET_INFO`;
-2. compatibility check;
-3. teljes desired TX config újraküldése;
-4. RDS FIFO-k újratöltése;
-5. desired TX ON/OFF állapot helyreállítása.
-
-A DB a desired state forrása.
+Full restoration is limited to application startup in the current daemon. Any
+future explicit reset path must establish actual global state loss before using
+it. V1 has no boot identifier; this milestone adds no reset-detection heuristics.
+The database and session STOP ALL holds remain the desired-state authority.
 
 ## 15.4 muxd kiesés
 

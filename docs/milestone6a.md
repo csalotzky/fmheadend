@@ -8,15 +8,16 @@ The architecture and RP protocol remain the canonical component/wire contracts.
 
 The existing single control executor owns recovery as well as API control, SQLite,
 status polling and RDS refill. No new I2C worker, supervisor or process launcher
-is introduced. Startup and reconnect use the same `Recovery` implementation.
+is introduced. Recovery scope must not exceed failure scope. Reopening the Linux
+I2C session does not imply loss of RP/QN state.
 
 After loading configuration, startup attempts GET_INFO and checks protocol V1 and
 exactly eight modulators. Missing/incompatible RP hardware leaves the API available
-with DEGRADED status, without a mock fallback. Failed attempts back off for two
-seconds (in addition to the low-level client's existing bounded transaction policy).
-Normal status polling drives recovery; RDS refill never performs its own reconnect.
+with DEGRADED status, without a mock fallback. Transport failures use the shared
+250 ms client/coordinator backoff; normal later polls retry communication. No
+additional fixed one-second RDS transport delay is imposed.
 
-A successful handshake is followed by:
+At application startup only, a successful handshake is followed by:
 
 1. Disable all eight physical transmitters before restoring any desired ON state.
 2. Apply SET_TX_CONFIG to each configured channel. Unconfigured channels stay OFF;
@@ -31,14 +32,39 @@ and DEGRADED. Persistent configuration is never rewritten to represent temporary
 OFF/unknown states. API start/config/stop operations during RP unavailability retain
 validated desired changes but reject hardware application until recovery succeeds.
 
-RP communication loss closes the real session, invalidates hardware observations
-and suspends RDS. Source pipelines/PCM may keep running. RDS errors also invalidate
-the recovery boundary; pending batches are discarded rather than replayed after an
-ambiguous outcome. After reconnect, effective RT is selected by the unchanged M5
-precedence and PS/AF/RT/ECC restart coherently. RP uptime decreasing between successful
-status observations is also treated as a reset. V1 has no boot identifier: a reset
-whose uptime overtakes the prior observation before the next poll cannot always be
-detected if no communication failure was observed.
+Startup retains progress through acknowledged steps: a corrupt final status read
+retries observation, not all eight OFF/config operations. There is currently no
+daemon-issued RP reset path. Startup is the only full hardware synchronization
+trigger. A suspicious uptime decrease (including wrap), status mismatch, failed poll
+or reconnect never invokes global restoration. Valid hardware faults/mismatches
+remain visible; they are not silently converted to success or configuration replay.
+
+The client preserves command, target, transaction stage and execution certainty:
+NOT_SENT, AMBIGUOUS, read-only OBSERVATION failure, or a valid RP RESPONSE. An
+implicit GET_INFO failure is not an executed SET. Local validation raises ValueError
+before I/O. Valid QN_ERROR/INTERNAL_ERROR remain typed RP errors.
+
+Read-only GET_INFO/GET_STATUS/GET_RDS_FIFO_FREE failures perform no RF/config/CLEAR
+recovery. Capacity failure skips refill and preserves scheduler/pending state; a
+long outage may starve RDS but leaves RF/audio untouched. A new session performs
+GET_INFO compatibility checking without replaying configuration. Existing locks
+still serialize request, command wait, header read and payload read.
+
+An ambiguous RDS_PUSH discards only that TX's uncertain pending batch and fences
+its FIFO until RDS_CLEAR is positively acknowledged. An uncertain CLEAR is retried
+without intervening PUSHes. Recovery then refills to the unchanged two-second
+lookahead in that same tick, bypassing the normal 100 ms gate. NOT_SENT retains
+the pending batch; BUSY retains its existing exact-batch/single-retry semantics.
+Valid RP RDS error replies retain a bounded channel retry interval. Other channels
+continue once the shared bus is usable; no RDS failure disables RF.
+
+An ambiguous SET_TX_ENABLED queues just the target's latest desired ON/OFF write,
+without an unnecessary OFF/config cycle. An ambiguous SET_TX_CONFIG queues a
+target-only OFF/config/CLEAR/desired-state reconciliation. At most one target
+lifecycle runs per maintenance tick, before RDS refill. Completed steps are not
+repeated merely because the next ACK is lost. NOT_SENT or explicit SET rejection
+does not create reconciliation work. Persistent desired state and STOP ALL holds
+remain authoritative. Explicit OFF still releases audio only after confirmation.
 
 Current hardware fault observations remain distinct from latched diagnostic error
 codes: historical counters/codes alone do not mean the RP is currently unhealthy.
@@ -69,8 +95,11 @@ TimeoutStopSec is the final bound if a native driver/worker does not return.
 
 The existing `/api/v1/status` remains the health surface. Failed dependencies yield
 DEGRADED while HTTP remains available; successful current dependency observations
-and restoration return RUNNING. On RP loss, hardware TX, nominal RF level and RP
-counters become null, TX runtime state becomes ERROR, and RDS becomes UNKNOWN.
+and restoration return RUNNING. On communication failure the last valid hardware
+TX, attenuation and counter values are retained. `rp_communication_state` reports
+AVAILABLE/UNAVAILABLE/INCOMPATIBLE; `rp_observation_stale` marks uncertain data and
+`rp_observation_age_s` measures time since the last successful snapshot (null before
+one exists). Transport uncertainty does not turn every TX into hardware ERROR.
 Desired enabled state is still read from the persistent modulator configuration.
 Mux counters are last-observed diagnostics while mux_state=ERROR, not proof of
 current transport. No second health API is added.
@@ -164,19 +193,31 @@ kill/restart variant with a local HTTP WAV server, native GStreamer, real mux Un
 sockets and mock RP/SPI. It checks resumed PCM, unchanged pipeline identity and
 DEGRADED -> RUNNING. This is an integration smoke, not a stress or soak test.
 
-## Future real RP smoke
+## Real RP scoped-recovery smoke (operator validation pending)
 
-Use compatible Pico firmware and an appropriate RF test setup. Configure one TX
-explicitly, observe normal status, then disconnect/reboot RP. Check DEGRADED,
-unknown hardware fields, preserved desired ON and suspended RDS. Reconnect and
-inspect journal/firmware diagnostics for GET_INFO, all-channel disable, config,
-RDS_CLEAR, desired enable and successful read-back. Verify PS/AF/ECC/RT clean restart
-with receiver/firmware instrumentation. A failed config/clear must not enable that
-TX or claim recovery. Finally SIGTERM fmheadendd and verify RF disables while the
-saved desired state remains ON. No real RP recovery or physical RF/RDS transmission
-has been tested in M6A without connected hardware.
+With the terminated RF bench setup, observe running TXs during the intermittent
+host-I2C corruption. Failed polls should mark observations stale/DEGRADED without
+OFF/config/CLEAR writes. After a good read the observation becomes fresh. An
+uncertain RDS_PUSH should produce only that TX's CLEAR/refill, without RF change.
+Confirm other TX audio and RDS continue after the shared transport backoff.
+
+An uncertain enable ACK should repeat only the target desired enable value; an
+uncertain config ACK may reconcile only that TX. Inspect both Linux logs and RP
+UART. Do not equate unplugging/rebooting the RP with a control-only outage: actual
+reset loses hardware state, and V1 currently provides no reliable automatic reset
+identification here. Restarting the daemon explicitly performs startup restore.
+Finally SIGTERM fmheadendd and verify the bounded OFF pass, preserved persistent
+desired state and an explicit warning if an OFF cannot be confirmed. These Linux
+recovery changes have automated coverage, not final physical acceptance yet.
 
 ## Validation and remaining scope
+
+Scoped-recovery update validation (Windows, isolated Python 3.13 test dependencies):
+focused recovery/RDS/RP-client suites **271 passed, 1 skipped**; full daemon suite
+**474 passed, 30 skipped**. Skips require Linux i2c-dev, native Linux mux integration,
+or GStreamer/PyGObject. The existing transaction-serialization and two-second RDS
+lookahead tests pass. No firmware, wire format, SPI/audio code or Linux scheduler
+policy was changed. Physical fault/recovery acceptance remains for the operator.
 
 Focused tests: `python -m pytest daemon/tests/test_recovery.py -q -ra`.
 For the real-process smoke and full regression use the M3/M5 `MUXD_BINARY` and

@@ -147,12 +147,16 @@ indices nor accepted counters advance before ACK. New content invalidates a BUSY
 batch and establishes a fresh FIFO boundary first.
 
 For a transport failure with uncertain execution, the batch is never blindly
-replayed. Pending groups are discarded; after a one-second internal backoff, a
-successful RDS_CLEAR is required before restarting PS/RT/AF segments coherently.
+replayed. Only that channel's pending groups are discarded; after the shared
+transport/client backoff, a successful RDS_CLEAR is required before restarting
+PS/RT/AF segments coherently. CLEAR and refill to the two-second lookahead happen
+in the same recovery tick, without an extra one-second or 100 ms delay.
 A failed clear blocks new pushes. This deliberately permits a gap and discards
 possibly queued old groups; it avoids silent replay/reordering. It cannot retract
 anything already transmitted before the failure. Persistent config remains intact.
-A capacity-query failure does not consume pending scheduler state.
+A capacity-query failure does not consume pending scheduler state or initiate
+hardware restoration. A known NOT_SENT PUSH retains its pending batch without
+CLEAR. Neither path interrupts RF/audio or resets another channel's scheduler.
 
 Disable/stop drops Linux pending groups and clears the RP FIFO. Re-enable starts
 coherently after a successful clear. Content configuration changes also establish

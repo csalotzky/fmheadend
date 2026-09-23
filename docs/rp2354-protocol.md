@@ -348,6 +348,13 @@ A short write, short read, malformed response, NACK or OS error closes the sessi
 there is no blind request replay because execution may already have happened.
 Reopening waits at least 250 ms. Existing periodic status polling retries communication
 and performs a fresh handshake; no extra recovery daemon or fake bus is introduced.
+Reconnection alone never restores hardware configuration. Linux failures carry
+command/target/stage and NOT_SENT, AMBIGUOUS, OBSERVATION or valid RESPONSE
+certainty; this metadata is Linux-local and does not change any wire bytes.
+Read failures retain stale observations and use bounded later retries. Ambiguous
+RDS operations establish a target-only CLEAR boundary; ambiguous enable writes
+reapply only that TX's desired state. Ambiguous configuration writes reconcile
+only their target. See [M6A](milestone6a.md) for current recovery policy.
 An unavailable device does not prevent the HTTP application from starting.
 
 The real CLI is the default. `--mock-rp` explicitly selects the unchanged high-level
@@ -358,8 +365,10 @@ pass `rp=Rp2354Client(device, address)` to opt into real control.
 Runtime status adds independent RP `hardware_tx_state`, `audio_underrun_count`,
 `rds_underrun_count`, `rds_fifo_free`, `hardware_last_error`, plus global
 `rp_uptime_ms`, `rp_spi_audio_link_error_count` and latched `rp_last_error_code`. Real reported TX state updates `tx_state`.
-On communication failure, measurements/counters that require a current RP snapshot
-become null, hardware TX state is unknown, and runtime TX state reports ERROR.
+On communication failure, the last valid measurements/counters and TX states are
+retained with `rp_observation_stale=true`, `rp_observation_age_s` and a separate
+`rp_communication_state`. Before the first valid snapshot, hardware values remain
+unknown. Transport uncertainty is not a confirmed TX hardware ERROR.
 Persistent desired state and the existing PCM streams are retained. A subsequent
 snapshot restores observed status; it does not silently enable RF or restore desired
 configuration. Explicit start remains available. Mux `underruns`, `overruns` and PCM

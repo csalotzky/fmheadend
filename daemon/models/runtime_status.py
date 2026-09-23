@@ -57,6 +57,9 @@ class ModulatorStatus(Model):
 class SystemStatus(Model):
     system_state: str = "RUNNING"
     rp2354_state: str = "OK"
+    rp_communication_state: str = "UNAVAILABLE"
+    rp_observation_stale: bool = True
+    rp_observation_age_s: float | None = None
     mux_state: str = "RUNNING"
     mux_transport: str = "mock"
     mux_transport_state: str = "RUNNING"

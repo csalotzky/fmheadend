@@ -4,6 +4,7 @@ from ..errors import DependencyUnavailable, DomainError
 from ..models.configuration import ModulatorConfig
 from ..models.runtime_status import ModulatorStatus, TxState
 from ..rp2354.client import TxConfig
+from ..rp2354.protocol import Command, Outcome, RpResponseError, execution_outcome
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,10 @@ class ModulatorManager:
         if config.enabled != old.enabled:
             raise DomainError(409, "LIFECYCLE_REQUIRED", "Use the explicit Start or Stop operation to change TX state")
         saved = self.database.save("modulators", config, modulator_id)
+        if self.recovery and modulator_id in self.recovery.pending:
+            # An edit supersedes any partially completed target reconciliation.
+            self.recovery.pending[modulator_id] = 'off'
+            self.rds.fence(modulator_id)
         self.statuses[modulator_id].source_state = None if config.audio_mode == "ANALOG" else "IDLE"
         if config.audio_mode != old.audio_mode:
             self.statuses[modulator_id].input_saturated = None
@@ -62,6 +67,8 @@ class ModulatorManager:
     def _start(self, modulator_id):
         if self.recovery:
             self.recovery.require_ready()
+            if modulator_id in self.recovery.pending:
+                raise DomainError(503, 'DEPENDENCY_UNAVAILABLE', 'Target TX reconciliation pending')
         config = self.get(modulator_id)
         status = self.statuses[modulator_id]
         if status.tx_state == TxState.ON and (config.audio_mode == "ANALOG" or modulator_id in self.active_sources):
@@ -70,40 +77,39 @@ class ModulatorManager:
             self._stop(modulator_id)
         analog = config.audio_mode == "ANALOG"
         source = None if analog else self.database.get("sources", config.input_source_id)
+        previous_state = status.tx_state
         status.tx_state, status.last_error = TxState.STARTING, None
         enable_attempted = False
-        rp_attempted = False
+        command = None
         try:
             if not analog:
                 self.sources.acquire(source.id, modulator_id)
                 self.active_sources[modulator_id] = source.id
                 self.mux.attach(modulator_id, source.id)
-            rp_attempted = True
+            command = Command.SET_TX_CONFIG
             self.rp.set_tx_config(modulator_id, TxConfig.from_modulator(config))
             if self.recovery:
+                command = Command.RDS_CLEAR
                 self.recovery.boundary(modulator_id)
             enable_attempted = True
+            command = Command.SET_TX_ENABLED
             self.rp.set_tx_enabled(modulator_id, True)
         except (DependencyUnavailable, ValueError) as exc:
-            # A failed enable may have reached hardware. Keep audio if RF OFF
-            # cannot be confirmed; failures before enable can release it safely.
-            rf_off = not enable_attempted
-            if enable_attempted:
-                try:
-                    self.rp.set_tx_enabled(modulator_id, False)
-                    rf_off = True
-                except DependencyUnavailable:
-                    pass
+            # An uncertain ON is retried as ON, never converted to an OFF cycle.
+            rf_off = command is None or (not enable_attempted and execution_outcome(exc, command) != Outcome.AMBIGUOUS)
             if rf_off:
                 self.mux.detach(modulator_id)
                 if source is not None:
                     self.sources.release(source.id, modulator_id)
                 self.active_sources.pop(modulator_id, None)
-            status.tx_state, status.last_error = TxState.ERROR, str(exc)
-            if self.recovery and rp_attempted:
-                self.recovery.lost(exc)
+            status.tx_state = TxState.ERROR if command is None or isinstance(exc, RpResponseError) else previous_state
+            status.last_error = str(exc)
+            if self.recovery and command is not None:
+                self.recovery.command_failed(modulator_id, command, exc)
             raise DomainError(503, "DEPENDENCY_UNAVAILABLE", str(exc)) from exc
         status.tx_state = TxState.ON
+        if self.recovery:
+            self.recovery.pending.pop(modulator_id, None)
         status.source_state = None if analog else "RUNNING"
         logger.info("modulator %s started at %s kHz", modulator_id, config.frequency_khz)
         return status
@@ -121,12 +127,16 @@ class ModulatorManager:
         try:
             self.rp.set_tx_enabled(modulator_id, False)
         except DependencyUnavailable as exc:
-            status.tx_state, status.last_error = TxState.ERROR, str(exc)
+            status.last_error = str(exc)
+            if isinstance(exc, RpResponseError):
+                status.tx_state = TxState.ERROR
             if self.recovery:
-                self.recovery.lost(exc)
+                self.recovery.command_failed(modulator_id, Command.SET_TX_ENABLED, exc)
             raise DomainError(503, "DEPENDENCY_UNAVAILABLE", str(exc)) from exc
         if self.rds is not None:
             self.rds.stop(modulator_id)
+        if self.recovery:
+            self.recovery.pending.pop(modulator_id, None)
         self.mux.detach(modulator_id)
         source_id = self.active_sources.get(modulator_id)
         if source_id is not None:

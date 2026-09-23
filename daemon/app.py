@@ -54,8 +54,9 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
             modulators.rds = rds
             recovery = Recovery(modulators, rds, clock)
             modulators.recovery = recovery
-            rds.on_failure = recovery.lost
-            rds.on_read_failure = recovery.verify_fifo_read
+            rds.on_failure = recovery.communication_failed
+            rds.can_communicate = recovery.can_communicate
+            rds.channel_ready = lambda channel: channel not in recovery.pending
             rds.suspended = True
             status = StatusService(modulators, sources, rp_client, mux_client, clock, recovery)
             status.info.update(frequency_plan=PLANS[settings.region].as_dict(),
@@ -77,12 +78,15 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
         def tick():
             nonlocal next_poll
             services.rt.expire()
+            services.recovery.service()
             services.rds.tick()
             now = time.monotonic()
             if now >= next_poll:
                 services.status.refresh()
                 next_poll = now + services.config.get_system().rp_status_poll_interval_ms / 1000
-            return min(POLL_SECONDS, max(0.01, next_poll - time.monotonic()))
+            interval = min(POLL_SECONDS, max(0.01, next_poll - time.monotonic()))
+            delay = services.recovery.retry_delay
+            return min(interval, delay) if delay > 0 else interval
 
         async def maintenance():
             while True:

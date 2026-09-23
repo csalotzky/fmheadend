@@ -80,26 +80,38 @@ class Rp2354Client:
         with self._lock:
             self._close()
 
+    @property
+    def retry_delay(self):
+        return max(0.0, self._retry_at - time.monotonic())
+
     def _exchange(self, command: p.Command, target: int, payload: bytes = b"", *, decode=None):
         packet = p.request(command, target, payload)
         if time.monotonic() < self._retry_at:
-            raise p.HardwareUnavailable(self.last_error or "RP reconnect backoff")
+            error = p.HardwareUnavailable(self.last_error or "RP reconnect backoff")
+            error.command, error.target, error.stage, error.outcome = command, target, 'backoff', p.Outcome.NOT_SENT
+            raise error
         header = received = None
+        stage = 'open'
         try:
             self._open()
             for attempt in range(2):
                 header = received = None
+                stage = 'write'
                 if os.write(self._fd, packet) != len(packet):
                     raise p.ProtocolError("Short I2C request write; command outcome is unknown")
                 # Firmware must prepare a response, or BUSY without side effects,
                 # within the command window. Each transaction ends with STOP.
+                stage = 'wait'
                 time.sleep(p.RESPONSE_WAIT_MS[command] / 1000)
+                stage = 'header'
                 header = os.read(self._fd, 2)
                 _, length = p.response_header(command, header)
+                stage = 'payload'
                 received = os.read(self._fd, length) if length else b""
                 try:
                     result = p.response(command, header + received)
                     if decode is not None:
+                        stage = 'decode'
                         result = decode(result)
                     if command == p.Command.GET_STATUS:
                         self._malformed_reported = False
@@ -110,6 +122,7 @@ class Rp2354Client:
                         raise
                     time.sleep(0.01)
         except p.RpResponseError as exc:
+            exc.target, exc.stage = target, 'response'
             self.last_error = str(exc)
             raise
         except (OSError, p.ProtocolError, p.HardwareUnavailable) as exc:
@@ -125,15 +138,15 @@ class Rp2354Client:
             self.last_error = f"RP2354 I2C {self.device} address {self.address}: {exc}"
             self._close()
             self._retry_at = time.monotonic() + 0.25
-            if isinstance(exc, p.ProtocolError):
-                if isinstance(exc, p.IncompatibleProtocol):
-                    raise
-                if command in (p.Command.GET_STATUS, p.Command.GET_RDS_FIFO_FREE):
-                    # Recovery may perform ONE fresh read-only health check on
-                    # the same control worker. This is not an automatic replay.
-                    self._retry_at = 0.0
-                raise p.MalformedResponse(command, str(exc)) from exc
-            raise p.HardwareUnavailable(self.last_error) from exc
+            error = (exc if isinstance(exc, p.IncompatibleProtocol) else
+                     p.MalformedResponse(command, str(exc)) if isinstance(exc, p.ProtocolError) else
+                     p.HardwareUnavailable(self.last_error))
+            error.command, error.target, error.stage = command, target, stage
+            error.outcome = (p.Outcome.NOT_SENT if stage == 'open' else
+                             p.Outcome.OBSERVATION if command in p.READ_ONLY else p.Outcome.AMBIGUOUS)
+            if error is exc:
+                raise
+            raise error from exc
         raise AssertionError("Unreachable exchange state")
 
     def get_info(self) -> dict:

@@ -1,5 +1,5 @@
 """RP2354 V1 wire contract. See docs/rp2354-protocol.md; no device access here."""
-from enum import IntEnum
+from enum import IntEnum, StrEnum
 import struct
 from decimal import Decimal
 
@@ -59,9 +59,31 @@ class HardwareUnavailable(DependencyUnavailable):
     pass
 
 
+class Outcome(StrEnum):
+    NOT_SENT = 'NOT_SENT'
+    AMBIGUOUS = 'AMBIGUOUS'
+    OBSERVATION = 'OBSERVATION'
+    RESPONSE = 'RESPONSE'
+
+
+READ_ONLY = {Command.GET_INFO, Command.GET_STATUS, Command.GET_RDS_FIFO_FREE, Command.QN_READ_REGISTER}
+
+
+def execution_outcome(error, command):
+    """Certainty for the caller's command, including an implicit INFO failure."""
+    if isinstance(error, ValueError):
+        return Outcome.NOT_SENT
+    if getattr(error, 'command', command) != command:
+        return Outcome.NOT_SENT
+    if isinstance(error, RpResponseError):
+        return Outcome.RESPONSE
+    return getattr(error, 'outcome', Outcome.OBSERVATION if command in READ_ONLY else Outcome.AMBIGUOUS)
+
+
 class RpResponseError(DependencyUnavailable):
     def __init__(self, command: Command, status: Status):
         self.command, self.rp_status = command, status
+        self.outcome = Outcome.RESPONSE
         super().__init__(f"RP2354 {command.name}: {status.name}")
 
 

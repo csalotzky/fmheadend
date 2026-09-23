@@ -87,7 +87,7 @@ def test_status_invalid_saturation(value):
 
 
 @pytest.mark.parametrize("settings", [DEFAULTS, MANUAL])
-def test_api_recovery_replays_full_config_and_current_saturation(tmp_path, settings):
+def test_api_reconnect_preserves_config_and_stale_saturation(tmp_path, settings):
     now = [0.0]; rp = MockRp2354Client(clock=lambda: now[0])
     app = create_app(Settings(tmp_path / "api.db"), rp=rp, clock=lambda: now[0])
     def refresh(): app.state.control.executor.submit(app.state.services.status.refresh).result()
@@ -106,8 +106,9 @@ def test_api_recovery_replays_full_config_and_current_saturation(tmp_path, setti
             rp.input_saturated[0] = saturation; refresh()
             assert api.get(prefix + "/status").json()["modulators"][0]["input_saturated"] is saturation
         rp.available = False; refresh()
-        assert api.get(prefix + "/status").json()["modulators"][0]["input_saturated"] is None
-        rp.configs.clear(); rp.available = True; now[0] = 3; refresh()
+        assert api.get(prefix + "/status").json()["modulators"][0]["input_saturated"] is False
+        assert api.get(prefix + "/status").json()["system"]["rp_observation_stale"]
+        rp.available = True; now[0] = 3; refresh()
         assert {key:getattr(rp.configs[0],key) for key in settings} == settings
         assert rp.enabled[0] and app.state.services.recovery.ready
         assert not app.state.services.sources.pipelines

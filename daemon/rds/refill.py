@@ -2,12 +2,12 @@
 from dataclasses import dataclass, field
 import time
 from ..errors import DependencyUnavailable
-from ..rp2354.protocol import Busy, MalformedResponse
+from ..rp2354.protocol import Busy, Command, Outcome, RpResponseError, execution_outcome
 from .characters import rt_bytes
 from .scheduler import Scheduler, LOOKAHEAD_SECONDS
 
 POLL_SECONDS = 0.1
-ERROR_RETRY_SECONDS = 1.0
+RP_ERROR_RETRY_SECONDS = 1.0  # Valid device error replies, never transport failures.
 MAX_BATCHES_PER_TICK = 2
 CONTENT_FIELDS = {'rds_pi', 'rds_ecc', 'rds_pty', 'rds_tp', 'rds_ps', 'rds_af_khz', 'stereo'}
 
@@ -30,7 +30,9 @@ class RdsRefill:
         self.next_poll = 0.0
         self.suspended = False
         self.on_failure = None
-        self.on_read_failure = None
+        self.can_communicate = lambda: True
+        self.channel_ready = lambda channel: True
+        self.transport_retry_at = 0.0
 
     def suspend(self):
         self.suspended = True
@@ -44,12 +46,30 @@ class RdsRefill:
         row = self.modulators.statuses[channel]
         row.rds_state, row.rds_last_error = "DISABLED", None
 
+    def fence(self, channel):
+        state = self.channels[channel]
+        state.pending = None
+        state.needs_clear = True
+        state.retry_at = 0
+        self.next_poll = 0
+
+    def _transport_ready(self):
+        return (self.clock() >= self.transport_retry_at and self.can_communicate()
+                and getattr(self.rp, 'retry_delay', 0.0) == 0)
+
+    def _transport_failure(self, error):
+        if not isinstance(error, RpResponseError):
+            self.transport_retry_at = self.clock() + max(.25, getattr(self.rp, 'retry_delay', 0.0))
+            if self.on_failure:
+                self.on_failure(error)
+
     def _error(self, channel, error):
         self.modulators.statuses[channel].rds_last_error = str(error)
         self.modulators.statuses[channel].rds_state = 'ERROR'
-        self.channels[channel].retry_at = self.clock() + ERROR_RETRY_SECONDS
-        if self.on_failure:
-            self.on_failure(error)
+        if isinstance(error, RpResponseError):
+            self.channels[channel].retry_at = self.clock() + RP_ERROR_RETRY_SECONDS
+        else:
+            self._transport_failure(error)
 
     def stop(self, channel):
         state = self.channels[channel]
@@ -75,17 +95,19 @@ class RdsRefill:
         return True
 
     def tick(self):
-        if self.suspended:
+        if self.suspended or not self._transport_ready():
             return
         now = self.clock()
-        if now < self.next_poll:
+        if now < self.next_poll and not any(c.needs_clear for c in self.channels):
             return
         self.next_poll = now + POLL_SECONDS
         ready = []
         for config in self.database.list('modulators'):
-            if self.suspended:
+            if self.suspended or not self._transport_ready():
                 return
             channel = config.id
+            if not self.channel_ready(channel):
+                continue
             state = self.channels[channel]
             active = config.rds_enabled and (channel in self.modulators.active_sources or
                 (config.audio_mode == "ANALOG" and self.modulators.statuses[channel].tx_state == "ON"))
@@ -125,20 +147,18 @@ class RdsRefill:
         if not ready:
             return
         try:
-            try:
-                free = self.rp.get_rds_fifo_free()
-            except MalformedResponse as exc:
-                if self.on_read_failure is None:
-                    raise
-                free = self.on_read_failure(exc)
+            free = self.rp.get_rds_fifo_free()
             if len(free) != 8 or any(type(n) is not int or not 0 <= n <= 65535 for n in free):
                 raise DependencyUnavailable('Invalid RDS FIFO capacity response')
         except DependencyUnavailable as exc:
+            self._transport_failure(exc)
             for channel in ready:
-                self._error(channel, exc)
+                # Capacity is unknown, but scheduler/pending batches are intact.
+                row = self.modulators.statuses[channel]
+                row.rds_last_error, row.rds_state = str(exc), 'UNKNOWN'
             return
         for channel in ready:
-            if self.suspended:
+            if self.suspended or not self._transport_ready():
                 return
             state = self.channels[channel]
             row = self.modulators.statuses[channel]
@@ -159,9 +179,9 @@ class RdsRefill:
                     row.rds_last_error, row.rds_state = str(exc), 'BUSY'
                     break
                 except DependencyUnavailable as exc:
-                    # Outcome may be ambiguous. Never replay; clear before restarting.
-                    state.pending = None
-                    state.needs_clear = True
+                    if execution_outcome(exc, Command.RDS_PUSH) != Outcome.NOT_SENT:
+                        # Ambiguous/failed submission: no replay across the boundary.
+                        self.fence(channel)
                     self._error(channel, exc)
                     break
                 state.scheduler = candidate
