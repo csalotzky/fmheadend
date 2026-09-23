@@ -1,3 +1,6 @@
+
+
+
 # M8.2: Raspberry Pi to RP2354 I2C control skeleton
 
 M8.2 adds the standard host control bus to the production firmware, preserving
@@ -110,8 +113,19 @@ Reads beyond the response return `0xFF` without overrunning memory. An address-o
 probe is not a command; it does not execute or reset the response cursor.
 
 The handler supplies one TX byte per hardware read request, so header reads do
-not prefetch and lose payload bytes at STOP. Hardware FIFO-flush aborts undo the
-one unsent queued response byte. Normal NACK/STOP preserves the cursor.
+not prefetch and lose payload bytes at STOP. The original abort accounting is
+restored: if last_tx_advanced and TX_FLUSH_CNT are nonzero, undo one queued
+response byte. Normal NACK/STOP preserves the cursor.
+
+The experimental multi-byte TX FIFO prefill/refill and TX_EMPTY watermark
+handling were reverted after physical testing showed no reliability improvement:
+SLV_ARBLOST/ARB_LOST and malformed reads still occurred. This revert does not
+claim to fix that hardware failure. The init setting remains 100000; the separate
+400000 init/filter experiment also did not improve reliability.
+
+The one-shot HOST I2C ABRT SNAP diagnostic remains: it freezes the first abort's
+registers, timestamp, cursor, state and up to 40 copied response bytes before
+rollback/clear, then prints once through the foreground UART drain.
 
 Only bounded byte movement, validation, snapshot serialization and log-event
 queueing occur inside the IRQ. It never prints, sleeps, allocates or accesses

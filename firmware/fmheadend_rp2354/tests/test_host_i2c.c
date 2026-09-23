@@ -151,11 +151,41 @@ int main(void)
 
     write_request(info, sizeof(info));
     assert(read_byte() == 0); /* Queued byte is flushed rather than sent. */
-    test_i2c1.hw.tx_abrt_source = 1u << 23;
+    test_i2c1.hw.tx_abrt_source = (1u << 23) | 0x2000;
+    test_i2c1.hw.raw_intr_stat = 0x240;
+    test_i2c1.hw.status = 0x64;
     irq(I2C_IC_INTR_STAT_R_TX_ABRT_BITS, 0, 0);
+    assert(atomic_load(&abrt_snapshot_valid) && !abrt_snapshot_printed);
+    assert(!uart_log[0]); /* Snapshot only; UART mocks also reject ISR printing. */
+    assert(abrt_snapshot.timestamp_us == time_us_64());
+    assert(abrt_snapshot.cursor == 1 && host.response_cursor == 0);
+    assert(abrt_snapshot.last_tx_advanced && !last_tx_advanced);
+    assert(abrt_snapshot.flags == 0x40 && abrt_snapshot.intr == 0x40);
+    assert(abrt_snapshot.raw == 0x240 && abrt_snapshot.status == 0x64);
+    assert(abrt_snapshot.txflr == 0 && abrt_snapshot.rxflr == 0);
+    assert(!abrt_snapshot.receiving && !abrt_snapshot.pending && !abrt_snapshot.running);
+    assert(abrt_snapshot.size == 37 && abrt_snapshot.copied == 37);
+    assert(!memcmp(abrt_snapshot.response,host.response,37));
+    assert(abrt_snapshot.response[37] == 0 && abrt_snapshot.response[39] == 0);
     assert(read_byte() == 0 && read_byte() == 35);
     finish_read();
+    /* Replace the live response and abort again before any foreground print. */
+    write_request(rds_free,sizeof(rds_free));
+    test_i2c1.hw.tx_abrt_source = 0x5000;
+    irq(I2C_IC_INTR_STAT_R_TX_ABRT_BITS,0,0);
+    assert(abrt_snapshot.source == 0x00802000 && abrt_snapshot.cursor == 1);
+    assert(abrt_snapshot.response[1] == 35 && host.response[1] == 16);
     drain();
+    assert(abrt_snapshot_printed);
+    const char *snapshot_log=strstr(uart_log,"HOST I2C ABRT SNAP:");
+    assert(snapshot_log && !strstr(snapshot_log+1,"HOST I2C ABRT SNAP:"));
+    assert(strstr(snapshot_log,"source=0x00802000 flags=0x00000040 raw=0x00000240 intr=0x00000040"));
+    assert(strstr(snapshot_log,"cursor=1 size=37 last_tx_advanced=1 receiving=0"));
+    assert(strstr(snapshot_log,"flush_cnt=1 copied=37\r\nresponse=00 23 01 00 30 2E"));
+    uart_log[0]=0;
+    irq(I2C_IC_INTR_STAT_R_TX_ABRT_BITS,0,0);
+    drain();
+    assert(!strstr(uart_log,"HOST I2C ABRT SNAP:"));
 
     irq(I2C_IC_INTR_STAT_R_RX_FULL_BITS, 1, 3 | I2C_IC_DATA_CMD_FIRST_DATA_BYTE_BITS);
     irq(I2C_IC_INTR_STAT_R_RESTART_DET_BITS, 0, 0);

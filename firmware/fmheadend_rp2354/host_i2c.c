@@ -10,6 +10,7 @@
 #include "hardware/uart.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdatomic.h>
 
 #if !defined(FMHEADEND_HOST_I2C_ADDRESS) || FMHEADEND_HOST_I2C_ADDRESS < 0x08 || FMHEADEND_HOST_I2C_ADDRESS > 0x77
 #error "Configure an unreserved 7-bit FMHEADEND_HOST_I2C_ADDRESS"
@@ -18,6 +19,17 @@
 #define HOST_I2C i2c1
 static host_protocol_t host;
 static bool last_tx_advanced;
+/* First abort only. ISR publishes once; core0 formats the immutable copy later. */
+static struct {
+    uint64_t timestamp_us;
+    uint32_t source, flags, raw, intr, txflr, rxflr, status;
+    size_t cursor, size, copied;
+    bool last_tx_advanced, receiving, pending, running;
+    uint8_t work_command, work_target;
+    uint8_t response[40];
+} abrt_snapshot;
+static atomic_bool abrt_snapshot_valid;
+static bool abrt_snapshot_printed;
 static char log_line[512];
 static size_t log_size, log_cursor;
 static void log_append(const char *text)
@@ -30,6 +42,35 @@ static void log_drain(void)
 {
     for (unsigned n=0;n<16 && log_cursor<log_size && uart_is_writable(DEBUG_UART);++n)
         uart_putc_raw(DEBUG_UART,log_line[log_cursor++]);
+}
+static void log_abort_snapshot(void)
+{
+    char line[384];
+    snprintf(line,sizeof(line),
+        "HOST I2C ABRT SNAP: timestamp_us=%llu\r\n"
+        "source=0x%08lX flags=0x%08lX raw=0x%08lX intr=0x%08lX\r\n"
+        "txflr=%lu rxflr=%lu status=0x%08lX\r\n"
+        "cursor=%lu size=%lu last_tx_advanced=%u receiving=%u\r\n"
+        "pending=%u running=%u work_cmd=0x%02X work_target=0x%02X\r\n"
+        "flush_cnt=%lu copied=%lu\r\nresponse=",
+        (unsigned long long)abrt_snapshot.timestamp_us,
+        (unsigned long)abrt_snapshot.source,(unsigned long)abrt_snapshot.flags,
+        (unsigned long)abrt_snapshot.raw,(unsigned long)abrt_snapshot.intr,
+        (unsigned long)abrt_snapshot.txflr,(unsigned long)abrt_snapshot.rxflr,
+        (unsigned long)abrt_snapshot.status,(unsigned long)abrt_snapshot.cursor,
+        (unsigned long)abrt_snapshot.size,abrt_snapshot.last_tx_advanced,
+        abrt_snapshot.receiving,abrt_snapshot.pending,abrt_snapshot.running,
+        abrt_snapshot.work_command,abrt_snapshot.work_target,
+        (unsigned long)((abrt_snapshot.source >> 23) & 0x1ffu),
+        (unsigned long)abrt_snapshot.copied);
+    log_append(line);
+    for (size_t i=0;i<abrt_snapshot.copied;++i) {
+        char byte[4];
+        snprintf(byte,sizeof(byte),"%02X ",abrt_snapshot.response[i]);
+        log_append(byte);
+    }
+    log_append("\r\n");
+    abrt_snapshot_printed=true;
 }
 bool host_i2c_led(uint64_t now_us) { return qn_control_led(&host.qn,now_us); }
 
@@ -45,6 +86,30 @@ static void host_i2c_irq(void)
     const uint32_t flags = hw->intr_stat;
     if (flags & I2C_IC_INTR_STAT_R_TX_ABRT_BITS) {
         const uint32_t source = hw->tx_abrt_source;
+        if (!atomic_load_explicit(&abrt_snapshot_valid,memory_order_relaxed)) {
+            abrt_snapshot.source=source;
+            abrt_snapshot.flags=flags;
+            abrt_snapshot.raw=hw->raw_intr_stat;
+            abrt_snapshot.intr=hw->intr_stat;
+            abrt_snapshot.txflr=hw->txflr;
+            abrt_snapshot.rxflr=hw->rxflr;
+            abrt_snapshot.status=hw->status;
+            abrt_snapshot.timestamp_us=time_us_64();
+            abrt_snapshot.cursor=host.response_cursor;
+            abrt_snapshot.size=host.response_size;
+            abrt_snapshot.last_tx_advanced=last_tx_advanced;
+            abrt_snapshot.receiving=host.receiving;
+            abrt_snapshot.pending=host.pending;
+            abrt_snapshot.running=host.running;
+            abrt_snapshot.work_command=(host.pending || host.running) ? host.work.event.command : 0;
+            abrt_snapshot.work_target=(host.pending || host.running) ? host.work.event.target : 0;
+            size_t n=host.response_size;
+            if (n>sizeof(host.response)) n=sizeof(host.response);
+            if (n>sizeof(abrt_snapshot.response)) n=sizeof(abrt_snapshot.response);
+            abrt_snapshot.copied=n;
+            memcpy(abrt_snapshot.response,host.response,n);
+            atomic_store_explicit(&abrt_snapshot_valid,true,memory_order_release);
+        }
         if (last_tx_advanced && (source & I2C_IC_TX_ABRT_SOURCE_TX_FLUSH_CNT_BITS)) {
             host_protocol_unread(&host, 1);
         }
@@ -147,6 +212,11 @@ void host_i2c_poll(void)
     log_drain();
     if (log_cursor<log_size) return;
     log_cursor=log_size=0;
+    if (!abrt_snapshot_printed && atomic_load_explicit(&abrt_snapshot_valid,memory_order_acquire)) {
+        log_abort_snapshot();
+        log_drain();
+        return;
+    }
     host_log_event_t event;
     const uint32_t saved = save_and_disable_interrupts();
     const bool have_event = host_protocol_pop_log(&host, &event);

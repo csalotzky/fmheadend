@@ -6,6 +6,7 @@ typedef struct {
     uint32_t intr_stat, tx_abrt_source, clr_tx_abrt, clr_rx_over, data_cmd;
     uint32_t clr_restart_det, clr_stop_det, clr_rx_done, clr_rd_req;
     uint32_t enable, con, ack_general_call, dma_cr, clr_intr, intr_mask;
+    uint32_t raw_intr_stat, txflr, rxflr, status;
 } i2c_hw_t;
 typedef struct { i2c_hw_t hw; } i2c_inst_t;
 extern i2c_inst_t test_i2c1;
