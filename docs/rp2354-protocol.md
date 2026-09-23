@@ -4,29 +4,45 @@ This is the authoritative V1 binary protocol specification and pre-release firmw
 `daemon/rp2354/protocol.py` and `daemon/rp2354/linux_client.py`.
 The architecture defines command semantics and envelopes, but leaves numeric IDs,
 field widths and bus transaction details open in sections 11 and 27. The choices
-below resolve those points for V1; they are not claims about existing firmware.
-The future RP firmware must implement this same contract. This document defines only RP transport. Linux RDS construction and refill policy
-are documented in [Milestone 5](milestone5.md); no RP firmware or QN driver is implemented.
+below resolve those points for V1. Production framing is implemented in
+`firmware/fmheadend_rp2354/host_protocol.c`. This document defines RP transport;
+Linux RDS construction and refill policy are documented in [Milestone 5](milestone5.md).
 
 ## Framing and bus transactions
 
 Pi is the only master. RP uses a configured unreserved 7-bit address, 0x08..0x77;
 there is deliberately no default address. The bus/device path is configurable.
 All multibyte fields are little-endian; structures are packed without padding.
-There are no sequence numbers or checksums.
+There are no sequence numbers. Every request and response has a CRC-16/CCITT-FALSE trailer.
 
-Request: `command:u8 target:u8 length:u8 payload[length]`.
-Response: `status:u8 length:u8 payload[length]`.
+Request: `command:u8 target:u8 length:u8 payload[length] crc16_le:u16`.
+Response: `status:u8 length:u8 payload[length] crc16_le:u16`.
 Lengths count payload bytes only; maximum payload is 255 bytes.
 Targets 0..7 are physical modulators; 0xFF is global. Other targets are invalid.
 Global commands reject channel targets and channel commands reject global targets.
+
+CRC covers the complete header and payload, excluding the CRC itself. Parameters:
+polynomial `0x1021`, initial value `0xFFFF`, no input/output reflection, xorout `0`.
+Check vector: ASCII `123456789` produces `0x29B1` (trailer bytes `b1 29`).
+The CRC trailer does **not** count toward `length`. Maximum request storage is
+260 bytes; the largest valid RDS_PUSH is 254 bytes (249-byte payload, 31 groups).
+GET_STATUS remains a 130-byte payload, now a 134-byte response frame.
+
+RP validates complete request length and CRC at write STOP **before command
+dispatch or any QN/FIFO side effect**. A missing, truncated or incorrect CRC is
+rejected as existing status INVALID_ARGUMENT, with no command execution.
+All responses include CRC, including errors, BUSY, startup BUSY and early-read
+errors. New requests retain the existing abandoned-response/work semantics.
 
 One request is outstanding at a time. Linux performs:
 
 1. One write containing the complete request, ending with STOP.
 2. Wait at least the command-specific response interval below for completion.
 3. One read of exactly two header bytes, ending with STOP.
-4. For a nonempty payload, one read of exactly its declared size, ending with STOP.
+4. One read of exactly `length + 2` bytes (payload and CRC), ending with STOP.
+   This read is mandatory even for an empty ACK/error payload: it reads the CRC.
+5. Validate complete response length and CRC **before** interpreting status or
+   decoding payload. Only a CRC-valid BUSY can authorize the existing single retry.
 
 RP must keep a response cursor across the two read transactions: the second read
 continues at the payload, not at the header. A new complete request replaces any
@@ -34,10 +50,16 @@ abandoned response and resets the cursor. No repeated START is required. The RP
 must have a completed response header ready within the command-specific interval;
 when not ready to execute a command it returns BUSY, with no command side effects. Delayed execution after BUSY is
 forbidden. Each successful response size is fixed below; error payloads are empty.
-Linux rejects a wrong declared length before reading an unexpected payload, and
-rejects short/extra bytes returned by the OS. I2C is master-clocked, so bytes a
+Linux uses the unverified u8 length only to bound its second read (at most 257
+bytes), then verifies CRC and command-specific length/status. It rejects
+short/extra bytes returned by the OS. I2C is master-clocked, so bytes a
 slave might offer beyond the requested read cannot be independently detected;
 firmware must honor the declared size and new-request cursor reset.
+
+Protocol version remains **1**, changed in place by project decision. Deploy the
+Linux client and RP firmware together: old frames without CRC are incompatible
+and there is no automatic fallback. CRC detects corruption; it provides neither
+transaction identity nor permission to replay commands with uncertain outcomes.
 
 The client locks requests within its process and takes an advisory exclusive lock
 on the device while open, preventing other cooperating client instances from
@@ -98,21 +120,22 @@ See [M8.3](milestone8_3.md) for timing bounds and failure isolation.
 | 5 | QN_ERROR | QnError |
 | 6 | INTERNAL_ERROR | InternalError |
 
-All RP error responses must be exactly two bytes: `[status, 0]`. Typed status
+All RP error responses are four bytes: `[status, 0, crc_lo, crc_hi]`. Typed status
 exceptions derive from `RpResponseError`, itself a `DependencyUnavailable`, and
-retain `command` and `rp_status`. Invalid framing/enums raise `ProtocolError`;
+retain `command` and `rp_status`. Invalid framing/CRC/enums raise `ProtocolError`;
 unsupported version/count raises `IncompatibleProtocol`. OS/device/slave access
 failures raise `HardwareUnavailable`. Existing manager/API dependency error handling
 therefore remains applicable. Local invalid arguments raise `ValueError` before I/O.
 
 The unreleased V1 contract includes the expanded SET_TX_CONFIG and GET_STATUS
 payloads below. Protocol version remains 1; command IDs, other payloads, serialized
-request handling, and no-CRC/no-sequence rules remain unchanged. There is no released
-RP firmware and no legacy-payload compatibility path.
+request handling and no-sequence rule remain unchanged. CRC is mandatory on both
+sides; there is no legacy-payload compatibility path.
 
 ## GET_INFO (0x01)
 
-Request has no payload: `01 ff 00`. OK response starts `00 23`.
+Request has no payload: `01 ff 00 53 f8`. OK response starts `00 23`;
+the second read returns 35 payload bytes followed by two CRC bytes.
 
 | Payload offset | Type | Field |
 |---:|---|---|
@@ -276,7 +299,8 @@ used by the Milestone 5 service to establish clean content/lifecycle boundaries.
 ## QN_READ_REGISTER (0x07)
 
 Request payload offset 0: `register:u8`. Response payload offset 0: `value:u8`.
-Example: read TX2 register 0x12: `07 02 01 12`; value 0xA5: `00 01 a5`.
+Example: read TX2 register 0x12: `07 02 01 12 cf ba`;
+value 0xA5: `00 01 a5 e2 1a` (header read `00 01`, second read `a5 e2 1a`).
 Firmware owns QN routing/access. M8.3 permits all u8 register addresses, including
 SYSTEM1, and returns the actual bus result; the datasheet still governs register
 meaning. Each transaction gets at most two retries before QN_ERROR.
@@ -312,9 +336,10 @@ reset. Automatic desired-state restoration and RDS refill are not added here.
 
 ## GET_RDS_FIFO_FREE (0x0B)
 
-Global request `0b ff 00`, no payload. Successful header `00 10`, followed by
+Global request `0b ff 00 92 3f`, no payload. Successful header `00 10`, followed by
 exactly eight little-endian u16 capacities: TX0 at offset 0, TX1 at 2, TX2 at 4,
-TX3 at 6, TX4 at 8, TX5 at 10, TX6 at 12 and TX7 at 14. Total payload: 16 bytes.
+TX3 at 6, TX4 at 8, TX5 at 10, TX6 at 12 and TX7 at 14. Total payload: 16 bytes;
+the second read is 18 bytes including CRC.
 Each capacity counts complete eight-byte RDS groups. The typed client method
 `get_rds_fifo_free()` returns eight integers in channel order.
 
@@ -344,7 +369,7 @@ The kernel/controller governs actual timeout behavior; Python cannot preempt a
 stuck kernel syscall. Hardware timing still requires validation on the real board.
 
 BUSY alone is retried once after 10 ms. All other RP errors are surfaced immediately.
-A short write, short read, malformed response, NACK or OS error closes the session;
+A short write, short read, malformed/CRC-failed response, NACK or OS error closes the session;
 there is no blind request replay because execution may already have happened.
 Reopening waits at least 250 ms. Existing periodic status polling retries communication
 and performs a fresh handshake; no extra recovery daemon or fake bus is introduced.
@@ -355,6 +380,13 @@ Read failures retain stale observations and use bounded later retries. Ambiguous
 RDS operations establish a target-only CLEAR boundary; ambiguous enable writes
 reapply only that TX's desired state. Ambiguous configuration writes reconcile
 only their target. See [M6A](milestone6a.md) for current recovery policy.
+CRC failures use that same execution-certainty model: read-only commands are
+failed observations, sent side-effecting commands remain AMBIGUOUS, and an
+implicit GET_INFO failure before a SET leaves that SET NOT_SENT. No global TX
+restore is triggered by CRC failure. An uncertain RDS_PUSH is never blindly
+replayed; only its target is fenced until a positively acknowledged CLEAR.
+The existing once-per-incident raw response log includes the CRC trailer in its
+`payload`/`payload_length` fields, exactly as returned by the second Linux read.
 An unavailable device does not prevent the HTTP application from starting.
 
 The real CLI is the default. `--mock-rp` explicitly selects the unchanged high-level

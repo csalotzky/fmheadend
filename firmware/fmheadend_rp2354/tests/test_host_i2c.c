@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include "../host_i2c.c"
 #include "fake_qn.h"
+#include "host_test_frame.h"
 
 i2c_inst_t test_i2c1;
 static unsigned available;
@@ -55,6 +56,12 @@ static void irq(uint32_t flags, unsigned rx, uint32_t byte)
 }
 static void write_request(const uint8_t *r, size_t n)
 {
+    uint8_t frame[HOST_REQUEST_MAX];
+    assert(n + 2 <= sizeof(frame));
+    memcpy(frame, r, n);
+    uint16_t crc=host_crc16(r,n);
+    frame[n++]=(uint8_t)crc; frame[n++]=(uint8_t)(crc>>8);
+    r=frame;
     for (size_t i = 0; i < n; ++i) {
         irq(I2C_IC_INTR_STAT_R_RX_FULL_BITS |
             (i == n - 1 ? I2C_IC_INTR_STAT_R_STOP_DET_BITS : 0), 1,
@@ -65,6 +72,13 @@ static uint8_t read_byte(void)
 {
     irq(I2C_IC_INTR_STAT_R_RD_REQ_BITS, 0, 0);
     return test_i2c1.hw.data_cmd;
+}
+static void read_crc(void)
+{
+    assert(host.response_cursor == host.response_size - 2);
+    test_response_crc(&host);
+    assert(read_byte() == host.response[host.response_size - 2]);
+    assert(read_byte() == host.response[host.response_size - 1]);
 }
 static void finish_read(void)
 {
@@ -85,6 +99,7 @@ int main(void)
     finish_read();
     assert(read_byte() == 1 && read_byte() == 0);
     for (unsigned i = 2; i < 35; ++i) assert(read_byte() == host.response[i + 2]);
+    read_crc();
     finish_read();
     drain();
     assert(strstr(uart_log, "HOST RX: GET_INFO") && strstr(uart_log, "HOST TX: OK payload=35 bytes"));
@@ -115,6 +130,7 @@ int main(void)
         if (i>=5 && i<9) assert(byte==(uint8_t)(0x12345678u>>(8*(i-5))));
         if (i >= 10 && (i - 10) % 15 == 0) assert(byte == 0);
     }
+    read_crc();
     finish_read();
     drain();
 
@@ -128,10 +144,12 @@ int main(void)
     write_request(rds_push,sizeof(rds_push));
     assert(!host.pending && !uart_log[0]);
     assert(read_byte()==HOST_OK && read_byte()==0);finish_read();
+    read_crc();finish_read();
     const uint8_t rds_free[]={11,255,0};
     write_request(rds_free,sizeof(rds_free));
     assert(read_byte()==HOST_OK && read_byte()==16);finish_read();
     for(unsigned i=0;i<8;++i) { assert(read_byte()==(i==3?33:64));assert(read_byte()==0); }
+    read_crc();
     finish_read();
     assert(fake_calls==calls_before && !memcmp(&qn_before,&host.qn,sizeof(qn_before)));
     assert(digital_mask==8 && audio_mask==0 && !host_i2c_led(0));
@@ -145,6 +163,7 @@ int main(void)
     calls_before=fake_calls;
     write_request(rds_clear,sizeof(rds_clear));
     assert(read_byte()==HOST_OK && read_byte()==0);finish_read();
+    read_crc();finish_read();
     assert(fake_calls==calls_before && rds_fifo_free(&host.rds[3])==64);
     assert(digital_mask==8 && !host.qn.channel[3].enabled);
     drain();uart_log[0]=0;
@@ -164,9 +183,9 @@ int main(void)
     assert(abrt_snapshot.raw == 0x240 && abrt_snapshot.status == 0x64);
     assert(abrt_snapshot.txflr == 0 && abrt_snapshot.rxflr == 0);
     assert(!abrt_snapshot.receiving && !abrt_snapshot.pending && !abrt_snapshot.running);
-    assert(abrt_snapshot.size == 37 && abrt_snapshot.copied == 37);
-    assert(!memcmp(abrt_snapshot.response,host.response,37));
-    assert(abrt_snapshot.response[37] == 0 && abrt_snapshot.response[39] == 0);
+    assert(abrt_snapshot.size == 39 && abrt_snapshot.copied == 39);
+    assert(!memcmp(abrt_snapshot.response,host.response,39));
+    assert(abrt_snapshot.response[39] == 0);
     assert(read_byte() == 0 && read_byte() == 35);
     finish_read();
     /* Replace the live response and abort again before any foreground print. */
@@ -180,8 +199,8 @@ int main(void)
     const char *snapshot_log=strstr(uart_log,"HOST I2C ABRT SNAP:");
     assert(snapshot_log && !strstr(snapshot_log+1,"HOST I2C ABRT SNAP:"));
     assert(strstr(snapshot_log,"source=0x00802000 flags=0x00000040 raw=0x00000240 intr=0x00000040"));
-    assert(strstr(snapshot_log,"cursor=1 size=37 last_tx_advanced=1 receiving=0"));
-    assert(strstr(snapshot_log,"flush_cnt=1 copied=37\r\nresponse=00 23 01 00 30 2E"));
+    assert(strstr(snapshot_log,"cursor=1 size=39 last_tx_advanced=1 receiving=0"));
+    assert(strstr(snapshot_log,"flush_cnt=1 copied=39\r\nresponse=00 23 01 00 30 2E"));
     uart_log[0]=0;
     irq(I2C_IC_INTR_STAT_R_TX_ABRT_BITS,0,0);
     drain();
@@ -206,8 +225,10 @@ int main(void)
     calls_before=fake_calls;
     write_request(rds_push,sizeof(rds_push));
     assert(read_byte()==HOST_OK && read_byte()==0);finish_read();
+    read_crc();finish_read();
     write_request(rds_clear,sizeof(rds_clear));
     assert(read_byte()==HOST_OK && read_byte()==0);finish_read();
+    read_crc();finish_read();
     assert(fake_calls==calls_before && host.qn.channel[3].enabled);
     assert(audio_mask==(1u<<3) && host_i2c_led(0));
     drain();

@@ -1,14 +1,14 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
-#include "host_protocol.h"
+#include "host_test_frame.h"
 #include "fake_qn.h"
 
 static host_protocol_t host;
 static void request(const uint8_t *bytes, unsigned length, uint8_t expected)
 {
     const unsigned calls=fake_calls;
-    for (unsigned i=0;i<length;++i) host_protocol_receive(&host,bytes[i],i==0);
+    test_receive(&host,bytes,length);
     host_protocol_stop(&host,0);
     assert(!host.pending && !host.running); /* Immediate response; no worker/wait. */
     assert(fake_calls==calls); /* FIFO commands never touch QNs. */
@@ -16,7 +16,8 @@ static void request(const uint8_t *bytes, unsigned length, uint8_t expected)
     const uint8_t size=host_protocol_read(&host);
     assert(size==(expected==HOST_OK && bytes[0]==11 ? 16 : 0));
     host_protocol_stop(&host,0); /* Read STOP preserves payload cursor. */
-    for (unsigned i=0;i<size;++i) assert(host_protocol_read(&host)==host.response[2+i]);
+    test_response_crc(&host);
+    for (unsigned i=0;i<size+2u;++i) assert(host_protocol_read(&host)==host.response[2+i]);
     assert(host_protocol_read(&host)==0xff);
     host_log_event_t event;
     while(host_protocol_pop_log(&host,&event)) assert(event.status==expected);
@@ -31,7 +32,7 @@ static void free_counts(const uint16_t *expected)
 {
     const uint8_t request_bytes[]={11,255,0};
     request(request_bytes,sizeof(request_bytes),HOST_OK);
-    assert(host.response_size==18);
+    assert(host.response_size==20);
     for (unsigned i=0;i<8;++i) {
         assert(host.response[2+2*i]==expected[i] && host.response[3+2*i]==0);
         assert(rds_fifo_free(&host.rds[i])==expected[i]);
@@ -40,7 +41,7 @@ static void free_counts(const uint16_t *expected)
 static void status_counts(const uint16_t *expected)
 {
     const uint8_t bytes[]={4,255,0};
-    for(unsigned i=0;i<3;++i) host_protocol_receive(&host,bytes[i],i==0);
+    test_receive(&host,bytes,3);
     host_protocol_stop(&host,0);
     host_work_t work;
     assert(host_protocol_take_work(&host,&work));
@@ -108,7 +109,7 @@ int main(void)
     /* Repeated free-space polls are quiet and never fill the diagnostic queue. */
     const uint8_t free_req[]={11,255,0};
     for(unsigned n=0;n<100;++n) {
-        for(unsigned i=0;i<3;++i) host_protocol_receive(&host,free_req[i],i==0);
+        test_receive(&host,free_req,3);
         host_protocol_stop(&host,0);assert(host.response[0]==HOST_OK);
     }
     assert(host.log_count==0);
@@ -116,17 +117,17 @@ int main(void)
     memcpy(before,host.rds,sizeof(before));
     host.running=true;
     const uint8_t one[]={5,0,9,1,0,0,0,0,0,0,0,0};
-    for(unsigned i=0;i<sizeof(one);++i) host_protocol_receive(&host,one[i],i==0);
+    test_receive(&host,one,sizeof(one));
     host_protocol_stop(&host,0);
     assert(host.response[0]==HOST_BUSY && !memcmp(before,host.rds,sizeof(before)));
     host.running=false;
     host_log_event_t event;
     assert(host_protocol_pop_log(&host,&event) && event.status==HOST_BUSY);
     host.log_count=HOST_LOG_CAPACITY;
-    for(unsigned i=0;i<sizeof(one);++i) host_protocol_receive(&host,one[i],i==0);
+    test_receive(&host,one,sizeof(one));
     host_protocol_stop(&host,0);
     assert(host.response[0]==HOST_BUSY && !memcmp(before,host.rds,sizeof(before)));
-    for(unsigned i=0;i<sizeof(truncated);++i) host_protocol_receive(&host,truncated[i],i==0);
+    test_receive(&host,truncated,sizeof(truncated));
     host_protocol_stop(&host,0);
     assert(host.response[0]==HOST_INVALID_ARGUMENT && !memcmp(before,host.rds,sizeof(before)));
     /* No configuration, RF or boot-readiness prerequisite for RAM transport. */

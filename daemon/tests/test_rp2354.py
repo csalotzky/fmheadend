@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import Mock
 import struct
+from binascii import crc_hqx
 import sys
 
 import pytest
@@ -41,9 +42,17 @@ def calls(monkeypatch):
     return os_calls, ioctl_calls
 
 
+def frame(body):
+    return body + struct.pack('<H', crc_hqx(body, 0xFFFF))
+
+
+def reads(header, payload=b''):
+    return [header, frame(header + payload)[2:]]
+
+
 def replies(calls, *payloads):
-    calls[0].read.side_effect = [part for payload in payloads for part in
-        ([bytes((0, len(payload))), payload] if payload else [b'\0\0'])]
+    calls[0].read.side_effect = [part for payload in payloads
+        for part in reads(bytes((0, len(payload))), payload)]
 
 
 def client():
@@ -51,7 +60,9 @@ def client():
 
 
 def packets(calls):
-    return [call.args[1] for call in calls[0].write.call_args_list]
+    wire = [call.args[1] for call in calls[0].write.call_args_list]
+    assert all(packet == frame(packet[:-2]) for packet in wire)
+    return [packet[:-2] for packet in wire]  # Semantic assertions below; CRC checked above.
 
 
 @pytest.mark.parametrize('channel', range(8))
@@ -79,7 +90,7 @@ def test_get_info_and_linux_setup(calls):
     assert rp.get_info() == {'rp_protocol_version': 1, 'rp_firmware_version': '0.1.0',
                               'hardware_revision': 'Pico2', 'modulator_count': 8}
     assert packets(calls) == [b'\x01\xff\x00']
-    assert [call.args[1] for call in calls[0].read.call_args_list] == [2, 35]
+    assert [call.args[1] for call in calls[0].read.call_args_list] == [2, 37]
     calls[1].ioctl.assert_any_call(42, linux.I2C_SLAVE, 0x42)
     calls[1].ioctl.assert_any_call(42, linux.I2C_TIMEOUT, 20)
     calls[1].ioctl.assert_any_call(42, linux.I2C_RETRIES, 0)
@@ -115,7 +126,7 @@ def test_debug_rds_reset_exact(calls):
 @pytest.mark.parametrize('status,error_type', list(p.ERROR_TYPES.items()))
 def test_all_protocol_status_errors(status, error_type):
     with pytest.raises(error_type, match=status.name) as exc:
-        p.response(p.Command.SET_TX_ENABLED, bytes((status, 0)))
+        p.response(p.Command.SET_TX_ENABLED, frame(bytes((status, 0))))
     assert exc.value.rp_status == status
     assert exc.value.command == p.Command.SET_TX_ENABLED
 
@@ -129,7 +140,7 @@ def test_bad_response_framing(data):
 @pytest.mark.parametrize('command', list(p.Command))
 def test_each_response_length_is_exact(command):
     length = p.RESPONSE_SIZES[command]
-    good = bytes((0, length)) + bytes(length)
+    good = frame(bytes((0, length)) + bytes(length))
     assert p.response(command, good) == bytes(length)
     for bad in (good + b'x', good[:-1], bytes((0, (length + 1) % 256)) + bytes(length + 1)):
         with pytest.raises(p.ProtocolError):
@@ -169,7 +180,7 @@ def test_invalid_rds_transport_groups(calls, groups):
 def test_maximum_rds_payload():
     data = p.rds_groups([(0xffff, 0, 1, 2)] * 31)
     assert len(data) == 249
-    assert len(p.request(p.Command.RDS_PUSH, 0, data)) == 252
+    assert len(p.request(p.Command.RDS_PUSH, 0, data)) == 254
     with pytest.raises(ValueError):
         p.request(p.Command.RDS_PUSH, 0, b'x' * 256)
 
@@ -205,7 +216,7 @@ def test_status_hardware_errors():
 
 
 def test_busy_is_bounded_and_safe_to_retry(calls):
-    calls[0].read.side_effect = [b'\0\x23', INFO, b'\x04\0', b'\x04\0']
+    calls[0].read.side_effect = reads(b'\0\x23', INFO) + reads(b'\x04\0') * 2
     rp = client()
     with pytest.raises(p.Busy):
         rp.set_tx_enabled(0, True)
@@ -214,7 +225,7 @@ def test_busy_is_bounded_and_safe_to_retry(calls):
 
 
 def test_busy_then_success(calls):
-    calls[0].read.side_effect = [b'\x04\0', b'\0\x23', INFO]
+    calls[0].read.side_effect = reads(b'\x04\0') + reads(b'\0\x23', INFO)
     assert client().get_info()['rp_protocol_version'] == 1
     assert len(packets(calls)) == 2
 
@@ -223,7 +234,7 @@ def test_busy_then_success(calls):
 def test_failed_read_never_replays_command(calls, failure):
     replies(calls, INFO)
     rp = client(); rp.get_info()
-    calls[0].read.side_effect = [failure]
+    calls[0].read.side_effect = [failure, b'']
     with pytest.raises((p.HardwareUnavailable, p.ProtocolError)):
         rp.set_tx_enabled(0, True)
     assert len(packets(calls)) == 2
@@ -305,7 +316,8 @@ def test_native_status_reaches_existing_api(calls, tmp_path):
         if not diagnostic[0]:
             for i in range(8): data[10 + i * 15] = 0
         payload = INFO if command == 1 else bytes(data) if command == 4 else b''
-        return bytes((0, len(payload))) if size == 2 else payload
+        header = bytes((0, len(payload)))
+        return header if calls[0].read.call_count % 2 else frame(header + payload)[2:]
     calls[0].read.side_effect = read
     rp = client()
     with TestClient(create_app(Settings(tmp_path / 'test.db'), rp=rp)) as api:
@@ -320,7 +332,7 @@ def test_native_status_reaches_existing_api(calls, tmp_path):
 
 @pytest.mark.parametrize('code', [1, 2, 3, 5, 6])
 def test_client_maps_protocol_failure_without_retry(calls, code):
-    calls[0].read.side_effect = [b'\0\x23', INFO, bytes((code, 0))]
+    calls[0].read.side_effect = reads(b'\0\x23', INFO) + reads(bytes((code, 0)))
     rp = client()
     with pytest.raises(p.ERROR_TYPES[p.Status(code)]):
         rp.clear_rds(0)
@@ -381,7 +393,7 @@ def test_invalid_register_args_before_io(calls, value):
 
 def test_api_incompatible_protocol_does_not_enable_or_crash(calls, tmp_path):
     incompatible = struct.pack('<H16s16sB', 2, b'fw', b'hw', 8)
-    calls[0].read.side_effect = lambda fd, size: b'\0\x23' if size == 2 else incompatible
+    calls[0].read.side_effect = lambda fd, size: b'\0\x23' if size == 2 else frame(b'\0\x23' + incompatible)[2:]
     rp = client()
     with TestClient(create_app(Settings(tmp_path / 'unsupported.db'), rp=rp)) as api:
         assert api.get('/docs').status_code == 200
@@ -468,7 +480,8 @@ def test_latched_errors_do_not_imply_current_fault(calls, tmp_path, global_activ
     def read(fd, size):
         command = packets(calls)[-1][0]
         payload = INFO if command == 1 else bytes(data) if command == 4 else b''
-        return bytes((0, len(payload))) if size == 2 else payload
+        header = bytes((0, len(payload)))
+        return header if calls[0].read.call_count % 2 else frame(header + payload)[2:]
     calls[0].read.side_effect = read
     with TestClient(create_app(Settings(tmp_path / 'latched.db'), rp=client())) as api:
         data[0] = int(global_active); data[10] = 2 if tx_active else 0
@@ -489,7 +502,7 @@ def test_m83_command_waits_and_two_read_cursor(calls):
     rp.set_tx_enabled(0, True)
     rp.get_status()
     assert [c.args[0] for c in linux.time.sleep.call_args_list] == [0.002, 0.1, 1.0, 0.15, 0.85]
-    assert [c.args[1] for c in calls[0].read.call_args_list] == [2, 35, 2, 1, 2, 2, 2, 130]
+    assert [c.args[1] for c in calls[0].read.call_args_list] == [2, 37, 2, 3, 2, 2, 2, 2, 2, 132]
 
 
 def test_m83_sine_is_enum_only_and_invalid_modes_rejected():
@@ -514,27 +527,35 @@ def running_wire_backend(calls, tmp_path):
             'audio_mode': 'ANALOG', 'frequency_khz': 87500, 'rf_attenuation_db': 22.5,
             'enabled': True, 'rds_enabled': True}), i)
     db.close()
-    wire = SimpleNamespace(enabled=[False]*8, uptime=100000, info=INFO, state=0, faults=[], payload=b'', now=0.)
+    wire = SimpleNamespace(enabled=[False]*8, uptime=100000, info=INFO, state=0, faults=[], payload=b'', now=0., body_pending=False, corrupt_crc=False)
 
     def snapshot():
         return p.GLOBAL_STATUS.pack(wire.state, wire.uptime, 0, 0) + b''.join(
             p.CHANNEL_STATUS.pack(int(on), 225, 0, 0, 41, 0, 255) for on in wire.enabled)
 
     def write(fd, packet):
+        wire.body_pending = False
         if packet[0] == p.Command.SET_TX_ENABLED:
             wire.enabled[packet[1]] = bool(packet[3])
         return len(packet)
 
     def read(fd, size):
-        if size != 2:
+        if wire.body_pending:
+            wire.body_pending = False
             return wire.payload
+        wire.body_pending = True
         command = packets(calls)[-1][0]
         wire.payload = (wire.info if command == p.Command.GET_INFO else snapshot() if command == p.Command.GET_STATUS
                         else struct.pack('<8H', *([41]*8)) if command == p.Command.GET_RDS_FIFO_FREE else b'')
         if wire.faults and command == wire.faults[0][0]:
             _, header, wire.payload = wire.faults.pop(0)
-            return header
-        return bytes((0, len(wire.payload)))
+        else:
+            header = bytes((0, len(wire.payload)))
+        wire.payload = frame(header + wire.payload)[2:]
+        if wire.corrupt_crc == command:
+            wire.payload = wire.payload[:-1] + bytes((wire.payload[-1] ^ 1,))
+            wire.corrupt_crc = False
+        return header
 
     calls[0].write.side_effect = write
     calls[0].read.side_effect = read
@@ -588,10 +609,78 @@ def test_single_malformed_read_retains_all_tx_and_rds(calls, running_wire_backen
         if kind == 'global128': assert 'Invalid hardware error code: 128' in logs[0]
         if kind == 'tx255': assert 'Invalid hardware error code: 255' in logs[0]
         if kind == 'attenuation80e1': assert 'Invalid RF attenuation: -32543' in logs[0]
-        unavailable = kind in ('status128', 'fifo_header')
-        assert f"payload={'unavailable' if unavailable else bytes(data).hex()}" in logs[0]
-        assert f"payload_length={'unavailable' if unavailable else len(data)}" in logs[0]
+        assert f'payload={frame(header + bytes(data))[2:].hex()}' in logs[0]
+        assert f'payload_length={len(data)+2}' in logs[0]
         assert services.rp.i2c_errors == 1
+    app.state.control.executor.submit(check).result()
+
+
+def test_crc_vectors_and_maximum_push():
+    assert p.crc16(b'123456789') == 0x29B1
+    assert p.request(p.Command.GET_INFO, 255) == bytes.fromhex('01 ff 00 53 f8')
+    payload = bytes((31,)) + bytes(range(248))
+    packet = p.request(p.Command.RDS_PUSH, 7, payload)
+    assert len(packet) == 254 and packet[-2:] == bytes.fromhex('f7 75')
+    assert packet[:-2] == bytes((5,7,249)) + payload
+    assert p.response(p.Command.RDS_PUSH, bytes.fromhex('00 00 0f 1d')) == b''
+
+
+@pytest.mark.parametrize('command', list(p.Command))
+def test_crc_rejects_every_single_bit_in_response(command):
+    good = frame(bytes((0, p.RESPONSE_SIZES[command])) + bytes(p.RESPONSE_SIZES[command]))
+    for bit in range(len(good) * 8):
+        bad = bytearray(good); bad[bit // 8] ^= 1 << (bit % 8)
+        with pytest.raises(p.ProtocolError):
+            p.response(command, bytes(bad))
+
+
+@pytest.mark.parametrize('command', [p.Command.GET_STATUS, p.Command.RDS_PUSH, p.Command.SET_TX_ENABLED])
+@pytest.mark.parametrize('status', [p.Status.OK, p.Status.BUSY, p.Status.QN_ERROR, p.Status.INTERNAL_ERROR])
+def test_crc_failure_keeps_certainty_and_never_accepts_status_or_retries(calls, command, status):
+    rp = client(); rp.info = p.parse_info(INFO)
+    payload = status_payload() if command == p.Command.GET_STATUS and status == p.Status.OK else b''
+    wire = frame(bytes((status,len(payload))) + payload)
+    bad = wire[:-1] + bytes((wire[-1] ^ 0x80,))
+    calls[0].read.side_effect = [bad[:2], bad[2:]]
+    with pytest.raises(p.MalformedResponse, match='CRC mismatch') as caught:
+        if command == p.Command.GET_STATUS: rp.get_status()
+        elif command == p.Command.RDS_PUSH: rp.push_rds(3, [(1,2,3,4)])
+        else: rp.set_tx_enabled(3, True)
+    assert caught.value.command == command and caught.value.stage == 'payload'
+    assert caught.value.outcome == (p.Outcome.OBSERVATION if command == p.Command.GET_STATUS else p.Outcome.AMBIGUOUS)
+    assert len(packets(calls)) == 1  # Even corrupted BUSY cannot authorize replay.
+
+
+@pytest.mark.parametrize('command', [p.Command.GET_STATUS, p.Command.GET_RDS_FIFO_FREE, p.Command.RDS_PUSH])
+def test_crc_failure_preserves_all_rf_and_existing_scoped_recovery(calls, running_wire_backend, command):
+    app, wire, _ = running_wire_backend
+    def check():
+        s = app.state.services
+        wire.corrupt_crc = command
+        calls[0].write.reset_mock()
+        wire.now += 1
+        if command == p.Command.GET_STATUS: s.status.refresh()
+        else: s.rds.tick()
+        assert wire.enabled == [True]*8 and s.recovery.ready and not s.recovery.pending
+        assert not s.rds.suspended
+        assert all(x[0] not in (2,3,6) for x in packets(calls))
+        if command == p.Command.RDS_PUSH:
+            assert [c.needs_clear for c in s.rds.channels] == [True] + [False]*7
+        else:
+            assert not any(c.needs_clear for c in s.rds.channels)
+        if command == p.Command.GET_STATUS:
+            assert s.status.snapshot().system.rp_observation_stale
+        wire.now += .3; s.rp._retry_at = 0
+        s.rds.tick()
+        sent = packets(calls)
+        assert all(x[0] not in (2,3) for x in sent)
+        if command == p.Command.RDS_PUSH:
+            clears = [i for i,x in enumerate(sent) if x[0] == 6]
+            pushes = [i for i,x in enumerate(sent) if x[0] == 5 and x[1] == 0]
+            assert len(clears) == 1 and sent[clears[0]][1] == 0
+            assert pushes[0] < clears[0] < pushes[1]  # No replay before confirmed CLEAR.
+        else:
+            assert all(x[0] != 6 for x in sent)
     app.state.control.executor.submit(check).result()
 
 
@@ -674,9 +763,9 @@ def test_complete_two_read_transaction_cannot_interleave(calls, monkeypatch, pau
             assert release.wait(2)
     def read(fd, size):
         if packets(calls)[-1][0] != p.Command.GET_STATUS:
-            return b'\0\0'
+            return b'\0\0' if calls[0].read.call_count % 2 else frame(b'\0\0')[2:]
         pause('header' if size == 2 else 'payload')
-        return b'\0\x82' if size == 2 else status_payload()
+        return b'\0\x82' if size == 2 else frame(b'\0\x82' + status_payload())[2:]
     monkeypatch.setattr(linux.time, 'sleep', lambda seconds: pause('wait'))
     calls[0].read.side_effect = read
     def competing_write():
@@ -692,7 +781,7 @@ def test_complete_two_read_transaction_cannot_interleave(calls, monkeypatch, pau
             release.set()
         assert first.result()['uptime_ms'] == 123456
         second.result()
-    assert [call.args[1] for call in calls[0].read.call_args_list] == [2, 130, 2]
+    assert [call.args[1] for call in calls[0].read.call_args_list] == [2, 132, 2, 2]
 
 
 @pytest.mark.parametrize('stage', ['open', 'write', 'header', 'payload', 'decode'])
@@ -701,11 +790,11 @@ def test_failure_execution_metadata(calls, stage):
     command = p.Command.GET_STATUS if stage in ('payload', 'decode') else p.Command.SET_TX_ENABLED
     if stage == 'open': calls[0].open.side_effect = OSError('open failed')
     if stage == 'write': calls[0].write.side_effect = OSError('uncertain write')
-    if stage == 'header': calls[0].read.side_effect = [b'\x80\0']
+    if stage == 'header': calls[0].read.side_effect = [b'\x80']
     if stage == 'payload': calls[0].read.side_effect = [b'\0\x82', b'\0']
     if stage == 'decode':
         data = bytearray(status_payload()); data[9] = 128
-        calls[0].read.side_effect = [b'\0\x82', bytes(data)]
+        calls[0].read.side_effect = reads(b'\0\x82', bytes(data))
     with pytest.raises((p.HardwareUnavailable, p.MalformedResponse)) as caught:
         rp.get_status() if command == p.Command.GET_STATUS else rp.set_tx_enabled(3, True)
     exc = caught.value
@@ -715,7 +804,7 @@ def test_failure_execution_metadata(calls, stage):
 
 
 def test_implicit_info_failure_does_not_mean_set_was_sent(calls):
-    calls[0].read.side_effect = [b'\x80\0']
+    calls[0].read.side_effect = reads(b'\x80\0')
     rp = client()
     with pytest.raises(p.MalformedResponse) as caught:
         rp.set_tx_enabled(3, True)
@@ -728,7 +817,7 @@ def test_implicit_info_failure_does_not_mean_set_was_sent(calls):
 @pytest.mark.parametrize('status', [p.Status.QN_ERROR, p.Status.INTERNAL_ERROR])
 def test_explicit_rp_error_retains_identity_and_target(calls, status):
     rp = client(); rp.info = p.parse_info(INFO)
-    calls[0].read.side_effect = [bytes((status, 0))]
+    calls[0].read.side_effect = reads(bytes((status, 0)))
     with pytest.raises(p.RpResponseError) as caught:
         rp.set_tx_enabled(3, True)
     assert caught.value.rp_status == status and caught.value.target == 3

@@ -105,9 +105,13 @@ class Rp2354Client:
                 time.sleep(p.RESPONSE_WAIT_MS[command] / 1000)
                 stage = 'header'
                 header = os.read(self._fd, 2)
-                _, length = p.response_header(command, header)
+                if len(header) != 2:
+                    raise p.ProtocolError("RP response header must be exactly two bytes")
+                # Length is untrusted but u8-bounded. Interpret neither status
+                # nor payload until the complete frame (including CRC) validates.
+                length = header[1]
                 stage = 'payload'
-                received = os.read(self._fd, length) if length else b""
+                received = os.read(self._fd, length + 2)
                 try:
                     result = p.response(command, header + received)
                     if decode is not None:
@@ -127,8 +131,7 @@ class Rp2354Client:
             raise
         except (OSError, p.ProtocolError, p.HardwareUnavailable) as exc:
             if isinstance(exc, p.ProtocolError) and not self._malformed_reported:
-                # Log exactly what read(2)/read(length) returned, never a rebuilt
-                # snapshot. A bad header is not trusted to request more bytes.
+                # Actual read bytes, including the CRC trailer in payload.
                 logger.warning("RP malformed response command=%s header=%s payload=%s payload_length=%s error=%s",
                     command.name, header.hex() if header is not None else "unavailable",
                     received.hex() if received is not None else "unavailable",

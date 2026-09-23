@@ -8,6 +8,17 @@ enum { GET_INFO = 1, SET_TX_CONFIG, SET_TX_ENABLED, GET_STATUS, RDS_PUSH,
 _Static_assert(sizeof(HOST_FIRMWARE_VERSION) <= 16, "firmware version too long");
 _Static_assert(sizeof(HOST_HARDWARE_REVISION) <= 16, "hardware revision too long");
 
+uint16_t host_crc16(const uint8_t *data, size_t size)
+{
+    uint16_t crc = 0xffff;
+    for (size_t i = 0; i < size; ++i) {
+        crc ^= (uint16_t)data[i] << 8;
+        for (unsigned bit = 0; bit < 8; ++bit)
+            crc = (uint16_t)((crc << 1) ^ ((crc & 0x8000) ? 0x1021 : 0));
+    }
+    return crc;
+}
+
 uint16_t host_get_u16(const uint8_t *p) { return (uint16_t)p[0] | (uint16_t)p[1] << 8; }
 uint32_t host_get_u32(const uint8_t *p)
 {
@@ -23,7 +34,10 @@ static void reply(host_protocol_t *host, uint8_t status, uint8_t length)
 {
     host->response[0] = status;
     host->response[1] = length;
-    host->response_size = 2u + length;
+    const uint16_t crc = host_crc16(host->response, 2u + length);
+    host->response[2u + length] = (uint8_t)crc;
+    host->response[3u + length] = (uint8_t)(crc >> 8);
+    host->response_size = 4u + length;
     host->response_cursor = 0;
 }
 
@@ -53,11 +67,17 @@ void host_protocol_overflow(host_protocol_t *host)
     host->receiving = host->malformed = true;
 }
 
+static bool valid_frame(const host_protocol_t *host)
+{
+    return !host->malformed && host->request_size >= 5 &&
+           host->request_size == 5u + host->request[2] &&
+           host_crc16(host->request, host->request_size - 2) ==
+               host_get_u16(host->request + host->request_size - 2);
+}
+
 static uint8_t validate(const host_protocol_t *host)
 {
     const uint8_t *r = host->request;
-    if (host->malformed || host->request_size < 3 ||
-        host->request_size != 3u + r[2]) return HOST_INVALID_ARGUMENT;
     const uint8_t command = r[0], target = r[1], length = r[2];
     const uint8_t *p = r + 3;
     if (command < GET_INFO || command > GET_RDS_FIFO_FREE) return HOST_INVALID_COMMAND;
@@ -116,16 +136,17 @@ void host_protocol_stop(host_protocol_t *host, uint32_t uptime_ms)
 {
     (void)uptime_ms;
     if (!host->receiving) return;
+    /* Validate integrity before dispatch or any command side effect. */
+    const bool frame_ok = valid_frame(host);
     cancel_pending(host); /* New complete request abandons unstarted work. */
     ++host->generation;
     host_log_event_t event = {0};
     bool quiet = false;
-    event.status = validate(host);
+    event.status = frame_ok ? validate(host) : HOST_INVALID_ARGUMENT;
     event.command = host->request_size ? host->request[0] : 0;
     event.target = host->request_size > 1 ? host->request[1] : 0xff;
     event.length = host->request_size > 2 ? host->request[2] : 0;
-    event.malformed = host->malformed || host->request_size < 3 ||
-                      host->request_size != 3u + event.length;
+    event.malformed = !frame_ok;
     if (!event.malformed && event.length <= sizeof(event.payload))
         memcpy(event.payload, host->request + 3, event.length);
     if (event.status == HOST_OK && (host->running || host->log_count == HOST_LOG_CAPACITY)) {

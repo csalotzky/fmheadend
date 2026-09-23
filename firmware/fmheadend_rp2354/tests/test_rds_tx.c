@@ -1,7 +1,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
-#include "host_protocol.h"
+#include "host_test_frame.h"
 #include "fake_qn.h"
 
 static host_protocol_t h;
@@ -67,7 +67,7 @@ static void first(void) { reset();active(0);push(0);until(0,RDS_WAIT); }
 static void host_command(uint8_t cmd,uint8_t target)
 {
     uint8_t req[]={cmd,target,0};
-    for(unsigned i=0;i<3;++i) host_protocol_receive(&h,req[i],i==0);
+    test_receive(&h,req,sizeof(req));
     host_protocol_stop(&h,0);
     host_work_t w;
     if(host_protocol_take_work(&h,&w)) {

@@ -2,6 +2,7 @@
 from enum import IntEnum, StrEnum
 import struct
 from decimal import Decimal
+from binascii import crc_hqx
 
 from ..errors import DependencyUnavailable
 
@@ -120,6 +121,11 @@ def boolean(value: bool, name: str) -> int:
     return int(value)
 
 
+def crc16(data: bytes) -> int:
+    """CRC-16/CCITT-FALSE: 1021/FFFF, no reflection, xorout zero."""
+    return crc_hqx(data, 0xFFFF)
+
+
 def request(command: Command, target: int, payload: bytes = b"") -> bytes:
     if not isinstance(command, Command):
         raise ValueError("command must be a V1 Command")
@@ -141,10 +147,12 @@ def request(command: Command, target: int, payload: bytes = b"") -> bytes:
         frequency, level, stereo, emphasis, mode, rds, gain, analog, trim, clipping = TX_CONFIG.unpack(payload)
         if level > 225 or level % 15 != 0 or frequency == 0 or stereo not in (0, 1) or emphasis not in (50, 75) or mode not in (0, 1, 2) or rds not in (0, 1) or gain not in (0, 1) or trim not in (0, 1) or clipping not in (0, 1):
             raise ValueError("Invalid SET_TX_CONFIG field value")
-    return bytes((command, target, len(payload))) + payload
+    body = bytes((command, target, len(payload))) + payload
+    return body + struct.pack('<H', crc16(body))
 
 
 def response_header(command: Command, data: bytes) -> tuple[Status, int]:
+    """Validate header semantics only after response() verifies the frame CRC."""
     if len(data) != 2:
         raise ProtocolError("RP response header must be exactly two bytes")
     try:
@@ -158,12 +166,15 @@ def response_header(command: Command, data: bytes) -> tuple[Status, int]:
 
 
 def response(command: Command, data: bytes) -> bytes:
-    status, length = response_header(command, data[:2])
-    if len(data) != 2 + length:
+    if len(data) < 4 or len(data) != 4 + data[1]:
         raise ProtocolError(f"{command.name} truncated or oversized response")
+    expected, received = crc16(data[:-2]), int.from_bytes(data[-2:], 'little')
+    if received != expected:
+        raise ProtocolError(f"{command.name} response CRC mismatch: received 0x{received:04X}, expected 0x{expected:04X}")
+    status, length = response_header(command, data[:2])
     if status != Status.OK:
         raise ERROR_TYPES[status](command, status)
-    return data[2:]
+    return data[2:2 + length]
 
 
 def rf_attenuation_x10(value: float | None) -> int:

@@ -25,7 +25,8 @@ def test_exact_config(mode, code, gain, encoded):
     body = p.tx_config(config(gain_mode=mode, analog_gain_db=gain, digital_trim_db=1, soft_clipping=True))
     expected = bytes.fromhex("347f01003c0001320101") + bytes([code]) + bytes.fromhex(encoded) + b"\x01\x01"
     assert body == expected and len(body) == 15
-    assert p.request(p.Command.SET_TX_CONFIG, 7, body) == b"\x02\x07\x0f" + expected
+    packet = b"\x02\x07\x0f" + expected
+    assert p.request(p.Command.SET_TX_CONFIG, 7, body) == packet + p.crc16(packet).to_bytes(2, "little")
     assert struct.unpack("<IHBBBBBhBB", body) == (98100, 60, 1, 50, 1, 1, code, int(gain * 10), 1, 1)
 
 
@@ -66,7 +67,7 @@ def status_payload():
 def test_status_exact_layout_and_saturation():
     payload = status_payload()
     assert len(payload) == 130
-    assert p.response(p.Command.GET_STATUS, b"\x00\x82" + payload) == payload
+    assert p.response(p.Command.GET_STATUS, b"\x00\x82" + payload + p.crc16(b"\x00\x82" + payload).to_bytes(2, "little")) == payload
     status = p.parse_status(payload)
     assert status["uptime_ms"] == 1 and status["rp_spi_audio_link_error_count"] == 2
     for index, expected in enumerate((False, True, None, False, True, None, False, True)):

@@ -890,7 +890,10 @@ wire semantics are maintained only in that protocol document.
 
 ## 11.2 Minimalista request/response frame
 
-V1-ben nincs sequence number és nincs CRC.
+V1-ben nincs sequence number. A Pi–RP I2C request és response CRC-16/CCITT-FALSE
+ellenőrzést használ (poly 0x1021, init 0xFFFF, no reflection, xorout 0).
+A CRC a header + payload byte-okra vonatkozik; a trailer little-endian, és nem
+része a `length` mezőnek. A protokoll verziója továbbra is 1.
 
 Request:
 
@@ -899,6 +902,7 @@ command     u8
 target      u8
 length      u8
 payload     length bytes
+crc16_le    u16
 ```
 
 Response:
@@ -907,6 +911,7 @@ Response:
 status      u8
 length      u8
 payload     length bytes
+crc16_le    u16
 ```
 
 `target`:

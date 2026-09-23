@@ -10,8 +10,8 @@
 
 #define HOST_FIRMWARE_VERSION "0.8.6b"
 #define HOST_HARDWARE_REVISION "PCB1.0"
-#define HOST_REQUEST_MAX 258u
-#define HOST_RESPONSE_MAX 132u
+#define HOST_REQUEST_MAX 260u
+#define HOST_RESPONSE_MAX 134u
 #define HOST_LOG_CAPACITY 16u
 
 enum host_status {
@@ -71,6 +71,7 @@ void host_protocol_unread(host_protocol_t *host, unsigned count);
 bool host_protocol_pop_log(host_protocol_t *host, host_log_event_t *event);
 const char *host_command_name(uint8_t command);
 const char *host_status_name(uint8_t status);
+uint16_t host_crc16(const uint8_t *data, size_t size);
 uint16_t host_get_u16(const uint8_t *p);
 uint32_t host_get_u32(const uint8_t *p);
 int host_get_i16(const uint8_t *p);

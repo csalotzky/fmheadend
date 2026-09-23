@@ -39,13 +39,15 @@ def main():
                 header = os.read(fd, 2)  # First independent read, then STOP.
                 if len(header) != 2:
                     raise RuntimeError("Short response header")
-                _, length = p.response_header(p.Command(packet[0]), header)
-                payload = os.read(fd, length) if length else b""
-                if len(payload) != length:
-                    raise RuntimeError("Short response payload")
-                if header == bytes((p.Status.BUSY, 0)) and attempt == 0:
-                    time.sleep(0.01)
-                    continue
+                payload = os.read(fd, header[1] + 2)
+                try:
+                    p.response(p.Command(packet[0]), header + payload)
+                except p.Busy:
+                    if attempt == 0:
+                        time.sleep(0.01)
+                        continue
+                except p.RpResponseError:
+                    pass  # Valid CRC; caller checks the expected error below.
                 return header + payload
             raise AssertionError("Unreachable")
 
@@ -82,8 +84,9 @@ def main():
             (b"\x0a\xff\x00", p.Status.INVALID_COMMAND),
         ]
         for packet, status in cases:
+            packet += p.crc16(packet).to_bytes(2, 'little')
             response = exchange(packet)
-            if response != bytes((status, 0)):
+            if response[:2] != bytes((status, 0)):
                 raise RuntimeError(f"{packet.hex()}: got {response.hex()}, expected {status.name}")
             print(f"{packet.hex(' ')} -> {status.name}")
         read_status()
