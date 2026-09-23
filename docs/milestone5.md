@@ -1,17 +1,25 @@
 # Milestone 5: Linux RDS
 
 M5 implements information-group encoding, per-modulator content scheduling and RP
-FIFO refill on Linux. RP firmware remains a transport endpoint. No checkwords or
-CRC are generated: each group is exactly four unsigned 16-bit information words.
+FIFO refill on Linux. RP firmware remains a transport endpoint. No RDS checkwords
+are generated: each group is exactly four unsigned 16-bit information words.
+The separate I2C frame CRC belongs to the RP client, not the RDS encoder.
 The [RP2354 protocol](rp2354-protocol.md) remains the only RP wire specification.
 
 ## Configuration
 
 Per-modulator fields are `rds_enabled`, `rds_pi`, `rds_ecc`, `rds_pty`, `rds_tp`,
-`rds_ps`, `rds_af_khz`, `rds_rt` and `rds_metadata_to_rt`. PI remains an integer
+`rds_ps`, `rds_af_khz`, `rds_rt`, `rds_rt_enabled`, `rds_rt_termination` and
+`rds_metadata_to_rt`. PI remains an integer
 uint16 in the API; ECC follows that style as nullable integer uint8. For example,
 PI 4660 represents hex 1234 and ECC 224 represents hex E0. Hex strings are not
 accepted in JSON. No country code is inferred. Null ECC means no ECC group is sent.
+
+`rds_rt_enabled` defaults to true, preserving RT service for existing records that
+omit this field. It alone enables/disables 2A scheduling; an empty text or missing
+metadata never disables RT. `rds_rt_termination` independently selects `CR`
+(default) or `PAD`. These are persistent per-TX backend/API settings; no UI or
+RP protocol field is added. Existing Stop-before-edit API lifecycle rules apply.
 
 Fresh pre-V1 schema-1 databases seed rds_ecc=null and rds_af_khz=[] from the current model. Old development databases are unsupported and may be recreated; see architecture section 16.4.
 
@@ -31,6 +39,8 @@ Example PATCH body (configure the actual PI/ECC/frequencies for your service):
   "rds_ps": [{"text": "RADIO FM", "duration_s": 5}],
   "rds_af_khz": [98100, 101100],
   "rds_rt": "Persistent programme information",
+  "rds_rt_enabled": true,
+  "rds_rt_termination": "CR",
   "rds_metadata_to_rt": true
 }
 ```
@@ -51,7 +61,8 @@ DI stereo d0 is sent at address 3, other DI bits zero. D carries two PS characte
 C cycles AF Method A pairs: prefix 224+N then N frequency codes; odd total byte
 counts are padded with 205. Empty AF is E0 CD. In 1A, C contains ECC in bits 7..0;
 LA, variant and paging OPC are zero; D PIN is zero. In 2A, B bit 4 is Text A/B,
-low four bits the segment; C/D carry four text characters. Short RT ends with CR.
+low four bits the segment; C/D carry four text characters. RT termination follows
+the per-TX CR/PAD setting below.
 
 Exact-word tests use independently stated expected words rather than a decoder.
 All words are passed to the existing RDS_PUSH serializer, which handles little-endian
@@ -72,10 +83,13 @@ be truncated. The original persistent Unicode text is preserved. This policy is
 isolated so a fuller RDS character map can be added without changing group scheduling.
 
 PS is truncated to eight encoded characters and space padded to exactly eight.
-RT is truncated to 64 encoded characters. Below 64, CR (0x0D) is appended and the
-last four-character segment is space padded. Exactly 64 characters occupy all
-16 segments without a terminator. Empty RT transmits a CR segment to clear old
-receiver text; it is not silently replaced by a lower-priority value.
+CR mode reserves one byte for 0x0D: up to 63 encoded text characters followed by
+CR, padding only the final four-byte segment with spaces. Only those segments
+are transmitted. This makes termination explicit even for a 64-character input
+(whose final character is omitted in CR mode). PAD mode keeps up to 64 encoded
+characters, space-pads to 64 bytes and transmits all 16 segments, without CR.
+With RT enabled, empty CR text sends one CR segment; empty PAD text sends all
+16 blank segments. An empty override is not replaced by a lower-priority value.
 
 ## Content and independent state
 
@@ -96,41 +110,75 @@ Text A/B is independent per modulator and toggles only when the resulting encode
 RT changes. Repeated metadata, segment wraparound, or a different origin providing
 the same content does not toggle it. Changed text restarts at segment zero. Character
 conversion yielding identical transmitted bytes also avoids an unnecessary toggle.
-RT changes do not reset dynamic PS duration or the ECC deadline.
+RT changes do not reset dynamic PS duration or allocator credits. A/B handling
+continues to compare encoded bytes: enabling/disabling unchanged RT alone does
+not toggle A/B; a CR/PAD change toggles it if the encoded bytes change.
 
 ## Scheduling policy
 
-`rds/scheduler.py` contains policy constants and one state object per channel.
+`rds/allocator.py` derives quotas and selects group types;
+`rds/scheduler.py` owns content/segment state per channel.
 It has no RP, database, API or GStreamer dependency. A bounded speculative copy
 produces a batch and its candidate next state; callers commit that state on ACK.
 
-The basic-RDS baseline follows the requested IEC 62106-2 recommendations for a
-service without TMC or other data services: 270/min (4.5/s) 0A, 12/min (0.2/s)
-1A/ECC and 402/min (6.7/s) 2A. PS and RT use virtual finish deadlines with
-intervals 1/4.5 s and 1/6.7 s. Both deadlines are rebased together to the current
-slot, preserving their relative distance; individual intervals are not rounded
-up to physical slot boundaries. ECC preempts when its five-second deadline is
-due, with subsequent deadlines retaining the cadence rather than accumulating
-slot-rounding drift. Null ECC is omitted without inventing a country code.
+Allocation is expressed as fractions of all groups, not independent groups/s:
 
-For one complete RT cycle after a text change, the RT interval becomes 0.125 s,
-temporarily increasing its weight while PS continues progressing. At approximately
-11.418 physical groups/s (1187.5/104), the small capacity remaining above the
-11.4/s baseline is absorbed by supported PS/RT content in their weighted ratio.
-CT/4A is intentionally absent. These are scheduler policy constants, not protocol
-requirements. Deterministic ten-minute tests check all three rates and maximum
-inter-group gaps; a separate test checks RT-change priority without PS starvation.
-There is no hard-coded infinite sequence. Other groups can be added as encoders
-and deadline policies rather than changing the FIFO contract.
+```text
+base_ps = 0.60
+base_rt = 0.30 if RT enabled else 0
+ecc     = 0.02 if ECC enabled else 0
+other   = sum(quotas of enabled additional types)
+surplus = 1 - base_ps - base_rt - ecc - other
+
+require surplus >= 0
+PS = base_ps + (surplus if RT disabled else 0)
+RT = base_rt + (surplus if RT enabled else 0)
+ECC = ecc
+additional types retain their individual quotas
+```
+
+With no additional types this **derives**, rather than hardcodes:
+
+| Enabled content | PS (0A) | RT (2A) | ECC (1A) |
+|---|---:|---:|---:|
+| PS, RT, ECC | 60% | 38% | 2% |
+| PS, RT | 60% | 40% | 0% |
+| PS, ECC | 98% | 0% | 2% |
+| PS only | 100% | 0% | 0% |
+
+`quotas(..., additional={name: fraction, ...})` accepts independently configured
+enabled extension quotas; absent/zero entries emit nothing. Reserved names,
+negative/nonfinite values and infeasible totals raise `ValueError`. For example,
+with RT/ECC enabled, additional quotas totaling 8% leave PS/RT/ECC at 60/30/2%;
+anything above 8% is rejected. Minima and ECC are never scaled down. This is an
+internal extension point, not a setting for unimplemented on-air group types.
+Adding a real type later requires its encoder/segment state and configuration
+wiring, but no change to allocation math or the FIFO contract.
+
+Selection uses smooth weighted round robin: add each type's integer weight to
+its credit, select the largest credit (stable tie order), subtract total weight
+from the selected type. Quotas use exact rational arithmetic during setup;
+per-group selection uses only integer arithmetic and O(number of types) work.
+Credits survive batch boundaries and RT text changes; no rigid 100-group batch,
+wall-clock ECC preemption or RT boost overrides the quota. The existing physical
+group interval remains 104/1187.5 seconds. Long-run shares apply to a continuous
+stable configuration; CLEAR or transport loss can discard already queued groups.
+
+Tests cover 10,003-group prefixes, a ten-minute scheduler run, inter-group gaps,
+arbitrary rational extension quotas and identical results with batch sizes
+1/7/31. With RT enabled the basic mix has no run longer than two identical group
+types. With RT disabled, long PS runs are mathematically necessary at 98–100% PS;
+the allocator spaces ECC rather than clustering it to meet a batch percentage.
 
 The projected FIFO timeline now has 2.0 s lookahead, normally about 23 queued
 groups. M8.6B increased the original 0.5 s / six-group horizon to cover the existing
 850 ms GET_STATUS wait on the serialized control executor, plus refill phase and
-jitter. This Linux buffering margin does not change the 100 ms cadence, group
-rates/weighting or CLEAR/lifecycle boundaries. Dynamic PS switching is decided using current monotonic time, never early
+jitter. This Linux buffering margin does not change the 100 ms cadence, total
+group rate or CLEAR/lifecycle boundaries. The quota policy above replaces the
+original M5 weighting. Dynamic PS switching is decided using current monotonic time, never early
 because of lookahead; queued older segments can delay the on-air transition by
 that bounded lookahead. Actual RP consumption/timing still needs physical testing.
-An empty RT CR segment continues to clear stale receiver content.
+When RT is enabled, empty RT is transmitted according to CR/PAD mode.
 
 ## Refill and failure behavior
 
@@ -160,7 +208,13 @@ CLEAR. Neither path interrupts RF/audio or resets another channel's scheduler.
 
 Disable/stop drops Linux pending groups and clears the RP FIFO. Re-enable starts
 coherently after a successful clear. Content configuration changes also establish
-a clean FIFO boundary. M5 itself introduced no RP reboot detection, RF desired-state restore, systemd
+a clean FIFO boundary. RT enable/termination changes participate in that same
+target-only boundary: discard pending batches, require acknowledged RDS_CLEAR,
+then refill using the new allocation/format. Failed CLEAR blocks that TX's
+PUSHes; other TXs are not reset and no RF command is issued. A group already
+handed to the QN may finish; CLEAR cannot retract it. While RT is disabled,
+metadata changes alone do not clear the remaining PS/ECC stream.
+M5 itself introduced no RP reboot detection, RF desired-state restore, systemd
 service or firmware. Lifecycle recovery is now described in [Milestone 6A](milestone6a.md).
 
 RDS errors are caught and exposed through existing modulator status fields:
@@ -208,7 +262,7 @@ No physical RP/QN RDS transmission has been tested. There is no architectural
 component-boundary deviation; AF Method A is included by explicit user instruction.
 
 
-## Recorded validation
+## Historical M5 validation (before quota allocator)
 
 On Raspberry Pi OS / Python 3.13, the M5 focused suite passed 45 tests; the complete
 Python suite passed 294 tests with zero failures and zero skips, including native

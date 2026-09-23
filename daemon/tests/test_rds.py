@@ -1,5 +1,6 @@
 """M5 exact information words, fake-time policy, and high-level mock integration."""
 from collections import Counter
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -86,7 +87,8 @@ def test_character_policy_and_padding():
     assert rt_bytes('Hi') == b'Hi\r '
     assert rt_bytes('ABCD') == b'ABCD\r   '
     assert rt_bytes('') == b'\r   '
-    assert rt_bytes('x'*64) == b'x'*64
+    assert rt_bytes('x'*64) == b'x'*63 + b'\r'
+    assert rt_bytes('x'*64, 'PAD') == b'x'*64
     assert len(ps_bytes('\u00df'*8)) == 8
 
 
@@ -128,7 +130,7 @@ def test_dynamic_ps_duration_and_segment_restart():
     assert switched.ps_item == 0
 
 
-def test_deadlines_fairness_ecc_cadence_and_static_ps():
+def test_quota_fairness_ecc_spacing_and_static_ps():
     s=Scheduler();s.reset(config(),'X'*64,0)
     counts=Counter();ecc_times=[];ps_addresses=[]
     for i in range(700):
@@ -477,21 +479,22 @@ def test_app_uses_existing_rds_control_path(tmp_path):
         assert not rp.rds_fifos[0]
 
 
-def test_rt_change_preserves_ps_duration_and_ecc_deadline(rig):
+def test_rt_change_preserves_ps_duration_and_quota_credits(rig):
     r=rig;r.manager.active_sources={0:r.src.id}
     c=r.db.get('modulators',0);c.rds_ps=[PsEntry(text='ONE',duration_s=2),PsEntry(text='TWO',duration_s=2)]
     r.db.save('modulators',c,0);r.refill.tick()
-    due=r.refill.channels[0].scheduler.deadlines['ecc']
+    expected=deepcopy(r.refill.channels[0].scheduler.allocator)
+    before=r.manager.statuses[0].rds_groups_accepted
     r.clock.advance(1);r.rt.set(0,RtOverride(text='changed',ttl_s=10));r.refill.tick()
     state=r.refill.channels[0].scheduler
-    assert state.ps_since==0 and state.deadlines['ecc']==due
+    for _ in range(r.manager.statuses[0].rds_groups_accepted-before): expected.next()
+    assert state.ps_since==0 and state.allocator.credits==expected.credits
     r.clock.advance(1.1);r.refill.tick()
     assert r.refill.channels[0].scheduler.ps_item==1
 
 
 def test_basic_rds_rates_over_ten_minutes():
     s=Scheduler();s.reset(config(),'X'*64,0)
-    s.boost_remaining=0  # Measure steady state independently of change priority.
     counts=Counter();times={0:[],1:[],2:[]}
     duration=600
     for i in range(int(duration/GROUP_SECONDS)):
@@ -499,17 +502,17 @@ def test_basic_rds_rates_over_ten_minutes():
         groups,s=s.prepare(1,now,0.001)
         kind=groups[0][1]>>12
         counts[kind]+=1;times[kind].append(now)
-    assert abs(counts[0]/duration-4.5) < 0.02
-    assert abs(counts[1]/duration-0.2) < 0.002
-    assert abs(counts[2]/duration-6.7) < 0.02
-    assert max(b-a for a,b in zip(times[0],times[0][1:])) < 0.36
-    assert max(b-a for a,b in zip(times[1],times[1][1:])) < 5.1
-    assert max(b-a for a,b in zip(times[2],times[2][1:])) < 0.27
+    total=sum(counts.values())
+    for kind,share in ((0,.60),(1,.02),(2,.38)):
+        assert abs(counts[kind]-total*share) < 1
+    assert max(b-a for a,b in zip(times[0],times[0][1:])) < 3*GROUP_SECONDS + 1e-8
+    assert max(b-a for a,b in zip(times[1],times[1][1:])) < 52*GROUP_SECONDS
+    assert max(b-a for a,b in zip(times[2],times[2][1:])) < 4*GROUP_SECONDS + 1e-8
 
 
-def test_rt_change_boost_preserves_ps_progress():
+def test_rt_change_does_not_override_quota():
     def run(changed):
-        s=Scheduler();s.reset(config(),'A'*64,0);s.boost_remaining=0
+        s=Scheduler();s.reset(config(),'A'*64,0)
         if changed:
             assert s.update_rt('B'*64,0)
         kinds=[];ps_times=[]
@@ -520,8 +523,63 @@ def test_rt_change_boost_preserves_ps_progress():
             if kind==0: ps_times.append(now)
         return kinds,ps_times,s
     baseline,_,_=run(False)
-    boosted,ps_times,s=run(True)
-    assert boosted.count(2)>baseline.count(2)
-    assert boosted.count(0)>=8
+    changed,ps_times,s=run(True)
+    assert changed==baseline
+    assert changed.count(0)>=15
     assert max(b-a for a,b in zip(ps_times,ps_times[1:])) < 0.36
-    assert s.boost_remaining == 0
+    assert s.text_ab == 1
+
+
+@pytest.mark.parametrize('clear_fails', [False, True])
+def test_disabling_rt_fences_queued_and_busy_rt_only_for_target(rig,clear_fails):
+    r=rig;r.refill.tick()
+    assert any(g[1]>>12==2 for g in r.rp.rds_fifos[0])
+    push=r.rp.push_rds
+    def busy(channel,groups):
+        if channel==0: raise Busy(Command.RDS_PUSH,Status.BUSY)
+        push(channel,groups)
+    r.rp.push_rds=busy;r.clock.advance(.2);r.refill.tick()
+    assert r.refill.channels[0].pending is not None
+    peers=[s.scheduler for s in r.refill.channels[1:]]
+    c=r.db.get('modulators',0);c.rds_rt_enabled=False;r.db.save('modulators',c,0)
+    clear=r.rp.clear_rds
+    if clear_fails:
+        def fail(channel):
+            if channel==0: raise DependencyUnavailable('uncertain CLEAR')
+            clear(channel)
+        r.rp.clear_rds=fail
+    r.rp.push_rds=Mock(side_effect=push);r.rp.rds_calls.clear()
+    r.clock.advance(.2);r.refill.tick()
+    if clear_fails:
+        assert r.refill.channels[0].needs_clear and r.refill.channels[0].pending is None
+        assert all(call.args[0]!=0 for call in r.rp.push_rds.call_args_list)
+        r.rp.clear_rds=clear;r.clock.advance(.3);r.refill.tick()
+    assert not r.refill.channels[0].needs_clear
+    assert r.rp.rds_fifos[0] and all(g[1]>>12!=2 for g in r.rp.rds_fifos[0])
+    assert all(c[1]==0 for c in r.rp.rds_calls if c[0]=='RDS_CLEAR')
+    assert all(r.refill.channels[i].scheduler.cursor>=peers[i-1].cursor for i in range(1,8))
+    assert all(any(g[1]>>12==2 for g in r.rp.rds_fifos[i]) for i in range(1,8))
+    # Metadata while disabled neither enables RT nor clears PS/ECC queues.
+    r.rp.rds_calls.clear();r.rt.set(0,RtOverride(text='Changed while disabled'))
+    r.clock.advance(.2);r.refill.tick()
+    assert not any(c[0]=='RDS_CLEAR' for c in r.rp.rds_calls)
+    assert all(g[1]>>12!=2 for g in r.rp.rds_fifos[0])
+    c.rds_rt_enabled=True;r.db.save('modulators',c,0)
+    r.clock.advance(.2);r.refill.tick()
+    assert any(g[1]>>12==2 for g in r.rp.rds_fifos[0])
+    assert [c[1] for c in r.rp.rds_calls if c[0]=='RDS_CLEAR']==[0]
+    assert r.refill.channels[0].scheduler.text_ab==1
+
+
+def test_rt_options_persist_through_api_and_default_existing_records(tmp_path):
+    path=tmp_path/'rt-options.db'
+    with TestClient(create_app(Settings(path))) as api:
+        row=api.get('/api/v1/modulators/0').json()
+        assert row['rds_rt_enabled'] is True and row['rds_rt_termination']=='CR'
+        assert api.patch('/api/v1/modulators/0',json={'rds_rt_enabled':False,'rds_rt_termination':'PAD'}).status_code==200
+        assert api.patch('/api/v1/modulators/0',json={'rds_rt_termination':'bad'}).status_code==422
+    db=Database(path)
+    assert not db.get('modulators',0).rds_rt_enabled
+    assert db.get('modulators',0).rds_rt_termination=='PAD'
+    db.close()
+    assert ModulatorConfig.model_validate({'rds_rt':'existing text'}).rds_rt_enabled

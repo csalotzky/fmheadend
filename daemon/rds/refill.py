@@ -3,13 +3,13 @@ from dataclasses import dataclass, field
 import time
 from ..errors import DependencyUnavailable
 from ..rp2354.protocol import Busy, Command, Outcome, RpResponseError, execution_outcome
-from .characters import rt_bytes
 from .scheduler import Scheduler, LOOKAHEAD_SECONDS
 
 POLL_SECONDS = 0.1
 RP_ERROR_RETRY_SECONDS = 1.0  # Valid device error replies, never transport failures.
 MAX_BATCHES_PER_TICK = 2
-CONTENT_FIELDS = {'rds_pi', 'rds_ecc', 'rds_pty', 'rds_tp', 'rds_ps', 'rds_af_khz', 'stereo'}
+CONTENT_FIELDS = {'rds_pi', 'rds_ecc', 'rds_pty', 'rds_tp', 'rds_ps', 'rds_af_khz', 'stereo',
+                  'rds_rt_enabled', 'rds_rt_termination'}
 
 
 @dataclass
@@ -125,8 +125,7 @@ class RdsRefill:
                 state.scheduler.reset(config, text, now)
                 state.signature = signature
                 state.active, state.needs_clear, state.pending = True, True, None
-            elif rt_bytes(text) != state.scheduler.rt:
-                state.scheduler.update_rt(text, now)
+            elif config.rds_rt_enabled and state.scheduler.update_rt(text, now):
                 state.pending = None
                 state.needs_clear = True
             if now < state.retry_at:
@@ -137,12 +136,10 @@ class RdsRefill:
                         return
                     continue
                 # Clear drops queued fragments, not independent content timers.
-                # RT updates must not restart the PS carousel or ECC deadline.
+                # RT updates must not restart the PS carousel or quota credits.
                 scheduler = state.scheduler
                 scheduler.cursor = now
                 scheduler.ps_segment = scheduler.rt_segment = scheduler.af_pair = 0
-                scheduler.deadlines['ps'] = scheduler.deadlines['rt'] = now
-                scheduler.boost_remaining = len(scheduler.rt) // 4
             ready.append(channel)
         if not ready:
             return

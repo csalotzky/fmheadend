@@ -157,6 +157,8 @@ class ModulatorConfig(Model):
     rds_pty: int = Field(default=0, ge=0, le=31, strict=True)
     rds_tp: bool = False
     rds_rt: str = Field(default="", max_length=64)
+    rds_rt_enabled: bool = Field(default=True, strict=True)
+    rds_rt_termination: Literal["CR", "PAD"] = "CR"
     rds_metadata_to_rt: bool = False
     _rt = field_validator("rds_rt")(validate_rds_text)
 

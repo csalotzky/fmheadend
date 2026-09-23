@@ -23,8 +23,11 @@ def ps_bytes(text: str) -> bytes:
     return convert(text, 8).ljust(8, b' ')
 
 
-def rt_bytes(text: str) -> bytes:
-    data = convert(text, 64)
-    if len(data) < 64:
-        data += b'\r'
+def rt_bytes(text: str, termination: str = 'CR') -> bytes:
+    if termination == 'PAD':
+        return convert(text, 64).ljust(64, b' ')
+    if termination != 'CR':
+        raise ValueError('RT termination must be CR or PAD')
+    # Reserve one byte so even maximum-length CR text is terminated.
+    data = convert(text, 63) + b'\r'
     return data.ljust((len(data) + 3) // 4 * 4, b' ')

@@ -403,6 +403,8 @@ A `Modulator` a nyolc fizikai QN egyikét reprezentálja. Az `id` **fizikai azon
 | `rds_pty` | integer | PTY |
 | `rds_tp` | bool | TP flag |
 | `rds_rt` | string | Persistent fallback RadioText |
+| `rds_rt_enabled` | bool | Transmit 2A independently of text/metadata contents; default true |
+| `rds_rt_termination` | CR / PAD | CR-terminated short RT (default) or all 16 space-padded segments |
 | `rds_metadata_to_rt` | bool | GStreamer metadata használható-e RT-nek |
 | `timestamp` | datetime | Utolsó módosítás |
 
@@ -1119,12 +1121,20 @@ BUSY retains the exact uncommitted batch; ACK alone commits scheduler advancemen
 Ambiguous outcomes require a successful FIFO clear before coherent segment restart.
 
 M5 policy, character conversion, standard reference and validation are documented
-in [Milestone 5](milestone5.md). Baseline PS/RT weighted rates are 4.5/s and 6.7/s, with
-short RT-change priority and five-second ECC deadlines. The 100 ms refill loop and
+in [Milestone 5](milestone5.md). The quota allocator reserves at least 60% PS,
+at least 30% RT when enabled, and exactly 2% ECC when enabled. Independently
+configured future group quotas consume surplus; infeasible totals are rejected.
+Remaining surplus goes to RT when enabled, otherwise PS. Without extensions the
+PS/RT/ECC shares are 60/38/2%, 60/40/0%, 98/0/2%, or 100/0/0%. Smooth weighted
+round robin interleaves groups continuously across FIFO batches; RT changes do
+not override quotas. RT enabled alone determines 2A transmission, including empty
+text. CR mode reserves a terminating 0x0D and sends only necessary segments;
+PAD mode space-pads to 64 bytes and sends all 16. RT disable/format changes use
+only that TX's existing acknowledged CLEAR boundary. The 100 ms refill loop and
 2.0 s lookahead are internal policy, independent of UI polling and GStreamer callbacks.
 M8.6B increased lookahead from 0.5 s to cover the existing 850 ms GET_STATUS wait
 on the same serialized control executor, plus refill phase/jitter. It is Linux
-buffering margin, not a QN hardware requirement; group weighting is unchanged.
+buffering margin, not a QN hardware requirement; total group rate is unchanged.
 Null ECC emits no 1A ECC. AF is a fixed user-ordered frequency list, never discovered.
 Fresh Modulators default to ECC=null and AF=[].
 
