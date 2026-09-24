@@ -1,4 +1,5 @@
 from enum import StrEnum
+from typing import Literal
 from .configuration import Model
 
 
@@ -44,6 +45,7 @@ class ModulatorStatus(Model):
     pcm_bytes_consumed: int = 0
     rds_state: str = "DISABLED"
     rds_last_error: str | None = None
+    rds_last_error_scope: Literal['TX', 'GLOBAL'] = 'TX'
     rds_groups_accepted: int = 0
     rds_text_ab: int = 0
     hardware_tx_state: str | None = None
@@ -52,6 +54,7 @@ class ModulatorStatus(Model):
     rds_fifo_free: int | None = None
     hardware_last_error: str | None = None
     last_error: str | None = None
+    last_error_scope: Literal['TX', 'GLOBAL'] = 'TX'
 
 
 class SystemStatus(Model):

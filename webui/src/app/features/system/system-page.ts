@@ -1,9 +1,12 @@
-import { Component, computed, effect, inject, signal } from '@angular/core';
+import { Component, DestroyRef, computed, effect, inject, signal, untracked } from '@angular/core';
+import { DatePipe } from '@angular/common';
+import { Subscription, finalize } from 'rxjs';
 import { DashboardState } from '../dashboard/dashboard-state';
-import { SystemApi, SystemInfo, frequencyLabel } from '../../core/api/system-api';
+import { SystemApi, SystemInfo, RecentLog, frequencyLabel } from '../../core/api/system-api';
 import { errorMessage } from '../../core/api/headend-api';
 @Component({
   selector: 'app-system-page',
+  imports: [DatePipe],
   host: { class: 'page-content' },
   styleUrl: './system-page.css',
   template: `
@@ -91,9 +94,6 @@ import { errorMessage } from '../../core/api/headend-api';
       <section class="diagnostics">
         <h2>Diagnostics</h2>
         @if (runtime(); as status) {
-          @if (status.last_error) {
-            <p class="error" role="status">{{ status.last_error }}</p>
-          }
           <dl>
             <dt>I2C errors</dt>
             <dd>{{ status.i2c_errors }}</dd>
@@ -112,6 +112,32 @@ import { errorMessage } from '../../core/api/headend-api';
         } @else {
           <p>Runtime diagnostics unavailable.</p>
         }
+        <div class="log-heading">
+          <h3>Recent backend logs</h3>
+          <button [disabled]="logsLoading()" (click)="refreshLogs()">Refresh logs</button>
+        </div>
+        <p class="muted">
+          Latest 100 entries, newest first. Since daemon startup only; not persistent history.
+        </p>
+        @if (logsError()) {
+          <p class="warning" role="status">Logs unavailable: {{ logsError() }}</p>
+        } @else if (logsLoading() && !logs().length) {
+          <p role="status">Loading logs…</p>
+        } @else if (!logs().length) {
+          <p>No recent backend log entries.</p>
+        }
+        <div class="recent-logs">
+          @for (entry of logs(); track $index) {
+            <div class="log-entry">
+              <time [attr.datetime]="entry.timestamp">{{
+                entry.timestamp | date: 'yyyy-MM-dd HH:mm:ss'
+              }}</time>
+              <strong>{{ entry.severity }}</strong>
+              <span class="log-source">{{ entry.logger }}</span>
+              <pre>{{ entry.message }}</pre>
+            </div>
+          }
+        </div>
       </section>
     </div>
   `,
@@ -121,6 +147,27 @@ export class SystemPage {
   private api = inject(SystemApi);
   readonly info = signal<SystemInfo | null>(null);
   readonly error = signal('');
+  readonly logs = signal<RecentLog[]>([]);
+  readonly logsError = signal('');
+  readonly logsLoading = signal(false);
+  private logsRequest?: Subscription;
+  refreshLogs() {
+    if (this.logsLoading()) return;
+    this.logsLoading.set(true);
+    this.logsRequest = this.api
+      .logs()
+      .pipe(finalize(() => this.logsLoading.set(false)))
+      .subscribe({
+        next: (entries) => {
+          this.logs.set(entries.slice(0, 100));
+          this.logsError.set('');
+        },
+        error: (e) => {
+          this.logs.set([]);
+          this.logsError.set(errorMessage(e));
+        },
+      });
+  }
   readonly runtime = computed(() =>
     this.shared.stale() ? null : this.shared.data()?.status.system,
   );
@@ -130,6 +177,11 @@ export class SystemPage {
   );
   readonly frequency = frequencyLabel;
   constructor() {
+    inject(DestroyRef).onDestroy(() => this.logsRequest?.unsubscribe());
+    effect(() => {
+      this.shared.data(); // Reuse general polling, no System-only timer.
+      untracked(() => this.refreshLogs());
+    });
     effect((cleanup) => {
       this.shared.data();
       const sub = this.api.info().subscribe({

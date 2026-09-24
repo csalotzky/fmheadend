@@ -14,7 +14,6 @@ export class ChannelCard {
   readonly profileName = input<string | null | undefined>(null);
   readonly locked = input(false);
   readonly pending = input(false);
-  readonly actionError = input<string | null>(null);
   readonly operate = output<'start' | 'stop'>();
   readonly stopping = computed(
     () =>

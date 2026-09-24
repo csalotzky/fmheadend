@@ -22,7 +22,6 @@ import { ChannelCard } from './channel-card';
           [stale]="state.stale()"
           [locked]="state.busy() !== null"
           [pending]="state.busy() === channel.id"
-          [actionError]="failure(channel.id)"
           (operate)="state.operate(channel.id, $event)"
         />
       }
@@ -47,7 +46,4 @@ import { ChannelCard } from './channel-card';
 })
 export class Dashboard {
   readonly state = inject(DashboardState);
-  failure(id: number) {
-    return this.state.failures().find((f) => f.id === id)?.message ?? null;
-  }
 }

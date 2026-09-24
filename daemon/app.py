@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from starlette.exceptions import HTTPException
 
 from . import __version__
+from .diagnostics import RecentLogs
 from .api.routes import router
 from .config import Settings
 from .control import ControlExecutor
@@ -40,7 +41,7 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
     settings = settings or Settings()
 
     @asynccontextmanager
-    async def lifespan(app):
+    async def service_lifespan(app):
         control = ControlExecutor()
         app.state.control = control
         def initialize():
@@ -127,6 +128,13 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
             finally:
                 control.close()
                 logger.info("fmheadendd shutdown completed")
+
+    @asynccontextmanager
+    async def lifespan(app):
+        with RecentLogs() as logs:
+            app.state.recent_logs = logs
+            async with service_lifespan(app):
+                yield
 
     app = FastAPI(title="fmheadend", version=__version__, lifespan=lifespan,
                   description="V1 headend configuration, runtime status and diagnostics.")

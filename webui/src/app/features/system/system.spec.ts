@@ -43,6 +43,7 @@ describe('System and region plans', () => {
     const f = TestBed.createComponent(SystemPage);
     f.detectChanges();
     TestBed.inject(HttpTestingController).expectOne('/api/v1/system/info').flush(systemInfo);
+    TestBed.inject(HttpTestingController).expectOne('/api/v1/system/logs').flush([]);
     f.detectChanges();
     const text = f.nativeElement.textContent;
     expect(text).toContain(state);
@@ -57,7 +58,7 @@ describe('System and region plans', () => {
     expect(text).not.toContain('Raster');
     expect(text).not.toContain('Counters and historical codes');
     expect(text).toContain('Multiplexer');
-    expect(f.nativeElement.querySelector('button')).toBeNull();
+    expect(f.nativeElement.querySelector('button').textContent).toContain('Refresh logs');
     expect(f.nativeElement.querySelectorAll('.error')).toHaveLength(0);
     shared.stale.set(true);
     f.detectChanges();
@@ -80,5 +81,64 @@ describe('System and region plans', () => {
   it('completes the sitemap without removed feature routes', () => {
     expect(routes.find((r) => r.path === 'system')?.component).toBe(SystemPage);
     expect(routes.some((r) => /band.?scan/i.test(r.path ?? ''))).toBe(false);
+  });
+  it('renders bounded newest-first logs, refreshes without overlap and stops on destroy', () => {
+    const shared = TestBed.inject(DashboardState);
+    shared.data.set(sample());
+    shared.stale.set(false);
+    const f = TestBed.createComponent(SystemPage);
+    f.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/v1/system/info').flush(systemInfo);
+    const first = http.expectOne('/api/v1/system/logs');
+    f.componentInstance.refreshLogs();
+    http.expectNone('/api/v1/system/logs');
+    first.flush(
+      Array.from({ length: 100 }, (_, i) => ({
+        timestamp: '2026-09-24T12:00:00Z',
+        severity: 'WARNING',
+        logger: 'fmheadendd.rp2354',
+        message: `entry ${100 - i}`,
+      })),
+    );
+    f.detectChanges();
+    const rows = f.nativeElement.querySelectorAll('.log-entry');
+    expect(rows).toHaveLength(100);
+    expect(rows[0].textContent).toContain('entry 100');
+    expect(rows[99].textContent).toContain('entry 1');
+    expect(rows[0].textContent).toContain('fmheadendd.rp2354');
+    f.nativeElement.querySelector('button').click();
+    http.expectOne('/api/v1/system/logs').flush([]);
+    f.detectChanges();
+    expect(f.nativeElement.textContent).toContain('No recent backend log entries');
+    shared.data.set(sample());
+    f.detectChanges();
+    http.expectOne('/api/v1/system/info').flush(systemInfo);
+    const pending = http.expectOne('/api/v1/system/logs');
+    f.destroy();
+    expect(pending.cancelled).toBe(true);
+    shared.data.set(sample());
+    TestBed.tick();
+    http.expectNone('/api/v1/system/logs');
+    http.verify();
+  });
+  it('shows log fetch failure independently of counters and retries manually', () => {
+    const shared = TestBed.inject(DashboardState);
+    shared.data.set(sample());
+    shared.stale.set(false);
+    const f = TestBed.createComponent(SystemPage);
+    f.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/v1/system/info').flush(systemInfo);
+    http.expectOne('/api/v1/system/logs').flush({}, { status: 503, statusText: 'Unavailable' });
+    f.detectChanges();
+    expect(f.nativeElement.textContent).toContain('Logs unavailable');
+    expect(f.nativeElement.textContent).toContain('I2C errors');
+    expect(f.nativeElement.querySelector('button').disabled).toBe(false);
+    f.nativeElement.querySelector('button').click();
+    http.expectOne('/api/v1/system/logs').flush([]);
+    f.detectChanges();
+    expect(f.nativeElement.textContent).not.toContain('Logs unavailable');
+    http.verify();
   });
 });

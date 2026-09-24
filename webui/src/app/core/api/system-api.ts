@@ -19,6 +19,12 @@ export interface SystemInfo {
   database_schema_version: number;
   media_backend: string;
 }
+export interface RecentLog {
+  timestamp: string;
+  severity: string;
+  logger: string;
+  message: string;
+}
 export function frequencyLabel(khz: number): string {
   const fraction = String(khz % 1000)
     .padStart(3, '0')
@@ -37,6 +43,9 @@ export function planOptions(plan: FrequencyPlan) {
 @Injectable({ providedIn: 'root' })
 export class SystemApi {
   private http = inject(HttpClient);
+  logs() {
+    return this.http.get<RecentLog[]>('/api/v1/system/logs').pipe(timeout(15000));
+  }
   info() {
     return this.http.get<SystemInfo>('/api/v1/system/info').pipe(timeout(15000));
   }

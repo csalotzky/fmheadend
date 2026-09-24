@@ -34,8 +34,8 @@ export function compose(snapshot: Snapshot, previous?: Snapshot): ChannelView[] 
               : 'No flow observed';
     // Latched hardware_last_error alone is not an active fault (M4 semantics).
     const error =
-      runtime?.last_error ||
-      runtime?.rds_last_error ||
+      (runtime?.last_error_scope !== 'GLOBAL' ? runtime?.last_error : null) ||
+      (runtime?.rds_last_error_scope !== 'GLOBAL' ? runtime?.rds_last_error : null) ||
       (runtime?.tx_state === 'ERROR'
         ? runtime.hardware_last_error || 'Hardware/control error'
         : runtime?.source_state === 'ERROR'

@@ -1,5 +1,6 @@
 import logging
 import time
+from ..diagnostics import error_scope
 from ..regions import HARDWARE_MIN_KHZ, HARDWARE_MAX_KHZ, HARDWARE_STEP_KHZ
 from ..errors import DependencyUnavailable, DomainError
 from ..models.configuration import ModulatorConfig
@@ -149,6 +150,7 @@ class ModulatorManager:
             rejected = isinstance(exc, RpResponseError) and exc.command == command
             status.tx_state = TxState.ERROR if command is None or rejected else previous_state
             status.last_error = self._command_error(command, exc)
+            status.last_error_scope = error_scope(exc)
             if self.recovery and command is not None:
                 self.recovery.command_failed(modulator_id, command, exc)
             raise DomainError(503, "DEPENDENCY_UNAVAILABLE", status.last_error) from exc
@@ -174,6 +176,7 @@ class ModulatorManager:
             self._lifecycle_command(Command.SET_TX_ENABLED, lambda: self.rp.set_tx_enabled(modulator_id, False), retry_budget)
         except DependencyUnavailable as exc:
             status.last_error = self._command_error(Command.SET_TX_ENABLED, exc)
+            status.last_error_scope = error_scope(exc)
             if isinstance(exc, RpResponseError) and exc.command == Command.SET_TX_ENABLED:
                 status.tx_state = TxState.ERROR
             if self.recovery:
@@ -202,6 +205,7 @@ class ModulatorManager:
             status.source_state = None if self.get(modulator_id).audio_mode == "ANALOG" else "IDLE"
         if cleanup_errors:
             status.last_error = 'RF OFF confirmed; cleanup pending: ' + '; '.join(cleanup_errors)
+            status.last_error_scope = 'TX'
             logger.warning('modulator %s: %s', modulator_id, status.last_error)
         logger.info("modulator %s stopped", modulator_id)
         return status

@@ -33,3 +33,40 @@ dd {
 .diagnostics {
   grid-column: 1 / -1;
 }
+.log-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.recent-logs {
+  max-height: 480px;
+  overflow: auto;
+}
+.log-entry {
+  display: grid;
+  grid-template-columns: 155px 70px minmax(0, 1fr);
+  gap: 4px 10px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+.log-source {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+.log-entry pre {
+  grid-column: 1 / -1;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+}
+@media (max-width: 500px) {
+  .log-entry {
+    grid-template-columns: 1fr 70px;
+  }
+  .log-source {
+    grid-column: 1 / -1;
+  }
+}

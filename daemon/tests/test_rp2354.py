@@ -1119,3 +1119,26 @@ def test_confirmed_off_survives_ambiguous_rds_clear(calls, running_wire_backend)
     assert not s.recovery.pending and not wire.enabled[3]
     assert [x[0] for x in packets(calls)] == [3,6]
     assert all(x[1] == 3 for x in packets(calls))
+
+
+def test_card_diagnostics_preserve_global_session_and_target_error_scope(calls, running_wire_backend):
+    app, wire, _ = running_wire_backend; s = app.state.services
+    def check():
+        s.rp.close()
+        calls[0].open.side_effect = OSError('shared control unavailable')
+        s.modulators.all(False)
+        rows = s.status.snapshot().modulators
+        assert all(r.last_error and r.last_error_scope == 'GLOBAL' for r in rows)
+        assert wire.enabled == [True]*8
+        calls[0].open.side_effect = None
+        s.rp._retry_at = 0
+        wire.faults = [(p.Command.SET_TX_ENABLED, b'\x05\0', b'')]
+        from fmheadendd.errors import DomainError
+        with pytest.raises(DomainError): s.modulators.stop(3)
+        rows = s.status.snapshot().modulators
+        assert rows[3].last_error_scope == 'TX' and 'QN_ERROR' in rows[3].last_error
+        assert all(r.last_error_scope == 'GLOBAL' for r in rows if r.id != 3)
+        error = p.MalformedResponse(p.Command.GET_INFO, 'global handshake error')
+        s.rds._error(2, error)
+        assert s.modulators.statuses[2].rds_last_error_scope == 'GLOBAL'
+    app.state.control.executor.submit(check).result()

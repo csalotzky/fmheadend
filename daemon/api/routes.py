@@ -12,6 +12,12 @@ router = APIRouter(prefix="/api/v1", responses={
 })
 
 
+@router.get('/system/logs', response_model=list[dict], tags=['system'])
+async def recent_logs(request: Request):
+    """Newest 100 backend log entries since startup; no hardware or journal I/O."""
+    return request.app.state.recent_logs.snapshot()
+
+
 @router.get("/sources", response_model=list[InputSource], tags=["sources"])
 @control_route
 def list_sources(request: Request):

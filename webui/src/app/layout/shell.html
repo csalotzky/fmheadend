@@ -70,17 +70,6 @@
   </div>
   <main id="main">
     <div class="messages" aria-live="polite">
-      @if (state.stale()) {
-        <p class="banner warning">
-          {{
-            state.loading()
-              ? 'Connecting to fmheadendd. No hardware state is known yet.'
-              : 'Backend unavailable. Previous configuration is retained; runtime state is stale. Retrying automatically.'
-          }}
-        </p>
-      } @else if (state.data()?.status?.system?.last_error) {
-        <p class="banner warning">{{ state.data()?.status?.system?.last_error }}</p>
-      }
       @if (state.notice()) {
         <p class="banner">{{ state.notice() }}</p>
       }

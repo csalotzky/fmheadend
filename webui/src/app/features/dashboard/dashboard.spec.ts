@@ -166,7 +166,7 @@ describe('Operational display', () => {
     expect(el.textContent).not.toContain('STARTING');
     expect(el.textContent).toContain('OFF');
     expect(el.textContent).toContain('RP unavailable');
-    expect(el.querySelectorAll('app-channel-card')[2].textContent).toContain(
+    expect(el.querySelectorAll('app-channel-card')[2].textContent).not.toContain(
       'TX configuration rejected',
     );
     expect([...el.querySelectorAll('button')].every((b) => b.disabled)).toBe(true);
@@ -274,5 +274,54 @@ describe('Operational display', () => {
     expect(el.textContent).toContain('BACKEND UNAVAILABLE');
     expect(el.querySelectorAll('nav a')).toHaveLength(5);
     expect(el.textContent).not.toContain('1 / 8 TX ON');
+  });
+  it('omits global banners on every route and retains action notifications', () => {
+    const state = setup();
+    vi.spyOn(state, 'start').mockImplementation(() => {});
+    const data = sample();
+    data.status.system.last_error = 'GET_INFO response CRC mismatch';
+    data.status.system.system_state = 'DEGRADED';
+    state.data.set(data);
+    const f = TestBed.createComponent(Shell);
+    const events = TestBed.inject(Router).events as import('rxjs').Subject<
+      import('@angular/router').Event
+    >;
+    for (const path of ['dashboard', 'sources', 'modulators', 'audio-profiles', 'system']) {
+      events.next(new NavigationEnd(1, '/' + path, '/' + path));
+      state.notice.set('STOP ALL: 7 accepted, 1 failed.');
+      state.failures.set([{ id: 3, message: 'SET_TX_ENABLED outcome unknown (AMBIGUOUS)' }]);
+      f.detectChanges();
+      expect(f.nativeElement.textContent).not.toContain('GET_INFO response CRC mismatch');
+      expect(f.nativeElement.querySelector('.banner.warning')).toBeNull();
+      expect(f.nativeElement.textContent).toContain('DEGRADED');
+      expect(f.nativeElement.textContent).toContain('STOP ALL: 7 accepted, 1 failed.');
+      expect(f.nativeElement.textContent).toContain('SET_TX_ENABLED outcome unknown (AMBIGUOUS)');
+    }
+  });
+  it('uses error scope, preserving a target fault despite global stale observations', () => {
+    const state = setup(),
+      data = sample();
+    data.status.system.last_error = 'global read failed';
+    for (const row of data.status.modulators) {
+      row.last_error = 'global read failed';
+      row.last_error_scope = 'GLOBAL';
+      row.rds_last_error = 'global session failed';
+      row.rds_last_error_scope = 'GLOBAL';
+    }
+    data.status.modulators[3].last_error = 'QN configuration rejected';
+    data.status.modulators[3].last_error_scope = 'TX';
+    state.channels.set(compose(data));
+    state.stale.set(true);
+    state.failures.set(
+      data.status.modulators.map((r) => ({ id: r.id, message: 'global read failed' })),
+    );
+    const f = TestBed.createComponent(Dashboard);
+    f.detectChanges();
+    expect(f.nativeElement.textContent).not.toContain('global read failed');
+    expect(f.nativeElement.textContent).not.toContain('global session failed');
+    expect(f.nativeElement.querySelectorAll('.card-error')).toHaveLength(1);
+    expect(f.nativeElement.querySelectorAll('app-channel-card')[3].textContent).toContain(
+      'QN configuration rejected',
+    );
   });
 });

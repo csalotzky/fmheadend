@@ -54,6 +54,11 @@ It should show a compact system summary such as:
 - active TX count, e.g. `6 / 8 TX ON`
 - significant global error indication
 
+Global error indication is the header system/dependency state (including DEGRADED),
+not a persistent last-error banner. No route shows a global raw-error or connection
+warning banner in the shell. START/STOP and bulk-action result notifications remain
+separate and retain their success, failure and uncertain-outcome messages.
+
 Global actions:
 
 - `START ALL`
@@ -142,6 +147,14 @@ Examples:
 Do not turn every statistic into a colored badge.
 
 Errors should be visible directly on the relevant modulator card without requiring the user to open another page.
+
+Cards show TX-specific lifecycle/configuration, source, RDS and current QN faults.
+Backend `last_error_scope` and `rds_last_error_scope` distinguish `TX` from `GLOBAL`
+using exception command/stage metadata, never message matching. Existing raw errors
+and health classification are retained. Shared GET_INFO/GET_STATUS/session failures
+are shown under System, not duplicated as eight TX faults. Action results stay in
+the shell notification area instead of being copied onto cards. A target fault
+remains visible even when unrelated observations are unavailable or stale.
 
 Clicking a card may navigate to the corresponding modulator configuration page.
 
@@ -331,8 +344,25 @@ V1 System is a read-only overview: backend version/status and selected media
 backend, RP connection/protocol/firmware/hardware, mux status/transport, current
 region plan and database schema. Diagnostics use existing counters and current
 errors; latched codes are marked historical. Missing values are unavailable.
-No CPU/temperature claims, raw register controls, live logs or administrative
-commands are exposed. Partial dependency failure keeps the page usable.
+No CPU/temperature claims, raw register controls or administrative commands are
+exposed. Partial dependency failure keeps the page usable.
+
+Diagnostics includes recent backend logs via `GET /api/v1/system/logs`: up to 100
+entries, newest first, with UTC timestamp, severity, logger and message. The UI
+formats timestamps in local browser time. A bounded in-process Python logging
+handler captures emitted INFO-and-higher `fmheadendd` records using existing logger
+levels/sinks; each message is limited to 4096 characters. It captures only the
+current daemon lifetime, including initialization, and is not persistent history
+or a journald viewer. External mux/system logs are not included. No new permissions,
+database or journal subprocess is needed.
+
+Manual Refresh is available; automatic refresh reuses successful general status
+snapshot updates (normally every five seconds) only while System is mounted.
+Concurrent log requests are suppressed, navigation cancels the pending request,
+and each response replaces the list. Empty and failed fetches have explicit states
+independent of the existing counters. The old single raw system last-error block
+is removed to avoid duplicating the recent log list. No top-level Logs navigation
+is added. RF/recovery/desired-state semantics and status classification are unchanged.
 
 Region is a startup-only frequency selection plan returned by the backend;
 frequency choices use its integer min/max/step. Existing out-of-plan frequencies

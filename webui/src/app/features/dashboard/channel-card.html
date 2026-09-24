@@ -86,8 +86,8 @@
       >
     </div>
   </a>
-  @if (actionError() || reportedError()) {
-    <p class="card-error" role="status">{{ actionError() || reportedError() }}</p>
+  @if (reportedError()) {
+    <p class="card-error" role="status">{{ reportedError() }}</p>
   }
   <div class="channel-control">
     <span class="muted">Reported state: {{ reportedState() }}</span>

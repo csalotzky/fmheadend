@@ -1,6 +1,7 @@
 """Scoped recovery on the existing control worker; reconnect is not a reset."""
 import logging
 import time
+from .diagnostics import error_scope
 from .errors import DependencyUnavailable, DomainError
 from .models.runtime_status import TxState
 from .rp2354.client import TxConfig
@@ -113,6 +114,7 @@ class Recovery:
                         self.pending[channel] = following[step]
             except (DependencyUnavailable, DomainError, ValueError) as exc:
                 self.modulators.statuses[channel].last_error = str(exc)
+                self.modulators.statuses[channel].last_error_scope = error_scope(exc)
                 if isinstance(exc, (RpResponseError, DomainError, ValueError)):
                     # A valid rejection/local error is not permission to replay.
                     del self.pending[channel]

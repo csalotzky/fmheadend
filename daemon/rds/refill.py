@@ -1,6 +1,7 @@
 """Bounded FIFO refill on the existing serialized control worker, never appsink."""
 from dataclasses import dataclass, field
 import time
+from ..diagnostics import error_scope
 from ..errors import DependencyUnavailable
 from ..rp2354.protocol import Busy, Command, Outcome, RpResponseError, execution_outcome
 from .scheduler import Scheduler, LOOKAHEAD_SECONDS
@@ -65,6 +66,7 @@ class RdsRefill:
 
     def _error(self, channel, error):
         self.modulators.statuses[channel].rds_last_error = str(error)
+        self.modulators.statuses[channel].rds_last_error_scope = error_scope(error)
         self.modulators.statuses[channel].rds_state = 'ERROR'
         if isinstance(error, RpResponseError):
             self.channels[channel].retry_at = self.clock() + RP_ERROR_RETRY_SECONDS

@@ -46,6 +46,7 @@ export interface ModulatorStatus {
   pcm_bytes_consumed: number;
   rds_state: string;
   rds_last_error: string | null;
+  rds_last_error_scope?: 'TX' | 'GLOBAL';
   rds_groups_accepted: number;
   rds_text_ab: number;
   audio_underrun_count: number | null;
@@ -53,6 +54,7 @@ export interface ModulatorStatus {
   rds_fifo_free: number | null;
   hardware_last_error: string | null;
   last_error: string | null;
+  last_error_scope?: 'TX' | 'GLOBAL';
 }
 export interface SystemStatus {
   system_state: string;
