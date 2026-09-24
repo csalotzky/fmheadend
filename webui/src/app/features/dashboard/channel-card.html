@@ -48,11 +48,11 @@
       <span>RF output</span
       ><strong
         >{{
-          stale() || channel().runtime?.rf_attenuation_db == null
+          attenuation() == null
             ? '\u2014'
-            : channel().runtime!.rf_attenuation_db === 0
+            : attenuation() === 0
               ? 'Maximum'
-              : '-' + (channel().runtime!.rf_attenuation_db | number: '1.1-1') + ' dB'
+              : '-' + (attenuation() | number: '1.1-1') + ' dB'
         }}
       </strong>
     </div>

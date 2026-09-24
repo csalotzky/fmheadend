@@ -33,6 +33,8 @@ export function sample(): Snapshot {
       rds_pty: 10,
       rds_tp: false,
       rds_rt: 'Fallback',
+      rds_rt_enabled: true,
+      rds_rt_termination: 'CR',
       rds_metadata_to_rt: true,
       timestamp: '',
     })),

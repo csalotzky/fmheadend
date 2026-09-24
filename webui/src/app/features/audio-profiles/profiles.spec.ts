@@ -149,6 +149,10 @@ describe('Audio Profiles management', () => {
     f.detectChanges();
     expect(c.form.controls.gain_db.value).toBe(-9);
     expect(c.form.dirty).toBe(true);
+    expect(f.nativeElement.querySelector('.editor-feedback').textContent).toContain(
+      'Stop all transmitters',
+    );
+    expect(f.nativeElement.querySelectorAll('[role="alert"]')).toHaveLength(1);
     expect(f.nativeElement.textContent).toContain(
       'Stop all transmitters using this profile before saving changes',
     );

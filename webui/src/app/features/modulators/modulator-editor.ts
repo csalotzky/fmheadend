@@ -13,6 +13,7 @@ import { FormArray, FormControl, FormGroup, ReactiveFormsModule, Validators } fr
 import { ActivatedRoute, CanDeactivateFn, Router } from '@angular/router';
 import { firstValueFrom, forkJoin } from 'rxjs';
 import { Modulator } from '../../core/api/models';
+import { sortSources } from '../../core/api/source-order';
 import { errorMessage } from '../../core/api/headend-api';
 import { DashboardState } from '../dashboard/dashboard-state';
 import { ModulatorApi, ModulatorDraft } from './modulator-api';
@@ -65,7 +66,7 @@ export class ModulatorEditor implements OnInit {
   readonly mhz = mhz;
   readonly textLength = textLength;
   private storedPty = 0;
-  readonly sources = computed(() => this.shared.data()?.sources ?? []);
+  readonly sources = computed(() => sortSources(this.shared.data()?.sources ?? []));
   readonly channel = computed(() => this.shared.channels().find((c) => c.id === this.id));
   readonly form = new FormGroup({
     frequency_khz: new FormControl<number | null>(null, Validators.required),
@@ -86,6 +87,8 @@ export class ModulatorEditor implements OnInit {
     rds_ps: new FormArray([psEntry()]),
     af: new FormArray<FormControl<string>>([]),
     rds_rt: text(),
+    rds_rt_enabled: flag(true),
+    rds_rt_termination: new FormControl<'CR' | 'PAD'>('CR', { nonNullable: true }),
     rds_metadata_to_rt: flag(),
   });
   get ps() {
@@ -96,11 +99,13 @@ export class ModulatorEditor implements OnInit {
   }
   ngOnInit() {
     this.route.paramMap.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((params) => {
+      if (this.saving()) return;
       this.id = Number(params.get('id'));
       void this.loadConfig();
     });
   }
   async loadConfig() {
+    if (this.saving()) return;
     const requestedId = this.id;
     this.loading.set(true);
     this.failed.set(false);
@@ -257,6 +262,8 @@ export class ModulatorEditor implements OnInit {
       rds_ps: ps,
       rds_af_khz: af,
       rds_rt: checkText(v.rds_rt, 64),
+      rds_rt_enabled: v.rds_rt_enabled,
+      rds_rt_termination: v.rds_rt_termination,
       rds_metadata_to_rt: v.rds_metadata_to_rt,
     };
   }
@@ -273,9 +280,10 @@ export class ModulatorEditor implements OnInit {
     }
     this.saving.set(true);
     try {
-      const saved = await firstValueFrom(this.api.save(this.id, body));
-      this.load(saved);
-      this.message.set('Configuration saved.');
+      const result = await firstValueFrom(this.api.saveAndResume(this.id, body));
+      if (result.saved && result.configuration) this.load(result.configuration);
+      if (result.failed_stage) this.error.set(result.message);
+      else this.message.set(result.message);
       await this.shared.refreshAfterMutation();
     } catch (e) {
       this.error.set(errorMessage(e));

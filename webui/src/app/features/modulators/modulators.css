@@ -74,10 +74,15 @@ small {
 }
 .list-entry {
   display: grid;
-  grid-template-columns: minmax(120px, 1fr) 130px auto;
+  grid-template-columns: minmax(120px, 1fr) 130px;
   gap: 12px;
   align-items: end;
   margin-bottom: 12px;
+  max-width: 540px;
+}
+.list-entry .actions {
+  grid-column: 1 / -1;
+  gap: 6px;
 }
 .af-entry {
   display: flex;
@@ -146,5 +151,5 @@ small {
   font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace;
 }
 .list-entry.single-ps {
-  grid-template-columns: minmax(120px, 1fr) auto;
+  grid-template-columns: minmax(120px, 1fr);
 }

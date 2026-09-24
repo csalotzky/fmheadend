@@ -324,4 +324,67 @@ describe('Operational display', () => {
       'QN configuration rejected',
     );
   });
+  it('shows persisted OFF configuration on refresh and fresh load without fabricating readback', () => {
+    const state = setup(),
+      data = sample();
+    data.status.modulators[0].tx_state = 'OFF';
+    data.status.modulators[0].hardware_tx_state = 'OFF';
+    data.status.modulators[0].rf_attenuation_db = 6;
+    data.modulators[0] = {
+      ...data.modulators[0],
+      frequency_khz: 99500,
+      rf_attenuation_db: 9,
+      audio_mode: 'ANALOG',
+      stereo: false,
+      preemphasis_us: 75,
+      rds_pi: 0x1234,
+      rds_ecc: 0xe1,
+      rds_ps: [{ text: 'NEW PS', duration_s: 5 }],
+      rds_af_khz: [101100],
+    };
+    state.channels.set(compose(data, sample()));
+    const f = TestBed.createComponent(Dashboard);
+    f.detectChanges();
+    for (const channels of [compose(data, sample()), compose(structuredClone(data))]) {
+      state.channels.set(channels);
+      f.detectChanges();
+      const card = f.nativeElement.querySelector('app-channel-card');
+      for (const text of [
+        '99.50',
+        '-9.0 dB',
+        'Analog',
+        'Mono',
+        '75',
+        '1234',
+        'E1',
+        'NEW PS',
+        '101.1',
+      ])
+        expect(card.textContent).toContain(text);
+      expect(data.status.modulators[0].rf_attenuation_db).toBe(6);
+    }
+  });
+  it.each(['ON', 'STARTING', 'stale', 'unknown'] as const)(
+    'does not switch %s RF observation to saved OFF values',
+    (mode) => {
+      const state = setup(),
+        data = sample();
+      data.modulators[0].rf_attenuation_db = 9;
+      data.status.modulators[0].rf_attenuation_db = 6;
+      data.status.modulators[0].tx_state =
+        mode === 'ON' ? 'ON' : mode === 'STARTING' ? 'STARTING' : 'OFF';
+      data.status.modulators[0].hardware_tx_state =
+        mode === 'unknown' ? null : mode === 'ON' ? 'ON' : 'OFF';
+      data.status.system.rp_observation_stale = mode === 'stale';
+      state.channels.set(compose(data));
+      const f = TestBed.createComponent(Dashboard);
+      f.detectChanges();
+      const rf = f.nativeElement.querySelector('.rf').textContent;
+      expect(rf).not.toContain('-9.0 dB');
+      expect(rf).toContain('-6.0 dB');
+      state.stale.set(true);
+      f.detectChanges();
+      expect(f.nativeElement.querySelector('.rf').textContent).not.toContain('-6.0 dB');
+    },
+  );
 });

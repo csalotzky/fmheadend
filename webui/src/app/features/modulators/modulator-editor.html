@@ -7,11 +7,8 @@
 @if (loading()) {
   <p role="status">Loading configuration...</p>
 }
-@if (error()) {
+@if (failed() && error()) {
   <p class="error" role="alert">{{ error() }}</p>
-}
-@if (message()) {
-  <p role="status">{{ message() }}</p>
 }
 @if (!loading() && !failed()) {
   <aside class="runtime" aria-label="Current observations">
@@ -53,7 +50,8 @@
     }
   </aside>
   <p class="muted">
-    Stop the transmitter before saving configuration. Saving never starts or restarts it.
+    Saving a running TX stops only that TX, saves, then resumes it. A stopped TX stays stopped,
+    including after STOP ALL.
   </p>
   <form [formGroup]="form" (ngSubmit)="save()">
     <fieldset [disabled]="saving()">
@@ -274,7 +272,7 @@
             Add frequency
           </button>
           <label class="rt"
-            >Fallback RadioText<textarea
+            >Default Radio Text (RT)<textarea
               class="rds-text"
               formControlName="rds_rt"
               rows="2"
@@ -286,12 +284,35 @@
             ></label
           >
           <label class="check"
+            ><input type="checkbox" formControlName="rds_rt_enabled" />Radio Text (RT)
+            enabled</label
+          >
+          <label
+            >RT termination<select formControlName="rds_rt_termination">
+              <option value="CR">CR</option>
+              <option value="PAD">PAD</option>
+            </select></label
+          >
+          <label class="check"
             ><input type="checkbox" formControlName="rds_metadata_to_rt" />Use source metadata for
             RadioText</label
           >
         </fieldset>
       </section>
     </fieldset>
+    <div class="editor-feedback" aria-live="polite">
+      @if (saving()) {
+        <p role="status">
+          Saving; a running TX will stop and resume. Waiting for the final result…
+        </p>
+      }
+      @if (error()) {
+        <p class="error" role="alert">{{ error() }}</p>
+      }
+      @if (message()) {
+        <p role="status">{{ message() }}</p>
+      }
+    </div>
     <div class="editor-actions">
       <button type="submit" [disabled]="saving() || form.invalid">
         {{ saving() ? 'Saving…' : 'Save' }}</button

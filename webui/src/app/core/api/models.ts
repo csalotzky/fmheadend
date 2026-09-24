@@ -21,6 +21,8 @@ export interface Modulator {
   rds_pty: number;
   rds_tp: boolean;
   rds_rt: string;
+  rds_rt_enabled: boolean;
+  rds_rt_termination: 'CR' | 'PAD';
   rds_metadata_to_rt: boolean;
   timestamp: string;
 }
@@ -57,6 +59,7 @@ export interface ModulatorStatus {
   last_error_scope?: 'TX' | 'GLOBAL';
 }
 export interface SystemStatus {
+  rp_observation_stale?: boolean;
   system_state: string;
   rp2354_state: string;
   mux_state: string;

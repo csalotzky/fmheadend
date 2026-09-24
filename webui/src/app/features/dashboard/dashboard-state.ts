@@ -13,6 +13,7 @@ export interface ChannelView {
   canStart: boolean;
   pcm: string;
   error: string | null;
+  confirmedOff?: boolean;
 }
 export function compose(snapshot: Snapshot, previous?: Snapshot): ChannelView[] {
   return Array.from({ length: 8 }, (_, id) => {
@@ -49,6 +50,10 @@ export function compose(snapshot: Snapshot, previous?: Snapshot): ChannelView[] 
       analog,
       pcm,
       error,
+      confirmedOff:
+        snapshot.status.system.rp_observation_stale !== true &&
+        runtime?.hardware_tx_state === 'OFF' &&
+        runtime?.tx_state === 'OFF',
       sourceName: analog
         ? 'Dedicated analog input'
         : (source?.name ??

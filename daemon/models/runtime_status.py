@@ -1,6 +1,6 @@
 from enum import StrEnum
 from typing import Literal
-from .configuration import Model
+from .configuration import Model, Modulator
 
 
 class SourceState(StrEnum):
@@ -16,6 +16,15 @@ class TxState(StrEnum):
     STARTING = "STARTING"
     ON = "ON"
     ERROR = "ERROR"
+
+
+class ModulatorSaveResult(Model):
+    saved: bool
+    stop_confirmed: bool
+    restarted: bool
+    failed_stage: Literal['stop', 'save', 'start'] | None = None
+    message: str
+    configuration: Modulator | None = None
 
 
 class InputSourceStatus(Model):

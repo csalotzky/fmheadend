@@ -4,7 +4,7 @@
 @if (loading()) {
   <p role="status">Loading source...</p>
 }
-@if (error()) {
+@if (loadFailed() && error()) {
   <p class="error" role="alert">{{ error() }}</p>
 }
 @if (!loading() && !loadFailed()) {
@@ -87,6 +87,11 @@
         </p>
       </details>
     </fieldset>
+    <div class="editor-feedback" aria-live="polite">
+      @if (error()) {
+        <p class="error" role="alert">{{ error() }}</p>
+      }
+    </div>
     <div class="editor-actions">
       <button type="submit" [disabled]="saving() || testing()">
         {{ saving() ? 'Saving...' : 'Save' }}

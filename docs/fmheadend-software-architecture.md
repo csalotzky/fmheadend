@@ -417,12 +417,20 @@ is unchanged. AudioProfile belongs only to digital InputSources. Analog mode cre
 no GStreamer pipeline or PCM producer; the mux slot remains silence. RDS remains
 Modulator-owned and independent of audio mode. RP audio_mode wire values remain 0/1.
 
-Configuration PATCH is separate from lifecycle for all clients. A desired ON,
-STARTING/ON, or active-source channel returns 409 MODULATOR_ACTIVE before any
-configuration mutation or hardware action. Stop explicitly before editing and
-start explicitly afterward. A PATCH attempting to change desired enabled state
-returns 409 LIFECYCLE_REQUIRED; dedicated Start/Stop remain authoritative.
-Stopped configuration changes are persisted for the next explicit start/recovery.
+Configuration PATCH remains persistence-only for confirmed OFF channels with no
+source ownership or pending reconciliation, after startup synchronization. ON,
+STARTING, ERROR/uncertain or source-owned channels cannot be patched. Persistent
+desired ON alone is not evidence of active RF: STOP ALL holds preserve that flag
+while confirmed stopped channels can be edited without RF commands or releasing
+the hold. PATCH cannot change desired enabled state (409 LIFECYCLE_REQUIRED).
+
+The editor uses explicit POST `/api/v1/modulators/{id}/save-and-resume`. One existing
+control-executor task validates, conditionally stops the running target, saves,
+then resumes only if it was operationally ON and desired ON without a hold when
+the request began. It reuses manager lifecycle methods; no maintenance/control
+operation interleaves the stages. Temporary OFF preserves persistent desired state.
+An operational hold fences failed STOP/SAVE sequences until explicit Start/Start
+All. Stopped/STOP ALL saves only persist. Partial outcomes are explicit; see M6A.
 
 Modulators have no separate name field; physical ID 0..7 is their identity.
 

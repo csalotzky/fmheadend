@@ -3,6 +3,7 @@ import { RouterLink } from '@angular/router';
 import { catchError, firstValueFrom, from, map, mergeMap, of } from 'rxjs';
 import { DashboardState } from '../dashboard/dashboard-state';
 import { InputSource } from '../../core/api/models';
+import { sortSources } from '../../core/api/source-order';
 import { errorMessage } from '../../core/api/headend-api';
 import { SourceApi, SourceRuntime, SourceTest } from './source-api';
 import { TestResult } from './test-result';
@@ -28,7 +29,7 @@ export function endpoint(source: InputSource): string {
 export class SourcesList {
   readonly shared = inject(DashboardState);
   private api = inject(SourceApi);
-  readonly sources = computed(() => this.shared.data()?.sources ?? []);
+  readonly sources = computed(() => sortSources(this.shared.data()?.sources ?? []));
   readonly runtime = signal<Record<number, SourceRuntime | null>>({});
   readonly pending = signal<Set<number>>(new Set());
   readonly pendingLabel = signal<Record<number, string>>({});

@@ -1,5 +1,6 @@
 import logging
 import time
+import sqlite3
 from ..diagnostics import error_scope
 from ..regions import HARDWARE_MIN_KHZ, HARDWARE_MAX_KHZ, HARDWARE_STEP_KHZ
 from ..errors import DependencyUnavailable, DomainError
@@ -39,24 +40,72 @@ class ModulatorManager:
         elif config.enabled and config.audio_mode == "DIGITAL":
             raise DomainError(409, "SOURCE_REQUIRED", "Assign an input source before enabling a modulator")
 
-    def update(self, modulator_id, patch):
+    def _edited_config(self, modulator_id, patch):
         old = self.get(modulator_id)
-        status = self.statuses[modulator_id]
-        if old.enabled or modulator_id in self.active_sources or status.tx_state in (TxState.ON, TxState.STARTING):
-            raise DomainError(409, "MODULATOR_ACTIVE", "Stop the transmitter before editing its configuration")
         config = ModulatorConfig.model_validate(old.model_dump(exclude={"id", "timestamp"}) | patch.model_dump(exclude_unset=True))
         self.validate(config)
         if config.enabled != old.enabled:
             raise DomainError(409, "LIFECYCLE_REQUIRED", "Use the explicit Start or Stop operation to change TX state")
+        return config
+
+    def _require_configurable(self, modulator_id):
+        if self.recovery:
+            self.recovery.require_ready()
+            if modulator_id in self.recovery.pending:
+                raise DomainError(409, 'MODULATOR_UNCERTAIN', 'Target TX reconciliation pending; OFF is not confirmed')
+        if modulator_id in self.active_sources or self.statuses[modulator_id].tx_state != TxState.OFF:
+            raise DomainError(409, 'MODULATOR_ACTIVE', 'Confirmed OFF and released source ownership are required before configuration changes')
+
+    def update(self, modulator_id, patch):
+        old = self.get(modulator_id)
+        self._require_configurable(modulator_id)
+        config = self._edited_config(modulator_id, patch)
         saved = self.database.save("modulators", config, modulator_id)
-        if self.recovery and modulator_id in self.recovery.pending:
-            # An edit supersedes any partially completed target reconciliation.
-            self.recovery.pending[modulator_id] = 'off'
-            self.rds.fence(modulator_id)
         self.statuses[modulator_id].source_state = None if config.audio_mode == "ANALOG" else "IDLE"
         if config.audio_mode != old.audio_mode:
             self.statuses[modulator_id].input_saturated = None
         return saved
+
+    def save_and_resume(self, modulator_id, patch):
+        """One control-executor operation; temporary OFF never changes desired enabled."""
+        self._edited_config(modulator_id, patch)  # Reject invalid edits before RF action.
+        if self.recovery:
+            self.recovery.require_ready()
+            if modulator_id in self.recovery.pending:
+                raise DomainError(409, 'MODULATOR_UNCERTAIN', 'Target TX reconciliation pending')
+        resume = self.statuses[modulator_id].tx_state == TxState.ON and self.desired_on(modulator_id)
+        if not resume:
+            self._require_configurable(modulator_id)
+        result = dict(saved=False, stop_confirmed=not resume, restarted=False,
+                      failed_stage=None, message='', configuration=None)
+        stage = 'stop' if resume else 'save'
+        retry_budget = [1]
+        try:
+            if resume:
+                # Also fences reconciliation after an ambiguous temporary OFF.
+                # On failure an explicit Start/Start All may release this hold.
+                self.bulk_stopped.add(modulator_id)
+                stopped = self._stop(modulator_id, retry_budget)
+                result['stop_confirmed'] = True
+                stage = 'save'
+                if stopped.last_error:
+                    raise DomainError(503, 'CLEANUP_PENDING', stopped.last_error)
+            result['configuration'] = self.update(modulator_id, patch)
+            result['saved'] = True
+            if resume:
+                stage = 'start'
+                self.bulk_stopped.discard(modulator_id)  # Only our temporary hold.
+                self._start(modulator_id, retry_budget)
+                result['restarted'] = True
+            result['message'] = 'Configuration saved and TX restarted.' if resume else 'Configuration saved; TX remains stopped.'
+        except (DomainError, DependencyUnavailable, ValueError, sqlite3.Error, OSError) as exc:
+            result['failed_stage'] = stage
+            prefix = {'stop': 'STOP failed; configuration not saved; RF OFF is not confirmed',
+                      'save': 'Saving failed; TX is stopped; configuration not saved',
+                      'start': 'Configuration saved, but TX restart failed'}[stage]
+            result['message'] = f'{prefix}: {exc}'
+            logger.warning('TX%s save-and-resume: %s', modulator_id, result['message'])
+        return result
 
     def start(self, modulator_id):
         current = self.get(modulator_id)

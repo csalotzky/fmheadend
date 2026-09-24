@@ -5,7 +5,7 @@ from ..models.configuration import (
     InputSource, InputSourceConfig, InputSourcePatch, Modulator, ModulatorPatch,
     RtOverride, RtStatus, SourceTestResult, SystemConfig, SystemConfigPatch,
 )
-from ..models.runtime_status import HeadendStatus, InputSourceStatus, ModulatorStatus
+from ..models.runtime_status import HeadendStatus, InputSourceStatus, ModulatorStatus, ModulatorSaveResult
 
 router = APIRouter(prefix="/api/v1", responses={
     code: {"model": ErrorResponse} for code in (400, 404, 409, 422, 500, 503)
@@ -131,7 +131,7 @@ def get_modulator(id: int, request: Request):
 @router.patch("/modulators/{id}", response_model=Modulator, tags=["modulators"])
 @control_route
 def update_modulator(id: int, body: ModulatorPatch, request: Request):
-    """Update a stopped TX configuration. Active TX returns 409 without side effects; use explicit Start/Stop operations."""
+    """Persist confirmed-OFF configuration without RF commands; active/uncertain TXs cannot be patched."""
     return request.app.state.services.modulators.update(id, body)
 
 
@@ -140,6 +140,13 @@ def update_modulator(id: int, body: ModulatorPatch, request: Request):
 def start_modulator(id: int, request: Request):
     """Persist enabled=true and start the TX through the selected RP client."""
     return request.app.state.services.modulators.start(id)
+
+
+@router.post('/modulators/{id}/save-and-resume', response_model=ModulatorSaveResult, tags=['modulators'])
+@control_route
+def save_and_resume_modulator(id: int, body: ModulatorPatch, request: Request):
+    """Serialize optional STOP, persistence, optional START; report partial outcomes."""
+    return request.app.state.services.modulators.save_and_resume(id, body)
 
 
 @router.post("/modulators/{id}/stop", response_model=ModulatorStatus, tags=["modulators"])

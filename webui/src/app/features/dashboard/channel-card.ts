@@ -15,6 +15,13 @@ export class ChannelCard {
   readonly locked = input(false);
   readonly pending = input(false);
   readonly operate = output<'start' | 'stop'>();
+  readonly attenuation = computed(() =>
+    this.stale()
+      ? null
+      : this.channel().confirmedOff
+        ? this.channel().config?.rf_attenuation_db
+        : this.channel().runtime?.rf_attenuation_db,
+  );
   readonly stopping = computed(
     () =>
       ['ON', 'STARTING'].includes(this.channel().runtime?.tx_state ?? '') ||

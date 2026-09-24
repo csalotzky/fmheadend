@@ -272,8 +272,8 @@ describe('Modulator configuration', () => {
     });
     c.form.markAsDirty();
     const pending = c.save();
-    const req = http.expectOne('/api/v1/modulators/0');
-    expect(req.request.method).toBe('PATCH');
+    const req = http.expectOne('/api/v1/modulators/0/save-and-resume');
+    expect(req.request.method).toBe('POST');
     expect(req.request.body).toMatchObject({
       frequency_khz: 100700,
       rf_attenuation_db: 6,
@@ -287,7 +287,14 @@ describe('Modulator configuration', () => {
     });
     expect(req.request.body.enabled).toBeUndefined();
     expect(req.request.body.name).toBeUndefined();
-    req.flush({ ...sample().modulators[0], ...req.request.body });
+    req.flush({
+      saved: true,
+      stop_confirmed: true,
+      restarted: true,
+      failed_stage: null,
+      message: 'Configuration saved and TX restarted.',
+      configuration: { ...sample().modulators[0], ...req.request.body },
+    });
     await pending;
     expect(c.form.pristine).toBe(true);
     expect(c.form.controls.pi.value).toBe('B0D7');
@@ -300,7 +307,7 @@ describe('Modulator configuration', () => {
     c.form.markAsDirty();
     const pending = c.save();
     await c.save();
-    const req = http.expectOne('/api/v1/modulators/0');
+    const req = http.expectOne('/api/v1/modulators/0/save-and-resume');
     req.flush(
       {
         error: 'MODULATOR_ACTIVE',
@@ -319,13 +326,93 @@ describe('Modulator configuration', () => {
       c = f.componentInstance;
     const pending = c.save();
     http
-      .expectOne('/api/v1/modulators/0')
+      .expectOne('/api/v1/modulators/0/save-and-resume')
       .flush(
         { error: 'INVALID_FREQUENCY', message: 'Frequency must be inside the configured FM band' },
         { status: 422, statusText: 'Validation' },
       );
     await pending;
     expect(c.error()).toContain('configured FM band');
+  });
+  it.each(['stop', 'save', 'start'] as const)(
+    'retains accurate %s stage results beside Save',
+    async (stage) => {
+      const f = await editor(),
+        c = f.componentInstance;
+      c.form.patchValue({ frequency_khz: 99500, rds_rt: 'Edited text' });
+      c.form.markAsDirty();
+      const before = c.form.getRawValue();
+      const pending = c.save();
+      await c.save();
+      await c.loadConfig();
+      expect(c.canLeave()).toBe(false);
+      shared.data.set(sample());
+      shared.channels.set(compose(sample()));
+      f.detectChanges();
+      expect(c.form.getRawValue()).toEqual(before);
+      const req = http.expectOne('/api/v1/modulators/0/save-and-resume');
+      const message =
+        stage === 'start'
+          ? 'Configuration saved, but TX restart failed'
+          : `${stage} failed; configuration not saved`;
+      req.flush({
+        saved: stage === 'start',
+        stop_confirmed: stage !== 'stop',
+        restarted: false,
+        failed_stage: stage,
+        message,
+        configuration:
+          stage === 'start' ? { ...sample().modulators[0], ...req.request.body } : null,
+      });
+      await pending;
+      f.detectChanges();
+      expect(c.form.controls.frequency_khz.value).toBe(99500);
+      expect(c.form.controls.rds_rt.value).toBe('Edited text');
+      expect(c.form.dirty).toBe(stage !== 'start');
+      expect(f.nativeElement.querySelector('.editor-feedback').textContent).toContain(message);
+      expect(f.nativeElement.querySelectorAll('[role="alert"]')).toHaveLength(1);
+      http.expectNone((r) => r.url.endsWith('/stop') || r.url.endsWith('/start'));
+    },
+  );
+  it('loads and saves disabled RT without erasing PAD or text', async () => {
+    const f = await editor({
+        rds_rt_enabled: true,
+        rds_rt_termination: 'PAD',
+        rds_rt: 'Keep text',
+      }),
+      c = f.componentInstance;
+    c.form.controls.rds_rt_enabled.setValue(false);
+    c.form.markAsDirty();
+    f.detectChanges();
+    expect(f.nativeElement.textContent).toContain('Default Radio Text (RT)');
+    expect(f.nativeElement.textContent).toContain('Radio Text (RT) enabled');
+    expect(f.nativeElement.textContent).toContain('RT termination');
+    const pending = c.save();
+    const req = http.expectOne('/api/v1/modulators/0/save-and-resume');
+    expect(req.request.body).toMatchObject({
+      rds_rt_enabled: false,
+      rds_rt_termination: 'PAD',
+      rds_rt: 'Keep text',
+      rds_metadata_to_rt: true,
+    });
+    const configuration = { ...sample().modulators[0], ...req.request.body };
+    req.flush({
+      saved: true,
+      stop_confirmed: true,
+      restarted: false,
+      failed_stage: null,
+      message: 'Configuration saved; TX remains stopped.',
+      configuration,
+    });
+    await pending;
+    c.load(configuration);
+    f.detectChanges();
+    expect(c.form.controls.rds_rt_enabled.value).toBe(false);
+    expect(c.form.controls.rds_rt_termination.value).toBe('PAD');
+    expect(c.form.controls.rds_rt.value).toBe('Keep text');
+    expect(f.nativeElement.querySelector('.editor-feedback').textContent).toContain(
+      'Configuration saved',
+    );
   });
   it('protects Cancel/navigation and browser unload', async () => {
     const f = await editor(),

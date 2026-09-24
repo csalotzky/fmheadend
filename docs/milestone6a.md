@@ -116,6 +116,52 @@ Current hardware fault observations remain distinct from latched diagnostic erro
 codes: historical counters/codes alone do not mean the RP is currently unhealthy.
 No RF measurement or successful physical RDS transmission is inferred.
 
+## Editor save-and-resume
+
+Plain PATCH remains persistence-only. Editing requires confirmed runtime OFF,
+released source ownership, completed startup and no target reconciliation pending.
+The old `enabled=true` guard incorrectly rejected successful STOP ALL edits:
+desired enabled is saved startup/START ALL intent, while the session operational
+hold keeps that target stopped. Neither PATCH nor stopped editor Save clears it.
+
+`POST /api/v1/modulators/{id}/save-and-resume` accepts the existing ModulatorPatch.
+It runs entirely within one existing serialized control-executor call:
+
+1. Validate the complete merged configuration without side effects.
+2. Determine resume intent from runtime ON, desired ON and absence of a hold.
+3. For that running target only, set a temporary operational hold and call the
+   existing internal STOP (no persistent `enabled=false` write).
+4. After confirmed OFF and successful cleanup, persist the edits.
+5. Release only the operation's temporary hold and call the existing START using
+   the saved configuration. Share one bounded NOT_SENT retry budget across stages.
+
+An already-stopped target only saves. A held but still ON/uncertain target is
+rejected; Save never uses a failed STOP ALL as permission to edit or restart.
+No synchronous GET_STATUS, parallel worker, RDS policy or wire change is added.
+
+Pre-operation validation/readiness conflicts use the existing 4xx/503 responses.
+Once orchestration begins, HTTP 200 carries its **result**, not a guarantee that
+every stage succeeded: `saved`, `stop_confirmed`, `restarted`, `failed_stage`
+(`stop`, `save`, `start`, or null), `message`, and `configuration` (null until saved).
+`stop_confirmed` records the confirmed OFF boundary, not final RF state after restart.
+
+- Failed/ambiguous STOP: no SAVE/START. Keep edits unsaved and the temporary hold;
+  target-only reconciliation may establish OFF but cannot inadvertently re-enable
+  the previous desired-ON state. Do not replay the uncertain command in the request.
+- STOP succeeds, SAVE/cleanup fails: retain old persistent configuration/desired
+  state and keep the target stopped under the hold. Explicit Start/Start All can
+  later resume; there is no automatic compensating restart.
+- SAVE succeeds, START fails: return the saved configuration and an explicit
+  restart failure. Existing execution-certainty and target-only reconciliation
+  apply to any ambiguous START command; there is no request-level blind replay.
+- Success: return the saved configuration and whether RF was resumed.
+
+The frontend submits one request, prevents duplicate clicks/navigation while it
+is pending, and does not reload dirty edits from polling. Unsaved failures retain
+the form; saved-but-restart-failed results update its saved baseline and show the
+restart error beside Save. HTTP transport loss means the aggregate result is not
+known; it does not authorize automatic replay. Shutdown/STOP ALL semantics remain.
+
 ## Mux and source independence
 
 Mux control status reconnects on each existing bounded status query. PCM writer

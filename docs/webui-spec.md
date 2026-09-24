@@ -116,6 +116,16 @@ Suggested information hierarchy:
 - source/runtime status
 - error state, if any
 
+Configuration-only fields (frequency, source/audio-mode assignment, stereo,
+pre-emphasis and PI/PS/AF/ECC) already use the latest persisted Modulator. RT is
+not displayed on the current card. RF attenuation has hardware readback: confirmed
+OFF uses saved attenuation; ON retains observed attenuation. STARTING, unknown or
+stale observations do not select the OFF configuration branch. Confirmation here
+requires both runtime and observed OFF with non-stale RP observations; backend
+unavailability keeps the existing unavailable display. No configured/readback
+labels are added. Source activity, PCM flow, RDS state/counters/FIFO and health are
+always runtime data. Saving OFF never writes SET_TX_CONFIG just to update a card.
+
 Example conceptual content:
 
 ```text
@@ -172,6 +182,11 @@ Supported V1 source types:
 - ALSA
 
 ### 6.1 Source list
+
+Source names are sorted for presentation using the shared Hungarian locale
+collator, case-insensitively, with ID as the equal-name tie-break. The Modulator
+source selector uses exactly the same ordering. Refresh after creation/rename
+re-sorts without changing IDs, assignments or database ordering.
 
 The source list should expose useful operational information such as:
 
@@ -306,10 +321,16 @@ Fields:
 - PTY 0..29 with European labels only
 - TP
 - PS list
-- fallback RadioText
+- Default Radio Text (RT)
+- Radio Text (RT) enabled (`rds_rt_enabled`, backend default true)
+- RT termination (`rds_rt_termination`: CR or PAD, backend default CR)
 - Use source metadata for RadioText
 
 PS behavior:
+
+Each PS row has compact text/duration columns and a separate Up/Down/Remove row.
+RT enable is independent of metadata selection. Disabling RT preserves its text,
+metadata selection and CR/PAD setting; the UI implements no encoding/scheduling.
 
 - one PS item = static PS
 - multiple PS items = dynamic PS loop
@@ -323,8 +344,15 @@ static entry, and sets fallback RT. It uses the current conservative RDS convers
 with 8/64-character limits, and confirms before replacing a carousel. Nothing follows
 source changes automatically; values remain unsaved until Save. There is no Station entity.
 
-Save/Cancel use a common action area and protect dirty navigation. Active-TX PATCH
-returns 409 without saving/stopping/restarting; lifecycle remains explicit.
+Save/Cancel use a common bottom action area with adjacent progress/success/error
+feedback and dirty navigation protection. The editor sends one explicit backend
+save-and-resume request: operationally running TX -> confirmed STOP -> SAVE ->
+START, serialized on the existing control executor. Already-stopped and STOP ALL
+held TXs save without RF changes. Desired enabled=true alone does not imply running.
+Plain PATCH remains persistence-only and rejects active/uncertain targets.
+Partial results distinguish unsaved STOP/SAVE failure from saved configuration
+with failed restart. Unsaved edits remain intact; saved results establish a new
+pristine baseline. No three-request frontend lifecycle chain is used. See M6A.
 See [M7B2](milestone7b2.md) for implementation and verification.
 
 ## 8. Audio Profiles
@@ -446,6 +474,12 @@ List headers use `page-header`: title left and primary action right within the
 bounded content area, wrapping naturally at narrow widths. Editors use bottom
 `editor-actions` with Save then Cancel. Cancel uses normal routing and existing
 dirty-navigation protection; a separate top Back link is unnecessary.
+
+Save/test/action errors on all editors belong next to the bottom action area,
+not above the form. Load failures remain visible when a form cannot be shown;
+field-level validation remains beside its field. Existing source test results
+remain at the bottom. Source/Profile successful saves retain their existing
+navigation behavior. Shell/Dashboard lifecycle notifications are unchanged.
 
 Shared structural CSS belongs in `styles.css`; do not duplicate host centering,
 header alignment or action-row layout per feature. Keep genuinely specific form

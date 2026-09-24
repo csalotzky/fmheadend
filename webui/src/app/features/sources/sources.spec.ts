@@ -209,7 +209,8 @@ describe('Sources management', () => {
     expect(shared.refreshAfterMutation).toHaveBeenCalled();
   });
   it('preserves form on save failure and prevents duplicate saves', async () => {
-    const c = editor().componentInstance;
+    const f = editor(),
+      c = f.componentInstance;
     fill(c);
     c.form.markAsDirty();
     const p = c.save();
@@ -221,6 +222,11 @@ describe('Sources management', () => {
     expect(c.form.controls.name.value).toBe('FM4');
     expect(c.dirty()).toBe(true);
     expect(c.error()).toBe('Source active');
+    f.detectChanges();
+    expect(f.nativeElement.querySelector('.editor-feedback').textContent).toContain(
+      'Source active',
+    );
+    expect(f.nativeElement.querySelectorAll('[role="alert"]')).toHaveLength(1);
   });
   it('tests unsaved config without persistence and prevents duplicates', async () => {
     const c = editor().componentInstance;

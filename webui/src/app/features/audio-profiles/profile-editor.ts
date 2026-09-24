@@ -21,7 +21,7 @@ import { errorMessage } from '../../core/api/headend-api';
   styleUrl: '../sources/sources.css',
   template: `
     <h1>{{ id === undefined ? 'Add Audio Profile' : 'Edit Audio Profile' }}</h1>
-    @if (error()) {
+    @if (failed() && error()) {
       <p role="alert" class="error">{{ error() }}</p>
     }
     @if (loading()) {
@@ -127,6 +127,11 @@ import { errorMessage } from '../../core/api/headend-api';
             <p class="muted">Stop all transmitters using this profile before saving changes.</p>
           }
         </fieldset>
+        <div class="editor-feedback" aria-live="polite">
+          @if (error()) {
+            <p role="alert" class="error">{{ error() }}</p>
+          }
+        </div>
         <div class="editor-actions">
           <button type="submit" [disabled]="saving() || form.invalid">
             {{ saving() ? 'Saving...' : 'Save' }}</button

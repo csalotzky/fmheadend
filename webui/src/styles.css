@@ -151,3 +151,9 @@ a.button-link {
 .editor-actions {
   padding-block: var(--space-3) var(--space-6);
 }
+.editor-feedback:empty {
+  display: none;
+}
+.editor-feedback p {
+  margin: 8px 0;
+}
