@@ -214,10 +214,10 @@ describe('Operational display', () => {
   it('shows profile names only for digital sources with a profile', () => {
     const state = setup();
     const data = sample();
-    data.sources[0].audio_profile_id = 4;
+    data.sources[0].audio_profile_path = 'custom/studio.json';
     data.modulators[1].audio_mode = 'ANALOG';
     state.channels.set(compose(data));
-    state.profileNames.set({ 4: 'Studio processing' });
+    state.profileNames.set({ 'custom/studio.json': 'Studio processing' });
     const f = TestBed.createComponent(Dashboard);
     f.detectChanges();
     const cards = f.nativeElement.querySelectorAll('app-channel-card');
@@ -233,7 +233,7 @@ describe('Operational display', () => {
     f.detectChanges();
     const http = TestBed.inject(HttpTestingController);
     http.expectOne('/api/v1/system/info').flush({ fmheadend_version: '1.2.3' });
-    http.expectOne('/api/v1/audio-profiles').flush([]);
+    http.expectOne('/api/v1/audio-profiles/files').flush([]);
     f.detectChanges();
     expect(f.nativeElement.textContent).toContain('Version 1.2.3');
     expect(f.nativeElement.textContent).toContain('MULTI-CHANNEL FM MODULATOR');

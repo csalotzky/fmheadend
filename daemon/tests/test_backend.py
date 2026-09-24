@@ -41,7 +41,7 @@ def assign(client, tx, source_id, **kwargs):
 def test_docs_and_fixed_modulators(client):
     assert client.get("/docs").status_code == 200
     schema = client.get("/openapi.json").json()
-    for path in ("/sources/test", "/sources/{id}/test", "/audio-profiles", "/modulators/{id}/rds/rt", "/status"):
+    for path in ("/sources/test", "/sources/{id}/test", "/audio-profiles/files", "/modulators/{id}/rds/rt", "/status"):
         assert P + path in schema["paths"]
     assert schema["paths"][P + "/sources"]["post"]["responses"]["422"]["content"]["application/json"]["schema"]["$ref"].endswith("ErrorResponse")
     rows = client.get(P + "/modulators").json()
@@ -145,16 +145,9 @@ def test_patch_revalidates_source_type(client):
     assert client.patch(f"{P}/sources/{sid}", json={"type": "ALSA", "config": {"device": "hw:1,0"}}).status_code == 200
 
 
-def test_profiles_and_foreign_keys(client):
-    profile = client.post(P + "/audio-profiles", json={"name": "Gain", "gain_db": -3}).json()
-    pid = profile["id"]
-    sid = source(client, HTTP | {"audio_profile_id": pid})
-    assert client.get(f"{P}/audio-profiles/{pid}").json()["gain_db"] == -3
-    assert client.patch(f"{P}/audio-profiles/{pid}", json={"gain_db": -6}).json()["gain_db"] == -6
-    assert client.delete(f"{P}/audio-profiles/{pid}").status_code == 409
-    assert client.patch(f"{P}/sources/{sid}", json={"audio_profile_id": None}).status_code == 200
-    assert client.delete(f"{P}/audio-profiles/{pid}").status_code == 204
-    assert client.post(P + "/sources", json=HTTP | {"audio_profile_id": 999}).status_code == 409
+def test_old_profile_api_removed(client):
+    assert client.get(P + '/audio-profiles').status_code == 404
+    assert client.post(P + '/sources', json=HTTP | {'audio_profile_id': 9}).status_code == 422
 
 
 def test_start_stop_status_active_edit_and_bulk(client):
@@ -184,7 +177,6 @@ def test_restart_persistence_and_runtime_reset(tmp_path):
         client.post(P + "/modulators/3/start")
         client.put(P + "/modulators/3/rds/rt", json={"text": "Override"})
         client.patch(P + "/system/config", json={"web_port": 8888})
-        client.post(P + "/audio-profiles", json={"name": "Keep"})
     with TestClient(create_app(settings)) as client:
         row = client.get(P + "/modulators/3").json()
         assert row["frequency_khz"] == 98100 and row["enabled"]
@@ -192,7 +184,7 @@ def test_restart_persistence_and_runtime_reset(tmp_path):
         assert client.get(P + "/modulators/3/rds/rt").json()["text"] == "Fallback"
         assert client.get(P + "/status").json()["modulators"][3]["tx_state"] == "ON"
         assert client.get(P + "/system/config").json()["web_port"] == 8888
-        assert client.get(P + "/audio-profiles").json()[0]["name"] == "Keep"
+        assert client.get(f"{P}/sources/{sid}").json()["name"] == HTTP["name"]
 
 
 def test_rt_ttl_api(client):
@@ -353,7 +345,7 @@ def test_status_reads_cache_without_hardware_calls(client):
 def test_schema_version_and_fixed_rows(tmp_path):
     path = tmp_path / "schema.db"
     db = Database(path)
-    assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 1
+    assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 2
     assert db.connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     with pytest.raises(sqlite3.IntegrityError):
         db.connection.execute("DELETE FROM modulators WHERE id=0")
@@ -363,7 +355,7 @@ def test_schema_version_and_fixed_rows(tmp_path):
     assert len(db.list("modulators")) == 8
     db.connection.execute("PRAGMA user_version = 99")
     db.close()
-    with pytest.raises(RuntimeError, match="Unsupported pre-release database schema 99. Recreate the database."):
+    with pytest.raises(RuntimeError, match="Unsupported database schema 99"):
         Database(path)
 
 

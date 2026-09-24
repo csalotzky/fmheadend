@@ -5,7 +5,7 @@ Eight-channel FM headend for Raspberry Pi Zero 2 W. The canonical design is
 
 Milestones 1-5 provide the Python control backend, real GStreamer ingest, and
 the independent C++ PCM mux daemon with mock and Linux spidev transports.
-Configuration remains in SQLite; Milestone 4 adds real Linux RP2354 I2C control.
+Source/TX configuration remains in SQLite; shared Audio Profiles use JSON files; Milestone 4 adds real Linux RP2354 I2C control.
 See [Milestone 4 setup, tests and hardware smoke procedure](docs/milestone4.md)
 and the [exact V1 RP protocol](docs/rp2354-protocol.md).
 [Milestone 5](docs/milestone5.md) adds Linux RDS 0A/1A/2A, ECC, fixed AF Method A,
@@ -53,6 +53,11 @@ for local development. Run one daemon process/worker per headend.
 
 The distribution maps `fmheadendd` directly to `daemon/` without an extra nested
 source directory. `muxd/` contains the C++ daemon; `systemd/` contains M6A service units; `webui/` contains the V1 Dashboard, Sources, Modulators, Audio Profiles and read-only System UI.
+
+The [file Audio Profile system](docs/audio-profile-files.md) integrates shared JSON
+profiles with Source selection, the WebUI and native GST Basic processing. Install its read-only JSON defaults separately as documented there, or use
+`--audio-profiles-default-dir ./audio-profiles/default` in development. The old DB profile entity is removed by guarded schema-2 migration; see that document
+before upgrading populated databases.
 
 ## Try the API
 
@@ -172,16 +177,12 @@ Milestone 7A Angular Dashboard: [development and validation](docs/milestone7a.md
 
 
 Milestone 7B1 Sources UI and final validation: [documentation](docs/milestone7b1.md).
-Current pre-V1 SQLite schema is **1**. Empty databases initialize directly from the
-current models with Modulators 0..7 (PS FM TX 0 through FM TX 7), SystemConfig, and no
-Sources or AudioProfiles. Current databases reopen without configuration rewrites.
-Other nonzero versions are unsupported: recreate old development database files.
-
-Before the first supported release, incompatible format changes may require
-development DB recreation; do not accumulate permanent compatibility migrations.
-After a released format exists, increment versions normally and preserve supported
-user data with explicit tested migrations. Backward-compatible migrations have not
-started yet. See architecture section 16.4 for startup and integrity rules.
+Current SQLite schema is **2**. Fresh databases seed Modulators 0..7 and
+SystemConfig; Sources start empty and Audio Profiles are shared JSON files.
+Schema 1 converts transactionally only when its profile data can be preserved by
+the supported mapping. Unexpected profiles/references block migration without
+changing the database. Back up populated databases before upgrading; see
+[file profile migration](docs/audio-profile-files.md) and architecture section 16.4.
 
 Modulator RF/Audio/RDS editor: [Milestone 7B2](docs/milestone7b2.md).
 

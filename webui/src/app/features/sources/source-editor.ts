@@ -38,7 +38,12 @@ export class SourceEditor implements OnInit {
       validators: [Validators.required, Validators.maxLength(200), Validators.pattern(/\S/)],
     }),
     type: new FormControl<SourceType>('HTTP', { nonNullable: true }),
-    audio_profile_id: new FormControl<number | null>(null),
+    processor_mode: new FormControl<SourceDraft['processor_mode']>('bypass', { nonNullable: true }),
+    input_gain_db: new FormControl(0, {
+      nonNullable: true,
+      validators: [Validators.required, Validators.max(20)],
+    }),
+    audio_profile_path: new FormControl<string | null>(null),
     gst_options: new FormControl('', { nonNullable: true }),
   });
   config = new FormGroup<Record<string, FormControl<string>>>({});
@@ -56,7 +61,9 @@ export class SourceEditor implements OnInit {
       this.form.setValue({
         name: source.name,
         type: source.type,
-        audio_profile_id: source.audio_profile_id,
+        audio_profile_path: source.audio_profile_path,
+        processor_mode: source.processor_mode,
+        input_gain_db: source.input_gain_db,
         gst_options: Object.keys(source.gst_options).length
           ? JSON.stringify(source.gst_options, null, 2)
           : '',
@@ -85,9 +92,13 @@ export class SourceEditor implements OnInit {
     this.form.controls.gst_options.setValue('');
     this.result.set(null);
   }
+  changeProcessor() {
+    this.form.controls.audio_profile_path.setValue(null);
+    this.form.markAsDirty();
+  }
   missingProfile() {
-    const id = this.form.controls.audio_profile_id.value;
-    return id !== null && !this.profiles().some((profile) => profile.id === id);
+    const id = this.form.controls.audio_profile_path.value;
+    return id !== null && !this.profiles().some((profile) => profile.path === id);
   }
   dirty() {
     return this.form.dirty || this.config.dirty;
@@ -121,6 +132,14 @@ export class SourceEditor implements OnInit {
       return null;
     }
     const v = this.form.getRawValue();
+    if (v.processor_mode === 'stereotool') {
+      this.error.set('Stereo Tool is not available yet.');
+      return null;
+    }
+    if (v.processor_mode === 'builtin' && (!v.audio_profile_path || this.missingProfile())) {
+      this.error.set('Select an available Built-in Audio Profile.');
+      return null;
+    }
     const config: Record<string, Json> = {};
     for (const f of fields[v.type]) {
       const raw = String(this.config.controls[f.key].value ?? '');
@@ -178,7 +197,9 @@ export class SourceEditor implements OnInit {
     return {
       name: blankHttpName ? 'HTTP stream probe' : v.name,
       type: v.type,
-      audio_profile_id: v.audio_profile_id,
+      processor_mode: v.processor_mode,
+      input_gain_db: v.input_gain_db,
+      audio_profile_path: v.processor_mode === 'bypass' ? null : v.audio_profile_path,
       config,
       gst_options: options,
     };

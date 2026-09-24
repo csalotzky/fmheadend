@@ -15,8 +15,8 @@ import { ChannelCard } from './channel-card';
         <app-channel-card
           [channel]="channel"
           [profileName]="
-            channel.source?.audio_profile_id
-              ? state.profileNames()[channel.source!.audio_profile_id!]
+            channel.source?.audio_profile_path
+              ? state.profileNames()[channel.source!.audio_profile_path!]
               : null
           "
           [stale]="state.stale()"

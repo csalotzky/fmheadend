@@ -78,11 +78,22 @@ class InputSourceConfig(Model):
     name: Name
     type: SourceType
     config: JsonObject
-    audio_profile_id: PositiveId | None = None
+    processor_mode: Literal['bypass', 'builtin', 'stereotool'] = 'bypass'
+    input_gain_db: float = Field(default=0, le=20)
+    audio_profile_path: str | None = None
     gst_options: dict[str, JsonObject] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_config(self):
+        import re
+        if self.processor_mode == 'bypass' and self.audio_profile_path is not None:
+            raise ValueError('Bypass requires audio_profile_path=null')
+        if self.processor_mode == 'builtin' and (self.audio_profile_path is None or not re.fullmatch(
+                r'(default|custom)/[a-zA-Z0-9_-]+\.json', self.audio_profile_path)):
+            raise ValueError('Built-in DSP requires a default/custom JSON profile path')
+        if self.processor_mode == 'stereotool' and self.audio_profile_path is not None and not re.fullmatch(
+                r'(default|custom)/[a-zA-Z0-9_-]+\.sts', self.audio_profile_path):
+            raise ValueError('Stereo Tool presets must be relative default/custom .sts paths')
         self.config = SOURCE_CONFIGS[self.type].model_validate(self.config).model_dump(mode="json")
         if set(self.gst_options) - {"source", "queue", "resample"}:
             raise ValueError("gst_options supports source, queue and resample property maps")
@@ -106,22 +117,6 @@ class BasicConfig(Model):
     lowpass_enabled: bool = True
     lowpass_hz: Literal[12000, 13000, 14000, 15000, 16000] = 15000
     limiter_enabled: bool = True
-
-
-class AudioProfileConfig(Model):
-    name: Name
-    gain_db: float = Field(default=0, le=20)
-    basic_config: BasicConfig = Field(default_factory=BasicConfig)
-    eq_config: JsonObject | None = None
-    compressor_config: JsonObject | None = None
-    limiter_config: JsonObject | None = None
-    processor: Literal["NONE", "GST_BASIC"] = "NONE"
-    advanced_options: JsonObject | None = None
-
-
-class AudioProfile(AudioProfileConfig):
-    id: PositiveId
-    timestamp: datetime
 
 
 def validate_rds_text(text: str) -> str:
@@ -194,7 +189,6 @@ def patch_model(name, model):
 
 
 InputSourcePatch = patch_model("InputSourcePatch", InputSourceConfig)
-AudioProfilePatch = patch_model("AudioProfilePatch", AudioProfileConfig)
 ModulatorPatch = patch_model("ModulatorPatch", ModulatorConfig)
 SystemConfigPatch = patch_model("SystemConfigPatch", SystemConfig)
 

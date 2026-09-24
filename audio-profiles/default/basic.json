@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "name": "GST Basic",
+  "stages": {
+    "gain": {
+      "selected": "GST_VOLUME",
+      "implementations": {"GST_VOLUME": {"gain_db": 0}}
+    },
+    "processor": {
+      "selected": "GST_BASIC",
+      "implementations": {
+        "GST_BASIC": {
+          "highpass_enabled": true,
+          "highpass_hz": 40,
+          "eq_low_db": 0,
+          "eq_mid_db": 0,
+          "eq_high_db": 0,
+          "compressor_enabled": true,
+          "compressor_threshold_dbfs": -12,
+          "compressor_ratio": 2,
+          "lowpass_enabled": true,
+          "lowpass_hz": 15000,
+          "limiter_enabled": true
+        }
+      }
+    }
+  }
+}

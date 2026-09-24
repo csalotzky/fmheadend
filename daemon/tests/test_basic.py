@@ -1,26 +1,10 @@
 """Typed DSP settings and native property mapping; no hardware required."""
 import pytest
 from pydantic import ValidationError
-from fmheadendd.models.configuration import AudioProfileConfig, BasicConfig
+from fmheadendd.models.configuration import BasicConfig
 from fmheadendd.database import Database
 from fmheadendd.sources.basic import basic_stages
 
-
-def test_defaults_and_persistence(tmp_path):
-    path = tmp_path / "profiles.db"
-    db = Database(path)
-    profile = db.save("audio_profiles", AudioProfileConfig(name="Basic", processor="GST_BASIC", gain_db=-3))
-    assert profile.basic_config.model_dump() == dict(highpass_enabled=True,highpass_hz=40,
-        eq_low_db=0,eq_mid_db=0,eq_high_db=0,compressor_enabled=True,
-        compressor_threshold_dbfs=-12,compressor_ratio=2,lowpass_enabled=True,
-        lowpass_hz=15000,limiter_enabled=True)
-    custom = profile.model_copy(update={"basic_config": BasicConfig(highpass_hz=80,eq_mid_db=-2.5,compressor_ratio=4)})
-    db.save("audio_profiles",custom,profile.id)
-    db.close()
-    db = Database(path)
-    assert db.get("audio_profiles",profile.id).basic_config == custom.basic_config
-    assert db.get("audio_profiles",profile.id).gain_db == -3
-    db.close()
 
 @pytest.mark.parametrize("field,value", [
     ("highpass_hz",41),("lowpass_hz",14500),("eq_low_db",-24.5),

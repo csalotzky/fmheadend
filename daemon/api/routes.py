@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Request, Response
 from ..control import control_route
 from ..models.configuration import (
-    AudioProfile, AudioProfileConfig, AudioProfilePatch, ErrorResponse,
+    ErrorResponse,
     InputSource, InputSourceConfig, InputSourcePatch, Modulator, ModulatorPatch,
     RtOverride, RtStatus, SourceTestResult, SystemConfig, SystemConfigPatch,
 )
 from ..models.runtime_status import HeadendStatus, InputSourceStatus, ModulatorStatus, ModulatorSaveResult
+from ..models.audio_profile_file import AudioProfileFile, CloneProfileFile, ProfileFileResult, ProfileFileSummary, ProfileSaveResult
 
 router = APIRouter(prefix="/api/v1", responses={
     code: {"model": ErrorResponse} for code in (400, 404, 409, 422, 500, 503)
@@ -70,34 +71,41 @@ def source_status(id: int, request: Request):
     return request.app.state.services.sources.status(id)
 
 
-@router.get("/audio-profiles", response_model=list[AudioProfile], tags=["audio profiles"])
+@router.get("/audio-profiles/files", response_model=list[ProfileFileSummary], tags=["audio profiles"])
 @control_route
-def list_profiles(request: Request):
-    return request.app.state.services.config.list("audio_profiles")
+def list_profile_files(request: Request):
+    return request.app.state.services.profile_files.list()
 
 
-@router.post("/audio-profiles", response_model=AudioProfile, status_code=201, tags=["audio profiles"])
+@router.post("/audio-profiles/files/custom", response_model=ProfileFileResult, status_code=201, tags=["audio profiles"])
 @control_route
-def create_profile(body: AudioProfileConfig, request: Request):
-    return request.app.state.services.config.create("audio_profiles", body)
+def create_profile_file(body: AudioProfileFile, request: Request):
+    request.app.state.services.sources.validate_profile(body)
+    return request.app.state.services.profile_files.create(body.model_dump())
 
 
-@router.get("/audio-profiles/{id}", response_model=AudioProfile, tags=["audio profiles"])
+@router.get("/audio-profiles/files/{kind}/{filename}", response_model=ProfileFileResult, tags=["audio profiles"])
 @control_route
-def get_profile(id: int, request: Request):
-    return request.app.state.services.config.get("audio_profiles", id)
+def get_profile_file(kind: str, filename: str, request: Request):
+    return request.app.state.services.profile_files.get(f"{kind}/{filename}")
 
 
-@router.patch("/audio-profiles/{id}", response_model=AudioProfile, tags=["audio profiles"])
+@router.put("/audio-profiles/files/custom/{filename}", response_model=ProfileSaveResult, tags=["audio profiles"])
 @control_route
-def update_profile(id: int, body: AudioProfilePatch, request: Request):
-    return request.app.state.services.config.update("audio_profiles", id, body)
+def save_profile_file(filename: str, body: AudioProfileFile, request: Request):
+    return request.app.state.services.sources.save_profile(f"custom/{filename}", body.model_dump())
 
 
-@router.delete("/audio-profiles/{id}", status_code=204, tags=["audio profiles"])
+@router.post("/audio-profiles/files/{kind}/{filename}/clone", response_model=ProfileFileResult, status_code=201, tags=["audio profiles"])
 @control_route
-def delete_profile(id: int, request: Request):
-    request.app.state.services.config.delete("audio_profiles", id)
+def clone_profile_file(kind: str, filename: str, body: CloneProfileFile, request: Request):
+    return request.app.state.services.profile_files.clone(f"{kind}/{filename}", body.name)
+
+
+@router.delete("/audio-profiles/files/custom/{filename}", status_code=204, tags=["audio profiles"])
+@control_route
+def delete_profile_file(filename: str, request: Request):
+    request.app.state.services.profile_files.delete(f"custom/{filename}")
     return Response(status_code=204)
 
 

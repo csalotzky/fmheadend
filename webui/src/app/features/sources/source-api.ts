@@ -8,7 +8,9 @@ export interface SourceDraft {
   name: string;
   type: SourceType;
   config: Record<string, Json>;
-  audio_profile_id: number | null;
+  processor_mode: 'bypass' | 'builtin' | 'stereotool';
+  input_gain_db: number;
+  audio_profile_path: string | null;
   gst_options: Record<string, Record<string, Json>>;
 }
 export interface SourceRuntime {
@@ -29,7 +31,8 @@ export interface SourceTest {
   message: string;
 }
 export interface Profile {
-  id: number;
+  path: string;
+  kind: 'default' | 'custom';
   name: string;
 }
 @Injectable({ providedIn: 'root' })
@@ -39,7 +42,7 @@ export class SourceApi {
     return this.http.get<InputSource>(`/api/v1/sources/${id}`).pipe(timeout(15000));
   }
   profiles() {
-    return this.http.get<Profile[]>('/api/v1/audio-profiles').pipe(timeout(15000));
+    return this.http.get<Profile[]>('/api/v1/audio-profiles/files').pipe(timeout(15000));
   }
   save(body: SourceDraft, id?: number) {
     return (

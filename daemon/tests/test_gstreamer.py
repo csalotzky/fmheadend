@@ -9,8 +9,16 @@ import wave
 
 import pytest
 from fmheadendd.errors import DependencyUnavailable
-from fmheadendd.models.configuration import InputSourceConfig, AudioProfileConfig, BasicConfig
+from fmheadendd.models.configuration import InputSourceConfig, BasicConfig
 from fmheadendd.sources.gst_pipeline import GstPipeline, load_gst, caps_structure, make_rtp_caps, rtp_parameters
+
+from fmheadendd.models.audio_profile_file import AudioProfileFile
+
+def file_profile(name, processor='NONE', gain_db=0, basic_config=None):
+    return AudioProfileFile.model_validate({'schema_version': 1, 'name': name, 'stages': {
+        'gain': {'selected': 'GST_VOLUME', 'implementations': {'GST_VOLUME': {'gain_db': gain_db}}},
+        'processor': {'selected': processor, 'implementations': {'GST_BASIC': (basic_config or BasicConfig()).model_dump()}}
+    }})
 
 pytestmark = pytest.mark.gstreamer
 
@@ -214,7 +222,7 @@ def test_alsa_capture(gst):
         pipeline.stop()
 
 
-@pytest.mark.parametrize("processor", ["NONE", "GST_BASIC"])
+@pytest.mark.parametrize("processor", [None, "NONE", "GST_BASIC"])
 def test_native_gain(gst, http_files, processor):
     import array
     require(gst, "souphttpsrc", "wavparse", "volume")
@@ -222,10 +230,13 @@ def test_native_gain(gst, http_files, processor):
     with wave.open(str(folder / "gain.wav"), "wb") as wav:
         wav.setparams((2, 2, 48000, 0, "NONE", "not compressed"))
         wav.writeframes(b"\x10\x27" * 2 * 48000 * 5)  # constant 10000 for this test only
-    profile = AudioProfileConfig(name="gain", processor=processor, gain_db=-6.020599913,
+    profile = file_profile(name="gain", processor=processor or 'NONE', gain_db=-6.020599913,
                                  basic_config=BasicConfig(highpass_enabled=False, compressor_enabled=False,
                                                           lowpass_enabled=False, limiter_enabled=False))
-    pipeline = GstPipeline(config("HTTP", {"uri": url + "/gain.wav"}), profile=profile, reconnect=False)
+    source = config("HTTP", {"uri": url + "/gain.wav"}).model_copy(update={
+        'input_gain_db': -6.020599913, 'processor_mode': 'builtin' if processor else 'bypass',
+        'audio_profile_path': 'default/basic.json' if processor else None})
+    pipeline = GstPipeline(source, profile=profile if processor else None, reconnect=False)
     pipeline.output.attach(0)
     try:
         pipeline.start()
@@ -234,7 +245,8 @@ def test_native_gain(gst, http_files, processor):
         import sys
         if sys.byteorder != "little":
             samples.byteswap()
-        assert all(4999 <= value <= 5001 for value in samples)
+        expected = 2500 if processor else 5000
+        assert all(expected - 1 <= value <= expected + 1 for value in samples)
     finally:
         pipeline.stop()
 
@@ -323,8 +335,10 @@ def test_basic_native_chain_and_float_domain(gst,http_files):
     with wave.open(str(folder/'basic.wav'),'wb') as wav:
         wav.setparams((1,2,44100,0,'NONE','not compressed'))
         wav.writeframes(b''.join(struct.pack('<h',int(12000*math.sin(i*2*math.pi*1000/44100))) for i in range(44100*4)))
-    profile=AudioProfileConfig(name='Basic',processor='GST_BASIC',gain_db=-3)
-    pipeline=GstPipeline(config('HTTP',{'uri':url+'/basic.wav'}),profile=profile,reconnect=False)
+    profile=file_profile(name='Basic',processor='GST_BASIC',gain_db=-3)
+    source = config('HTTP',{'uri':url+'/basic.wav'}).model_copy(update={
+        'processor_mode': 'builtin', 'audio_profile_path': 'default/basic.json'})
+    pipeline=GstPipeline(source,profile=profile,reconnect=False)
     pipeline.output.attach(0)
     try:
         pipeline.start()
@@ -344,7 +358,7 @@ def test_basic_native_chain_and_float_domain(gst,http_files):
             pad=element.get_static_pad('src')
             peer=pad.get_peer() if pad else None
             element=peer.get_parent_element() if peer else None
-        assert factories==['audioconvert','audioresample','capsfilter','volume','audiocheblimit',
+        assert factories==['audioconvert','audioresample','capsfilter','volume','volume','audiocheblimit',
                            'equalizer-3bands','audiodynamic','audiocheblimit','rglimiter',
                            'audioconvert','capsfilter','queue','appsink']
     finally:pipeline.stop()
@@ -352,8 +366,9 @@ def test_basic_native_chain_and_float_domain(gst,http_files):
 
 def test_none_does_not_construct_basic(gst):
     from unittest.mock import patch
-    pipeline=GstPipeline(config('UDP',{'port':54321,'format':'S16LE','sample_rate':48000,'channels':2}),
-                         profile=AudioProfileConfig(name='None',gain_db=-3))
+    pipeline=GstPipeline(config('UDP',{'port':54321,'format':'S16LE','sample_rate':48000,'channels':2}).model_copy(
+        update={'processor_mode': 'builtin', 'audio_profile_path': 'default/basic.json'}),
+                         profile=file_profile(name='None',gain_db=-3))
     pipeline.Gst=gst
     with patch('fmheadendd.sources.gst_pipeline.basic_stages',side_effect=AssertionError('Basic instantiated')):
         pipeline._build()
@@ -362,8 +377,9 @@ def test_none_does_not_construct_basic(gst):
 
 def test_missing_basic_plugin_fails_explicitly(gst):
     from unittest.mock import patch
-    pipeline=GstPipeline(config('UDP',{'port':54321,'format':'S16LE','sample_rate':48000,'channels':2}),
-                         profile=AudioProfileConfig(name='Basic',processor='GST_BASIC'))
+    pipeline=GstPipeline(config('UDP',{'port':54321,'format':'S16LE','sample_rate':48000,'channels':2}).model_copy(
+        update={'processor_mode': 'builtin', 'audio_profile_path': 'default/basic.json'}),
+                         profile=file_profile(name='Basic',processor='GST_BASIC'))
     pipeline.Gst=gst
     make=gst.ElementFactory.make
     with patch.object(gst.ElementFactory,'make',side_effect=lambda name,*args:None if name=='rglimiter' else make(name,*args)):

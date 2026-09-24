@@ -1,5 +1,10 @@
 # Milestone 7B4 - native GStreamer Basic
 
+> Historical milestone: DB profile CRUD and stop-before-profile-edit rules below
+> have been superseded by [file Audio Profiles](audio-profile-files.md). Current
+> Sources use mode/gain/path; profile Save rebuilds audio only. DSP mappings below
+> remain authoritative for GST Basic.
+
 ## Scope and ownership
 
 One processor runs per active digital InputSource, before shared PCM fanout.

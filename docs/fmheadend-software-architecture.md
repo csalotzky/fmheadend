@@ -249,7 +249,7 @@ Az `InputSource` egy újrahasznosítható logikai audioforrás. Nem tartalmaz FM
 | `name` | string | igen | Emberi név, pl. `KEXP` |
 | `type` | enum | igen | `HTTP`, `UDP`, `RTP`, `ALSA` |
 | `config` | JSON object | igen | Type-specifikus config |
-| `audio_profile_id` | nullable integer | nem | Opcionális audio processing profil |
+| `processor_mode` / `input_gain_db` / `audio_profile_path` | mode / dB / relative path | yes | Source processing selection; see 6.2 |
 | `gst_options` | JSON object | igen | Haladó GStreamer property override-ok; default `{}` |
 | `timestamp` | datetime | igen | Utolsó mentés/módosítás időpontja |
 
@@ -336,31 +336,24 @@ A capture formátumot a GStreamer normalizálja a fix belső PCM contractra.
 
 ## 6.2 `AudioProfile`
 
-Az audio processinget nem az `InputSource` mezőivel kell szétszórni. Opcionális, újrahasznosítható `AudioProfile` tartozhat egy source-hoz.
+Audio Profiles are shared versioned JSON files, not database entities. Defaults
+are Git-tracked/read-only; custom profiles live in persistent application data.
+See [file Audio Profiles](audio-profile-files.md) for paths, schema, REST API,
+transactional DB migration and audio restart/error semantics.
 
-V1-ben a modell maradjon egyszerű:
+Sources persist `processor_mode` (`bypass`, `builtin`, `stereotool`), Source Gain
+`input_gain_db`, and a single stable relative `audio_profile_path`. Bypass requires
+null path and still applies Source Gain. Built-in loads/validates its selected JSON:
+Source decode -> Source Gain -> Profile Input Gain -> existing GST Basic stages ->
+fixed PCM output. Stereo Tool is explicitly unavailable, with no silent fallback.
 
-| Mező | Jelentés |
-|---|---|
-| `id` | Primary key |
-| `name` | Profil neve |
-| `gain_db` | Source-side gain, independent of processor; default 0 dB, maximum +20 dB |
-| `eq_config` | Opcionális JSON, kezdetben minimális |
-| `compressor_config` | Opcionális JSON |
-| `limiter_config` | Opcionális JSON |
-| `processor` | `NONE` (gain only, default) or `GST_BASIC` (native Basic DSP after common gain) |
-| `basic_config` | Typed high-pass, three-band EQ, compressor, low-pass and limiter settings; see M7B4 |
-| `advanced_options` | Opcionális advanced config |
-| `timestamp` | Utolsó módosítás |
-
-Gain always applies. Reserved DSP JSON is not interpreted. Basic uses only typed `basic_config`.
-The backend chain and defaults are defined in `docs/milestone7b4.md`; frontend
-integration is deferred. Gain is followed by Basic stages in F32LE/48 kHz/stereo,
-then converted to the unchanged S16LE output contract. Missing plugins fail clearly.
-All profile updates return 409 while a referencing source is assigned to a
-Modulator whose current runtime TX state is ON. Stop affected transmitters before
-saving, including renames. No live update or implicit restart is implemented. Referenced
-profiles cannot be deleted. See `docs/milestone7b3.md` for compatibility details.
+The existing typed Basic settings/order remain as in M7B4. Selected implementation
+and saved implementation settings are independent. No new plugins are introduced.
+Saving a custom profile validates required plugins, atomically persists, then
+rebuilds active Sources using it on the existing serialized control executor.
+Shared source consumers retain their PCM output object; RF, RDS, desired states and
+STOP ALL holds are untouched. Partial save/apply failures are returned explicitly.
+Referenced custom files cannot be deleted; default files can only be cloned.
 
 ### V1 processing elv
 
@@ -1274,11 +1267,12 @@ Ez a külső script/Liquidsoap/custom automation integráció alapja is lehet.
 ## 13.5 AudioProfile endpointok
 
 ```http
-GET    /api/v1/audio-profiles
-POST   /api/v1/audio-profiles
-GET    /api/v1/audio-profiles/{id}
-PATCH  /api/v1/audio-profiles/{id}
-DELETE /api/v1/audio-profiles/{id}
+GET    /api/v1/audio-profiles/files
+POST   /api/v1/audio-profiles/files/custom
+GET    /api/v1/audio-profiles/files/{kind}/{filename}
+PUT    /api/v1/audio-profiles/files/custom/{filename}
+POST   /api/v1/audio-profiles/files/{kind}/{filename}/clone
+DELETE /api/v1/audio-profiles/files/custom/{filename}
 ```
 
 V1 implementation minimális lehet; az adatmodell jövőbővíthető.
@@ -1625,30 +1619,16 @@ Ajánlott:
 
 ## 16.4 Schema version
 
-The current pre-V1 SQLite format is schema version 1. There is no released database
-format and no supported external legacy database. Startup reads PRAGMA user_version:
-0 creates the complete current schema and model-default seeds in one atomic
-transaction, then sets version 1; 1 opens normally without rewriting configuration;
-any other nonzero version fails with "Unsupported pre-release database schema <n>.
-Recreate the database." No downgrade, recovery, or historical migration runs.
+The current SQLite format is schema version 2. Tables are sources, modulators and
+system_config, plus sqlite_sequence for Source IDs. Modulators reference Sources
+with ON DELETE RESTRICT. Fixed 0..7 IDs, delete/ID-update triggers and startup
+validation remain. No AudioProfile table or Source profile FK remains.
 
-The current tables are audio_profiles, sources, modulators, and system_config
-(with SQLite's internal sqlite_sequence for generated profile/source IDs).
-Sources reference AudioProfiles and Modulators reference Sources, both with
-ON DELETE RESTRICT. Modulator IDs are constrained to 0..7; triggers prohibit
-deletion and ID updates. Every open validates exactly the eight required IDs.
-Initialization seeds those Modulators and SystemConfig directly from current
-models; it creates no AudioProfiles or Sources.
-
-Before the first supported release, incompatible changes may reset this pre-release
-format and development databases may need recreation. Developers/operators may
-delete old development DB files; startup never silently resets them. Do not
-accumulate permanent compatibility migrations for unreleased formats.
-
-After a released database format exists, increment schema versions normally,
-preserve supported user data, and write explicit tested migrations between released
-formats. Backward-compatible migrations have not started yet; no migration framework
-is required now.
+Schema 1 is upgraded by a single transactional conversion described in
+[audio-profile-files.md](audio-profile-files.md). It preserves Sources, gains,
+representable default Basic behavior and TX references; unexpected profiles or
+unresolved references block conversion with the original DB intact. Unsupported
+versions are never silently reset. No general migration framework is introduced.
 
 ---
 

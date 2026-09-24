@@ -46,13 +46,60 @@ describe('Sources management', () => {
       });
     const f = TestBed.createComponent(SourceEditor);
     f.detectChanges();
-    http.expectOne('/api/v1/audio-profiles').flush([]);
+    http.expectOne('/api/v1/audio-profiles/files').flush([]);
     return f;
   }
   function fill(c: SourceEditor) {
     c.form.controls.name.setValue('FM4');
     c.config.controls['uri'].setValue('https://example.org/live');
   }
+  it('selects file paths with independent gain and clears profile for Bypass', async () => {
+    const f = editor(),
+      c = f.componentInstance;
+    await f.whenStable();
+    fill(c);
+    c.profiles.set([
+      { name: 'Default', path: 'default/basic.json', kind: 'default' },
+      { name: 'Custom', path: 'custom/server_123.json', kind: 'custom' },
+    ]);
+    c.form.controls.processor_mode.setValue('builtin');
+    c.changeProcessor();
+    c.form.controls.audio_profile_path.setValue('custom/server_123.json');
+    c.form.controls.input_gain_db.setValue(-6);
+    f.detectChanges();
+    expect(
+      f.nativeElement.querySelector('[formControlName="audio_profile_path"]').textContent,
+    ).toContain('Custom');
+    expect(c.draft()).toMatchObject({
+      processor_mode: 'builtin',
+      input_gain_db: -6,
+      audio_profile_path: 'custom/server_123.json',
+    });
+    c.form.controls.processor_mode.setValue('bypass');
+    c.changeProcessor();
+    f.detectChanges();
+    expect(c.draft()).toMatchObject({
+      processor_mode: 'bypass',
+      input_gain_db: -6,
+      audio_profile_path: null,
+    });
+    expect(f.nativeElement.querySelector('[formControlName="audio_profile_path"]')).toBeNull();
+    expect(f.nativeElement.querySelector('[formControlName="input_gain_db"]').disabled).toBe(false);
+  });
+  it('rejects missing Built-in profile and unavailable Stereo Tool without I/O', async () => {
+    const f = editor(),
+      c = f.componentInstance;
+    await f.whenStable();
+    fill(c);
+    c.form.controls.processor_mode.setValue('builtin');
+    expect(c.draft()).toBeNull();
+    c.form.controls.audio_profile_path.setValue('custom/missing.json');
+    expect(c.draft()).toBeNull();
+    c.form.controls.processor_mode.setValue('stereotool');
+    expect(c.draft()).toBeNull();
+    expect(f.nativeElement.querySelector('option[value="stereotool"]').disabled).toBe(true);
+    http.expectNone('/api/v1/sources');
+  });
   it('uses the shared centered editor with bottom Save and Cancel', () => {
     const f = editor();
     const el = f.nativeElement as HTMLElement;
@@ -372,10 +419,13 @@ describe('Saved source editor', () => {
     vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
     const f = TestBed.createComponent(SourceEditor);
     f.detectChanges();
-    http.expectOne('/api/v1/audio-profiles').flush([{ id: 2, name: 'Studio' }]);
+    http
+      .expectOne('/api/v1/audio-profiles/files')
+      .flush([{ path: 'custom/studio.json', name: 'Studio', kind: 'custom' }]);
     http.expectOne('/api/v1/sources/1').flush({
       ...sample().sources[0],
-      audio_profile_id: 2,
+      processor_mode: 'builtin',
+      audio_profile_path: 'custom/studio.json',
       gst_options: { queue: { 'max-size-buffers': 4 } },
     });
     await f.whenStable();
@@ -384,7 +434,7 @@ describe('Saved source editor', () => {
     const p = c.save();
     const req = http.expectOne('/api/v1/sources/1');
     expect(req.request.method).toBe('PATCH');
-    expect(req.request.body.audio_profile_id).toBe(2);
+    expect(req.request.body.audio_profile_path).toBe('custom/studio.json');
     expect(req.request.body.gst_options.queue['max-size-buffers']).toBe(4);
     req.flush(sample().sources[0]);
     await p;

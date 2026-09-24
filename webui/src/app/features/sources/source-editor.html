@@ -57,19 +57,33 @@
           </div>
         }
       </div>
-      <label
-        >Audio profile (applies to digital sources)<select formControlName="audio_profile_id">
-          <option [ngValue]="null">No profile</option>
-          @for (profile of profiles(); track profile.id) {
-            <option [ngValue]="profile.id">{{ profile.name }}</option>
-          }
-          @if (missingProfile()) {
-            <option [ngValue]="form.controls.audio_profile_id.value">
-              Current profile {{ form.controls.audio_profile_id.value }} (unavailable)
-            </option>
-          }
-        </select></label
-      >
+      <div class="fields">
+        <label
+          >Processor<select formControlName="processor_mode" (change)="changeProcessor()">
+            <option value="bypass">Bypass</option>
+            <option value="builtin">Built-in DSP</option>
+            <option value="stereotool" disabled>Stereo Tool (coming soon)</option>
+          </select></label
+        >
+        <label
+          >Source Gain (dB)<input type="number" step="any" max="20" formControlName="input_gain_db"
+        /></label>
+      </div>
+      @if (form.controls.processor_mode.value === 'builtin') {
+        <label
+          >Audio Profile<select formControlName="audio_profile_path">
+            <option [ngValue]="null">Select a profile</option>
+            @for (profile of profiles(); track profile.path) {
+              <option [ngValue]="profile.path">{{ profile.name }}</option>
+            }
+            @if (missingProfile()) {
+              <option [ngValue]="form.controls.audio_profile_path.value">
+                Current profile (unavailable)
+              </option>
+            }
+          </select></label
+        >
+      }
       @if (profileError()) {
         <p class="warning">Audio profiles unavailable: {{ profileError() }}</p>
       }

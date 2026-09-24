@@ -4,38 +4,51 @@ import { HttpClient } from '@angular/common/http';
 import { timeout } from 'rxjs';
 export type Processor = 'NONE' | 'GST_BASIC';
 export interface ProfileDraft {
+  schema_version: 1;
   name: string;
-  gain_db?: number;
-  processor?: Processor;
-  basic_config?: BasicConfig;
+  stages: {
+    gain: { selected: 'GST_VOLUME'; implementations: { GST_VOLUME: { gain_db: number } } };
+    processor: { selected: Processor; implementations: { GST_BASIC: BasicConfig } };
+  };
 }
 export interface AudioProfile {
-  id: number;
   name: string;
-  gain_db: number;
-  processor: Processor;
-  timestamp: string;
-  basic_config: BasicConfig;
+  path: string;
+  kind: 'default' | 'custom';
 }
-export const processorLabel = (value: Processor) =>
-  value === 'NONE' ? 'None (gain only)' : 'GStreamer Basic';
+export interface ProfileResult extends AudioProfile {
+  profile: ProfileDraft;
+}
+export interface ProfileSaveResult extends ProfileResult {
+  saved?: true;
+  applied?: boolean;
+  restart_errors?: Record<string, string>;
+}
+const base = '/api/v1/audio-profiles/files';
+export const profileUrl = (path: string) =>
+  base + '/' + path.split('/').map(encodeURIComponent).join('/');
 @Injectable({ providedIn: 'root' })
 export class ProfileApi {
   private http = inject(HttpClient);
   list() {
-    return this.http.get<AudioProfile[]>('/api/v1/audio-profiles').pipe(timeout(15000));
+    return this.http.get<AudioProfile[]>(base).pipe(timeout(15000));
   }
-  get(id: number) {
-    return this.http.get<AudioProfile>(`/api/v1/audio-profiles/${id}`).pipe(timeout(15000));
+  get(path: string) {
+    return this.http.get<ProfileResult>(profileUrl(path)).pipe(timeout(15000));
   }
-  save(body: ProfileDraft, id?: number) {
+  save(body: ProfileDraft, path?: string) {
     return (
-      id === undefined
-        ? this.http.post<AudioProfile>('/api/v1/audio-profiles', body)
-        : this.http.patch<AudioProfile>(`/api/v1/audio-profiles/${id}`, body)
-    ).pipe(timeout(15000));
+      path === undefined
+        ? this.http.post<ProfileSaveResult>(base + '/custom', body)
+        : this.http.put<ProfileSaveResult>(profileUrl(path), body)
+    ).pipe(timeout(300000));
   }
-  delete(id: number) {
-    return this.http.delete<void>(`/api/v1/audio-profiles/${id}`).pipe(timeout(15000));
+  clone(path: string, name: string) {
+    return this.http
+      .post<ProfileResult>(profileUrl(path) + '/clone', { name })
+      .pipe(timeout(15000));
+  }
+  delete(path: string) {
+    return this.http.delete<void>(profileUrl(path)).pipe(timeout(15000));
   }
 }

@@ -16,3 +16,4 @@ dist/
 .DS_Store
 Thumbs.db
 .vscode/
+audio-profiles/custom/

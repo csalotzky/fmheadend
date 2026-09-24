@@ -15,6 +15,7 @@ from . import __version__
 from .diagnostics import RecentLogs
 from .api.routes import router
 from .config import Settings
+from .audio_profile_files import AudioProfileFiles
 from .control import ControlExecutor
 from .database import Database, SCHEMA_VERSION
 from .regions import PLANS
@@ -46,7 +47,9 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
         app.state.control = control
         def initialize():
             database = Database(settings.database_path)
-            sources = SourceManager(database, pipeline_factory)
+            profile_files = AudioProfileFiles(settings.audio_profiles_default_dir, settings.audio_profiles_custom_dir,
+                is_referenced=lambda path: any(s.audio_profile_path == path for s in database.list('sources')))
+            sources = SourceManager(database, pipeline_factory, profile_files)
             rp_client = rp or MockRp2354Client()
             mux_client = mux or (mux_factory(sources) if mux_factory else MockMuxClient())
             modulators = ModulatorManager(database, sources, rp_client, mux_client, settings)
@@ -65,6 +68,7 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
                                media_backend="MOCK" if getattr(pipeline_factory, "mocked", True) else "GStreamer")
             config = ConfigurationService(database, sources, modulators)
             return SimpleNamespace(
+                profile_files=profile_files,
                 database=database, rp=rp_client, mux=mux_client, config=config, sources=sources, modulators=modulators, rt=rt, rds=rds, status=status, recovery=recovery,
                 info=status.info,
             )
@@ -180,13 +184,16 @@ def argument_parser():
     parser.add_argument("--mux-runtime-dir", default="/run/fmheadend")
     parser.add_argument("--region", type=int, choices=sorted(PLANS), default=1, help="Frequency selection plan: 0 Expert, 1 Europe (default), 2 US, 3 Japan")
     parser.add_argument("--webui-dir", help="Production Angular browser assets directory (optional)")
+    parser.add_argument("--audio-profiles-default-dir", default="/usr/share/fmheadend/audio-profiles/default")
+    parser.add_argument("--audio-profiles-custom-dir", default="/var/lib/fmheadend/audio-profiles/custom")
     return parser
 
 
 def main():
     parser = argument_parser()
     args = parser.parse_args()
-    settings = Settings(args.database, args.region, args.webui_dir)
+    settings = Settings(args.database, args.region, args.webui_dir,
+                        args.audio_profiles_default_dir, args.audio_profiles_custom_dir)
     database = Database(args.database)
     try:
         config = database.get_system()

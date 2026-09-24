@@ -82,7 +82,7 @@ export class DashboardState {
   readonly updated = signal<Date | null>(null);
   readonly busy = signal<number | 'start-all' | 'stop-all' | null>(null);
   readonly notice = signal('');
-  readonly profileNames = signal<Record<number, string>>({});
+  readonly profileNames = signal<Record<string, string>>({});
   private messageGeneration = 0;
   clearMessages() {
     this.messageGeneration++;

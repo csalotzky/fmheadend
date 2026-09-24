@@ -361,3 +361,13 @@ The existing `FMHEADEND_ARGS` environment entry can include `--region 1` and
 `--webui-dir /opt/fmheadend/webui`. Build/install the browser assets separately;
 no Node server or extra systemd service is needed. Region 1 is the default.
 See [M7B5](milestone7b5.md) for the production hosting procedure.
+
+## File Audio Profile saves (schema 2 integration)
+
+Profile PUT shares the existing control executor. After validation and atomic save,
+it restarts only active Sources selecting that file, preserving consumer sets and
+PCM output objects. It never invokes ModulatorManager START/STOP, changes desired
+state/STOP ALL holds, or calls QN/RDS control. Source teardown failure retains
+ownership; saved-file/restart failure is a partial outcome, not failed RF control.
+Source configuration edits retain their existing stop-before-edit guard.
+See [file profiles](audio-profile-files.md) for migration and API response details.

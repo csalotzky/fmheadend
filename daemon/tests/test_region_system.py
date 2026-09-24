@@ -22,7 +22,7 @@ def test_exact_plans_and_info(tmp_path,region,minimum,maximum,step,count):
     with TestClient(create_app(Settings(tmp_path/'config.db',region))) as api:
         info=api.get('/api/v1/system/info').json()
         assert info['frequency_plan']==plan.as_dict()
-        assert info['database_schema_version']==1 and info['media_backend']=='MOCK'
+        assert info['database_schema_version']==2 and info['media_backend']=='MOCK'
         assert info['rp_protocol_version']==1
         # Hardware validation is independent of selection region.
         assert api.patch('/api/v1/modulators/0',json={'frequency_khz':76050,'preemphasis_us':75,'rds_af_khz':[87600,107900]}).status_code==200

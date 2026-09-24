@@ -7,10 +7,10 @@ import pytest
 from fmheadendd.database import Database, SCHEMA_VERSION
 from fmheadendd.errors import DomainError
 from fmheadendd.models.configuration import (
-    AudioProfileConfig, InputSourceConfig, ModulatorConfig, PsEntry, SystemConfig,
+    InputSourceConfig, ModulatorConfig, PsEntry, SystemConfig,
 )
 
-TABLES = ("audio_profiles", "sources", "modulators", "system_config")
+TABLES = ("sources", "modulators", "system_config")
 
 
 def snapshot(connection):
@@ -21,13 +21,12 @@ def snapshot(connection):
 def test_fresh_schema_and_model_defaults(tmp_path):
     db = Database(tmp_path / "current.db")
     try:
-        assert SCHEMA_VERSION == 1
-        assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert SCHEMA_VERSION == 2
+        assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 2
         tables = {row[0] for row in db.connection.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
         assert tables == set(TABLES) | {"sqlite_sequence"}
         assert db.list("sources") == []
-        assert db.list("audio_profiles") == []
         assert db.get_system() == SystemConfig()
         assert [m.id for m in db.list("modulators")] == list(range(8))
         for tx in range(8):
@@ -47,12 +46,9 @@ def test_fresh_schema_and_model_defaults(tmp_path):
 def test_current_configuration_reopens_without_writes(tmp_path):
     path = tmp_path / "current.db"
     db = Database(path)
-    profiles = [db.save("audio_profiles", AudioProfileConfig(
-        name=processor, processor=processor, gain_db=-3))
-        for processor in ("NONE", "GST_BASIC")]
     source = db.save("sources", InputSourceConfig(
         name="Station", type="HTTP", config={"uri": "https://example.org/live"},
-        audio_profile_id=profiles[1].id,
+        processor_mode='builtin', input_gain_db=-3, audio_profile_path='default/basic.json',
         gst_options={"source": {"user-agent": "Station/2"}}))
     db.save("modulators", ModulatorConfig(
         enabled=True, input_source_id=source.id, frequency_khz=98100,
@@ -72,8 +68,7 @@ def test_current_configuration_reopens_without_writes(tmp_path):
         try:
             assert snapshot(db.connection) == before
             assert db.connection.total_changes == 0
-            assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 1
-            assert db.list("audio_profiles") == profiles
+            assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 2
             assert db.get("sources", source.id) == source
             assert db.get("modulators", 3).rds_ps[0].duration_s == 9
             assert db.get_system().web_port == 8090
@@ -81,7 +76,7 @@ def test_current_configuration_reopens_without_writes(tmp_path):
             db.close()
 
 
-@pytest.mark.parametrize("version", [2, 9, 99])
+@pytest.mark.parametrize("version", [3, 9, 99])
 def test_unsupported_pre_release_version_is_untouched(tmp_path, version):
     path = tmp_path / "unsupported.db"
     # Only the version matters: startup must reject it before accessing any tables.
@@ -91,7 +86,7 @@ def test_unsupported_pre_release_version_is_untouched(tmp_path, version):
         connection.execute(f"PRAGMA user_version={version}")
     before = path.read_bytes()
     with pytest.raises(RuntimeError, match=(
-            rf"Unsupported pre-release database schema {version}\. Recreate the database\.")):
+            rf"Unsupported database schema {version}")):
         Database(path)
     assert path.read_bytes() == before
 
@@ -130,17 +125,14 @@ def test_reopen_requires_complete_modulator_set(tmp_path):
 def test_foreign_keys_and_delete_restrictions(tmp_path):
     db = Database(tmp_path / "current.db")
     try:
-        profile = db.save("audio_profiles", AudioProfileConfig(name="Profile"))
         source = db.save("sources", InputSourceConfig(
-            name="Capture", type="ALSA", config={"device": "hw:1,0"},
-            audio_profile_id=profile.id))
+            name="Capture", type="ALSA", config={"device": "hw:1,0"}))
         db.save("modulators", ModulatorConfig(input_source_id=source.id), 0)
-        for table, record_id in (("sources", source.id), ("audio_profiles", profile.id)):
+        for table, record_id in (("sources", source.id),):
             with pytest.raises(DomainError) as error:
                 db.delete(table, record_id)
             assert error.value.status == 409
         for statement in (
-            "UPDATE sources SET audio_profile_id=999",
             "UPDATE modulators SET input_source_id=999 WHERE id=0",
         ):
             with pytest.raises(sqlite3.IntegrityError):
@@ -148,7 +140,6 @@ def test_foreign_keys_and_delete_restrictions(tmp_path):
                     db.connection.execute(statement)
         db.save("modulators", ModulatorConfig(), 0)
         db.delete("sources", source.id)
-        db.delete("audio_profiles", profile.id)
     finally:
         db.close()
 

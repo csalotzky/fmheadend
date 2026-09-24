@@ -20,7 +20,7 @@ import { errorMessage } from '../../core/api/headend-api';
   imports: [ReactiveFormsModule],
   styleUrl: '../sources/sources.css',
   template: `
-    <h1>{{ id === undefined ? 'Add Audio Profile' : 'Edit Audio Profile' }}</h1>
+    <h1>{{ path === undefined ? 'Add Audio Profile' : 'Edit Audio Profile' }}</h1>
     @if (failed() && error()) {
       <p role="alert" class="error">{{ error() }}</p>
     }
@@ -33,14 +33,15 @@ import { errorMessage } from '../../core/api/headend-api';
           <div class="fields">
             <label>Name<input formControlName="name" required maxlength="200" /></label>
             <label
-              >Gain (dB)<input type="number" step="any" max="20" formControlName="gain_db" /><small
-                >Applies with either processor. Maximum +20 dB. Leave blank to use the
-                default.</small
-              ></label
+              >Profile Input Gain (dB)<input
+                type="number"
+                step="any"
+                max="20"
+                formControlName="gain_db"
+              /><small>Shared profile gain, after Source Gain. Maximum +20 dB.</small></label
             >
             <label
               >Processor<select formControlName="processor">
-                <option [ngValue]="null" disabled>Default: None (gain only)</option>
                 <option value="NONE">None (gain only)</option>
                 <option value="GST_BASIC">GStreamer Basic</option>
               </select></label
@@ -123,11 +124,16 @@ import { errorMessage } from '../../core/api/headend-api';
               </div>
             </section>
           }
-          @if (id !== undefined) {
-            <p class="muted">Stop all transmitters using this profile before saving changes.</p>
+          @if (path !== undefined) {
+            <p class="muted">
+              Saving restarts audio for Sources using this profile. RF remains on.
+            </p>
           }
         </fieldset>
         <div class="editor-feedback" aria-live="polite">
+          @if (message()) {
+            <p role="status">{{ message() }}</p>
+          }
           @if (error()) {
             <p role="alert" class="error">{{ error() }}</p>
           }
@@ -145,13 +151,15 @@ export class ProfileEditor implements OnInit {
   private api = inject(ProfileApi);
   private route = inject(ActivatedRoute);
   private router = inject(Router);
-  readonly id = this.route.snapshot.paramMap.has('id')
-    ? Number(this.route.snapshot.paramMap.get('id'))
+  path = this.route.snapshot.paramMap.has('id')
+    ? this.route.snapshot.paramMap.get('id')!
     : undefined;
   readonly loading = signal(false);
   readonly failed = signal(false);
   readonly saving = signal(false);
   readonly error = signal('');
+  readonly message = signal('');
+  private document?: ProfileDraft;
   readonly highpass = highpassOptions;
   readonly lowpass = lowpassOptions;
   readonly ratios = ratioOptions;
@@ -190,8 +198,8 @@ export class ProfileEditor implements OnInit {
       nonNullable: true,
       validators: [Validators.required, Validators.maxLength(200), Validators.pattern(/\S/)],
     }),
-    gain_db: new FormControl<number | null>(null, Validators.max(20)),
-    processor: new FormControl<Processor | null>(null),
+    gain_db: new FormControl<number | null>(0, [Validators.required, Validators.max(20)]),
+    processor: new FormControl<Processor>('GST_BASIC', { nonNullable: true }),
   });
   constructor() {
     this.form.controls.processor.valueChanges
@@ -220,20 +228,25 @@ export class ProfileEditor implements OnInit {
     b.lowpass_hz[b.lowpass_enabled.value ? 'enable' : 'disable']({ emitEvent: false });
   }
   async ngOnInit() {
-    if (this.id === undefined) return;
+    if (window.history.state?.profileSaved) this.message.set('Audio Profile saved.');
+    if (this.path === undefined) return;
     this.loading.set(true);
     try {
-      const p = await firstValueFrom(this.api.get(this.id));
+      const result = await firstValueFrom(this.api.get(this.path));
+      if (result.kind === 'default')
+        throw new Error('Default profiles are read-only. Clone from the list.');
+      const p = result.profile;
+      this.document = p;
       this.form.setValue({
         name: p.name,
-        gain_db: p.gain_db,
-        processor: p.processor,
-        basic_config: p.basic_config,
+        gain_db: p.stages.gain.implementations.GST_VOLUME.gain_db,
+        processor: p.stages.processor.selected,
+        basic_config: p.stages.processor.implementations.GST_BASIC,
       });
       this.syncBasic();
       this.form.markAsPristine();
     } catch (e) {
-      this.error.set(errorMessage(e));
+      this.error.set(e instanceof Error && !('status' in e) ? e.message : errorMessage(e));
       this.failed.set(true);
     } finally {
       this.loading.set(false);
@@ -242,24 +255,54 @@ export class ProfileEditor implements OnInit {
   async save() {
     if (this.saving() || this.loading() || this.failed() || this.form.invalid) return;
     const v = this.form.getRawValue();
-    const body: ProfileDraft = { name: v.name };
-    if (v.gain_db !== null) body.gain_db = v.gain_db;
-    else if (this.id !== undefined) {
-      this.error.set('Enter gain for this existing profile.');
+    if (v.gain_db === null) {
+      this.error.set('Enter Profile Input Gain.');
       return;
     }
-    if (v.processor !== null) body.processor = v.processor;
-    if (this.id !== undefined || v.processor === 'GST_BASIC' || this.basic.dirty)
-      body.basic_config = v.basic_config;
+    const body: ProfileDraft = this.document
+      ? structuredClone(this.document)
+      : {
+          schema_version: 1,
+          name: v.name,
+          stages: {
+            gain: { selected: 'GST_VOLUME', implementations: { GST_VOLUME: { gain_db: 0 } } },
+            processor: {
+              selected: 'GST_BASIC',
+              implementations: { GST_BASIC: { ...basicDefaults } },
+            },
+          },
+        };
+    body.name = v.name;
+    body.stages.gain.implementations.GST_VOLUME.gain_db = v.gain_db;
+    body.stages.processor.selected = v.processor;
+    Object.assign(body.stages.processor.implementations.GST_BASIC, v.basic_config);
     this.saving.set(true);
     this.error.set('');
+    this.message.set('');
     try {
-      await firstValueFrom(this.api.save(body, this.id));
+      const creating = this.path === undefined;
+      const result = await firstValueFrom(this.api.save(body, this.path));
+      this.path = result.path;
+      this.document = result.profile;
       this.form.markAsPristine();
       this.saving.set(false);
-      await this.router.navigate(['/audio-profiles']);
+      if (result.applied === false) {
+        this.error.set(
+          'Profile saved, but audio restart failed: ' +
+            Object.values(result.restart_errors ?? {}).join('; '),
+        );
+      } else {
+        this.message.set(
+          'Audio Profile saved.' + (result.applied ? ' Active sources using it restarted.' : ''),
+        );
+        if (creating)
+          await this.router.navigate(['/audio-profiles', result.path], {
+            replaceUrl: true,
+            state: { profileSaved: true },
+          });
+      }
     } catch (e) {
-      this.error.set(errorMessage(e));
+      this.error.set(e instanceof Error && !('status' in e) ? e.message : errorMessage(e));
     } finally {
       this.saving.set(false);
     }

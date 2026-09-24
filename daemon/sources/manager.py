@@ -8,30 +8,93 @@ logger = logging.getLogger(__name__)
 
 
 class SourceManager:
-    def __init__(self, database, pipeline_factory=MockPipeline):
+    def __init__(self, database, pipeline_factory=MockPipeline, profile_files=None):
         self.database = database
         self.pipeline_factory = pipeline_factory
+        self.profile_files = profile_files
         self.pipelines = {}
         self.consumers: dict[int, set[int]] = {}
         self.statuses: dict[int, InputSourceStatus] = {}
+        self.restart_errors: dict[int, str] = {}
 
     def status(self, source_id):
-        self.database.get("sources", source_id)
+        source = self.database.get("sources", source_id)
         status = self.statuses.setdefault(source_id, InputSourceStatus(source_id=source_id))
         pipeline = self.pipelines.get(source_id)
+        if pipeline is not None:
+            try:
+                self.validate_config(source)
+            except DomainError as exc:
+                return InputSourceStatus(source_id=source_id, state=SourceState.ERROR, last_error=f'{exc.error}: {exc}')
+        if source_id in self.restart_errors:
+            return InputSourceStatus(source_id=source_id, state=SourceState.ERROR, last_error=self.restart_errors[source_id])
         if pipeline is not None and not getattr(pipeline, "mocked", True):
             status = InputSourceStatus(source_id=source_id, **pipeline.snapshot())
             self.statuses[source_id] = status
         return status
 
     def _new_pipeline(self, source, **kwargs):
+        if source.processor_mode == 'stereotool':
+            raise DependencyUnavailable('Stereo Tool processing is not implemented')
+        try:
+            profile = self.validate_config(source)
+        except DomainError as exc:
+            raise DependencyUnavailable(f'{exc.error}: {exc.message}') from exc
         if getattr(self.pipeline_factory, "mocked", True):
             return self.pipeline_factory(source)
-        profile = self.database.get("audio_profiles", source.audio_profile_id) if source.audio_profile_id else None
         return self.pipeline_factory(source, profile=profile, **kwargs)
+
+    def validate_config(self, source):
+        if source.processor_mode == 'builtin':
+            if self.profile_files is None:
+                raise DomainError(503, 'PROFILE_STORAGE_ERROR', 'Profile storage is not configured')
+            return self.profile_files.get(source.audio_profile_path).profile
+        return None
+
+    def validate_profile(self, profile):
+        if not getattr(self.pipeline_factory, 'mocked', True):
+            try:
+                self.pipeline_factory.validate_profile(profile)
+            except (DependencyUnavailable, ValueError, TypeError) as exc:
+                raise DomainError(503, 'PROFILE_PLUGIN_UNAVAILABLE', str(exc)) from exc
+
+    def save_profile(self, path, data):
+        """Control-executor operation; no TX/mux/RDS control commands."""
+        from ..models.audio_profile_file import ProfileSaveResult
+        profile = self.profile_files.validate(data)
+        self.validate_profile(profile)
+        saved = self.profile_files.save(path, data)
+        errors = {}
+        for source_id, old in list(self.pipelines.items()):
+            source = self.database.get('sources', source_id)
+            if source.audio_profile_path != path:
+                continue
+            try:
+                # Stop before replacing; failed stop retains old ownership for retry.
+                old.stop()
+                output = getattr(old, 'output', None)
+                replacement = self._new_pipeline(source, output=output)
+                self.pipelines[source_id] = replacement
+                replacement.start()
+                self.restart_errors.pop(source_id, None)
+                self.statuses[source_id] = InputSourceStatus(source_id=source_id, state=SourceState.RUNNING)
+            except (DependencyUnavailable, DomainError, ValueError) as exc:
+                errors[source_id] = str(exc)
+                self.restart_errors[source_id] = str(exc)
+                self.statuses[source_id] = InputSourceStatus(source_id=source_id, state=SourceState.ERROR, last_error=str(exc))
+                logger.error('Profile saved; source %s audio restart failed: %s', source_id, exc)
+        return ProfileSaveResult(**saved.model_dump(), applied=not errors, restart_errors=errors)
 
     def acquire(self, source_id, modulator_id):
         source = self.database.get("sources", source_id)
+        # Joining an existing pipeline must validate too: a live worker with old
+        # settings is not proof that its selected file remains usable.
+        try:
+            self.validate_config(source)
+        except DomainError as exc:
+            self.statuses[source_id] = InputSourceStatus(source_id=source_id, state=SourceState.ERROR,
+                                                        last_error=f'{exc.error}: {exc}')
+            raise DependencyUnavailable(f'{exc.error}: {exc}') from exc
         consumers = self.consumers.setdefault(source_id, set())
         if modulator_id in consumers:
             return
@@ -59,12 +122,15 @@ class SourceManager:
                         source_id=source_id, state=SourceState.ERROR, last_error=str(exc))
                 raise
             status.state, status.last_error = SourceState.RUNNING, None
+            self.restart_errors.pop(source_id, None)
             if getattr(pipeline, "mocked", True):
                 status.codec = "MOCK"
                 status.input_sample_rate, status.input_channels = 48000, 2
             logger.info("source %s started", source_id)
         else:
             pipeline = self.pipelines[source_id]
+            if status.state == SourceState.ERROR:
+                raise DependencyUnavailable(status.last_error or 'Shared source audio failed')
             if not getattr(pipeline, "mocked", True):
                 if pipeline.snapshot()["state"] != "RUNNING":
                     raise DependencyUnavailable("Shared source is not currently producing usable audio")
@@ -85,12 +151,17 @@ class SourceManager:
             self.pipelines.pop(source_id)
             self.consumers.pop(source_id)
             self.statuses[source_id] = InputSourceStatus(source_id=source_id)
+            self.restart_errors.pop(source_id, None)
             logger.info("source %s stopped", source_id)
         consumers.discard(modulator_id)
         if not getattr(pipeline, "mocked", True):
             pipeline.output.detach(modulator_id)
 
     def test(self, source: InputSourceConfig):
+        if source.processor_mode == 'stereotool':
+            return SourceTestResult(ok=False, mocked=getattr(self.pipeline_factory, 'mocked', True),
+                                    message='Stereo Tool processing is not implemented')
+        self.validate_config(source)
         if getattr(self.pipeline_factory, "mocked", True):
             return probe(source)
         # Testing an active saved source reads its existing pipeline: no duplicate

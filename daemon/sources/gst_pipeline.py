@@ -85,7 +85,27 @@ class GstPipeline:
     """
     mocked = False
 
+    @staticmethod
+    def validate_profile(profile):
+        Gst = load_gst()
+        def check(factory, **properties):
+            element = Gst.ElementFactory.make(factory, None)
+            if element is None:
+                raise DependencyUnavailable(f'Missing GStreamer element: {factory}')
+            for name, value in properties.items():
+                element.set_property(name.replace('_', '-'), value)
+            return element
+        check('volume', volume=10 ** (profile.stages.gain.implementations.GST_VOLUME.gain_db / 20))
+        if profile.stages.processor.selected == 'GST_BASIC':
+            basic_stages(check, profile.stages.processor.implementations.GST_BASIC)
+
     def __init__(self, source, *, profile=None, output=None, timeout_s=None, reconnect=True):
+        if source.processor_mode == 'stereotool':
+            raise DependencyUnavailable('Stereo Tool processing is not implemented')
+        if source.processor_mode == 'builtin' and profile is None:
+            raise DependencyUnavailable('Built-in DSP requires its validated profile')
+        if source.processor_mode == 'bypass' and profile is not None:
+            raise DependencyUnavailable('Bypass must not load a processing profile')
         self.source = source
         self.profile = profile
         self.output = output or PcmOutput()
@@ -197,28 +217,24 @@ class GstPipeline:
         self._convert = self._make("audioconvert")
         resample = self._make("audioresample")
         self._overrides(resample, "resample")
-        volume = self._make("volume")
+        volume = self._make('volume', volume=10 ** (self.source.input_gain_db / 20))
+        profile_gain = []
         if self.profile:
-            # Native volume element performs the actual processing.
-            gain = 10 ** (self.profile.gain_db / 20)
-            if not math.isfinite(gain) or not 0 <= gain <= 10:
-                raise DependencyUnavailable("GStreamer volume gain must be at most +20 dB")
-            volume.set_property("volume", gain)
-            if self.profile.processor == "GST_BASIC" and any((self.profile.eq_config, self.profile.compressor_config, self.profile.limiter_config, self.profile.advanced_options)):
-                raise DependencyUnavailable("Legacy DSP property blobs are unsupported; configure Basic processing with basic_config")
+            profile_gain.append(self._make('volume', volume=10 ** (
+                self.profile.stages.gain.implementations.GST_VOLUME.gain_db / 20)))
         capsfilter = self._make("capsfilter", caps=Gst.Caps.from_string(PCM_CAPS))
         queue = self._make("queue", max_size_buffers=8, max_size_bytes=19200, max_size_time=100000000, leaky=0)
         self._overrides(queue, "queue")
         sink = self._make("appsink", caps=Gst.Caps.from_string(PCM_CAPS), emit_signals=True,
                           sync=True, max_buffers=2, drop=True, wait_on_eos=False, enable_last_sample=False)
         sink.connect("new-sample", self._sample)
-        if self.profile and self.profile.processor == "GST_BASIC":
+        if self.profile and self.profile.stages.processor.selected == "GST_BASIC":
             domain = self._make("capsfilter", caps=Gst.Caps.from_string(PROCESSING_CAPS))
-            stages = basic_stages(self._make, self.profile.basic_config)
+            stages = basic_stages(self._make, self.profile.stages.processor.implementations.GST_BASIC)
             final_convert = self._make("audioconvert")
-            self._link(self._convert, resample, domain, volume, *stages, final_convert, capsfilter, queue, sink)
+            self._link(self._convert, resample, domain, volume, *profile_gain, *stages, final_convert, capsfilter, queue, sink)
         else:
-            self._link(self._convert, resample, volume, capsfilter, queue, sink)
+            self._link(self._convert, resample, volume, *profile_gain, capsfilter, queue, sink)
         self.sink = sink
         config = self.source.config
         if self.source.type == SourceType.HTTP:

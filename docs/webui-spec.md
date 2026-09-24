@@ -357,14 +357,25 @@ See [M7B2](milestone7b2.md) for implementation and verification.
 
 ## 8. Audio Profiles
 
-The Audio Profiles list/editor uses Name, Gain and Processor only. NONE is shown
-as "None (gain only)"; GST_BASIC as "GStreamer Basic", with an explicit gain-only
-limitation until additional DSP exists. No separate bypass switch or placeholder
-DSP controls are exposed. Gain applies for both processors. Used-by counts refer
-to InputSources. All edits to profiles used by running transmitters and referenced-profile deletes
-surface backend conflicts; no source restart is hidden in an edit action.
+The existing list/editor uses the file API under `/api/v1/audio-profiles/files`.
+Defaults show Clone only; customs show Edit/Clone/Delete. Referenced custom files
+cannot be deleted. Display name and stable path are separate; Create/Clone use the
+actual backend-generated path. Renaming never changes Source references.
 
-See [M7B3](milestone7b3.md) for implemented capabilities and safety semantics.
+The editor exposes Profile Input Gain and the existing GST Basic controls through
+structured schema-1 data. Inactive settings survive selection changes. Save/error
+feedback sits beside Save, values survive failures, and duplicate Saves/navigation
+while saving are blocked. Save restarts affected audio pipelines without TX/RDS
+commands. A saved-but-not-applied response is shown explicitly without discarding
+saved configuration. No raw JSON editor or speculative DSP controls are added.
+
+The Source editor selects Bypass / Built-in DSP / disabled Stereo Tool (coming
+soon), with Source Gain always available. Built-in shows a profile dropdown with
+both default/custom names backed by stable paths. Bypass saves a null path. Source
+Gain and Profile Input Gain are independent, sequential gain stages. Changing mode
+clears the old selection; existing stop-before-edit Source ownership rules remain.
+
+See [file profiles](audio-profile-files.md) for runtime, migration and API details.
 
 ## 10. System
 

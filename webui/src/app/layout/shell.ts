@@ -27,19 +27,15 @@ export class Shell implements OnInit, OnDestroy {
       });
     effect((cleanup) => {
       this.state.data();
-      const info = this.systemApi
-        .info()
-        .subscribe({
-          next: (i) => this.version.set(i.fmheadend_version),
-          error: () => this.version.set(null),
-        });
-      const profiles = this.profiles
-        .list()
-        .subscribe({
-          next: (rows) =>
-            this.state.profileNames.set(Object.fromEntries(rows.map((p) => [p.id, p.name]))),
-          error: () => this.state.profileNames.set({}),
-        });
+      const info = this.systemApi.info().subscribe({
+        next: (i) => this.version.set(i.fmheadend_version),
+        error: () => this.version.set(null),
+      });
+      const profiles = this.profiles.list().subscribe({
+        next: (rows) =>
+          this.state.profileNames.set(Object.fromEntries(rows.map((p) => [p.path, p.name]))),
+        error: () => this.state.profileNames.set({}),
+      });
       cleanup(() => {
         info.unsubscribe();
         profiles.unsubscribe();
