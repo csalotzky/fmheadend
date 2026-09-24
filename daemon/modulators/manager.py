@@ -1,10 +1,11 @@
 import logging
+import time
 from ..regions import HARDWARE_MIN_KHZ, HARDWARE_MAX_KHZ, HARDWARE_STEP_KHZ
 from ..errors import DependencyUnavailable, DomainError
 from ..models.configuration import ModulatorConfig
 from ..models.runtime_status import ModulatorStatus, TxState
 from ..rp2354.client import TxConfig
-from ..rp2354.protocol import Command, Outcome, RpResponseError, execution_outcome
+from ..rp2354.protocol import Command, Outcome, RpResponseError, IncompatibleProtocol, execution_outcome
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,48 @@ class ModulatorManager:
         self.bulk_stopped.discard(modulator_id)
         return self._start(modulator_id)
 
-    def _start(self, modulator_id):
+    def _lifecycle_command(self, command, operation, retry_budget):
+        """One session reacquisition, only with proof the requested write never began."""
+        try:
+            return operation()
+        except DependencyUnavailable as exc:
+            failed_command = getattr(exc, 'command', None)
+            session_failure = (
+                failed_command == Command.GET_INFO or
+                (failed_command == command and getattr(exc, 'stage', None) in ('open', 'backoff'))
+            )
+            if (not retry_budget[0] or not session_failure or
+                    isinstance(exc, (RpResponseError, IncompatibleProtocol)) or
+                    execution_outcome(exc, command) != Outcome.NOT_SENT):
+                raise
+            retry_budget[0] -= 1
+            delay = max(getattr(self.rp, 'retry_delay', 0.0),
+                        self.recovery.retry_delay if self.recovery else 0.0)
+            # The existing shared client/coordinator backoff is 250 ms. Do not
+            # bypass a longer hold or turn this into an unbounded request wait.
+            if delay > 0.25:
+                raise
+            logger.info('%s not sent; reacquiring control session once', command.name)
+            if delay:
+                time.sleep(delay)
+        return operation()  # Errors on the second attempt propagate unchanged.
+
+    @staticmethod
+    def _command_error(command, exc):
+        if command is None:
+            return str(exc)
+        certainty = execution_outcome(exc, command)
+        if certainty == Outcome.NOT_SENT:
+            failed_command = getattr(exc, 'command', None)
+            if failed_command is not None and not isinstance(exc, RpResponseError):
+                return f'{command.name} not sent: control/session unavailable during {failed_command.name}: {exc}'
+            return f'{command.name} not sent: {exc}'
+        if certainty == Outcome.AMBIGUOUS:
+            return f'{command.name} outcome unknown (AMBIGUOUS): {exc}'
+        return str(exc)
+
+    def _start(self, modulator_id, retry_budget=None):
+        retry_budget = [1] if retry_budget is None else retry_budget
         if self.recovery:
             self.recovery.require_ready()
             if modulator_id in self.recovery.pending:
@@ -74,7 +116,9 @@ class ModulatorManager:
         if status.tx_state == TxState.ON and (config.audio_mode == "ANALOG" or modulator_id in self.active_sources):
             return status
         if modulator_id in self.active_sources:
-            self._stop(modulator_id)
+            stopped = self._stop(modulator_id, retry_budget)
+            if stopped.last_error:
+                raise DomainError(503, 'DEPENDENCY_UNAVAILABLE', stopped.last_error)
         analog = config.audio_mode == "ANALOG"
         source = None if analog else self.database.get("sources", config.input_source_id)
         previous_state = status.tx_state
@@ -87,13 +131,13 @@ class ModulatorManager:
                 self.active_sources[modulator_id] = source.id
                 self.mux.attach(modulator_id, source.id)
             command = Command.SET_TX_CONFIG
-            self.rp.set_tx_config(modulator_id, TxConfig.from_modulator(config))
+            self._lifecycle_command(command, lambda: self.rp.set_tx_config(modulator_id, TxConfig.from_modulator(config)), retry_budget)
             if self.recovery:
                 command = Command.RDS_CLEAR
-                self.recovery.boundary(modulator_id)
+                self._lifecycle_command(command, lambda: self.recovery.boundary(modulator_id), retry_budget)
             enable_attempted = True
             command = Command.SET_TX_ENABLED
-            self.rp.set_tx_enabled(modulator_id, True)
+            self._lifecycle_command(command, lambda: self.rp.set_tx_enabled(modulator_id, True), retry_budget)
         except (DependencyUnavailable, ValueError) as exc:
             # An uncertain ON is retried as ON, never converted to an OFF cycle.
             rf_off = command is None or (not enable_attempted and execution_outcome(exc, command) != Outcome.AMBIGUOUS)
@@ -102,11 +146,12 @@ class ModulatorManager:
                 if source is not None:
                     self.sources.release(source.id, modulator_id)
                 self.active_sources.pop(modulator_id, None)
-            status.tx_state = TxState.ERROR if command is None or isinstance(exc, RpResponseError) else previous_state
-            status.last_error = str(exc)
+            rejected = isinstance(exc, RpResponseError) and exc.command == command
+            status.tx_state = TxState.ERROR if command is None or rejected else previous_state
+            status.last_error = self._command_error(command, exc)
             if self.recovery and command is not None:
                 self.recovery.command_failed(modulator_id, command, exc)
-            raise DomainError(503, "DEPENDENCY_UNAVAILABLE", str(exc)) from exc
+            raise DomainError(503, "DEPENDENCY_UNAVAILABLE", status.last_error) from exc
         status.tx_state = TxState.ON
         if self.recovery:
             self.recovery.pending.pop(modulator_id, None)
@@ -120,33 +165,44 @@ class ModulatorManager:
         self.database.save("modulators", config, modulator_id)
         return self._stop(modulator_id)
 
-    def _stop(self, modulator_id):
+    def _stop(self, modulator_id, retry_budget=None):
+        retry_budget = [1] if retry_budget is None else retry_budget
         if self.recovery:
             self.recovery.require_ready()
         status = self.statuses[modulator_id]
         try:
-            self.rp.set_tx_enabled(modulator_id, False)
+            self._lifecycle_command(Command.SET_TX_ENABLED, lambda: self.rp.set_tx_enabled(modulator_id, False), retry_budget)
         except DependencyUnavailable as exc:
-            status.last_error = str(exc)
-            if isinstance(exc, RpResponseError):
+            status.last_error = self._command_error(Command.SET_TX_ENABLED, exc)
+            if isinstance(exc, RpResponseError) and exc.command == Command.SET_TX_ENABLED:
                 status.tx_state = TxState.ERROR
             if self.recovery:
                 self.recovery.command_failed(modulator_id, Command.SET_TX_ENABLED, exc)
-            raise DomainError(503, "DEPENDENCY_UNAVAILABLE", str(exc)) from exc
+            raise DomainError(503, "DEPENDENCY_UNAVAILABLE", status.last_error) from exc
+        # The CRC-protected ACK confirms RF OFF independently of cleanup.
+        status.tx_state, status.last_error = TxState.OFF, None
         if self.rds is not None:
             self.rds.stop(modulator_id)
         if self.recovery:
             self.recovery.pending.pop(modulator_id, None)
-        self.mux.detach(modulator_id)
+        cleanup_errors = []
+        try:
+            self.mux.detach(modulator_id)
+        except (DependencyUnavailable, OSError) as exc:
+            cleanup_errors.append(f'mux detach: {exc}')
         source_id = self.active_sources.get(modulator_id)
         if source_id is not None:
             try:
                 self.sources.release(source_id, modulator_id)
-            except DependencyUnavailable as exc:
-                status.tx_state, status.last_error = TxState.ERROR, str(exc)
-                raise DomainError(503, "DEPENDENCY_UNAVAILABLE", str(exc)) from exc
-            self.active_sources.pop(modulator_id, None)
-        status.tx_state, status.source_state, status.last_error = TxState.OFF, (None if self.get(modulator_id).audio_mode == "ANALOG" else "IDLE"), None
+            except (DependencyUnavailable, OSError) as exc:
+                cleanup_errors.append(f'source release: {exc}')
+            else:
+                self.active_sources.pop(modulator_id, None)
+        if modulator_id not in self.active_sources:
+            status.source_state = None if self.get(modulator_id).audio_mode == "ANALOG" else "IDLE"
+        if cleanup_errors:
+            status.last_error = 'RF OFF confirmed; cleanup pending: ' + '; '.join(cleanup_errors)
+            logger.warning('modulator %s: %s', modulator_id, status.last_error)
         logger.info("modulator %s stopped", modulator_id)
         return status
 
@@ -155,6 +211,7 @@ class ModulatorManager:
 
     def all(self, start):
         results = []
+        retry_budget = [1]  # One extra reacquisition for the entire bulk request.
         if not start:
             # Session-only operational hold; recovery must not undo STOP ALL.
             self.bulk_stopped.update(range(8))
@@ -167,9 +224,9 @@ class ModulatorManager:
                         continue
                     self.validate(config)
                     self.bulk_stopped.discard(modulator_id)
-                    result = self._start(modulator_id)
+                    result = self._start(modulator_id, retry_budget)
                 else:
-                    result = self._stop(modulator_id)
+                    result = self._stop(modulator_id, retry_budget)
                 results.append(result.model_dump(mode="json"))
             except DomainError as exc:
                 results.append({"id": modulator_id, "error": exc.error, "message": exc.message})
@@ -179,7 +236,7 @@ class ModulatorManager:
         # Shutdown changes actual state only, preserving the desired boot state.
         for modulator_id in range(8):
             try:
-                self._stop(modulator_id)
+                self._stop(modulator_id, [0])
             except DomainError:
                 logger.exception("modulator %s shutdown failed", modulator_id)
 

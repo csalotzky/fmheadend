@@ -1513,6 +1513,18 @@ future explicit reset path must establish actual global state loss before using
 it. V1 has no boot identifier; this milestone adds no reset-detection heuristics.
 The database and session STOP ALL holds remain the desired-state authority.
 
+Explicit START/STOP may reacquire the control session once only when metadata
+proves the requested command was NOT_SENT (open/backoff/implicit GET_INFO failure).
+The existing shared backoff is honored; bulk operations share one extra attempt.
+Ambiguous command responses and valid RP rejections are never retried by this
+allowance. No synchronous GET_STATUS is added to a lifecycle request.
+
+A valid OFF ACK confirms STOP even if later mux/source cleanup fails: the response
+remains HTTP 200/OFF, with cleanup diagnostics in `last_error` and retained source
+ownership where release failed. During incomplete startup synchronization, changed
+desired state revisits only the affected target's obsolete acknowledged enable
+state before final observation. See [M6A](milestone6a.md) for the exact boundaries.
+
 ## 15.4 muxd kiesés
 
 - `mux_state = ERROR`;

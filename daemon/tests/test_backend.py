@@ -52,6 +52,32 @@ def test_docs_and_fixed_modulators(client):
     assert client.get(P + "/modulators/8").status_code == 404
 
 
+@pytest.mark.parametrize('failure', ['source', 'mux', 'both'])
+def test_stop_http_success_survives_cleanup_failure(client, monkeypatch, failure):
+    sid = source(client)
+    assign(client, 0, sid, frequency_khz=98100)
+    assert client.post(P + '/modulators/0/start').status_code == 200
+    s = client.app.state.services
+    pipeline = s.sources.pipelines[sid]
+    stop, detach = pipeline.stop, s.mux.detach
+    def fail(*args):
+        raise DependencyUnavailable('teardown timed out')
+    if failure in ('source', 'both'): monkeypatch.setattr(pipeline, 'stop', fail)
+    if failure in ('mux', 'both'): monkeypatch.setattr(s.mux, 'detach', fail)
+    response = client.post(P + '/modulators/0/stop')
+    assert response.status_code == 200
+    assert response.json()['tx_state'] == 'OFF'
+    assert 'RF OFF confirmed; cleanup pending' in response.json()['last_error']
+    assert not s.rp.enabled[0] and not client.get(P + '/modulators/0').json()['enabled']
+    assert (0 in s.modulators.active_sources) == (failure in ('source', 'both'))
+    assert client.get(P + '/status').json()['system']['system_state'] == 'DEGRADED'
+    monkeypatch.setattr(pipeline, 'stop', stop)
+    monkeypatch.setattr(s.mux, 'detach', detach)
+    retried = client.post(P + '/modulators/0/stop')
+    assert retried.status_code == 200 and retried.json()['last_error'] is None
+    assert 0 not in s.modulators.active_sources
+
+
 def test_crud_constraints_and_probe_isolation(client):
     before = client.get(P + "/modulators").json()
     probe = client.post(P + "/sources/test", json=HTTP)

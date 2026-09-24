@@ -283,9 +283,9 @@ def test_stop_failure_keeps_source_ownership(services):
     def failed_stop():
         raise DependencyUnavailable("teardown timed out")
     pipeline.stop = failed_stop
-    from fmheadendd.errors import DomainError
-    with pytest.raises(DomainError):
-        manager.stop(0)
+    stopped = manager.stop(0)
+    assert stopped.tx_state == 'OFF' and not rp.enabled[0]
+    assert 'RF OFF confirmed; cleanup pending' in stopped.last_error
     assert sources.pipelines[saved.id] is pipeline
     assert sources.consumers[saved.id] == {0}
     assert manager.active_sources[0] == saved.id

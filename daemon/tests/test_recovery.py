@@ -140,6 +140,32 @@ def test_unavailable_shutdown_preserves_desired_and_cleans_workers(tmp_path):
     db=Database(path);assert db.get('modulators',0).enabled;db.close()
 
 
+def test_desired_stop_after_failed_final_startup_observation(tmp_path):
+    path = tmp_path / 'startup-desired.db'; seed(path); now = [0.]
+    rp = MockRp2354Client(clock=lambda: now[0])
+    original = rp.get_status
+    rp.get_status = Mock(side_effect=DependencyUnavailable('lost final status'))
+    app = create_app(Settings(path), rp=rp, clock=lambda: now[0])
+    with TestClient(app) as api:
+        s = app.state.services
+        assert not s.recovery.ready and rp.enabled[0]
+        rp.set_tx_enabled = Mock(wraps=rp.set_tx_enabled)
+        rp.set_tx_config = Mock(wraps=rp.set_tx_config)
+        rp.clear_rds = Mock(wraps=rp.clear_rds)
+        response = api.post(P + '/modulators/0/stop')
+        assert response.status_code == 503
+        assert not api.get(P + '/modulators/0').json()['enabled']
+        rp.set_tx_enabled.assert_not_called()
+        rp.get_status.side_effect = original
+        now[0] += .3; refresh(app)
+        assert s.recovery.ready and not rp.enabled[0]
+        rp.set_tx_enabled.assert_called_once_with(0, False)
+        rp.set_tx_config.assert_not_called()
+        rp.clear_rds.assert_not_called()  # Startup RDS refill was still suspended.
+        refresh(app)
+        rp.set_tx_enabled.assert_called_once_with(0, False)
+
+
 def test_systemd_contract():
     root=Path(__file__).resolve().parents[2]/'systemd'
     mux=(root/'fmheadend-muxd.service').read_text()

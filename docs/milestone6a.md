@@ -29,11 +29,16 @@ At application startup only, a successful handshake is followed by:
 
 Invalid desired ON configuration or a failed operation leaves recovery incomplete
 and DEGRADED. Persistent configuration is never rewritten to represent temporary
-OFF/unknown states. API start/config/stop operations during RP unavailability retain
-validated desired changes but reject hardware application until recovery succeeds.
+OFF/unknown states. API START/STOP saves validated desired changes even while
+startup synchronization is incomplete; hardware application waits for startup to
+complete. Communication loss after startup does not close this readiness gate.
 
 Startup retains progress through acknowledged steps: a corrupt final status read
-retries observation, not all eight OFF/config operations. There is currently no
+retries observation, not all eight OFF/config operations. It records each positively
+acknowledged startup enable state. If START/STOP changes desired state before the
+final observation succeeds, only targets with obsolete confirmed states receive
+another desired-state enable write before the next observation. Unrelated completed
+OFF/config/CLEAR/enable steps are retained. There is currently no
 daemon-issued RP reset path. Startup is the only full hardware synchronization
 trigger. A suspicious uptime decrease (including wrap), status mismatch, failed poll
 or reconnect never invokes global restoration. Valid hardware faults/mismatches
@@ -65,6 +70,47 @@ lifecycle runs per maintenance tick, before RDS refill. Completed steps are not
 repeated merely because the next ACK is lost. NOT_SENT or explicit SET rejection
 does not create reconciliation work. Persistent desired state and STOP ALL holds
 remain authoritative. Explicit OFF still releases audio only after confirmation.
+
+### Explicit START/STOP under a transient session failure
+
+START validates and saves desired ON, prepares the DIGITAL source/mux, then sends
+SET_TX_CONFIG, the RDS_CLEAR boundary, and SET_TX_ENABLED(true), in that order.
+STOP saves desired OFF, sends SET_TX_ENABLED(false), then stops RDS and attempts
+mux/source cleanup. Neither lifecycle adds a synchronous GET_STATUS. Periodic
+status remains observation; a later failed read cannot revoke a confirmed command.
+
+Each explicit lifecycle request has at most **one extra session reacquisition**,
+shared across its RP commands. START ALL/STOP ALL share that one budget across all
+eight targets and retain their existing partial-result/persistent-state semantics.
+The allowance requires NOT_SENT metadata identifying device/session open, active
+backoff, or an implicit GET_INFO failure before the requested command. It waits
+out the existing shared backoff (at most 250 ms); a longer hold returns failure
+without bypassing it. The second attempt's failure propagates normally. Existing
+bounded command waits and the client's BUSY retry remain unchanged.
+
+There is no lifecycle retry for a write that may have begun, a missing/corrupt SET
+response, an explicit RP rejection, incompatibility, validation, or source failure.
+There is no new background retry queue. Ambiguous SETs retain target-only recovery;
+NOT_SENT failures retain desired state without scheduling reconciliation. HTTP 503
+messages distinguish `not sent` from `outcome unknown (AMBIGUOUS)` and explicit RP
+errors. Shutdown does not use this additional retry allowance.
+
+After a valid OFF ACK, HTTP STOP returns 200 with `tx_state=OFF`, including when
+mux/source teardown subsequently fails. Cleanup continues for the other resource;
+failed source release retains ownership, preventing duplicate pipelines. Existing
+`last_error` reports `RF OFF confirmed; cleanup pending: ...`, is logged, and makes
+the status DEGRADED without marking the TX ERROR. A later STOP retries cleanup;
+START cannot proceed past a failed cleanup of a retained source. Failed post-OFF
+RDS_CLEAR remains a target-local fence/`rds_last_error`, not an RF failure.
+
+These behaviors are covered by deterministic client/HTTP/manager tests, including
+CRC corruption, exhausted reacquisition, ambiguous SET after reacquisition,
+cleanup failures and a desired OFF following failed startup observation. Hardware
+validation under real I2C corruption remains an operator test.
+
+Validation for this hardening pass: focused lifecycle/RP/recovery/RDS suites
+390 passed, 1 skipped; full daemon suite 558 passed, 30 skipped. Skips require
+Linux I2C/mux or GStreamer dependencies unavailable in the Windows test environment.
 
 Current hardware fault observations remain distinct from latched diagnostic error
 codes: historical counters/codes alone do not mean the RP is currently unhealthy.

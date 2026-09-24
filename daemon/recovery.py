@@ -21,6 +21,7 @@ class Recovery:
         self.stopping = False
         self.pending = {}  # channel -> next idempotent reconciliation step
         self._startup_step = 0
+        self._startup_enabled = {}  # Last positively acknowledged startup state.
         self._startup = [('info', None)] + [('off', i) for i in range(8)]
         for i in range(8):
             self._startup.extend([('config', i), ('clear', i)])
@@ -87,6 +88,8 @@ class Recovery:
             if enabled:
                 self.modulators.restore_audio(config)
             self.rp.set_tx_enabled(channel, enabled)
+            if not self.ready:
+                self._startup_enabled[channel] = enabled
             if not enabled:
                 self.rds.stop(channel)
                 self.modulators.release_audio(channel)
@@ -144,6 +147,11 @@ class Recovery:
         while self._startup_step < len(self._startup):
             self._apply(*self._startup[self._startup_step])
             self._startup_step += 1
+        # A user can change desired state while the final observation is pending.
+        # Revisit only targets whose confirmed startup write is now obsolete.
+        for channel, enabled in list(self._startup_enabled.items()):
+            if enabled != self.modulators.desired_on(channel):
+                self._apply('enable', channel)
         observed = self.rp.get_status()
         if observed['state'] != 'OK' or any(
             c['tx_state'] != ('ON' if self.modulators.desired_on(c['id']) else 'OFF')

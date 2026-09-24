@@ -977,3 +977,145 @@ def test_unsent_and_explicit_config_errors_do_not_schedule_reconciliation(calls,
         s.recovery.service()
         assert len(packets(calls)) == n
     app.state.control.executor.submit(check).result()
+
+
+def lifecycle_wait(monkeypatch, services, wire):
+    """Advance only the lifecycle wait; normal wire command waits stay mocked."""
+    from fmheadendd.modulators import manager
+    waits = []
+    def wait(delay):
+        assert 0 < delay <= .25
+        waits.append(delay)
+        assert services.rp.retry_delay > 0 or services.recovery.retry_delay > 0
+        wire.now += delay
+        services.rp._retry_at = 0
+        services.recovery.retry_at = wire.now
+    monkeypatch.setattr(manager, 'time', SimpleNamespace(sleep=wait))
+    return waits
+
+
+def test_status_crc_failure_then_stop_reacquires_once(calls, running_wire_backend, monkeypatch):
+    app, wire, _ = running_wire_backend
+    s = app.state.services
+    waits = lifecycle_wait(monkeypatch, s, wire)
+    def fail_poll():
+        wire.corrupt_crc = p.Command.GET_STATUS
+        s.status.refresh()
+        assert s.status.snapshot().system.rp_observation_stale
+        calls[0].write.reset_mock()
+    app.state.control.executor.submit(fail_poll).result()
+    response = TestClient(app).post('/api/v1/modulators/3/stop')
+    assert response.status_code == 200 and response.json()['tx_state'] == 'OFF'
+    assert len(waits) == 1
+    sent = packets(calls)
+    assert sent[0][0] == p.Command.GET_INFO
+    assert [x for x in sent if x[0] == 3] == [bytes((3,3,1,0))]
+    assert all(x[0] in (1,3,6) and (x[0] == 1 or x[1] == 3) for x in sent)
+    assert not s.recovery.pending and wire.enabled == [True]*3 + [False] + [True]*4
+    # A later corrupt observation cannot change the completed HTTP result/OFF.
+    wire.corrupt_crc = p.Command.GET_STATUS
+    app.state.control.executor.submit(s.status.refresh).result()
+    assert response.status_code == 200 and s.modulators.statuses[3].tx_state == 'OFF'
+    assert s.status.snapshot().system.rp_observation_stale
+
+
+@pytest.mark.parametrize('action', ['start', 'stop'])
+@pytest.mark.parametrize('failures', [1, 2])
+def test_lifecycle_implicit_info_retry_is_bounded(calls, running_wire_backend, monkeypatch, action, failures):
+    app, wire, _ = running_wire_backend; s = app.state.services
+    if action == 'start': app.state.control.executor.submit(s.modulators.stop, 3).result()
+    waits = lifecycle_wait(monkeypatch, s, wire)
+    s.rp.close()
+    wire.faults = [(p.Command.GET_INFO, b'\x80\0', b'')] * failures
+    calls[0].write.reset_mock()
+    response = TestClient(app).post(f'/api/v1/modulators/3/{action}')
+    assert response.status_code == (200 if failures == 1 else 503)
+    assert len(waits) == 1
+    sent = packets(calls)
+    assert sum(x[0] == 1 for x in sent) == 2
+    assert app.state.control.executor.submit(s.modulators.get, 3).result().enabled == (action == 'start')
+    assert not s.recovery.pending
+    if failures == 2:
+        assert all(x[0] == 1 for x in sent)
+        assert 'not sent' in response.json()['message']
+        assert 'outcome unknown' not in response.json()['message']
+    else:
+        assert [x[0] for x in sent if x[0] != 1] == ([2,6,3] if action == 'start' else [3,6])
+        assert all(x[0] == 1 or x[1] == 3 for x in sent)
+
+
+@pytest.mark.parametrize('failure', ['crc', 'write', 'QN_ERROR', 'INTERNAL_ERROR', 'info_rejection'])
+def test_lifecycle_never_retries_uncertain_or_rejected_set(calls, running_wire_backend, monkeypatch, failure):
+    app, wire, _ = running_wire_backend; s = app.state.services
+    waits = lifecycle_wait(monkeypatch, s, wire)
+    if failure == 'crc': wire.corrupt_crc = p.Command.SET_TX_ENABLED
+    elif failure == 'write': calls[0].write.side_effect = OSError('write may have begun')
+    elif failure == 'info_rejection':
+        s.rp.close(); wire.faults = [(p.Command.GET_INFO, b'\x06\0', b'')]
+    else: wire.faults = [(p.Command.SET_TX_ENABLED, bytes((p.Status[failure],0)), b'')]
+    calls[0].write.reset_mock()
+    response = TestClient(app).post('/api/v1/modulators/3/stop')
+    assert response.status_code == 503 and not waits
+    assert len(packets(calls)) == 1
+    ambiguous = failure in ('crc', 'write')
+    assert s.recovery.pending == ({3: 'enable'} if ambiguous else {})
+    if ambiguous: assert 'outcome unknown (AMBIGUOUS)' in response.json()['message']
+    if failure == 'info_rejection':
+        assert 'not sent' in response.json()['message']
+        assert s.modulators.statuses[3].tx_state == 'ON'
+    assert not app.state.control.executor.submit(s.modulators.get, 3).result().enabled
+    calls[0].write.side_effect = lambda fd, packet: len(packet)
+
+
+@pytest.mark.parametrize('start', [False, True])
+def test_bulk_unavailable_has_one_shared_reacquisition(calls, running_wire_backend, monkeypatch, start):
+    app, wire, _ = running_wire_backend; s = app.state.services
+    if start:
+        app.state.control.executor.submit(s.modulators.all, False).result()
+    waits = lifecycle_wait(monkeypatch, s, wire)
+    s.rp.close()
+    calls[0].open.reset_mock()
+    calls[0].open.side_effect = OSError('device unavailable')
+    calls[0].write.reset_mock()
+    results = app.state.control.executor.submit(s.modulators.all, start).result()
+    assert len(results) == 8 and all(r['error'] == 'DEPENDENCY_UNAVAILABLE' for r in results)
+    assert len(waits) == 1 and calls[0].open.call_count == 2
+    assert not packets(calls) and not s.recovery.pending
+
+
+def test_reacquired_session_does_not_retry_ambiguous_set(calls, running_wire_backend, monkeypatch):
+    app, wire, _ = running_wire_backend; s = app.state.services
+    waits = lifecycle_wait(monkeypatch, s, wire)
+    s.rp.close()
+    wire.faults = [(p.Command.GET_INFO, b'\x80\0', b'')]
+    wire.corrupt_crc = p.Command.SET_TX_ENABLED
+    calls[0].write.reset_mock()
+    response = TestClient(app).post('/api/v1/modulators/3/stop')
+    assert response.status_code == 503 and len(waits) == 1
+    assert [x[0] for x in packets(calls)] == [1,1,3]
+    assert 'AMBIGUOUS' in response.json()['message']
+    assert s.recovery.pending == {3: 'enable'}
+
+
+def test_transient_device_open_failure_retries_only_unsent_stop(calls, running_wire_backend, monkeypatch):
+    app, wire, _ = running_wire_backend; s = app.state.services
+    waits = lifecycle_wait(monkeypatch, s, wire)
+    s.rp.close()
+    calls[0].open.side_effect = [OSError('transient open failure'), 42]
+    calls[0].write.reset_mock()
+    response = TestClient(app).post('/api/v1/modulators/3/stop')
+    assert response.status_code == 200 and len(waits) == 1
+    assert [x[0] for x in packets(calls)] == [1,3,6]
+    assert not s.recovery.pending
+
+
+def test_confirmed_off_survives_ambiguous_rds_clear(calls, running_wire_backend):
+    app, wire, _ = running_wire_backend; s = app.state.services
+    wire.corrupt_crc = p.Command.RDS_CLEAR
+    calls[0].write.reset_mock()
+    response = TestClient(app).post('/api/v1/modulators/3/stop')
+    assert response.status_code == 200 and response.json()['tx_state'] == 'OFF'
+    assert response.json()['rds_last_error'] and s.rds.channels[3].needs_clear
+    assert not s.recovery.pending and not wire.enabled[3]
+    assert [x[0] for x in packets(calls)] == [3,6]
+    assert all(x[1] == 3 for x in packets(calls))

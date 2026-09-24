@@ -114,6 +114,6 @@ class StatusService:
             if source_id is not None:
                 row.source_state = self.sources.status(source_id).state.value
             rows.append(row)
-        if system.last_error or system.mux_state != "RUNNING" or any(r.tx_state == TxState.ERROR or r.source_state == "ERROR" or r.rds_last_error for r in rows):
+        if system.last_error or system.mux_state != "RUNNING" or any(r.tx_state == TxState.ERROR or r.source_state == "ERROR" or r.rds_last_error or r.last_error for r in rows):
             system.system_state = "DEGRADED"
         return HeadendStatus(system=system, modulators=rows)
