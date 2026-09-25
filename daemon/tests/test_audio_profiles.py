@@ -215,3 +215,95 @@ def test_actual_gst_builder_gains_and_json_stages(tmp_path, builtin):
     else:
         assert not any(e.factory in ('audiocheblimit', 'lsp-plug-in-plugins-lv2-limiter-stereo') for e in elements)
     db.close()
+
+
+@pytest.mark.parametrize('count', [1, 3])
+def test_source_hot_save_replaces_one_pipeline_preserving_all_consumers(api, count):
+    sid, other = source(api), source(api)
+    for tx in range(count): start(api, sid, tx)
+    start(api, other, 7)
+    services = api.app.state.services
+    manager = services.sources
+    before = dict(manager.pipelines)
+    create = Mock(wraps=manager._new_pipeline)
+    manager._new_pipeline = create
+    spies = []
+    for owner, names in [(services.rp, ('set_tx_enabled', 'set_tx_config', 'clear_rds')),
+                         (services.rds, ('stop', 'reset_channel', 'suspend', 'fence')),
+                         (services.modulators, ('start', 'stop'))]:
+        for name in names:
+            spy = Mock(wraps=getattr(owner, name)); setattr(owner, name, spy); spies.append(spy)
+    response = api.patch(f'/api/v1/sources/{sid}', json={'input_gain_db': -7.125,
+        'config': {'uri': 'http://localhost/changed'}})
+    assert response.status_code == 200 and response.json()['saved'] and response.json()['applied']
+    assert create.call_count == 1
+    assert manager.pipelines[sid] is not before[sid] and not before[sid].running
+    assert manager.pipelines[sid].output is before[sid].output
+    assert manager.pipelines[sid].source.input_gain_db == -7.125
+    assert manager.pipelines[other] is before[other]
+    assert manager.consumers[sid] == set(range(count))
+    for spy in spies: spy.assert_not_called()
+    for tx in range(count):
+        assert api.get(f'/api/v1/modulators/{tx}').json()['enabled']
+        assert services.modulators.statuses[tx].tx_state == 'ON'
+
+
+@pytest.mark.parametrize('failure', ['start', 'stop'])
+def test_source_saved_but_apply_failed_retains_desired_and_worker_ownership(api, failure):
+    sid = source(api)
+    start(api, sid, 0); start(api, sid, 1)
+    services = api.app.state.services
+    manager = services.sources
+    old = manager.pipelines[sid]
+    create = Mock(wraps=manager._new_pipeline); manager._new_pipeline = create
+    spies = [Mock(wraps=getattr(services.rp, name)) for name in ('set_tx_enabled', 'set_tx_config', 'clear_rds')]
+    for name, spy in zip(('set_tx_enabled', 'set_tx_config', 'clear_rds'), spies): setattr(services.rp, name, spy)
+    if failure == 'stop': old.fail_stop = True
+    else: FakePipeline.fail_start = True
+    try:
+        result = api.patch(f'/api/v1/sources/{sid}', json={'input_gain_db': -9}).json()
+        assert result['saved'] and not result['applied'] and 'audio' in result['apply_error']
+        assert api.get(f'/api/v1/sources/{sid}').json()['input_gain_db'] == -9
+        assert manager.consumers[sid] == {0, 1}
+        assert manager.pipelines[sid].output is old.output
+        assert api.get(f'/api/v1/sources/{sid}/status').json()['state'] == 'ERROR'
+        assert all(services.modulators.statuses[tx].tx_state == 'ON' for tx in (0, 1))
+        if failure == 'stop':
+            assert manager.pipelines[sid] is old
+            create.assert_not_called()
+        for spy in spies: spy.assert_not_called()
+    finally:
+        old.fail_stop = False; FakePipeline.fail_start = False
+    # Retrying the same saved configuration must apply it, not falsely report
+    # success merely because no persistent field changed this time.
+    assert api.patch(f'/api/v1/sources/{sid}', json={'input_gain_db': -9}).json()['applied']
+    assert manager.pipelines[sid].running
+
+
+def test_source_idle_name_only_and_stop_all_hold_do_not_start_audio(api):
+    sid = source(api)
+    manager = api.app.state.services.sources
+    assert api.patch(f'/api/v1/sources/{sid}', json={'input_gain_db': -4}).json()['applied']
+    assert not manager.pipelines
+    start(api, sid, 0)
+    old = manager.pipelines[sid]
+    assert api.patch(f'/api/v1/sources/{sid}', json={'name': 'Rename only'}).json()['applied']
+    assert manager.pipelines[sid] is old and old.running
+    api.post('/api/v1/modulators/stop-all')
+    services = api.app.state.services
+    held = set(services.modulators.bulk_stopped)
+    spy = Mock(wraps=services.rp.set_tx_enabled); services.rp.set_tx_enabled = spy
+    assert api.patch(f'/api/v1/sources/{sid}', json={'input_gain_db': -5}).json()['applied']
+    assert services.modulators.bulk_stopped == held
+    assert not manager.pipelines
+    assert api.get('/api/v1/modulators/0').json()['enabled']
+    spy.assert_not_called()
+
+
+def test_source_invalid_edit_does_not_save_or_replace_audio(api):
+    sid = source(api); start(api, sid, 0)
+    old = api.app.state.services.sources.pipelines[sid]
+    response = api.patch(f'/api/v1/sources/{sid}', json={'config': {'uri': 'not a URL'}})
+    assert response.status_code == 422
+    assert api.app.state.services.sources.pipelines[sid] is old and old.running
+    assert api.get(f'/api/v1/sources/{sid}').json()['config']['uri'] == SOURCE['config']['uri']

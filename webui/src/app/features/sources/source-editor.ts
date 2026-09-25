@@ -210,12 +210,16 @@ export class SourceEditor implements OnInit {
     if (!body) return;
     this.saving.set(true);
     try {
-      await firstValueFrom(this.api.save(body, this.id));
+      const result = await firstValueFrom(this.api.save(body, this.id));
       this.form.markAsPristine();
       this.config.markAsPristine();
       await this.shared.refreshAfterMutation();
       this.saving.set(false);
-      await this.router.navigate(['/sources']);
+      if (result.applied === false) {
+        this.error.set('Source saved, but audio restart failed: ' + result.apply_error);
+      } else {
+        await this.router.navigate(['/sources']);
+      }
     } catch (e) {
       this.error.set(errorMessage(e));
     } finally {

@@ -18,6 +18,11 @@ export interface SourceRuntime {
   state: 'IDLE' | 'CONNECTING' | 'BUFFERING' | 'RUNNING' | 'ERROR';
   last_error: string | null;
 }
+export interface SourceSaveResult extends InputSource {
+  saved?: true;
+  applied?: boolean;
+  apply_error?: string | null;
+}
 export interface SourceTest {
   input_bitrate_bps?: number | null;
   station_name?: string | null;
@@ -47,9 +52,9 @@ export class SourceApi {
   save(body: SourceDraft, id?: number) {
     return (
       id === undefined
-        ? this.http.post<InputSource>('/api/v1/sources', body)
-        : this.http.patch<InputSource>(`/api/v1/sources/${id}`, body)
-    ).pipe(timeout(15000));
+        ? this.http.post<SourceSaveResult>('/api/v1/sources', body)
+        : this.http.patch<SourceSaveResult>(`/api/v1/sources/${id}`, body)
+    ).pipe(timeout(300000));
   }
   delete(id: number) {
     return this.http.delete<void>(`/api/v1/sources/${id}`).pipe(timeout(15000));

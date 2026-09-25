@@ -73,15 +73,19 @@ small {
   margin: 0;
 }
 .list-entry {
-  display: grid;
-  grid-template-columns: minmax(120px, 1fr) 130px;
-  gap: 12px;
-  align-items: end;
   margin-bottom: 12px;
   max-width: 540px;
 }
+.ps-fields {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) 130px;
+  gap: 12px;
+  align-items: start;
+}
 .list-entry .actions {
-  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: 8px;
   gap: 6px;
 }
 .af-entry {
@@ -130,11 +134,8 @@ small {
   .summary {
     grid-template-columns: 1fr 1fr;
   }
-  .list-entry {
+  .ps-fields {
     grid-template-columns: 1fr 130px;
-  }
-  .list-entry .actions {
-    grid-column: 1/-1;
   }
 }
 @media (max-width: 600px) {
@@ -150,6 +151,11 @@ small {
 .rds-text {
   font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace;
 }
-.list-entry.single-ps {
+.ps-fields.single-ps {
   grid-template-columns: minmax(120px, 1fr);
+}
+@media (max-width: 400px) {
+  .ps-fields {
+    grid-template-columns: 1fr;
+  }
 }

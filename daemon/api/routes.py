@@ -2,7 +2,7 @@ from fastapi import APIRouter, Request, Response
 from ..control import control_route
 from ..models.configuration import (
     ErrorResponse,
-    InputSource, InputSourceConfig, InputSourcePatch, Modulator, ModulatorPatch,
+    InputSource, InputSourceConfig, InputSourcePatch, SourceSaveResult, Modulator, ModulatorPatch,
     RtOverride, RtStatus, SourceTestResult, SystemConfig, SystemConfigPatch,
 )
 from ..models.runtime_status import HeadendStatus, InputSourceStatus, ModulatorStatus, ModulatorSaveResult
@@ -44,10 +44,10 @@ def get_source(id: int, request: Request):
     return request.app.state.services.config.get("sources", id)
 
 
-@router.patch("/sources/{id}", response_model=InputSource, tags=["sources"])
+@router.patch("/sources/{id}", response_model=SourceSaveResult, tags=["sources"])
 @control_route
 def update_source(id: int, body: InputSourcePatch, request: Request):
-    """Replace supplied fields (including the entire config object). Active sources return 409."""
+    """Persist supplied fields, then apply to this Source's existing audio pipeline."""
     return request.app.state.services.config.update("sources", id, body)
 
 

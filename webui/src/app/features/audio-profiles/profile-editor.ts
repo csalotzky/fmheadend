@@ -1,4 +1,4 @@
-import { Component, HostListener, OnInit, inject, signal } from '@angular/core';
+import { ChangeDetectorRef, Component, HostListener, OnInit, inject, signal } from '@angular/core';
 import {
   FormControl,
   FormGroup,
@@ -10,6 +10,7 @@ import { ActivatedRoute, CanDeactivateFn, Router } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { ProfileApi, ProfileDraft, DspDescription } from './profile-api';
 import { DspFields } from './dsp-fields';
+import { validSettings } from './dsp-number';
 import { errorMessage } from '../../core/api/headend-api';
 @Component({
   host: { class: 'page-content editor-narrow' },
@@ -25,6 +26,12 @@ import { errorMessage } from '../../core/api/headend-api';
     summary {
       cursor: pointer;
       font-weight: 600;
+    }
+    .plugin-doc {
+      display: inline-block;
+      font-size: 0.8rem;
+      margin: 0 0 0.6rem;
+      color: var(--muted);
     }
     .plugin {
       margin: 0.7rem 0;
@@ -47,7 +54,7 @@ import { errorMessage } from '../../core/api/headend-api';
             <details class="stage" open>
               <summary>{{ index + 1 }}. {{ stage.label }}</summary>
               @if (description.helpers?.[stage.key]) {
-                  <p class="muted">{{ description.helpers[stage.key] }}</p>
+                <p class="muted">{{ description.helpers[stage.key] }}</p>
               }
               @if (stage.choices.length > 1) {
                 <label class="plugin"
@@ -88,6 +95,15 @@ import { errorMessage } from '../../core/api/headend-api';
               }
               @if (document.stages[stage.key].selected !== 'OFF') {
                 @let impl = description.implementations[document.stages[stage.key].selected];
+                @if (impl.documentation_url) {
+                  <a
+                    class="plugin-doc"
+                    [href]="impl.documentation_url"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >Plugin documentation ↗</a
+                  >
+                }
                 @if (!impl.available) {
                   <p class="error">{{ impl.reason }}</p>
                 }
@@ -104,29 +120,19 @@ import { errorMessage } from '../../core/api/headend-api';
                 </fieldset>
               }
               @if (stage.key === 'limiter') {
-                <small
-                  >PCM limiting does not
-                  guarantee FM deviation.</small
-                >
-              }
-              @if (stage.key === 'master_gain') {
-                <small
-                  >Before the limiter. Boost with the limiter Off may overload final PCM.</small
-                >
+                <small>PCM limiting does not guarantee FM deviation.</small>
               }
               @if (stage.key === 'lpf') {
-                <small
-                  >Filtering can regrow peaks. Validate the final filtered PCM level.</small
-                >
+                <small>Filtering can regrow peaks. Validate the final filtered PCM level.</small>
               }
               @if (stage.key === 'output_trim') {
-                <small>Final attenuation only, after LPF. No software pre-emphasis.</small>
+                <small
+                  >FM pre-emphasis is handled by the QN transmitter and is configured in Modulator
+                  settings.</small
+                >
               }
             </details>
           }
-          <p class="muted">
-            Save restarts only active Sources using this profile. RF and RDS remain on.
-          </p>
         </fieldset>
         <div class="editor-feedback" aria-live="polite">
           @if (message()) {
@@ -147,6 +153,7 @@ import { errorMessage } from '../../core/api/headend-api';
   `,
 })
 export class ProfileEditor implements OnInit {
+  private cdr = inject(ChangeDetectorRef);
   private api = inject(ProfileApi);
   private route = inject(ActivatedRoute);
   private router = inject(Router);
@@ -168,6 +175,7 @@ export class ProfileEditor implements OnInit {
   });
   changed() {
     this.form.markAsDirty();
+    this.cdr.markForCheck();
   }
   select(stage: string, implementation: string) {
     const entry = this.document!.stages[stage];
@@ -202,6 +210,18 @@ export class ProfileEditor implements OnInit {
   async save() {
     if (this.saving() || this.loading() || this.failed() || this.form.invalid) return;
     if (!this.document) return;
+    for (const entry of Object.values(this.document.stages)) {
+      if (
+        entry.selected !== 'OFF' &&
+        !validSettings(
+          this.description!.implementations[entry.selected].schema,
+          entry.implementations[entry.selected],
+        )
+      ) {
+        this.error.set('Check the DSP values: enter numbers within the supported limits.');
+        return;
+      }
+    }
     const body = structuredClone(this.document);
     body.name = this.form.controls.name.value;
     this.saving.set(true);

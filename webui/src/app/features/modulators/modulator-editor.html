@@ -201,17 +201,20 @@
           <p class="muted">Up to 8 characters per entry.</p>
           <div formArrayName="rds_ps">
             @for (entry of ps.controls; track entry; let i = $index) {
-              <div class="list-entry" [class.single-ps]="ps.length === 1" [formGroupName]="i">
-                <label
-                  >PS {{ i + 1 }}<input class="rds-text" formControlName="text" /><small
-                    >{{ textLength(entry.controls.text.value) }} / 8</small
-                  ></label
-                >
-                @if (ps.length > 1) {
+              <div class="list-entry" [formGroupName]="i">
+                <div class="ps-fields" [class.single-ps]="ps.length === 1">
                   <label
-                    >Duration (s)<input formControlName="duration_s" inputmode="decimal"
-                  /></label>
-                }
+                    >PS {{ i + 1
+                    }}<input class="rds-text" maxlength="8" formControlName="text" /><small
+                      >{{ textLength(entry.controls.text.value) }} / 8</small
+                    ></label
+                  >
+                  @if (ps.length > 1) {
+                    <label
+                      >Duration (s)<input formControlName="duration_s" inputmode="decimal"
+                    /></label>
+                  }
+                </div>
                 <div class="actions">
                   <button
                     type="button"
@@ -271,32 +274,35 @@
           <button type="button" (click)="addAf()" [disabled]="af.length >= 25">
             Add frequency
           </button>
-          <label class="rt"
-            >Default Radio Text (RT)<textarea
-              class="rds-text"
-              formControlName="rds_rt"
-              rows="2"
-            ></textarea
-            ><small>{{ textLength(form.controls.rds_rt.value) }} / 64</small
-            ><small
-              >Up to 64 characters. Temporary override takes priority, then selected source
-              metadata, then this fallback.</small
-            ></label
-          >
+          <h3>Radio Text (RT)</h3>
           <label class="check"
             ><input type="checkbox" formControlName="rds_rt_enabled" />Radio Text (RT)
             enabled</label
           >
-          <label
-            >RT termination<select formControlName="rds_rt_termination">
-              <option value="CR">CR</option>
-              <option value="PAD">PAD</option>
-            </select></label
-          >
-          <label class="check"
-            ><input type="checkbox" formControlName="rds_metadata_to_rt" />Use source metadata for
-            RadioText</label
-          >
+          @if (form.controls.rds_rt_enabled.value) {
+            <label class="rt"
+              >Default Radio Text<textarea
+                class="rds-text"
+                formControlName="rds_rt"
+                rows="2"
+              ></textarea
+              ><small>{{ textLength(form.controls.rds_rt.value) }} / 64</small
+              ><small
+                >Up to 64 characters. Temporary override takes priority, then selected source
+                metadata, then this fallback.</small
+              ></label
+            >
+            <label
+              >RT termination<select formControlName="rds_rt_termination">
+                <option value="CR">CR</option>
+                <option value="PAD">PAD</option>
+              </select></label
+            >
+            <label class="check"
+              ><input type="checkbox" formControlName="rds_metadata_to_rt" />Use source metadata for
+              RadioText</label
+            >
+          }
         </fieldset>
       </section>
     </fieldset>

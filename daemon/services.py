@@ -1,4 +1,3 @@
-from .errors import DomainError
 from .models.configuration import InputSourceConfig, SystemConfig
 
 
@@ -22,11 +21,9 @@ class ConfigurationService:
         model = {"sources": InputSourceConfig}[table]
         config = model.model_validate(current.model_dump(exclude={"id", "timestamp"}) | patch.model_dump(exclude_unset=True))
         if table == "sources":
-            # Preserve explicit stop-before-edit semantics; apply changes on next start.
-            if record_id in self.modulators.active_sources.values():
-                raise DomainError(409, "SOURCE_ACTIVE", "Stop consumers before editing this source")
             self.sources.validate_config(config)
-        return self.database.save(table, config, record_id)
+        saved = self.database.save(table, config, record_id)
+        return self.sources.apply_saved_source(current, saved)
 
     def delete(self, table, record_id):
         self.database.delete(table, record_id)

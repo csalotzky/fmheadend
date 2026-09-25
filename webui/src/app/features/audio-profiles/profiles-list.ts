@@ -11,6 +11,18 @@ import { AudioProfile, ProfileApi } from './profile-api';
   selector: 'app-profiles-list',
   imports: [RouterLink],
   styleUrl: '../sources/sources.css',
+  styles: `
+    .profile-summary {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem 2rem;
+      align-items: baseline;
+    }
+    .profile-summary span {
+      overflow-wrap: anywhere;
+      color: var(--muted);
+    }
+  `,
   template: `
     <div class="page-header">
       <h1>Audio Profiles</h1>
@@ -26,9 +38,8 @@ import { AudioProfile, ProfileApi } from './profile-api';
     }
     @for (profile of profiles(); track profile.path) {
       <section class="source-row">
-        <div class="source-summary">
+        <div class="profile-summary">
           <strong>{{ profile.name }}</strong
-          ><span>{{ profile.kind }}</span
           ><span>{{ profile.path }}</span>
         </div>
         <div class="actions">

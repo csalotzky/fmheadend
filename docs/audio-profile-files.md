@@ -68,7 +68,7 @@ All paths below start with `/api/v1/audio-profiles/files`. The old numeric-ID `/
 | Method/path | Operation |
 |---|---|
 | GET empty suffix | List both roots |
-| GET `/dsp` | Neutral template, stage schemas and local plugin availability |
+| GET `/dsp` | Neutral template, stage schemas, slider metadata, official documentation URLs and local plugin availability |
 | GET `/{kind}/{filename}` | Read validated profile |
 | POST `/custom` | Create, body = structured schema-1 document |
 | PUT `/custom/{filename}` | Replace complete custom document |
@@ -122,8 +122,13 @@ shows the partial outcome next to Save, and never claims it was applied. Validat
 missing file and plugin preflight failures occur before save, using normal errors;
 missing plugins report 503 `PROFILE_PLUGIN_UNAVAILABLE`.
 
-The existing stop-before-edit Source rule remains; this task changes profile Save,
-not Source/TX lifecycle. A shared profile may be edited while Sources run. Invalid or
+Source PATCH also allows edits with active consumers: validate, persist, then
+rebuild only that Source's audio through the same ownership-safe mechanism.
+Name-only changes do not rebuild healthy audio; idle Sources stay idle. The
+response extends the Source with `saved`, `applied`, `apply_error`. Restart failure
+keeps the saved configuration and attached consumers, reports Source ERROR, and
+does not touch RF/RDS or STOP ALL. See [Source hot-save](dsp-editor-controls.md#source-save-api-and-lifecycle).
+A shared profile may be edited while Sources run. Invalid or
 missing files discovered at start prevent that Source from starting. Periodic source
 status checks report external file corruption/missing files as Source ERROR without
 switching to Bypass or stopping unrelated TXs. Already-running native pipelines hold

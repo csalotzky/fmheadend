@@ -6,6 +6,14 @@ export interface DspStage {
   implementations: Record<string, Record<string, any>>;
 }
 export interface DspSchema {
+  slider?: {
+    min: number;
+    max: number;
+    scale: 'linear' | 'log';
+    offset?: number;
+    step?: number;
+    significant_digits?: number;
+  };
   type?: string;
   title?: string;
   description?: string;
@@ -40,6 +48,7 @@ export interface DspDescription {
       reason: string | null;
       schema: DspSchema;
       defaults: Record<string, any>;
+      documentation_url?: string;
     }
   >;
 }

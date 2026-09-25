@@ -80,7 +80,7 @@ class LspLimiter(Model):
     attack_ms: float = Field(5, ge=.25, le=20, title='Attack (ms)')
     release_ms: float = Field(5, ge=.25, le=20, title='Release (ms)')
     stereo_link_percent: float = Field(100, ge=0, le=100, title='Stereo Link (%)')
-    oversampling: Literal[0] = Field(0, title='Oversampling: Off (other modes not load-verified)')
+    oversampling: Literal[0] = Field(0, json_schema_extra={'hidden': True})
     mode: Literal[0] = Field(0, json_schema_extra={'hidden': True})
     boost: Literal[False] = Field(False, json_schema_extra={'hidden': True})
     alr: bool = Field(False, json_schema_extra={'hidden': True})
@@ -102,7 +102,7 @@ class LspEq(Model):
 
 
 class MultibandBand(Model):
-    bypass: bool = Field(False, title='Compressor Bypass (band audio remains present)')
+    bypass: bool = Field(False, title='Compressor Bypass', description='Disables compression for this band without muting it.')
     threshold_dbfs: float = Field(-12, ge=-60, le=0, title='Threshold (dBFS)')
     ratio: float = Field(1, ge=1, le=100, title='Ratio (N:1)')
     attack_ms: float = Field(20, ge=0, le=2000, title='Attack (ms)')
@@ -113,7 +113,7 @@ class MultibandBand(Model):
 
 
 class Multiband(Model):
-    mode: Literal['classic'] = Field('classic', title='Mode: Classic (other modes not load-verified)')
+    mode: Literal['classic'] = Field('classic', json_schema_extra={'hidden': True})
     crossovers_hz: list[float] = Field(default_factory=lambda: [120, 1000, 5000], min_length=0,
                                      max_length=7, title='Ascending crossovers (Hz)')
     # Keep unused band's settings when reducing the active crossover count.
@@ -149,7 +149,7 @@ STAGES = {
     'eq': ('EQ', ['OFF', 'LSP_EQ']),
     'wideband': ('Wideband Compressor', ['OFF', 'LSP_COMPRESSOR']),
     'multiband': ('Multiband Compressor', ['OFF', 'LSP_MULTIBAND']),
-    'master_gain': ('Master Gain', ['VOLUME']),
+    'master_gain': ('Overall Gain', ['VOLUME']),
     'limiter': ('Limiter', ['OFF', 'LSP_LIMITER']),
     'lpf': ('LPF', ['OFF', 'CHEBYSHEV']),
     'output_trim': ('Output Trim', ['TRIM']),

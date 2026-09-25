@@ -1,15 +1,29 @@
 import { ChangeDetectorRef, Component, inject, input, output } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { DspNumber } from './dsp-number';
 import { DspSchema } from './profile-api';
 
 /** Profile-only controls; edit the existing object so hidden keys survive. */
 @Component({
   selector: 'app-dsp-fields',
-  imports: [FormsModule],
+  imports: [FormsModule, DspNumber],
   template: `
     <div class="fields">
       @for (field of fields(); track field.key) {
-        @if (field.schema.type !== 'array') {
+        @if (
+          field.schema.type === 'number' ||
+          (field.schema.type === 'integer' &&
+            !field.schema.enum &&
+            field.schema.const === undefined)
+        ) {
+          <app-dsp-number
+            [schema]="field.schema"
+            [label]="field.schema.title || field.key"
+            [value]="values()[field.key]"
+            [disabled]="disabled(field.schema)"
+            (changed)="set(field.key, $event)"
+          />
+        } @else if (field.schema.type !== 'array') {
           <label
             >{{ field.schema.title || field.key }}
             @if (field.schema.const !== undefined) {
@@ -55,19 +69,12 @@ import { DspSchema } from './profile-api';
       @if (field.schema.type === 'array') {
         @for (band of visibleItems(field.key, field.schema); track $index; let i = $index) {
           @if (field.schema.items?.type === 'number') {
-            <label
-              >{{ field.schema.title }} {{ i + 1 }}
-              <input
-                type="number"
-                min="10"
-                max="20000"
-                step="any"
-                required
-                [ngModel]="band"
-                (ngModelChange)="setItem(field.key, i, $event)"
-                [ngModelOptions]="{ standalone: true }"
-              />
-            </label>
+            <app-dsp-number
+              [schema]="field.schema.items!"
+              [label]="field.schema.title + ' ' + (i + 1)"
+              [value]="band"
+              (changed)="setItem(field.key, i, $event)"
+            />
             <button type="button" (click)="remove(field.key, i)">Remove crossover</button>
           } @else {
             <details open>

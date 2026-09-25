@@ -65,25 +65,43 @@ class SourceManager:
         self.validate_profile(profile)
         saved = self.profile_files.save(path, data)
         errors = {}
-        for source_id, old in list(self.pipelines.items()):
+        for source_id in list(self.pipelines):
             source = self.database.get('sources', source_id)
             if source.audio_profile_path != path:
                 continue
-            try:
-                # Stop before replacing; failed stop retains old ownership for retry.
-                old.stop()
-                output = getattr(old, 'output', None)
-                replacement = self._new_pipeline(source, output=output)
-                self.pipelines[source_id] = replacement
-                replacement.start()
-                self.restart_errors.pop(source_id, None)
-                self.statuses[source_id] = InputSourceStatus(source_id=source_id, state=SourceState.RUNNING)
-            except (DependencyUnavailable, DomainError, ValueError) as exc:
-                errors[source_id] = str(exc)
-                self.restart_errors[source_id] = str(exc)
-                self.statuses[source_id] = InputSourceStatus(source_id=source_id, state=SourceState.ERROR, last_error=str(exc))
-                logger.error('Profile saved; source %s audio restart failed: %s', source_id, exc)
+            error = self._restart_audio(source)
+            if error:
+                errors[source_id] = error
         return ProfileSaveResult(**saved.model_dump(), applied=not errors, restart_errors=errors)
+
+    def apply_saved_source(self, previous, saved):
+        """Called after persistence on the control executor; retain fanout/consumers."""
+        from ..models.configuration import SourceSaveResult
+        runtime_fields = ('type', 'config', 'processor_mode', 'input_gain_db',
+                          'audio_profile_path', 'gst_options')
+        changed = any(getattr(previous, key) != getattr(saved, key) for key in runtime_fields)
+        needs_apply = changed or saved.id in self.restart_errors
+        error = self._restart_audio(saved) if needs_apply and saved.id in self.pipelines else None
+        return SourceSaveResult(**saved.model_dump(), applied=not error, apply_error=error)
+
+    def _restart_audio(self, source):
+        """One ownership-preserving audio replacement, shared by Source/profile Save."""
+        source_id = source.id
+        old = self.pipelines[source_id]
+        try:
+            # Failed stop retains old ownership; never create a competing worker.
+            old.stop()
+            replacement = self._new_pipeline(source, output=getattr(old, 'output', None))
+            self.pipelines[source_id] = replacement
+            replacement.start()
+            self.restart_errors.pop(source_id, None)
+            self.statuses[source_id] = InputSourceStatus(source_id=source_id, state=SourceState.RUNNING)
+            return None
+        except (DependencyUnavailable, DomainError, ValueError, OSError) as exc:
+            self.restart_errors[source_id] = str(exc)
+            self.statuses[source_id] = InputSourceStatus(source_id=source_id, state=SourceState.ERROR, last_error=str(exc))
+            logger.error('Configuration saved; source %s audio restart failed: %s', source_id, exc)
+            return str(exc)
 
     def acquire(self, source_id, modulator_id):
         source = self.database.get("sources", source_id)

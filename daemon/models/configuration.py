@@ -105,6 +105,12 @@ class InputSource(InputSourceConfig):
     timestamp: datetime
 
 
+class SourceSaveResult(InputSource):
+    saved: Literal[True] = True
+    applied: bool
+    apply_error: str | None = None
+
+
 def validate_rds_text(text: str) -> str:
     # Encoding is a later milestone. Reject controls; retain Unicode text here.
     if any(not char.isprintable() for char in text):

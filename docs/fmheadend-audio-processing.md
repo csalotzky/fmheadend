@@ -48,7 +48,7 @@ Within a Built-in profile, the order is **fixed**:
 | 5 | EQ | Tonal and spectral correction. |
 | 6 | Wideband Compressor | Control the dynamics of the full audio band. |
 | 7 | Multiband Compressor | Control the dynamics of individual frequency bands. |
-| 8 | Master Gain | Drive the limiter and set the finished programme's loudness. |
+| 8 | Overall Gain | Drive the limiter and set the finished programme's loudness. |
 | 9 | Limiter | Control short peaks. |
 | 10 | LPF | Restrict the upper audio-frequency range. |
 | 11 | Output Trim | Final, **attenuation-only** adjustment of the PCM output. |
@@ -189,23 +189,23 @@ Include LSP's more complex filter types/modes/slopes, FIR/FFT/SPM, decramp, and 
 |---|---|
 | Active Bands | Number of frequency bands into which the programme is split (1–8, as supported by the plugin's actual model). |
 | Crossover frequencies | Boundaries between adjacent bands; the outer usable frequency range is restricted separately by the HPF/LPF. |
-| Processing Mode | Initial candidate: **Classic**. Supporting/displaying Modern and Linear Phase depends on the target version and CPU measurement. |
+| Processing Mode | **Classic**, fixed internally; no non-actionable mode field is shown. |
 
 **Per band:** Threshold, Ratio, Attack, Release, Knee, Makeup Gain, **Compressor Bypass**. Individual bands are collapsible.
 
-**Helper — Band Bypass:** “The band's audio remains present, but its compressor applies no gain reduction. This is **not** Mute, and it does not remove the band from the crossover system.”
+**Helper — Band Bypass:** “Disables compression for this band without muting it.”
 
 The native LSP UI distinguishes a band's **Band** presence from the associated compressor's **On** state; **Band #0 is always present**. The frontend's “Bypass” disables the latter compressor: it does **not** delete the band or invoke Solo/Mute. [L5]
 
 The conventional four-band labels “Bass / Low-mid / High-mid / High” are merely UI labels, not hard-coded frequency ranges. Modern and Linear Phase process differently and may change latency and CPU demand. Decide which modes can be used in production templates under the Pi 3B+'s full **8× distinct-stream load**; do not exclude or enable them automatically based on assumed cost. [L5]
 
-### 3.8. Master Gain — `volume`, **before the limiter**
+### 3.8. Overall Gain (`master_gain` in JSON) — `volume`, **before the limiter**
 
 **No selector. Visible:** Gain (dB), default **0 dB**.
 
-**Helper:** “Adjusts the entire processed programme's level before the limiter. Boosting can make the programme louder, but pushes more peaks into limiting, which can audibly alter dynamics and tone.”
+**Helper:** “Adjusts the overall signal level. Higher gain may increase loudness and, when limiting is enabled, make the limiter work harder.”
 
-Do not confuse this with Compressor Makeup Gain (compensation within the compressor) or Output Trim (output matching **after** the limiter). Positive Master Gain with the limiter Off can easily create excessive final PCM levels; the UI should warn about this, not secretly enable another processor.
+Do not confuse this with Compressor Makeup Gain (compensation within the compressor) or Output Trim (output matching **after** the limiter). Positive Overall Gain with the limiter Off can easily create excessive final PCM levels; the UI should warn about this, not secretly enable another processor.
 
 ### 3.9. Limiter
 
@@ -244,7 +244,9 @@ Stereo Link is documented as `slink` in the relevant GStreamer LV2 wrapper. The 
 
 **No selector. Visible:** Output Trim (dB); **default 0 dB; the frontend permits only 0 dB or attenuation**.
 
-**Helper:** “Matches the final PCM level sent toward the QN. It does not drive the limiter harder or make the already-limited signal louder; this control can only turn the level down.”
+**Helper:** “Adjusts the final output level. Attenuation only.”
+
+Secondary note: “FM pre-emphasis is handled by the QN transmitter and is configured in Modulator settings.”
 
 Output Trim does not replace alignment of the QN's analogue/RF modulation chain. Negative trim reduces the output PCM level; it cannot repair clipping that may already have happened during an earlier fixed-point conversion. Keep the DSP backbone floating-point until the final output conversion.
 

@@ -334,6 +334,14 @@ A V1 codec lista lehet korlátozott: `PCM`, `MP3`, `AAC`, `OPUS`.
 
 A capture formátumot a GStreamer normalizálja a fix belső PCM contractra.
 
+Source edits are serialized audio-only operations. PATCH validates and persists,
+then rebuilds that Source's existing audio pipeline only if runtime fields changed
+(or a previous apply failed). Consumer/fanout ownership remains intact. Name-only
+edits to healthy audio do not restart it; idle Sources stay idle. A response with
+`saved:true, applied:false, apply_error` preserves the saved desired configuration
+and reports runtime failure. No TX/QN/RDS operation or STOP ALL hold release occurs.
+See [Source save contract](dsp-editor-controls.md#source-save-api-and-lifecycle).
+
 ## 6.2 `AudioProfile`
 
 Audio Profiles are shared versioned JSON files, not database entities. Defaults

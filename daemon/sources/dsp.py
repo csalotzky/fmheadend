@@ -93,6 +93,7 @@ def dsp_stages(make, profile):
 def editor_description():
     """One small editor contract derived from authoritative settings validation."""
     from .gst_pipeline import load_gst
+    from ..models.dsp_editor import DOCUMENTATION, editor_schema
     from ..errors import DependencyUnavailable
     try:
         Gst = load_gst()
@@ -103,16 +104,18 @@ def editor_description():
         available = bool(Gst and Gst.ElementFactory.find(factory))
         implementations[key] = dict(label=label, factory=factory, available=available,
             reason=None if available else f'GStreamer element unavailable on this daemon: {factory}',
-            schema=model.model_json_schema(), defaults=model().model_dump())
+            schema=editor_schema(model), defaults=model().model_dump(), documentation_url=DOCUMENTATION[key])
     return dict(template=dict(schema_version=1, name='', stages=neutral_stages()),
                 stages=[dict(key=k, label=v[0], choices=v[1]) for k, v in STAGES.items()],
                 implementations=implementations,
                 helpers={
-                    'input_gain': 'Shared profile gain after the independent Source Gain. Boost may drive later dynamics harder.',
+                    'input_gain': 'Adjusts the level entering this profile. Boost may drive dynamics harder.',
                     'hpf': 'Removes very low-frequency content; excessive cutoff can remove musical bass.',
-                    'gate': 'Downward expansion reduces quiet content. Gate Reduction attenuates a closed gate; it is not bypass.',
+                    'gate': 'Controls low-level dynamics using either expansion or gating.',
                     'agc': 'Levelling is not peak limiting. Grow/Fall times apply per saved amount (12 dB by default). Quick Grow may raise noise and pump.',
-                    'eq': 'LSP uses Q. Remove disables the filter slot; Notch has no gain control.',
-                    'wideband': 'Full-band dynamics, independent of Multiband.',
-                    'multiband': 'Crossovers define active bands. Compressor Bypass preserves the band audio and its saved settings.',
+                    'eq': 'Adjusts tonal balance with configurable parametric EQ bands.',
+                    'wideband': 'Controls full-band dynamics independently of the Multiband Compressor.',
+                    'multiband': 'Splits the audio into frequency bands and controls the dynamics of each band independently.',
+                    'master_gain': 'Adjusts the overall signal level. Higher gain may increase loudness and, when limiting is enabled, make the limiter work harder.',
+                    'output_trim': 'Adjusts the final output level. Attenuation only.',
                 })

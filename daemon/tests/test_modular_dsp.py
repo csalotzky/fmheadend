@@ -124,7 +124,8 @@ def test_editor_description_matches_every_validated_setting(monkeypatch):
     assert [s['key'] for s in description['stages']]==list(STAGES)
     for key,(model,_,_) in IMPLEMENTATIONS.items():
         assert description['implementations'][key]['defaults']==model().model_dump()
-        assert description['implementations'][key]['schema']==model.model_json_schema()
+        from fmheadendd.models.dsp_editor import editor_schema
+        assert description['implementations'][key]['schema']==editor_schema(model)
     assert set(description['implementations']) == set(IMPLEMENTATIONS)
     assert description['template']['schema_version'] == 1
 

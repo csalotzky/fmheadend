@@ -7,6 +7,15 @@ import { ProfileEditor } from './profile-editor';
 import { AudioProfile, ProfileResult, DspDescription } from './profile-api';
 const base = '/api/v1/audio-profiles/files';
 const description: DspDescription = {
+  helpers: {
+    hpf: 'Removes very low-frequency content; excessive cutoff can remove musical bass.',
+    gate: 'Controls low-level dynamics using either expansion or gating.',
+    eq: 'Adjusts tonal balance with configurable parametric EQ bands.',
+    wideband: 'Controls full-band dynamics independently of the Multiband Compressor.',
+    multiband: 'Splits the audio into frequency bands and controls the dynamics of each band independently.',
+    master_gain: 'Adjusts the overall signal level. Higher gain may increase loudness and, when limiting is enabled, make the limiter work harder.',
+    output_trim: 'Adjusts the final output level. Attenuation only.',
+  },
   template: { schema_version: 1, name: '', stages: {} },
   stages: [
     { key: 'input_gain', label: 'Profile Input Gain', choices: ['VOLUME'] },
@@ -16,7 +25,7 @@ const description: DspDescription = {
     { key: 'eq', label: 'EQ', choices: ['OFF', 'LSP_EQ'] },
     { key: 'wideband', label: 'Wideband Compressor', choices: ['OFF', 'LSP_COMPRESSOR'] },
     { key: 'multiband', label: 'Multiband Compressor', choices: ['OFF', 'LSP_MULTIBAND'] },
-    { key: 'master_gain', label: 'Master Gain', choices: ['VOLUME'] },
+    { key: 'master_gain', label: 'Overall Gain', choices: ['VOLUME'] },
     { key: 'limiter', label: 'Limiter', choices: ['OFF', 'LSP_LIMITER'] },
     { key: 'lpf', label: 'LPF', choices: ['OFF', 'CHEBYSHEV'] },
     { key: 'output_trim', label: 'Output Trim', choices: ['TRIM'] },
@@ -94,11 +103,19 @@ const description: DspDescription = {
   },
 };
 // The generic field component has detailed AGC/EQ/multiband coverage separately.
-for (const [key, label] of Object.entries({ LSP_GATE: 'LSP Gate Stereo',
-  LSP_COMPRESSOR: 'LSP Compressor Stereo', LSP_MULTIBAND: 'LSP Multiband Compressor x8 Stereo',
-  LSP_LIMITER: 'LSP Limiter Stereo' })) {
-  description.implementations[key] = { label, available: true, reason: null,
-    defaults: {}, schema: { properties: {} } };
+for (const [key, label] of Object.entries({
+  LSP_GATE: 'LSP Gate Stereo',
+  LSP_COMPRESSOR: 'LSP Compressor Stereo',
+  LSP_MULTIBAND: 'LSP Multiband Compressor x8 Stereo',
+  LSP_LIMITER: 'LSP Limiter Stereo',
+})) {
+  description.implementations[key] = {
+    label,
+    available: true,
+    reason: null,
+    defaults: {},
+    schema: { properties: {} },
+  };
 }
 for (const stage of description.stages) {
   description.template.stages[stage.key] = {
@@ -158,10 +175,57 @@ describe('File Audio Profiles', () => {
     f.detectChanges();
     return f;
   }
+  it('shows documentation only for the selected implementation and keeps fixed modes internal', async () => {
+    const f = await editor(),
+      c = f.componentInstance;
+    c.description!.implementations['LSP_GATE'].documentation_url =
+      'https://lsp-plug.in/?page=manuals&section=gate_stereo';
+    c.description!.implementations['LSP_EXPANDER'].documentation_url =
+      'https://lsp-plug.in/?page=manuals&section=expander_stereo';
+    c.select('gate', 'LSP_GATE');
+    f.detectChanges();
+    const gate = f.nativeElement.querySelectorAll('details.stage')[2];
+    expect(gate.querySelector('a').href).toContain('section=gate_stereo');
+    expect(gate.querySelector('a').rel).toBe('noopener noreferrer');
+    expect(gate.querySelector('a').target).toBe('_blank');
+    c.select('gate', 'LSP_EXPANDER');
+    f.detectChanges();
+    expect(gate.querySelector('a').href).toContain('section=expander_stereo');
+    c.select('gate', 'OFF');
+    f.detectChanges();
+    expect(gate.querySelector('a')).toBeNull();
+    expect(f.nativeElement.textContent).toContain('Overall Gain');
+    for (const helper of Object.values(description.helpers!)) {
+      expect(f.nativeElement.textContent).toContain(helper);
+    }
+    expect(f.nativeElement.textContent).not.toContain('Master Gain');
+    expect(f.nativeElement.textContent).not.toContain('Save restarts only active Sources');
+    expect(f.nativeElement.textContent).not.toContain('No software pre-emphasis');
+    expect(f.nativeElement.textContent).not.toContain('Classic');
+    expect(f.nativeElement.textContent).toContain(
+      'FM pre-emphasis is handled by the QN transmitter',
+    );
+  });
+  it('refuses out-of-range precise entry without changing it or sending Save', async () => {
+    const f = await editor(),
+      c = f.componentInstance;
+    c.document!.stages['output_trim'].implementations['TRIM']['gain_db'] = 1;
+    await c.save();
+    http.expectNone(base + '/' + profile.path);
+    expect(c.error()).toContain('supported limits');
+    expect(c.document!.stages['output_trim'].implementations['TRIM']['gain_db']).toBe(1);
+  });
   it('defaults offer only Clone; customs Edit/Clone/Delete and stable paths', async () => {
     const f = await list();
     const rows = f.nativeElement.querySelectorAll('.source-row');
     expect(rows[0].textContent).toContain('default/basic.json');
+    for (const row of rows) {
+      expect(
+        [...row.querySelectorAll('span')].some((el: any) =>
+          ['default', 'custom'].includes(el.textContent.trim()),
+        ),
+      ).toBe(false);
+    }
     expect(rows[0].querySelectorAll('button')).toHaveLength(1);
     expect(rows[0].querySelector('button').textContent).toContain('Clone');
     expect(rows[0].querySelector('a')).toBeNull();
@@ -328,9 +392,22 @@ describe('File Audio Profiles', () => {
     expect(unavailable.textContent).toContain('unavailable');
     const trim = f.nativeElement.querySelectorAll('details.stage')[10].querySelector('input');
     expect(trim.max).toBe('0');
-    const choices = Array.from(f.nativeElement.querySelectorAll('option') as NodeListOf<HTMLOptionElement>).map(o => o.value);
-    expect(new Set(choices)).toEqual(new Set(['OFF', 'CHEBYSHEV', 'LSP_EXPANDER',
-      'LSP_GATE', 'LSP_AGC', 'LSP_EQ', 'LSP_COMPRESSOR', 'LSP_MULTIBAND', 'LSP_LIMITER']));
+    const choices = Array.from(
+      f.nativeElement.querySelectorAll('option') as NodeListOf<HTMLOptionElement>,
+    ).map((o) => o.value);
+    expect(new Set(choices)).toEqual(
+      new Set([
+        'OFF',
+        'CHEBYSHEV',
+        'LSP_EXPANDER',
+        'LSP_GATE',
+        'LSP_AGC',
+        'LSP_EQ',
+        'LSP_COMPRESSOR',
+        'LSP_MULTIBAND',
+        'LSP_LIMITER',
+      ]),
+    );
     expect(f.nativeElement.textContent).not.toContain('Inherited');
   });
   it('EQ Add/Remove changes only that implementation and preserves Q units', async () => {

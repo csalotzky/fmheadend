@@ -241,6 +241,39 @@ describe('Sources management', () => {
     expect(c.draft()?.config).toEqual({ device: 'hw:1,0' });
     expect(c.draft()?.gst_options).toEqual({});
   });
+  it('saves an active source in one request and retains the saved form on apply failure', async () => {
+    Object.assign(TestBed.inject(ActivatedRoute).snapshot, {
+      paramMap: convertToParamMap({ id: '1' }),
+    });
+    const f = editor(),
+      c = f.componentInstance;
+    http.expectOne('/api/v1/sources/1').flush(sample().sources[0]);
+    await f.whenStable();
+    fill(c);
+    c.form.markAsDirty();
+    const navigate = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
+    const pending = c.save();
+    await c.save();
+    const req = http.expectOne('/api/v1/sources/1');
+    expect(req.request.method).toBe('PATCH');
+    req.flush({
+      ...sample().sources[0],
+      ...req.request.body,
+      saved: true,
+      applied: false,
+      apply_error: 'audio start failed',
+    });
+    await pending;
+    f.detectChanges();
+    expect(c.form.pristine).toBe(true);
+    expect(c.config.pristine).toBe(true);
+    expect(c.form.controls.name.value).toBe('FM4');
+    expect(f.nativeElement.querySelector('.editor-feedback').textContent).toContain(
+      'Source saved, but audio restart failed',
+    );
+    expect(navigate).not.toHaveBeenCalled();
+    expect(shared.refreshAfterMutation).toHaveBeenCalledOnce();
+  });
   it('creates HTTP source only after successful save', async () => {
     const c = editor().componentInstance;
     fill(c);

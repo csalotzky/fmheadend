@@ -9,12 +9,12 @@ The existing file API, Source selection, ownership, output fan-out and audio-onl
 Save lifecycle are retained. No TX/QN/RDS, mux, SPI or protocol code changes.
 The editor has eleven collapsible stages in the approved order:
 
-`Input Gain → HPF → Gate/Expander → AGC → EQ → Wideband → Multiband → Master Gain → Limiter → LPF → Output Trim`
+`Input Gain → HPF → Gate/Expander → AGC → EQ → Wideband → Multiband → Overall Gain → Limiter → LPF → Output Trim`
 
 Source Gain precedes this chain independently. Built-in processing negotiates
 F32LE/48 kHz/interleaved stereo, then converts once to the existing S16LE/48 kHz
 stereo output. Bypass still applies Source Gain; Stereo Tool still fails explicitly.
-Master Gain is before limiting; Output Trim is attenuation-only after LPF.
+Overall Gain is before limiting; Output Trim is attenuation-only after LPF.
 
 Audio Profile JSON and SQLite each use their current structure as version **1**.
 No development-format conversion or backward compatibility is supported.
@@ -200,3 +200,9 @@ measurements remain separate acceptance gates. No synthetic test proves those.
 The measurements above are from the earlier isolated native run, not a claim of
 new RF or deployment validation. Current schema-cleanup tests and one-time Pi
 file/database checks are recorded in [pre-production cleanup](preproduction-schema-cleanup.md).
+
+## Editor and Source Save
+
+See [DSP editor controls](dsp-editor-controls.md) for verified ranges, official
+documentation links, precision-preserving sliders and Source hot-save semantics.
+Overall Gain is a UI label only; `master_gain` and all DSP mappings remain unchanged.

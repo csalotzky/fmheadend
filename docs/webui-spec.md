@@ -358,7 +358,9 @@ See [M7B2](milestone7b2.md) for implementation and verification.
 ## 8. Audio Profiles
 
 The existing list/editor uses the file API under `/api/v1/audio-profiles/files`.
-Defaults show Clone only; customs show Edit/Clone/Delete. Referenced custom files
+Defaults show Clone only; customs show Edit/Clone/Delete. Kind remains API data
+for permissions but is not rendered as a label, icon or badge; the stable path
+uses the available width. Referenced custom files
 cannot be deleted. Display name and stable path are separate; Create/Clone use the
 actual backend-generated path. Renaming never changes Source references.
 
@@ -377,9 +379,33 @@ The Source editor selects Bypass / Built-in DSP / disabled Stereo Tool (coming
 soon), with Source Gain always available. Built-in shows a profile dropdown with
 both default/custom names backed by stable paths. Bypass saves a null path. Source
 Gain and Profile Input Gain are independent, sequential gain stages. Changing mode
-clears the old selection; existing stop-before-edit Source ownership rules remain.
+clears the old selection. Save is allowed while TXs consume a Source: one serialized
+PATCH persists and rebuilds only that Source's audio when runtime fields change.
+Consumers/fanout remain attached, without TX/QN/RDS lifecycle operations. Name-only
+edits avoid a healthy audio restart. Idle Sources stay idle. A saved-but-not-applied
+result keeps the saved form and displays the audio failure beside Save.
 
 See [file profiles](audio-profile-files.md) for runtime, schema and API details.
+
+### DSP controls and RDS editor layout
+
+DSP sliders retain synchronized precise numeric entry, with target-verified ranges
+and nonlinear scales where appropriate. Existing values are never rounded on load
+or save. See [controls and range audit](dsp-editor-controls.md) for each field,
+step/scale and authoritative references. The selected implementation has a small
+official developer documentation link (safe new tab); Off has none.
+
+Stage helpers describe audible consequences. Overall Gain is the UI label for
+unchanged `master_gain`; fixed Classic multiband mode stays internal. Output Trim
+is attenuation-only, with a note directing users to Modulator settings for QN
+pre-emphasis. The editor does not permanently display Save lifecycle trivia.
+
+Each PS entry has one row of text plus Duration (when dynamic), then one inline
+Up/Down/Remove row. Static PS hides Duration. Narrow screens may stack the fields.
+Radio Text (RT) has its own heading: enabled checkbox first, then Default Radio
+Text and counter/helper, termination and source metadata selection. Disabling RT
+hides all other RT fields but preserves their form/saved values; enabling it shows
+them again. Encoding and scheduling semantics are unchanged.
 
 ## 10. System
 

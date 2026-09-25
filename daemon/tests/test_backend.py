@@ -157,7 +157,8 @@ def test_start_stop_status_active_edit_and_bulk(client):
     assert client.post(P + "/modulators/0/start").json()["tx_state"] == "ON"
     assert client.get(P + "/modulators/0").json()["enabled"]
     assert client.get(f"{P}/sources/{sid}/status").json()["state"] == "RUNNING"
-    assert client.patch(f"{P}/sources/{sid}", json={"name": "Busy"}).status_code == 409
+    result = client.patch(f"{P}/sources/{sid}", json={"name": "Busy"})
+    assert result.status_code == 200 and result.json()['applied']
     status = client.get(P + "/status").json()
     assert status["modulators"][0]["tx_state"] == "ON"
     assert status["modulators"][0]["rf_attenuation_db"] is None

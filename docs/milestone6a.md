@@ -369,8 +369,11 @@ it restarts only active Sources selecting that file, preserving consumer sets an
 PCM output objects. It never invokes ModulatorManager START/STOP, changes desired
 state/STOP ALL holds, or calls QN/RDS control. Source teardown failure retains
 ownership; saved-file/restart failure is a partial outcome, not failed RF control.
-Source configuration edits retain their existing stop-before-edit guard.
+Source configuration edits now reuse this audio-only replacement path even with
+active consumers; persistence/apply outcomes are separate. Name-only edits to
+healthy Sources and idle Source saves do not start/rebuild audio.
 See [file profiles](audio-profile-files.md) for schema and API response details.
 
 Modular DSP retains this audio-only lifecycle; see [implementation](modular-dsp-implementation.md).
-JSON profile version 2 does not change the SQLite schema or TX recovery rules.
+SQLite and modular Audio Profile JSON both use their current first-release schema
+version 1. Audio-only changes do not alter TX recovery rules.

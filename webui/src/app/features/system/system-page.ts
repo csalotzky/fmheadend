@@ -117,7 +117,7 @@ import { errorMessage } from '../../core/api/headend-api';
           <button [disabled]="logsLoading()" (click)="refreshLogs()">Refresh logs</button>
         </div>
         <p class="muted">
-          Latest 100 entries, newest first. Since daemon startup only; not persistent history.
+          Latest 100 entries
         </p>
         @if (logsError()) {
           <p class="warning" role="status">Logs unavailable: {{ logsError() }}</p>

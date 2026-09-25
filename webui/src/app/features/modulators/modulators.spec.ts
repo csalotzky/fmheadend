@@ -374,6 +374,29 @@ describe('Modulator configuration', () => {
       http.expectNone((r) => r.url.endsWith('/stop') || r.url.endsWith('/start'));
     },
   );
+  it('groups PS text and duration above one inline action row', async () => {
+    const f = await editor(),
+      c = f.componentInstance;
+    let row = f.nativeElement.querySelector('.list-entry');
+    expect(row.querySelector('.ps-fields').classList.contains('single-ps')).toBe(true);
+    expect(row.querySelector('[formControlName="duration_s"]')).toBeNull();
+    c.addPs();
+    f.detectChanges();
+    const rows = [...f.nativeElement.querySelectorAll('.list-entry')];
+    for (const r of rows) {
+      expect(r.querySelector('.ps-fields [formControlName="text"]').maxLength).toBe(8);
+      expect(r.querySelector('.ps-fields [formControlName="duration_s"]')).not.toBeNull();
+      expect(
+        [...r.querySelectorAll('.actions button')].map((b: any) => b.textContent.trim()),
+      ).toEqual(['Up', 'Down', 'Remove']);
+    }
+    expect(rows[0].querySelector('.actions button').disabled).toBe(true);
+    expect(rows[1].querySelectorAll('.actions button')[1].disabled).toBe(true);
+    c.ps.at(1).controls.text.setValue('SECOND');
+    rows[1].querySelector('.actions button').click();
+    f.detectChanges();
+    expect(c.ps.at(0).controls.text.value).toBe('SECOND');
+  });
   it('loads and saves disabled RT without erasing PAD or text', async () => {
     const f = await editor({
         rds_rt_enabled: true,
@@ -384,9 +407,31 @@ describe('Modulator configuration', () => {
     c.form.controls.rds_rt_enabled.setValue(false);
     c.form.markAsDirty();
     f.detectChanges();
-    expect(f.nativeElement.textContent).toContain('Default Radio Text (RT)');
+    expect(f.nativeElement.textContent).not.toContain('Default Radio Text');
     expect(f.nativeElement.textContent).toContain('Radio Text (RT) enabled');
-    expect(f.nativeElement.textContent).toContain('RT termination');
+    expect(f.nativeElement.textContent).not.toContain('RT termination');
+    expect(f.nativeElement.querySelector('[formControlName="rds_metadata_to_rt"]')).toBeNull();
+    const rtToggle = f.nativeElement.querySelector('[formControlName="rds_rt_enabled"]');
+    rtToggle.checked = true;
+    rtToggle.dispatchEvent(new Event('change', { bubbles: true }));
+    f.detectChanges();
+    await f.whenStable();
+    f.detectChanges();
+    expect(f.nativeElement.querySelector('[formControlName="rds_rt"]').value).toBe('Keep text');
+    expect(f.nativeElement.querySelector('[formControlName="rds_rt_termination"]').value).toBe(
+      'PAD',
+    );
+    const enabled = f.nativeElement.querySelector('[formControlName="rds_rt_enabled"]');
+    const text = f.nativeElement.querySelector('[formControlName="rds_rt"]');
+    expect(enabled.compareDocumentPosition(text) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(
+      [...f.nativeElement.querySelectorAll('h3')].some(
+        (h: any) => h.textContent === 'Radio Text (RT)',
+      ),
+    ).toBe(true);
+    c.form.controls.rds_rt_enabled.setValue(false);
+    f.changeDetectorRef.markForCheck();
+    f.detectChanges();
     const pending = c.save();
     const req = http.expectOne('/api/v1/modulators/0/save-and-resume');
     expect(req.request.body).toMatchObject({
