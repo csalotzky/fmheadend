@@ -1,4 +1,4 @@
-"""Current pre-V1 schema initialization, persistence, and integrity."""
+"""First-release schema initialization, persistence, and integrity."""
 import json
 import sqlite3
 
@@ -21,8 +21,8 @@ def snapshot(connection):
 def test_fresh_schema_and_model_defaults(tmp_path):
     db = Database(tmp_path / "current.db")
     try:
-        assert SCHEMA_VERSION == 2
-        assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert SCHEMA_VERSION == 1
+        assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 1
         tables = {row[0] for row in db.connection.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
         assert tables == set(TABLES) | {"sqlite_sequence"}
@@ -68,7 +68,7 @@ def test_current_configuration_reopens_without_writes(tmp_path):
         try:
             assert snapshot(db.connection) == before
             assert db.connection.total_changes == 0
-            assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 2
+            assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 1
             assert db.get("sources", source.id) == source
             assert db.get("modulators", 3).rds_ps[0].duration_s == 9
             assert db.get_system().web_port == 8090
@@ -76,7 +76,7 @@ def test_current_configuration_reopens_without_writes(tmp_path):
             db.close()
 
 
-@pytest.mark.parametrize("version", [3, 9, 99])
+@pytest.mark.parametrize("version", [2, 3, 9, 99])
 def test_unsupported_pre_release_version_is_untouched(tmp_path, version):
     path = tmp_path / "unsupported.db"
     # Only the version matters: startup must reject it before accessing any tables.
@@ -87,6 +87,23 @@ def test_unsupported_pre_release_version_is_untouched(tmp_path, version):
     before = path.read_bytes()
     with pytest.raises(RuntimeError, match=(
             rf"Unsupported database schema {version}")):
+        Database(path)
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize('mutation', [
+    'ALTER TABLE sources ADD COLUMN obsolete_reference INTEGER',
+    'DROP TRIGGER fixed_modulator_id',
+    'CREATE INDEX unexpected ON sources(data)',
+    'PRAGMA user_version=0',
+])
+def test_incorrect_structure_is_rejected_without_conversion(tmp_path, mutation):
+    path = tmp_path / 'incorrect.db'
+    Database(path).close()
+    with sqlite3.connect(path) as connection:
+        connection.execute(mutation)
+    before = path.read_bytes()
+    with pytest.raises(RuntimeError, match='database left untouched'):
         Database(path)
     assert path.read_bytes() == before
 

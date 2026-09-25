@@ -6,9 +6,7 @@ from pathlib import Path
 from dsp_native_probe import Gst, process, tone, rms
 from fmheadendd.models.audio_profile_file import AudioProfileFile
 from fmheadendd.models.dsp import IMPLEMENTATIONS, STAGES, neutral_stages
-from fmheadendd.models.configuration import BasicConfig
-from fmheadendd.sources.basic import basic_stages
-from fmheadendd.sources.dsp import dsp_stages, BLOCKED
+from fmheadendd.sources.dsp import dsp_stages
 
 
 def make(factory, **properties):
@@ -31,7 +29,7 @@ def isolated(stage, implementation, settings=None):
         if 'OFF' in choices: stages[key]['selected'] = 'OFF'
     stages[stage]['selected'] = implementation
     if settings: stages[stage]['implementations'][implementation].update(settings)
-    return AudioProfileFile.model_validate(dict(schema_version=2, name='Probe', stages=stages))
+    return AudioProfileFile.model_validate(dict(schema_version=1, name='Probe', stages=stages))
 
 
 def run(profile, samples):
@@ -44,21 +42,9 @@ x = tone(1000, .4, frames=48000)
 for stage, (_, choices) in STAGES.items():
     for impl in choices:
         if impl == 'OFF': continue
-        if impl in BLOCKED:
-            evidence[stage + '/' + impl] = {'blocked': BLOCKED[impl]}
-            continue
         y = run(isolated(stage, impl), x)
         assert len(y) == len(x) and all(math.isfinite(v) for v in y) and max(abs(v) for v in y) < 2
         evidence[stage + '/' + impl] = dict(gain=rms(y)/rms(x), peak=max(abs(v) for v in y))
-
-# The exact pre-existing Basic settings/order remain sample-identical.
-legacy = dict(schema_version=1, name='Legacy', stages={
-    'gain': dict(selected='GST_VOLUME', implementations={'GST_VOLUME': {'gain_db': 0}}),
-    'processor': dict(selected='GST_BASIC', implementations={'GST_BASIC': BasicConfig().model_dump()})})
-a = process(basic_stages(make, BasicConfig()), x)
-b = run(AudioProfileFile.model_validate(legacy), x)
-assert a == b
-evidence['legacy_max_difference'] = max(abs(i-j) for i,j in zip(a,b))
 
 # True channel separation, also for linked stereo processors.
 left_only = x.copy(); left_only[1::2] = [0.] * (len(left_only)//2)

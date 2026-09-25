@@ -77,24 +77,14 @@ def rms(samples, channel=0):
     return math.sqrt(sum(v*v for v in values)/len(values))
 
 
-def eq_config(pipeline):
-    band = pipeline.get_by_name('eq').get_child_by_index(0)
-    for key, value in {'freq':1000., 'bandwidth':500., 'gain':6., 'type':0}.items():
-        band.set_property(key, value)
-
-
 def main():
     inventory = {}
-    for factory in ('volume','audiocheblimit','audiowsinclimit','audiodynamic',
-                    'equalizer-nbands','equalizer-3bands','rglimiter','audioloudnorm'):
+    for factory in ('volume', 'audiocheblimit'):
         element = Gst.ElementFactory.make(factory)
         if element is None:
             inventory[factory] = None
             continue
         objects = [element]
-        if factory == 'equalizer-nbands':
-            element.set_property('num-bands', 3)
-            objects.append(element.get_child_by_index(0))
         inventory[factory] = []
         for obj in objects:
             properties = {}
@@ -114,8 +104,7 @@ def main():
     assert abs(rms(out)/reference - .5) < .0001
     assert abs(rms(out, 1)/rms(out) - .5) < .0001
     evidence['gain_stereo_ratio'] = rms(out)/reference
-    for factory, extra in [('audiocheblimit','type=1 ripple=0 poles=4'),
-                            ('audiowsinclimit','length=101 window=0 low-latency=false drain-on-changes=true')]:
+    for factory, extra in [('audiocheblimit','type=1 ripple=0 poles=4')]:
         low = tone(1000); high = tone(20000)
         a = rms(process(f'{factory} mode=0 cutoff=15000 {extra}', low))/rms(low)
         b = rms(process(f'{factory} mode=0 cutoff=15000 {extra}', high))/rms(high)
@@ -126,17 +115,6 @@ def main():
     b = rms(process('audiocheblimit mode=1 cutoff=30 type=1 ripple=0 poles=4', high))/rms(high)
     assert a < .2 and b > .9
     evidence['hpf_10hz_1k'] = [a,b]
-    out = process('equalizer-nbands name=eq num-bands=1', signal, eq_config)
-    ratio = rms(out)/reference
-    assert 1.9 < ratio < 2.1
-    evidence['eq_1khz_plus6db'] = ratio
-    for mode, slope, value, expected in [(0,.5,.8,.65),(1,2.,.4,.3)]:
-        out = process(f'audiodynamic mode={mode} characteristics=0 threshold=0.5 ratio={slope}', [value,-value]*1024)
-        assert max(abs(v-e) for v,e in zip(out,[expected,-expected]*1024)) < .00001
-        evidence[f'dynamic_mode{mode}_amplitude'] = out[0]
-    out = process('rglimiter enabled=true', [.9,-.9]*1024)
-    assert .5 < out[0] < .9
-    evidence['limiter_0_9_input'] = out[0]
     # Final common PCM negotiation is tested separately from float signal analysis.
     p = Gst.parse_launch('audiotestsrc num-buffers=8 ! audio/x-raw,format=F32LE,rate=48000,channels=2 ! '
                          'audioconvert ! audio/x-raw,format=S16LE,rate=48000,channels=2 ! fakesink sync=false')

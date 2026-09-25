@@ -44,7 +44,7 @@ with tempfile.TemporaryDirectory(prefix='fmheadend-dsp-source-') as directory:
                 if s['selected'] not in ('VOLUME','TRIM'): s['selected']='OFF'
             stages['input_gain']['implementations']['VOLUME']['gain_db']=-6
             file=path/'profile.json'
-            file.write_text(json.dumps(dict(schema_version=2,name='Shared test',stages=stages)))
+            file.write_text(json.dumps(dict(schema_version=1,name='Shared test',stages=stages)))
             profile=AudioProfileFile.model_validate_json(file.read_text()) if builtin else None
             source=InputSourceConfig(name='Isolated',type='HTTP',config={'uri':f'http://127.0.0.1:{server.server_port}/source.wav'},
                 input_gain_db=-6,processor_mode='builtin' if builtin else 'bypass',

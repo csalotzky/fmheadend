@@ -23,49 +23,6 @@ class Chebyshev(Model):
     type: Literal[1, 2] = Field(1, json_schema_extra={'hidden': True})
 
 
-class Sinc(Model):
-    cutoff_hz: float = Field(15000, gt=0, lt=24000, title='Cutoff (Hz)')
-    length: int = Field(101, ge=3, le=256000, title='Kernel length (samples)')
-    window: Literal[0, 1, 2, 3, 4] = Field(0, json_schema_extra={'hidden': True})
-    low_latency: bool = Field(False, json_schema_extra={'hidden': True})
-    drain_on_changes: bool = Field(True, json_schema_extra={'hidden': True})
-
-    @model_validator(mode='after')
-    def odd(self):
-        if self.length % 2 != 1:
-            raise ValueError('Kernel length must be odd; implicit rounding is not permitted')
-        return self
-
-
-class Dynamic(Model):
-    threshold_dbfs: float = Field(-12, ge=-120, le=0, title='Threshold (dBFS)')
-    ratio: float = Field(.5, ge=0, le=100, title='Amplitude slope',
-                         description='Native amplitude-domain slope, not a conventional N:1 dB ratio.')
-    knee: Literal['hard', 'soft'] = 'soft'
-
-
-class EqBand(Model):
-    frequency_hz: float = Field(1000, gt=0, lt=24000, title='Frequency (Hz)')
-    gain_db: float = Field(0, ge=-24, le=12, title='Gain (dB)')
-    bandwidth_hz: float = Field(100, gt=0, le=100000, title='Bandwidth (Hz)')
-    type: Literal[0, 1, 2] = Field(0, json_schema_extra={'hidden': True})
-
-
-class Eq(Model):
-    bands: list[EqBand] = Field(default_factory=lambda: [
-        EqBand(frequency_hz=f, bandwidth_hz=f) for f in (100, 1100, 11000)], min_length=0, max_length=16)
-
-
-class LegacyEq(Model):
-    low_db: float = Field(0, ge=-24, le=12, title='100 Hz (dB)')
-    mid_db: float = Field(0, ge=-24, le=12, title='1100 Hz (dB)')
-    high_db: float = Field(0, ge=-24, le=12, title='11000 Hz (dB)')
-
-
-class Empty(Model):
-    pass
-
-
 class LspDynamics(Model):
     threshold_dbfs: float = Field(-12, ge=-60, le=0, title='Threshold (dBFS)')
     ratio: float = Field(4, ge=1, le=100, title='Ratio (N:1)')
@@ -176,11 +133,6 @@ IMPLEMENTATIONS = {
     'VOLUME': (Gain, 'volume', 'Gain'),
     'TRIM': (Trim, 'volume', 'Output Trim'),
     'CHEBYSHEV': (Chebyshev, 'audiocheblimit', 'Chebyshev'),
-    'SINC': (Sinc, 'audiowsinclimit', 'Windowed Sinc'),
-    'DYNAMIC': (Dynamic, 'audiodynamic', 'Basic dynamics'),
-    'EQ': (Eq, 'equalizer-nbands', 'GStreamer equalizer'),
-    'LEGACY_EQ': (LegacyEq, 'equalizer-3bands', 'Inherited fixed three-band EQ'),
-    'RGLIMITER': (Empty, 'rglimiter', 'Basic limiter (fixed threshold)'),
     'LSP_EXPANDER': (LspExpander, 'lsp-plug-in-plugins-lv2-expander-stereo', 'LSP Expander Stereo'),
     'LSP_GATE': (LspGate, 'lsp-plug-in-plugins-lv2-gate-stereo', 'LSP Gate Stereo'),
     'LSP_AGC': (LspAutogain, 'lsp-plug-in-plugins-lv2-autogain-stereo', 'LSP Autogain Stereo'),
@@ -192,14 +144,14 @@ IMPLEMENTATIONS = {
 STAGES = {
     'input_gain': ('Profile Input Gain', ['VOLUME']),
     'hpf': ('HPF', ['OFF', 'CHEBYSHEV']),
-    'gate': ('Gate / Expander', ['OFF', 'DYNAMIC', 'LSP_EXPANDER', 'LSP_GATE']),
+    'gate': ('Gate / Expander', ['OFF', 'LSP_EXPANDER', 'LSP_GATE']),
     'agc': ('AGC / Leveller', ['OFF', 'LSP_AGC']),
-    'eq': ('EQ', ['OFF', 'EQ', 'LSP_EQ', 'LEGACY_EQ']),
-    'wideband': ('Wideband Compressor', ['OFF', 'DYNAMIC', 'LSP_COMPRESSOR']),
+    'eq': ('EQ', ['OFF', 'LSP_EQ']),
+    'wideband': ('Wideband Compressor', ['OFF', 'LSP_COMPRESSOR']),
     'multiband': ('Multiband Compressor', ['OFF', 'LSP_MULTIBAND']),
     'master_gain': ('Master Gain', ['VOLUME']),
-    'limiter': ('Limiter', ['OFF', 'RGLIMITER', 'LSP_LIMITER']),
-    'lpf': ('LPF', ['OFF', 'CHEBYSHEV', 'SINC']),
+    'limiter': ('Limiter', ['OFF', 'LSP_LIMITER']),
+    'lpf': ('LPF', ['OFF', 'CHEBYSHEV']),
     'output_trim': ('Output Trim', ['TRIM']),
 }
 
@@ -210,9 +162,6 @@ def neutral_stages():
         result[key] = {'selected': choices[0], 'implementations': {
             name: IMPLEMENTATIONS[name][0]().model_dump() for name in choices if name != 'OFF'}}
     result['hpf']['selected'] = 'CHEBYSHEV'
-    result['eq']['selected'] = 'EQ'
-    result['limiter']['selected'] = 'RGLIMITER'
     result['lpf']['selected'] = 'CHEBYSHEV'
     result['lpf']['implementations']['CHEBYSHEV']['cutoff_hz'] = 15000
-    result['gate']['implementations']['DYNAMIC']['ratio'] = 2
     return result

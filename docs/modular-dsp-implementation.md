@@ -1,6 +1,6 @@
 # Modular Built-in DSP implementation — 2026-09-25
 
-The approved design remains [fmheadend-audio-processing.md](fmheadend-audio-processing.md).
+The current approved design is [fmheadend-audio-processing.md](fmheadend-audio-processing.md).
 This document records implementation and measurement, not an RF acceptance report.
 
 ## Implemented
@@ -16,7 +16,8 @@ F32LE/48 kHz/interleaved stereo, then converts once to the existing S16LE/48 kHz
 stereo output. Bypass still applies Source Gain; Stereo Tool still fails explicitly.
 Master Gain is before limiting; Output Trim is attenuation-only after LPF.
 
-The schema is JSON version **2**. SQLite remains version **2**, unchanged.
+Audio Profile JSON and SQLite each use their current structure as version **1**.
+No development-format conversion or backward compatibility is supported.
 Every stage has `selected` and `implementations`; saved settings for inactive
 implementations are validated and preserved. `OFF` creates no element. A stage's
 settings are not erased by switching it off. No arbitrary native property bag is
@@ -26,9 +27,8 @@ Example shape (abbreviated; all eleven stages are required):
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 1,
   "name": "My processing",
-  "compatibility": null,
   "stages": {
     "input_gain": {"selected":"VOLUME","implementations":{"VOLUME":{"gain_db":0}}},
     "hpf": {"selected":"CHEBYSHEV","implementations":{"CHEBYSHEV":{"cutoff_hz":30,"poles":4,"ripple_db":0,"type":1}}},
@@ -38,7 +38,7 @@ Example shape (abbreviated; all eleven stages are required):
     "wideband": {"selected":"OFF","implementations":{}},
     "multiband": {"selected":"OFF","implementations":{}},
     "master_gain": {"selected":"VOLUME","implementations":{"VOLUME":{"gain_db":0}}},
-    "limiter": {"selected":"RGLIMITER","implementations":{"RGLIMITER":{}}},
+    "limiter": {"selected":"OFF","implementations":{}},
     "lpf": {"selected":"CHEBYSHEV","implementations":{"CHEBYSHEV":{"cutoff_hz":15000,"poles":4,"ripple_db":0,"type":1}}},
     "output_trim": {"selected":"TRIM","implementations":{"TRIM":{"gain_db":0}}}
   }
@@ -52,23 +52,15 @@ profile store. Available does not certify every possible parameter combination o
 eight-programme load. Save/start instantiate selected factories, set parameters
 and verify native readback; negotiation/start failures remain Source errors.
 
-### Basic compatibility
+### First-release defaults
 
-The shipped `default/basic.json` stays unchanged on disk. V1 files are strictly
-validated and converted on read; GET never writes them. Save/Clone emit version 2
-at the same stable path (Clone gets its existing newly generated path).
-`compatibility: "gst_basic_v1"` preserves the inherited LPF-before-limiter order
-and `equalizer-3bands`. Existing HPF 40 Hz, EQ gains/frequencies, compressor
-threshold/slope/knee, LPF 15 kHz and limiter settings are retained. Added Master
-Gain/Output Trim are unity. The original native chain and the converted default
-produced **sample-identical F32 output** in the isolated Pi test (max difference 0).
-No implicit conversion to `equalizer-nbands` occurs.
-
-New profiles have `compatibility: null`, HPF 30 Hz/4 poles, flat three-band
-`equalizer-nbands`, Gate/AGC/compressors Off, Basic limiter, Chebyshev 15 kHz/4 poles,
-and three unity gains. These are neutral engineering starting settings, not a
-broadcast preset. Their LPF is after the limiter. Clones of Basic retain the
-explicit compatibility marker; the editor identifies that ordering exception.
+`default/basic.json` keeps its stable filename. It now contains the eleven-stage
+schema directly: unity gains, Chebyshev HPF 40 Hz / LPF 15 kHz (4 poles, type I,
+ripple 0), other optional processors OFF. It is not a tuned broadcast preset.
+The new-profile editor template uses HPF 30 Hz and the same LPF; EQ, dynamics
+and limiter start OFF. Selecting an LSP implementation loads its existing validated
+settings defaults. Hidden and inactive settings for supported implementations survive
+Save. Every profile uses Limiter before LPF, with no ordering exception.
 
 ## Verified native mappings
 
@@ -80,10 +72,6 @@ Online older wrapper documentation showing `bypass` is not used as the mapping.
 |---|---|
 | Three profile gains / `volume` | `gain_db → volume = 10^(dB/20)`; max +20 dB, Output Trim max 0 dB |
 | HPF/LPF Chebyshev / `audiocheblimit` | `cutoff_hz→cutoff`, `poles→poles`, `ripple_db→ripple`, `type→type`; mode 1 HPF, 0 LPF. Even poles 2–32; cutoff strictly between 0 and 24 kHz. Type/ripple hidden but preserved |
-| Basic Expander/Compressor / `audiodynamic` | `threshold_dbfs→threshold=10^(dBFS/20)`, `ratio→ratio` **native amplitude slope**; mode 1/0; hard/soft→characteristics 0/1. No Attack/Release/Makeup. Old Basic UI ratio R converts to slope 1/R |
-| GStreamer EQ / `equalizer-nbands` | `num-bands`, child `freq`, `gain` dB, **`bandwidth` Hz**, `type`; 0–16 saved bands; no bands omits EQ |
-| Legacy EQ / `equalizer-3bands` | low/mid/high→`band0/1/2`, preserving original native frequencies/filter types |
-| Basic limiter / `rglimiter` | `enabled=true`; no invented controls. Fixed −6 dB threshold is **not** an output ceiling |
 | Expander / `expander-stereo` | downward/upward→`em=0/1`; threshold→`al` linear, ratio→`er`, knee dB→`kn=10^(-dB/20)`, attack/release→`at/rt` ms; makeup→`mk` linear |
 | Gate / `gate-stereo` | threshold→`gt` linear; positive attenuation `reduction_db→gr=10^(-dB/20)`; attack/hold/release→`at/hold/rt` ms; hidden zone/hysteresis→`gz/gh/ht/hz` |
 | AGC / `autogain-stereo` | target→`level` LUFS; max enable/gain→`max-on/max-amp` dB; silence→`silence`; long grow/fall→`tgrow-l/tfall-l` ms; short fall/grow→`tfall-s/tgrow-s` ms; short Grow enable→`qamp` (Off by default); K weighting `weight=5`, internal `scmode=0` |
@@ -106,17 +94,6 @@ Multiband may both run. Per-band bypass leaves crossover audio present.
 
 ## Blocked / limited implementations
 
-* **Windowed Sinc is blocked**, even though its factory is installed. Standalone
-  `audiowsinclimit mode=0 cutoff=15000 length=101 window=0 low-latency=false`
-  tests initially passed, then intermittently produced non-finite/huge output
-  (e.g. peak `1.04e34`) with 96,000-frame input buffers. The actual adapter also
-  caught a `5.66e35` peak with a 48,000-frame buffer. This does **not** establish
-  the internal plugin root cause or prove that all normal decoder block sizes fail.
-  It is sufficient to withhold operational selection. Settings remain validated
-  and retained; selecting it fails explicitly, never substitutes Chebyshev.
-* **audioloudnorm:** no factory and no runtime Rust-plugin package candidate in
-  the Pi's configured repositories. No adapter, UI knobs or untested 192 kHz island
-  is advertised. No repository was added and no system plugin was compiled.
 * **LSP advanced modes:** limiter oversampling only Off; Herm Thin only; EQ IIR/RLC(BT)
   only; multiband Classic only. Other native enum values were inspected but are
   not accepted as working options without algorithm/load validation. Actual limiter
@@ -125,7 +102,7 @@ Multiband may both run. Per-band bypass leaves crossover audio present.
 * Not every LV2 sidechain/control port is supported. Unknown fields are rejected,
   not ignored. All **supported** hidden settings survive editor saves.
 
-These are implementation limits, not changes to the approved design.
+These are the current supported mode limits.
 
 ## Pi environment and measured evidence
 
@@ -143,11 +120,9 @@ Isolated native results, not RF/audio-quality acceptance:
   silent on the right through all seven LSP stereo adapters.
 * HPF 30 Hz: 10 Hz gain .01234, 1 kHz gain ~1. Chebyshev LPF 15 kHz:
   1 kHz ~1, 20 kHz .02585 (four poles/type I/ripple 0).
-* GStreamer and LSP Bell at 1 kHz/+6 dB measured ~1.99526 amplitude gain.
+* LSP Bell at 1 kHz/+6 dB measured ~1.99526 amplitude gain.
   LSP Notch at 1 kHz measured ~2.94e-6 steady-state gain; removal restores unity.
-* Basic hard compressor threshold .5/slope .5 maps .8→.65; expander
-  threshold .5/slope 2 maps .4→.3. `rglimiter` .9 input produces ~.832, proving
-  threshold ≠ ceiling. LSP limiter .1 threshold measured peak ~.099999 in its test.
+* LSP limiter .1 threshold measured peak ~.099999 in its isolated test.
 * Four/eight-band bypass retained unity RMS within 2%; active compression test
   measured gains .1153/.1296. These measurements don't certify flat phase or every
   crossover/ratio combination.
@@ -209,7 +184,7 @@ timeout 65s nice -n 15 python dsp_load_probe.py
 ```
 
 `dsp_native_probe.py` and `lsp_native_probe.py` retain standalone property/audio
-discovery cases (the former includes the known unsafe sinc diagnostic). All output
+discovery cases for the retained implementations. All output
 is to memory or temporary fixtures, never an audio device or mux socket. Backend
 property descriptions match installed names, and readback detects clamping on
 incompatible plugin versions. Save failure leaves files unchanged; saved/restart
@@ -217,44 +192,11 @@ failure remains the existing explicit partial result. Final source negotiation i
 still checked by the real pipeline before a Source start reports success.
 
 Eight distinct-stream endurance, live-network jitter/reconnection, total pipeline
-latency, expensive optional modes, sinc root cause, and RF/MPX/deviation/pilot-region
+latency, expensive optional modes and RF/MPX/deviation/pilot-region
 measurements remain separate acceptance gates. No synthetic test proves those.
 
-## Automated validation in this implementation
+## Validation
 
-* Full daemon suite: **650 passed, 32 skipped**. Skips: 25 GI/GStreamer tests on
-  Windows, five Linux mux integrations, one Linux i2c-dev test, one Windows symlink
-  creation privilege test. The existing Starlette/httpx deprecation warning remains.
-* Full frontend suite: **164 passed**, eight test files. Typecheck and production
-  WebUI build passed. `git diff --check` passed.
-* Focused profile/schema/audio-lifecycle run: 58 passed/one platform skip at the
-  earlier checkpoint; later added regressions are included in the full counts.
-* An intermediate full run caught extra read-only background GET_INFO/GET_STATUS
-  polls in the unchanged `info_rejection` lifecycle test. The isolated rerun and
-  final serial full run passed; no recovery code or that test was modified.
-* Native Pi: standalone property/audio probes, final production-adapter assertions,
-  real decoder/gain/fan-out/rebuild test, and the authorized bounded eight-stream
-  workload ran. Pytest itself is absent from the Pi venv; the Windows-skipped native
-  suite was not claimed as executed on the Pi. The standalone checks are separate.
-
-No RF listening, FM deviation, MPX, firmware or live deployment validation was done.
-
-## Changed files
-
-* Backend: `daemon/models/audio_profile_file.py`, new `daemon/models/dsp.py`,
-  `daemon/sources/gst_pipeline.py`, new `daemon/sources/dsp.py`, `daemon/api/routes.py`.
-* Backend tests: `test_audio_profile_files.py`, `test_audio_profiles.py`,
-  `test_gstreamer.py`, new `test_modular_dsp.py` under `daemon/tests/`.
-* Standalone verification: `dsp_native_probe.py`, `lsp_native_probe.py`,
-  `dsp_adapter_probe.py`, `dsp_source_probe.py`, `dsp_load_probe.py` under `daemon/tools/`.
-* Existing WebUI feature: `profile-api.ts`, `profile-editor.ts`, `profiles.spec.ts`,
-  new `dsp-fields.ts` and `dsp-fields.spec.ts` under
-  `webui/src/app/features/audio-profiles/`. Removed the now-unused `basic-config.ts`;
-  editor defaults/constraints come from the validated backend model.
-* Documentation: `README.md`, `docs/audio-profile-files.md`,
-  `docs/fmheadend-software-architecture.md`, `docs/webui-spec.md`, `docs/milestone6a.md`,
-  this report, and the implementation-status note in the canonical
-  `docs/fmheadend-audio-processing.md` (approved design text retained).
-
-The shipped Basic JSON, Source DB schema, source manager/lifecycle, RP firmware,
-control protocol, recovery, mux, SPI/audio transport and RDS scheduling are unchanged.
+The measurements above are from the earlier isolated native run, not a claim of
+new RF or deployment validation. Current schema-cleanup tests and one-time Pi
+file/database checks are recorded in [pre-production cleanup](preproduction-schema-cleanup.md).

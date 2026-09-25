@@ -43,9 +43,6 @@ import { errorMessage } from '../../core/api/headend-api';
       <form [formGroup]="form" (ngSubmit)="save()">
         <fieldset [disabled]="saving()">
           <label>Name<input formControlName="name" required maxlength="200" /></label>
-          @if (document.compatibility) {
-            <p class="muted">Inherited Basic ordering preserved: LPF before Limiter.</p>
-          }
           @for (stage of description.stages; track stage.key; let index = $index) {
             <details class="stage" open>
               <summary>{{ index + 1 }}. {{ stage.label }}</summary>
@@ -89,9 +86,6 @@ import { errorMessage } from '../../core/api/headend-api';
                   >
                 }
               }
-              @for (reason of description.blocked[stage.key] || []; track reason) {
-                <p class="muted">{{ reason }}</p>
-              }
               @if (document.stages[stage.key].selected !== 'OFF') {
                 @let impl = description.implementations[document.stages[stage.key].selected];
                 @if (!impl.available) {
@@ -111,7 +105,7 @@ import { errorMessage } from '../../core/api/headend-api';
               }
               @if (stage.key === 'limiter') {
                 <small
-                  >Basic: fixed -6 dB threshold, not an output ceiling. PCM limiting does not
+                  >PCM limiting does not
                   guarantee FM deviation.</small
                 >
               }
@@ -122,8 +116,7 @@ import { errorMessage } from '../../core/api/headend-api';
               }
               @if (stage.key === 'lpf') {
                 <small
-                  >Filtering can regrow peaks. Longer sinc kernels increase processing cost and
-                  latency.</small
+                  >Filtering can regrow peaks. Validate the final filtered PCM level.</small
                 >
               }
               @if (stage.key === 'output_trim') {

@@ -4,9 +4,16 @@ import sqlite3
 from pathlib import Path
 
 from .errors import DomainError
-from .models.configuration import BasicConfig, InputSource, Modulator, ModulatorConfig, PsEntry, SystemConfig, utcnow
+from .models.configuration import InputSource, Modulator, ModulatorConfig, PsEntry, SystemConfig, utcnow
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 1
+SCHEMA_STATEMENTS = (
+    "CREATE TABLE sources (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT NOT NULL)",
+    "CREATE TABLE modulators (id INTEGER PRIMARY KEY CHECK(id BETWEEN 0 AND 7), input_source_id INTEGER REFERENCES sources(id) ON DELETE RESTRICT, data TEXT NOT NULL)",
+    "CREATE TABLE system_config (id INTEGER PRIMARY KEY CHECK(id = 1), data TEXT NOT NULL)",
+    "CREATE TRIGGER fixed_modulator_delete BEFORE DELETE ON modulators BEGIN SELECT RAISE(ABORT, 'Modulators are fixed'); END",
+    "CREATE TRIGGER fixed_modulator_id BEFORE UPDATE OF id ON modulators BEGIN SELECT RAISE(ABORT, 'Modulator IDs are fixed'); END",
+)
 RECORDS = {"sources": InputSource, "modulators": Modulator}
 
 
@@ -26,90 +33,40 @@ class Database:
 
     def _initialize(self):
         version = self.connection.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1, SCHEMA_VERSION):
+        if version not in (0, SCHEMA_VERSION):
             raise RuntimeError(f"Unsupported database schema {version}; database left untouched.")
-        if version == 1:
-            self._migrate_profiles()
         if version == 0:
+            if self.connection.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone():
+                raise RuntimeError("Unversioned nonempty database; database left untouched.")
             # Explicit transaction includes all DDL, seeds and the version bump.
             self.connection.execute("BEGIN IMMEDIATE")
             with self.connection:
-                for statement in (
-                    "CREATE TABLE sources (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT NOT NULL)",
-                    "CREATE TABLE modulators (id INTEGER PRIMARY KEY CHECK(id BETWEEN 0 AND 7), input_source_id INTEGER REFERENCES sources(id) ON DELETE RESTRICT, data TEXT NOT NULL)",
-                    "CREATE TABLE system_config (id INTEGER PRIMARY KEY CHECK(id = 1), data TEXT NOT NULL)",
-                    "CREATE TRIGGER fixed_modulator_delete BEFORE DELETE ON modulators BEGIN SELECT RAISE(ABORT, 'Modulators are fixed'); END",
-                    "CREATE TRIGGER fixed_modulator_id BEFORE UPDATE OF id ON modulators BEGIN SELECT RAISE(ABORT, 'Modulator IDs are fixed'); END",
-                ):
+                for statement in SCHEMA_STATEMENTS:
                     self.connection.execute(statement)
                 for modulator_id in range(8):
                     config = ModulatorConfig(rds_ps=[PsEntry(text=f"FM TX {modulator_id}")])
                     data = config.model_dump(mode="json") | {"timestamp": utcnow().isoformat()}
                     self.connection.execute("INSERT INTO modulators VALUES (?, NULL, ?)", (modulator_id, json.dumps(data)))
                 self.connection.execute("INSERT INTO system_config VALUES (1, ?)", (SystemConfig().model_dump_json(),))
-                self.connection.execute("PRAGMA user_version = 2")
+                self.connection.execute("PRAGMA user_version = 1")
+        expected_columns = {'sources': ['id', 'data'],
+                            'modulators': ['id', 'input_source_id', 'data'],
+                            'system_config': ['id', 'data'], 'sqlite_sequence': ['name', 'seq']}
+        tables = {r[0] for r in self.connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if tables != set(expected_columns) or any(
+                [r[1] for r in self.connection.execute(f'PRAGMA table_info({table})')] != columns
+                for table, columns in expected_columns.items()):
+            raise RuntimeError("Incorrect database schema 1 structure; database left untouched.")
         ids = [row[0] for row in self.connection.execute("SELECT id FROM modulators ORDER BY id")]
         if ids != list(range(8)):
             raise RuntimeError("Database must contain exactly modulators 0..7")
-
-    def _migrate_profiles(self):
-        """One-time, transactional v1 conversion. Unknown data is never discarded."""
-        self.connection.execute('PRAGMA foreign_keys = OFF')
-        try:
-            self.connection.execute('BEGIN IMMEDIATE')
-            with self.connection:
-                if [r[0] for r in self.connection.execute('SELECT id FROM modulators ORDER BY id')] != list(range(8)):
-                    raise ValueError('Database must contain exactly modulators 0..7')
-                profiles = {row['id']: json.loads(row['data']) for row in
-                            self.connection.execute('SELECT * FROM audio_profiles')}
-                converted, used = [], set()
-                for row in self.connection.execute('SELECT * FROM sources'):
-                    data = json.loads(row['data'])
-                    pid = data.pop('audio_profile_id', None)
-                    if pid != row['audio_profile_id']:
-                        raise ValueError(f"Source {row['id']} profile reference disagrees with its foreign key")
-                    data.update(processor_mode='bypass', input_gain_db=0, audio_profile_path=None)
-                    if pid is not None:
-                        if pid not in profiles:
-                            raise ValueError(f"Source {row['id']} references missing profile {pid}")
-                        p = profiles[pid]
-                        if not isinstance(p, dict) or not isinstance(p.get('name'), str) or not p['name'].strip():
-                            raise ValueError(f'Profile {pid} has invalid content/name')
-                        allowed = {'name', 'gain_db', 'processor', 'basic_config', 'eq_config',
-                                   'compressor_config', 'limiter_config', 'advanced_options', 'timestamp'}
-                        if set(p) - allowed or any(p.get(k) for k in ('eq_config', 'compressor_config',
-                                                                     'limiter_config', 'advanced_options')):
-                            raise ValueError(f'Profile {pid} contains unsupported settings')
-                        basic = BasicConfig.model_validate(p.get('basic_config', {}))
-                        if basic != BasicConfig():
-                            raise ValueError(f'Profile {pid} has custom Basic settings; export it before migration')
-                        processor = p.get('processor', 'NONE')
-                        if processor not in ('NONE', 'GST_BASIC'):
-                            raise ValueError(f'Profile {pid} has unknown processor {processor}')
-                        data['input_gain_db'] = p.get('gain_db', 0)
-                        if processor == 'GST_BASIC':
-                            data.update(processor_mode='builtin', audio_profile_path='default/basic.json')
-                        used.add(pid)
-                    validated = InputSource.model_validate(data | {'id': row['id']})
-                    converted.append((row['id'], validated.model_dump_json(exclude={'id'})))
-                if set(profiles) - used:
-                    raise ValueError(f'Unreferenced profiles {sorted(set(profiles) - used)} require explicit export/removal')
-                sequence = self.connection.execute("SELECT seq FROM sqlite_sequence WHERE name='sources'").fetchone()
-                self.connection.execute('CREATE TABLE sources_new (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT NOT NULL)')
-                self.connection.executemany('INSERT INTO sources_new VALUES (?, ?)', converted)
-                self.connection.execute('DROP TABLE sources')
-                self.connection.execute('ALTER TABLE sources_new RENAME TO sources')
-                if sequence:
-                    self.connection.execute("DELETE FROM sqlite_sequence WHERE name='sources'")
-                    self.connection.execute("INSERT INTO sqlite_sequence(name,seq) VALUES ('sources',?)", (sequence[0],))
-                self.connection.execute('DROP TABLE audio_profiles')
-                if self.connection.execute('PRAGMA foreign_key_check').fetchall():
-                    raise ValueError('Unresolved database references')
-                self.connection.execute('PRAGMA user_version = 2')
-        except (ValueError, KeyError, TypeError, sqlite3.Error) as exc:
-            raise RuntimeError(f'Audio profile migration blocked; database unchanged: {exc}') from exc
-        finally:
-            self.connection.execute('PRAGMA foreign_keys = ON')
+        # Identifier quoting/whitespace is not a structural change.
+        def normalize(sql):
+            return ' '.join(sql.replace('"', '').split())
+        actual = {normalize(r[0]) for r in self.connection.execute(
+            "SELECT sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'")}
+        if actual != {normalize(sql) for sql in SCHEMA_STATEMENTS}:
+            raise RuntimeError("Incorrect database schema 1 structure; database left untouched.")
 
     def list(self, table):
         model = RECORDS[table]  # table names are internal, never supplied by API callers

@@ -9,16 +9,18 @@ import wave
 
 import pytest
 from fmheadendd.errors import DependencyUnavailable
-from fmheadendd.models.configuration import InputSourceConfig, BasicConfig
+from fmheadendd.models.configuration import InputSourceConfig
 from fmheadendd.sources.gst_pipeline import GstPipeline, load_gst, caps_structure, make_rtp_caps, rtp_parameters
 
 from fmheadendd.models.audio_profile_file import AudioProfileFile
 
-def file_profile(name, processor='NONE', gain_db=0, basic_config=None):
-    return AudioProfileFile.model_validate({'schema_version': 1, 'name': name, 'stages': {
-        'gain': {'selected': 'GST_VOLUME', 'implementations': {'GST_VOLUME': {'gain_db': gain_db}}},
-        'processor': {'selected': processor, 'implementations': {'GST_BASIC': (basic_config or BasicConfig()).model_dump()}}
-    }})
+def file_profile(name, gain_db=0):
+    from fmheadendd.models.dsp import neutral_stages, STAGES
+    stages = neutral_stages()
+    for key, (_, choices) in STAGES.items():
+        if 'OFF' in choices: stages[key]['selected'] = 'OFF'
+    stages['input_gain']['implementations']['VOLUME']['gain_db'] = gain_db
+    return AudioProfileFile.model_validate(dict(schema_version=1, name=name, stages=stages))
 
 pytestmark = pytest.mark.gstreamer
 
@@ -222,7 +224,7 @@ def test_alsa_capture(gst):
         pipeline.stop()
 
 
-@pytest.mark.parametrize("processor", [None, "NONE", "GST_BASIC"])
+@pytest.mark.parametrize("processor", [None, "builtin"])
 def test_native_gain(gst, http_files, processor):
     import array
     require(gst, "souphttpsrc", "wavparse", "volume")
@@ -230,9 +232,7 @@ def test_native_gain(gst, http_files, processor):
     with wave.open(str(folder / "gain.wav"), "wb") as wav:
         wav.setparams((2, 2, 48000, 0, "NONE", "not compressed"))
         wav.writeframes(b"\x10\x27" * 2 * 48000 * 5)  # constant 10000 for this test only
-    profile = file_profile(name="gain", processor=processor or 'NONE', gain_db=-6.020599913,
-                                 basic_config=BasicConfig(highpass_enabled=False, compressor_enabled=False,
-                                                          lowpass_enabled=False, limiter_enabled=False))
+    profile = file_profile(name="gain", gain_db=-6.020599913)
     source = config("HTTP", {"uri": url + "/gain.wav"}).model_copy(update={
         'input_gain_db': -6.020599913, 'processor_mode': 'builtin' if processor else 'bypass',
         'audio_profile_path': 'default/basic.json' if processor else None})
@@ -293,49 +293,15 @@ def test_http_user_agent_on_wire(gst,tmp_path,agent):
         pipeline.stop();server.shutdown();server.server_close();thread.join()
 
 
-@pytest.mark.parametrize("ratio, expected", [
-    (1, [0.01,-0.01,0.8,-0.8,1,-1]),
-    (2, [0.01,-0.01,0.6994427,-0.6994427,0.8127971,-0.8127971]),
-    (4, [0.01,-0.01,0.6491640,-0.6491640,0.7191957,-0.7191957]),
-])
-def test_native_soft_knee_compressor(gst, ratio, expected):
-    import struct
-    require(gst,"appsrc","audiodynamic","appsink")
-    pipeline=gst.Pipeline.new(None)
-    source=gst.ElementFactory.make('appsrc')
-    compressor=gst.ElementFactory.make('audiodynamic')
-    sink=gst.ElementFactory.make('appsink')
-    source.set_property('caps',gst.Caps.from_string('audio/x-raw,format=F32LE,rate=48000,channels=2,layout=interleaved'))
-    source.set_property('format',gst.Format.TIME)
-    compressor.set_property('mode',0)
-    compressor.set_property('characteristics',1)
-    compressor.set_property('threshold',10**(-12/20))
-    compressor.set_property('ratio',1/ratio)
-    sink.set_property('sync',False)
-    for element in (source,compressor,sink):pipeline.add(element)
-    assert source.link(compressor) and compressor.link(sink)
-    try:
-        pipeline.set_state(gst.State.PLAYING)
-        data=struct.pack('<6f',0.01,-0.01,0.8,-0.8,1,-1)
-        buf=gst.Buffer.new_allocate(None,len(data),None)
-        buf.fill(0,data)
-        assert source.emit('push-buffer',buf)==gst.FlowReturn.OK
-        source.emit('end-of-stream')
-        sample=sink.emit('try-pull-sample',2*gst.SECOND)
-        assert sample is not None
-        buf=sample.get_buffer()
-        assert struct.unpack('<6f',buf.extract_dup(0,buf.get_size()))==pytest.approx(expected,abs=2e-6)
-    finally:pipeline.set_state(gst.State.NULL)
-
-
-def test_basic_native_chain_and_float_domain(gst,http_files):
-    require(gst,'audiocheblimit','equalizer-3bands','audiodynamic','rglimiter','souphttpsrc','wavparse')
+def test_modular_native_chain_and_float_domain(gst,http_files):
+    require(gst,'audiocheblimit','souphttpsrc','wavparse')
     import math, struct
     folder,url=http_files
     with wave.open(str(folder/'basic.wav'),'wb') as wav:
         wav.setparams((1,2,44100,0,'NONE','not compressed'))
         wav.writeframes(b''.join(struct.pack('<h',int(12000*math.sin(i*2*math.pi*1000/44100))) for i in range(44100*4)))
-    profile=file_profile(name='Basic',processor='GST_BASIC',gain_db=-3)
+    profile=file_profile(name='Filters', gain_db=-3)
+    for stage in ('hpf', 'lpf'): profile.stages[stage].selected = 'CHEBYSHEV'
     source = config('HTTP',{'uri':url+'/basic.wav'}).model_copy(update={
         'processor_mode': 'builtin', 'audio_profile_path': 'default/basic.json'})
     pipeline=GstPipeline(source,profile=profile,reconnect=False)
@@ -349,7 +315,7 @@ def test_basic_native_chain_and_float_domain(gst,http_files):
         while element is not None:
             factory=element.get_factory()
             factories.append(factory.get_name())
-            if factory.get_name() in ('volume','audiocheblimit','equalizer-3bands','audiodynamic','rglimiter'):
+            if factory.get_name() in ('volume','audiocheblimit'):
                 caps=element.get_static_pad('sink').get_current_caps()
                 with caps_structure(caps) as structure:
                     assert structure.get_string('format')=='F32LE'
@@ -359,31 +325,32 @@ def test_basic_native_chain_and_float_domain(gst,http_files):
             peer=pad.get_peer() if pad else None
             element=peer.get_parent_element() if peer else None
         assert factories==['audioconvert','audioresample','capsfilter','volume','volume','audiocheblimit',
-                           'equalizer-3bands','audiodynamic','volume','audiocheblimit','rglimiter','volume',
+                           'volume','audiocheblimit','volume',
                            'audioconvert','capsfilter','queue','appsink']
     finally:pipeline.stop()
 
 
-def test_none_does_not_construct_basic(gst):
+def test_off_does_not_construct_processors(gst):
     from unittest.mock import patch
     pipeline=GstPipeline(config('UDP',{'port':54321,'format':'S16LE','sample_rate':48000,'channels':2}).model_copy(
         update={'processor_mode': 'builtin', 'audio_profile_path': 'default/basic.json'}),
                          profile=file_profile(name='None',gain_db=-3))
     pipeline.Gst=gst
     make=gst.ElementFactory.make
-    with patch.object(gst.ElementFactory,'make',side_effect=lambda name,*args: (_ for _ in ()).throw(AssertionError('DSP instantiated')) if name in ('rglimiter','audiodynamic','audiocheblimit','equalizer-3bands') else make(name,*args)):
+    with patch.object(gst.ElementFactory,'make',side_effect=lambda name,*args: (_ for _ in ()).throw(AssertionError('DSP instantiated')) if name in ('audiocheblimit','lsp-plug-in-plugins-lv2-limiter-stereo') else make(name,*args)):
         pipeline._build()
     pipeline._pipeline.set_state(gst.State.NULL)
 
 
-def test_missing_basic_plugin_fails_explicitly(gst):
+def test_missing_filter_plugin_fails_explicitly(gst):
     from unittest.mock import patch
     pipeline=GstPipeline(config('UDP',{'port':54321,'format':'S16LE','sample_rate':48000,'channels':2}).model_copy(
         update={'processor_mode': 'builtin', 'audio_profile_path': 'default/basic.json'}),
-                         profile=file_profile(name='Basic',processor='GST_BASIC'))
+                         profile=file_profile(name='Filters'))
+    pipeline.profile.stages['hpf'].selected = 'CHEBYSHEV'
     pipeline.Gst=gst
     make=gst.ElementFactory.make
-    with patch.object(gst.ElementFactory,'make',side_effect=lambda name,*args:None if name=='rglimiter' else make(name,*args)):
-        with pytest.raises(DependencyUnavailable,match='Missing GStreamer element: rglimiter'):
+    with patch.object(gst.ElementFactory,'make',side_effect=lambda name,*args:None if name=='audiocheblimit' else make(name,*args)):
+        with pytest.raises(DependencyUnavailable,match='Missing GStreamer element: audiocheblimit'):
             pipeline._build()
     pipeline._pipeline.set_state(gst.State.NULL)

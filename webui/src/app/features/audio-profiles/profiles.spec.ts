@@ -7,17 +7,17 @@ import { ProfileEditor } from './profile-editor';
 import { AudioProfile, ProfileResult, DspDescription } from './profile-api';
 const base = '/api/v1/audio-profiles/files';
 const description: DspDescription = {
-  template: { schema_version: 2, name: '', compatibility: null, stages: {} },
+  template: { schema_version: 1, name: '', stages: {} },
   stages: [
     { key: 'input_gain', label: 'Profile Input Gain', choices: ['VOLUME'] },
     { key: 'hpf', label: 'HPF', choices: ['OFF', 'CHEBYSHEV'] },
-    { key: 'gate', label: 'Gate / Expander', choices: ['OFF', 'DYNAMIC'] },
+    { key: 'gate', label: 'Gate / Expander', choices: ['OFF', 'LSP_EXPANDER', 'LSP_GATE'] },
     { key: 'agc', label: 'AGC / Leveller', choices: ['OFF', 'LSP_AGC'] },
-    { key: 'eq', label: 'EQ', choices: ['OFF', 'EQ'] },
-    { key: 'wideband', label: 'Wideband Compressor', choices: ['OFF', 'DYNAMIC'] },
-    { key: 'multiband', label: 'Multiband Compressor', choices: ['OFF'] },
+    { key: 'eq', label: 'EQ', choices: ['OFF', 'LSP_EQ'] },
+    { key: 'wideband', label: 'Wideband Compressor', choices: ['OFF', 'LSP_COMPRESSOR'] },
+    { key: 'multiband', label: 'Multiband Compressor', choices: ['OFF', 'LSP_MULTIBAND'] },
     { key: 'master_gain', label: 'Master Gain', choices: ['VOLUME'] },
-    { key: 'limiter', label: 'Limiter', choices: ['OFF'] },
+    { key: 'limiter', label: 'Limiter', choices: ['OFF', 'LSP_LIMITER'] },
     { key: 'lpf', label: 'LPF', choices: ['OFF', 'CHEBYSHEV'] },
     { key: 'output_trim', label: 'Output Trim', choices: ['TRIM'] },
   ],
@@ -51,16 +51,16 @@ const description: DspDescription = {
         },
       },
     },
-    DYNAMIC: {
-      label: 'Basic dynamics',
+    LSP_EXPANDER: {
+      label: 'LSP Expander Stereo',
       available: true,
       reason: null,
-      defaults: { threshold_dbfs: -12, ratio: 0.5, knee: 'soft' },
+      defaults: { threshold_dbfs: -12, ratio: 4, attack_ms: 20 },
       schema: {
         properties: {
           threshold_dbfs: { type: 'number', title: 'Threshold (dBFS)', minimum: -120, maximum: 0 },
-          ratio: { type: 'number', title: 'Amplitude slope' },
-          knee: { enum: ['hard', 'soft'], title: 'Knee' },
+          ratio: { type: 'number', title: 'Ratio (N:1)' },
+          attack_ms: { type: 'number', title: 'Attack (ms)' },
         },
       },
     },
@@ -71,11 +71,11 @@ const description: DspDescription = {
       defaults: { short_grow_enabled: false },
       schema: { properties: { short_grow_enabled: { type: 'boolean' } } },
     },
-    EQ: {
-      label: 'GStreamer equalizer',
+    LSP_EQ: {
+      label: 'LSP Parametric EQ x16 Stereo',
       available: true,
       reason: null,
-      defaults: { bands: [{ frequency_hz: 1000, gain_db: 0, bandwidth_hz: 100 }] },
+      defaults: { bands: [{ frequency_hz: 1000, gain_db: 0, q: 1 }] },
       schema: {
         properties: {
           bands: { type: 'array', minItems: 0, maxItems: 16, items: { $ref: '#/$defs/Band' } },
@@ -85,15 +85,21 @@ const description: DspDescription = {
             properties: {
               frequency_hz: { type: 'number', default: 1000, title: 'Frequency (Hz)' },
               gain_db: { type: 'number', default: 0, title: 'Gain (dB)' },
-              bandwidth_hz: { type: 'number', default: 100, title: 'Bandwidth (Hz)' },
+              q: { type: 'number', default: 1, title: 'Q' },
             },
           },
         },
       },
     },
   },
-  blocked: { multiband: ['Load verification pending'] },
 };
+// The generic field component has detailed AGC/EQ/multiband coverage separately.
+for (const [key, label] of Object.entries({ LSP_GATE: 'LSP Gate Stereo',
+  LSP_COMPRESSOR: 'LSP Compressor Stereo', LSP_MULTIBAND: 'LSP Multiband Compressor x8 Stereo',
+  LSP_LIMITER: 'LSP Limiter Stereo' })) {
+  description.implementations[key] = { label, available: true, reason: null,
+    defaults: {}, schema: { properties: {} } };
+}
 for (const stage of description.stages) {
   description.template.stages[stage.key] = {
     selected: stage.choices[0],
@@ -231,7 +237,7 @@ describe('File Audio Profiles', () => {
     const pending = c.save();
     void c.save();
     const req = http.expectOne(base + '/custom');
-    expect(req.request.body.schema_version).toBe(2);
+    expect(req.request.body.schema_version).toBe(1);
     expect(Object.keys(req.request.body.stages)).toHaveLength(11);
     expect(c.canLeave()).toBe(false);
     req.flush(profile);
@@ -310,37 +316,41 @@ describe('File Audio Profiles', () => {
   it('shows eleven sections, native units and unavailable selections honestly', async () => {
     const f = await editor(),
       c = f.componentInstance;
-    c.select('gate', 'DYNAMIC');
+    c.select('gate', 'LSP_EXPANDER');
     f.detectChanges();
     await f.whenStable();
     f.detectChanges();
     expect(f.nativeElement.querySelectorAll('details.stage')).toHaveLength(11);
-    expect(f.nativeElement.textContent).toContain('Amplitude slope');
-    expect(f.nativeElement.textContent).not.toContain('Attack (ms)');
+    expect(f.nativeElement.textContent).toContain('Ratio (N:1)');
+    expect(f.nativeElement.textContent).toContain('Attack (ms)');
     const unavailable = f.nativeElement.querySelector('option[value="LSP_AGC"]');
     expect(unavailable.disabled).toBe(true);
     expect(unavailable.textContent).toContain('unavailable');
     const trim = f.nativeElement.querySelectorAll('details.stage')[10].querySelector('input');
     expect(trim.max).toBe('0');
+    const choices = Array.from(f.nativeElement.querySelectorAll('option') as NodeListOf<HTMLOptionElement>).map(o => o.value);
+    expect(new Set(choices)).toEqual(new Set(['OFF', 'CHEBYSHEV', 'LSP_EXPANDER',
+      'LSP_GATE', 'LSP_AGC', 'LSP_EQ', 'LSP_COMPRESSOR', 'LSP_MULTIBAND', 'LSP_LIMITER']));
+    expect(f.nativeElement.textContent).not.toContain('Inherited');
   });
-  it('EQ Add/Remove changes only that implementation and preserves Bandwidth units', async () => {
+  it('EQ Add/Remove changes only that implementation and preserves Q units', async () => {
     const f = await editor(),
       c = f.componentInstance;
-    c.select('eq', 'EQ');
+    c.select('eq', 'LSP_EQ');
     f.detectChanges();
     await f.whenStable();
     f.detectChanges();
     const eq = f.nativeElement.querySelectorAll('details.stage')[4];
-    expect(eq.textContent).toContain('Bandwidth (Hz)');
+    expect(eq.textContent).toContain('Q');
     const add = Array.from(eq.querySelectorAll('button') as NodeListOf<HTMLButtonElement>).find(
       (b) => b.textContent?.trim() === 'Add band',
     )!;
     add.click();
     f.detectChanges();
-    expect(c.document!.stages['eq'].implementations['EQ']['bands']).toHaveLength(2);
+    expect(c.document!.stages['eq'].implementations['LSP_EQ']['bands']).toHaveLength(2);
     (eq.querySelector('button') as HTMLButtonElement).click();
     f.detectChanges();
-    expect(c.document!.stages['eq'].implementations['EQ']['bands']).toHaveLength(1);
+    expect(c.document!.stages['eq'].implementations['LSP_EQ']['bands']).toHaveLength(1);
     expect(c.form.dirty).toBe(true);
   });
 });

@@ -51,20 +51,15 @@ for other local users. Symlinks/junctions in profile paths are rejected, includi
 root/ancestor links. Logical names are restricted to `default|custom` plus one
 ASCII alphanumeric/underscore/hyphen filename ending in `.json`. No arbitrary paths.
 
-## JSON schema 2 (schema 1 accepted for migration)
+## JSON schema 1
 
-The current structured schema, stage mappings and compatibility rules are documented
-in [Modular DSP implementation](modular-dsp-implementation.md). All eleven stages
-use selected/implementation settings. New profiles use the fixed approved order;
-version-1 documents are strictly validated and converted on read without changing
-the original file. GET/Create/Clone/Save responses return normalized version 2.
-Save/Clone publish version 2; stable paths and shared Source references do not change.
-
-The shipped [basic.json](../audio-profiles/default/basic.json) remains unchanged as
-a version-1 compatibility fixture. Its actual HPF/EQ/compressor/LPF/limiter sound
-is retained using `compatibility: "gst_basic_v1"`, including LPF before limiter.
-New profiles have no compatibility marker and use limiter before LPF. The DB
-schema version is independent and unchanged by modular DSP.
+The current eleven-stage modular structure is the first and only supported profile
+schema. See [Modular DSP implementation](modular-dsp-implementation.md) for exact
+fields, mappings and stage order. Historical two-stage documents, version 2,
+compatibility metadata and deleted implementation identifiers are rejected.
+There is no conversion on read or write. Save/Clone return version 1 at stable paths.
+The shipped `default/basic.json` is a filter-only modular starting point, not a
+preserved historical processing chain or the operator's tuned custom preset.
 
 ## REST
 
@@ -75,7 +70,7 @@ All paths below start with `/api/v1/audio-profiles/files`. The old numeric-ID `/
 | GET empty suffix | List both roots |
 | GET `/dsp` | Neutral template, stage schemas and local plugin availability |
 | GET `/{kind}/{filename}` | Read validated profile |
-| POST `/custom` | Create, body = structured schema-2 document (v1 accepted) |
+| POST `/custom` | Create, body = structured schema-1 document |
 | PUT `/custom/{filename}` | Replace complete custom document |
 | POST `/{kind}/{filename}/clone` | Clone, body = `{"name":"New name"}` |
 | DELETE `/custom/{filename}` | Delete; 204 |
@@ -85,7 +80,7 @@ mutation with 403 `READ_ONLY_PROFILE`. Create/clone return 201; get/save return 
 
 ```text
 {name, path: "custom/my_profile_<timestamp>.json", kind: "custom",
- profile: {schema_version: 2, name, compatibility, stages: { /* eleven stages */ }}}
+ profile: {schema_version: 1, name, stages: { /* eleven stages */ }}}
 ```
 
 The `profile` member is the full validated object, not JSON text. List returns an array of the same
@@ -135,44 +130,25 @@ switching to Bypass or stopping unrelated TXs. Already-running native pipelines 
 their last loaded settings until an explicit restart/Save; no file watcher or live
 parameter mutation is implemented.
 
-## Database schema 2 migration
+## Database schema 1
 
-Startup transactionally migrates schema 1, preserving Source IDs/config/URLs,
-modulator references, desired state and all unrelated configuration. Sources without
-profiles become Bypass/0 dB. Referenced gain-only profiles become Bypass with their
-gain moved to Source Gain. Referenced default GST Basic profiles become Built-in
-`default/basic.json`, with their old gain moved to Source Gain (profile gain is 0).
-
-Any unresolved/inconsistent reference, unknown settings/processor, non-default saved
-Basic settings, or unreferenced profile row blocks the migration **without changing
-the database**. No arbitrary user profile is silently discarded. Back up the DB and
-explicitly export/resolve such data before retrying; this iteration does not provide
-a general legacy-preset importer. The local development DB was inspected read-only:
-schema 1, zero Sources, zero profiles. It was not migrated by development tooling.
-
-Only migration code refers to the old table/foreign key; no permanent compatibility
-runtime is retained. Fresh databases use schema 2 directly. File JSON uses schema 2; strict schema-1 read compatibility remains.
-Install the shipped defaults before running migrated Built-in Sources.
+Fresh databases directly create the current Sources/Modulators/SystemConfig layout
+as version 1, including the fixed-modulator triggers and Source ID sequence.
+There are no profile rows or Source profile foreign keys. Source mode, gain and
+stable file path remain in Source JSON. Unsupported versions and incorrect structures
+fail explicitly without conversion. There is no runtime migration machinery.
 
 ## Validation and limitations
 
 Tests cover file CRUD, strict content/path validation, collision/atomic writes,
-reference protection, migration rollback, JSON-to-pipeline settings, independent
+reference protection, direct schema creation, JSON-to-pipeline settings, independent
 gains, shared output ownership, audio-only restart, partial results and UI behavior.
 Native GStreamer tests verify gains and negotiated DSP ordering where GI/plugins
 are available; mock/builder tests do not establish acoustic or hardware results.
 No physical RF/audio testing, deployment or flash was performed.
 
-Deferred: Stereo Tool runtime/presets, blocked DSP options, live editing and
-automatic external-file reload. The Basic path keeps its existing F32LE DSP domain
+Deferred: Stereo Tool runtime/presets, live editing and
+automatic external-file reload. The processing path uses F32LE DSP domain
 and S16LE/48 kHz/stereo output; no general float-domain redesign was introduced.
 
-Previous file-profile integration results (historical): full daemon suite **619 passed / 32 skipped**; final focused
-file/profile/migration/Basic suite **94 passed / 1 skipped** (including the final
-Source ID high-water preservation case). Full frontend suite **160 passed**;
-TypeScript typecheck, production WebUI build and `git diff --check` passed.
-Skipped dependencies: 25 native GStreamer tests, five Linux mux tests, one Linux
-I2C test and one Windows symlink-creation test. Existing Starlette/httpx deprecation
-warning remains. No physical RF/audio testing was performed.
-
-Current modular DSP validation and Pi measurements are recorded in [the implementation report](modular-dsp-implementation.md).
+Current validation is recorded in [pre-production cleanup](preproduction-schema-cleanup.md).

@@ -57,7 +57,7 @@ source directory. `muxd/` contains the C++ daemon; `systemd/` contains M6A servi
 The [file Audio Profile system](docs/audio-profile-files.md) integrates shared JSON
 profiles with Source selection, the WebUI and modular native/LSP DSP. See
 [implemented mappings, dependencies and limits](docs/modular-dsp-implementation.md). Install its read-only JSON defaults separately as documented there, or use
-`--audio-profiles-default-dir ./audio-profiles/default` in development. The old DB profile entity is removed by guarded schema-2 migration; see that document
+`--audio-profiles-default-dir ./audio-profiles/default` in development. Profiles are files; SQLite and modular JSON use their current structures as schema 1. See that document
 before upgrading populated databases.
 
 ## Try the API
@@ -178,12 +178,11 @@ Milestone 7A Angular Dashboard: [development and validation](docs/milestone7a.md
 
 
 Milestone 7B1 Sources UI and final validation: [documentation](docs/milestone7b1.md).
-Current SQLite schema is **2**. Fresh databases seed Modulators 0..7 and
-SystemConfig; Sources start empty and Audio Profiles are shared JSON files.
-Schema 1 converts transactionally only when its profile data can be preserved by
-the supported mapping. Unexpected profiles/references block migration without
-changing the database. Back up populated databases before upgrading; see
-[file profile migration](docs/audio-profile-files.md) and architecture section 16.4.
+Current SQLite schema is **1**. Fresh databases directly seed Modulators 0..7 and
+SystemConfig; Sources start empty and Audio Profiles are shared modular JSON files
+with `schema_version: 1`. There is no development-format migration or compatibility
+path. Unsupported versions/structures fail explicitly. See
+[file profiles](docs/audio-profile-files.md) and architecture section 16.4.
 
 Modulator RF/Audio/RDS editor: [Milestone 7B2](docs/milestone7b2.md).
 

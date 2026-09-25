@@ -95,9 +95,8 @@ backend suite emitted two dependency deprecation warnings, with no failures.
 
 ## Database format
 
-System diagnostics report database schema version 1, the current pre-V1 format.
-Startup initializes an empty database directly, opens current version 1 without
-rewriting saved configuration, and rejects any other nonzero version with
-instructions to recreate the development database. No released database format
-exists yet. See architecture section 16.4 for the pre-release reset and future
-released-format migration policy.
+System diagnostics report database schema version 1, the current first-release
+structure. Startup creates empty databases directly, opens current databases without
+rewriting saved configuration, and rejects unsupported versions or incorrect
+structures. There is no runtime migration or development-format compatibility.
+See architecture section 16.4.

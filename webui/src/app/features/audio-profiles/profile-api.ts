@@ -42,12 +42,10 @@ export interface DspDescription {
       defaults: Record<string, any>;
     }
   >;
-  blocked: Record<string, string[]>;
 }
 export interface ProfileDraft {
-  schema_version: 2;
+  schema_version: 1;
   name: string;
-  compatibility: 'gst_basic_v1' | null;
   stages: Record<string, DspStage>;
 }
 export interface AudioProfile {

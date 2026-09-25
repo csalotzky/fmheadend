@@ -9,7 +9,7 @@ import time
 from ..errors import DependencyUnavailable
 from ..models.configuration import SourceType, SourceTestResult
 from .output import PCM_CAPS, PcmQueue, PcmOutput
-from .basic import PROCESSING_CAPS
+from .dsp import PROCESSING_CAPS
 from .dsp import dsp_stages
 
 log = logging.getLogger(__name__)

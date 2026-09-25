@@ -339,7 +339,7 @@ A capture formátumot a GStreamer normalizálja a fix belső PCM contractra.
 Audio Profiles are shared versioned JSON files, not database entities. Defaults
 are Git-tracked/read-only; custom profiles live in persistent application data.
 See [file Audio Profiles](audio-profile-files.md) for paths, schema, REST API,
-transactional DB migration and audio restart/error semantics.
+direct schema-1 creation and audio restart/error semantics.
 
 Sources persist `processor_mode` (`bypass`, `builtin`, `stereotool`), Source Gain
 `input_gain_db`, and a single stable relative `audio_profile_path`. Bypass requires
@@ -347,8 +347,7 @@ null path and still applies Source Gain. Built-in loads/validates its selected J
 Source decode -> Source Gain -> fixed eleven-stage Built-in DSP ->
 fixed PCM output. Stereo Tool is explicitly unavailable, with no silent fallback.
 
-The inherited Basic settings/order remain as in M7B4 through explicit v1 compatibility.
-New JSON schema-2 profiles use the approved eleven-stage order. Selected implementation
+JSON schema-1 profiles use the current eleven-stage order with no compatibility exceptions. Selected implementation
 and saved settings are independent. Native/LSP adapters and measured limitations are
 recorded in [Modular DSP implementation](modular-dsp-implementation.md); the canonical
 design is [Audio processing](fmheadend-audio-processing.md).
@@ -1623,16 +1622,15 @@ Ajánlott:
 
 ## 16.4 Schema version
 
-The current SQLite format is schema version 2. Tables are sources, modulators and
+The current SQLite format is schema version 1. Tables are sources, modulators and
 system_config, plus sqlite_sequence for Source IDs. Modulators reference Sources
 with ON DELETE RESTRICT. Fixed 0..7 IDs, delete/ID-update triggers and startup
 validation remain. No AudioProfile table or Source profile FK remains.
 
-Schema 1 is upgraded by a single transactional conversion described in
-[audio-profile-files.md](audio-profile-files.md). It preserves Sources, gains,
-representable default Basic behavior and TX references; unexpected profiles or
-unresolved references block conversion with the original DB intact. Unsupported
-versions are never silently reset. No general migration framework is introduced.
+Fresh databases directly create this structure with version 1. There is no runtime
+migration or support for earlier development structures. Unsupported version markers
+and incorrect physical structures fail explicitly without changing the database.
+Audio Profile JSON independently uses the current modular structure as version 1.
 
 ---
 

@@ -1,9 +1,9 @@
-"""Fixed-order stereo processing, with explicit legacy Basic compatibility."""
+"""Fixed-order stereo processing for the first-release modular profile."""
 import math
 from ..models.dsp import IMPLEMENTATIONS, STAGES, neutral_stages
 from ..errors import DependencyUnavailable
 
-BLOCKED = {'SINC': 'Target GStreamer 1.26.2 sinc tests produced intermittent non-finite/huge output; disabled pending native investigation'}
+PROCESSING_CAPS = "audio/x-raw,format=F32LE,rate=48000,channels=2,layout=interleaved"
 
 
 def linear(db):
@@ -25,17 +25,12 @@ def dsp_stages(make, profile):
                     raise DependencyUnavailable(f'{factory}.{key}: requested {value}, native readback {actual}')
         return element
     order = list(STAGES)
-    if profile.compatibility == 'gst_basic_v1':
-        order.remove('lpf')
-        order.insert(order.index('limiter'), 'lpf')
     result = []
     for stage in order:
         selection = profile.stages[stage]
         name = selection.selected
         if name == 'OFF':
             continue
-        if name in BLOCKED:
-            raise DependencyUnavailable(BLOCKED[name])
         p = selection.implementations[name]
         factory = IMPLEMENTATIONS[name][1]
         if name in ('VOLUME', 'TRIM'):
@@ -43,27 +38,6 @@ def dsp_stages(make, profile):
         elif name == 'CHEBYSHEV':
             props = dict(mode=1 if stage == 'hpf' else 0, cutoff=p['cutoff_hz'], poles=p['poles'],
                          type=p['type'], ripple=p['ripple_db'])
-        elif name == 'SINC':
-            props = dict(mode=0, cutoff=p['cutoff_hz'], length=p['length'], window=p['window'],
-                         low_latency=p['low_latency'], drain_on_changes=p['drain_on_changes'])
-        elif name == 'DYNAMIC':
-            props = dict(mode=1 if stage == 'gate' else 0, threshold=linear(p['threshold_dbfs']),
-                         ratio=p['ratio'], characteristics=0 if p['knee'] == 'hard' else 1)
-        elif name == 'LEGACY_EQ':
-            props = dict(band0=p['low_db'], band1=p['mid_db'], band2=p['high_db'])
-        elif name == 'EQ':
-            if not p['bands']:
-                continue
-            element = make(factory, num_bands=len(p['bands']))
-            for index, band in enumerate(p['bands']):
-                child = element.get_child_by_index(index)
-                for prop, value in dict(freq=band['frequency_hz'], gain=band['gain_db'],
-                                        bandwidth=band['bandwidth_hz'], type=band['type']).items():
-                    child.set_property(prop, value)
-            result.append(element)
-            continue
-        elif name == 'RGLIMITER':
-            props = dict(enabled=True)
         elif name in ('LSP_COMPRESSOR', 'LSP_EXPANDER'):
             props = dict(enabled=True, al=linear(p['threshold_dbfs']), at=p['attack_ms'], rt=p['release_ms'],
                          kn=linear(-p['knee_db']), mk=linear(p['makeup_db']), hold=p['hold_ms'],
@@ -126,11 +100,11 @@ def editor_description():
         Gst = None
     implementations = {}
     for key, (model, factory, label) in IMPLEMENTATIONS.items():
-        available = key not in BLOCKED and bool(Gst and Gst.ElementFactory.find(factory))
+        available = bool(Gst and Gst.ElementFactory.find(factory))
         implementations[key] = dict(label=label, factory=factory, available=available,
-            reason=None if available else BLOCKED.get(key, f'GStreamer element unavailable on this daemon: {factory}'),
+            reason=None if available else f'GStreamer element unavailable on this daemon: {factory}',
             schema=model.model_json_schema(), defaults=model().model_dump())
-    return dict(template=dict(schema_version=2, name='', compatibility=None, stages=neutral_stages()),
+    return dict(template=dict(schema_version=1, name='', stages=neutral_stages()),
                 stages=[dict(key=k, label=v[0], choices=v[1]) for k, v in STAGES.items()],
                 implementations=implementations,
                 helpers={
@@ -138,9 +112,7 @@ def editor_description():
                     'hpf': 'Removes very low-frequency content; excessive cutoff can remove musical bass.',
                     'gate': 'Downward expansion reduces quiet content. Gate Reduction attenuates a closed gate; it is not bypass.',
                     'agc': 'Levelling is not peak limiting. Grow/Fall times apply per saved amount (12 dB by default). Quick Grow may raise noise and pump.',
-                    'eq': 'GStreamer Bandwidth is in Hz; LSP uses Q. Remove disables the filter slot; Notch has no gain control.',
-                    'wideband': 'Full-band dynamics, independent of Multiband. Basic uses native amplitude slope, not a conventional N:1 ratio.',
+                    'eq': 'LSP uses Q. Remove disables the filter slot; Notch has no gain control.',
+                    'wideband': 'Full-band dynamics, independent of Multiband.',
                     'multiband': 'Crossovers define active bands. Compressor Bypass preserves the band audio and its saved settings.',
-                },
-                blocked={'agc': ['audioloudnorm: unavailable; no verified installed adapter'],
-                         'multiband': ['Classic mode only. Eight-programme target load measurement pending.']})
+                })

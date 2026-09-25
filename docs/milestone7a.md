@@ -200,4 +200,4 @@ names remain unchanged.
 Fresh schema-1 databases store physical Modulator IDs without a name field. No replacement naming field is introduced. Old development databases are unsupported and may be recreated; see architecture section 16.4.
 
 
-Historical correction validation covered backend identity/API behavior and 20 frontend Dashboard/API tests, with TypeScript checking. The unreleased migration tests have since been removed; current database coverage tests direct schema-1 initialization, reopen, version rejection, and integrity.
+Historical correction validation covered backend identity/API behavior and 20 frontend Dashboard/API tests, with TypeScript checking. current database coverage tests direct schema-1 initialization, reopen, version rejection, and integrity.

@@ -11,7 +11,7 @@ from fmheadendd.app import create_app, argument_parser
 from fmheadendd.audio_profile_files import AudioProfileFiles
 from fmheadendd.config import Settings
 from fmheadendd.errors import DomainError
-from fmheadendd.models.configuration import BasicConfig
+from fmheadendd.models.dsp import neutral_stages
 
 DEFAULT = Path(__file__).resolve().parents[2] / 'audio-profiles/default/basic.json'
 
@@ -31,11 +31,11 @@ def document():
 
 def test_default_and_list(store):
     item = store.get('default/basic.json')
-    assert item.profile.compatibility == 'gst_basic_v1'
-    assert item.profile.stages['wideband'].implementations['DYNAMIC']['ratio'] == 1 / BasicConfig().compressor_ratio
+    assert item.profile.schema_version == 1
+    assert item.profile.stages['wideband'].selected == 'OFF'
     assert item.profile.stages['input_gain'].implementations['VOLUME']['gain_db'] == 0
     assert [x.model_dump() for x in store.list()] == [
-        {'path': 'default/basic.json', 'name': 'GST Basic', 'kind': 'default'}]
+        {'path': 'default/basic.json', 'name': 'Basic', 'kind': 'default'}]
 
 
 def test_crud_clone_stable_name_and_inactive_settings(store):
@@ -44,12 +44,13 @@ def test_crud_clone_stable_name_and_inactive_settings(store):
     data = first.profile.model_dump()
     data['name'] = 'Renamed'
     data['stages']['eq']['selected'] = 'OFF'
-    data['stages']['eq']['implementations']['LEGACY_EQ']['low_db'] = 3
+    data['stages']['eq']['implementations'] = neutral_stages()['eq']['implementations']
+    data['stages']['eq']['implementations']['LSP_EQ']['bands'][0]['gain_db'] = 3
     saved = store.save(first.path, data)
     assert saved.path == first.path and saved.name == 'Renamed'
     cloned = store.clone(saved.path, 'Copy')
     assert cloned.profile.stages['eq'].selected == 'OFF'
-    assert cloned.profile.stages['eq'].implementations['LEGACY_EQ']['low_db'] == 3
+    assert cloned.profile.stages['eq'].implementations['LSP_EQ']['bands'][0]['gain_db'] == 3
     assert len(store.list()) == 3
     store.delete(first.path)
     assert len(store.list()) == 2
@@ -86,15 +87,15 @@ def test_atomic_create_collision_does_not_replace(store, monkeypatch):
 
 
 def test_unknown_implementation_and_gain(store):
-    for stage, changes in [('gain', {'selected': 'AUTO'}),
-                           ('processor', {'selected': 'LSP'}),
-                           ('processor', {'implementations': {'LSP': {}}})]:
+    for stage, changes in [('input_gain', {'selected': 'AUTO'}),
+                           ('wideband', {'selected': 'LSP'}),
+                           ('wideband', {'implementations': {'LSP': {}}})]:
         data = document()
         data['stages'][stage].update(changes)
         with pytest.raises(DomainError):
             store.create(data)
     data = document()
-    data['stages']['gain']['implementations']['GST_VOLUME']['gain_db'] = 21
+    data['stages']['input_gain']['implementations']['VOLUME']['gain_db'] = 21
     with pytest.raises(DomainError):
         store.create(data)
 
@@ -109,15 +110,14 @@ def test_document_validation(store, change):
     assert error.value.error == 'INVALID_PROFILE'
 
 
-@pytest.mark.parametrize('field,value', [('highpass_hz', 25), ('eq_low_db', .1),
-    ('eq_low_db', float('nan')), ('limiter_enabled', 'yes'), ('compressor_ratio', 8),
-    ('compressor_threshold_dbfs', -12.5), ('unknown', 1)])
+@pytest.mark.parametrize('field,value', [('poles', 3), ('cutoff_hz', 24000),
+    ('cutoff_hz', float('nan')), ('type', 'yes'), ('ripple_db', -1), ('unknown', 1)])
 def test_settings_invalid_before_replace(store, field, value):
     item = store.create(document())
     path = store.roots['custom'] / item.path.split('/')[1]
     before = path.read_bytes()
     data = document()
-    data['stages']['processor']['implementations']['GST_BASIC'][field] = value
+    data['stages']['hpf']['implementations']['CHEBYSHEV'][field] = value
     with pytest.raises(DomainError):
         store.save(item.path, data)
     assert path.read_bytes() == before
@@ -224,7 +224,7 @@ def test_file_api(store, tmp_path):
         assert api.put(base + '/default/basic.json', json=document()).status_code == 405
         assert api.delete(base + '/default/basic.json').status_code == 405
         invalid = copy.deepcopy(document())
-        invalid['stages']['processor']['implementations']['GST_BASIC']['limiter_enabled'] = 'yes'
+        invalid['stages']['hpf']['implementations']['CHEBYSHEV']['limiter_enabled'] = 'yes'
         assert api.post(base + '/custom', json=invalid).status_code == 422
         assert api.delete(base + '/' + path).status_code == 204
         assert api.get(base + '/' + path).status_code == 404

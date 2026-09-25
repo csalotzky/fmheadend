@@ -362,7 +362,7 @@ The existing `FMHEADEND_ARGS` environment entry can include `--region 1` and
 no Node server or extra systemd service is needed. Region 1 is the default.
 See [M7B5](milestone7b5.md) for the production hosting procedure.
 
-## File Audio Profile saves (schema 2 integration)
+## File Audio Profile saves (schema 1)
 
 Profile PUT shares the existing control executor. After validation and atomic save,
 it restarts only active Sources selecting that file, preserving consumer sets and
@@ -370,7 +370,7 @@ PCM output objects. It never invokes ModulatorManager START/STOP, changes desire
 state/STOP ALL holds, or calls QN/RDS control. Source teardown failure retains
 ownership; saved-file/restart failure is a partial outcome, not failed RF control.
 Source configuration edits retain their existing stop-before-edit guard.
-See [file profiles](audio-profile-files.md) for migration and API response details.
+See [file profiles](audio-profile-files.md) for schema and API response details.
 
 Modular DSP retains this audio-only lifecycle; see [implementation](modular-dsp-implementation.md).
 JSON profile version 2 does not change the SQLite schema or TX recovery rules.

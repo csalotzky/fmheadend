@@ -60,9 +60,8 @@ def test_modular_editor_metadata_uses_existing_api_family(api):
     result=api.get(BASE+'dsp')
     assert result.status_code==200
     data=result.json()
-    assert data['template']['schema_version']==2 and len(data['stages'])==11
-    assert data['implementations']['SINC']['available'] is False
-    assert 'sinc tests' in data['implementations']['SINC']['reason']
+    assert data['template']['schema_version']==1 and len(data['stages'])==11
+    assert set(data['implementations']) == {'VOLUME','TRIM','CHEBYSHEV','LSP_EXPANDER','LSP_GATE','LSP_AGC','LSP_EQ','LSP_COMPRESSOR','LSP_MULTIBAND','LSP_LIMITER'}
 
 def start(api, sid, tx):
     assert api.patch(f'/api/v1/modulators/{tx}', json={'input_source_id': sid, 'frequency_khz': 98100}).status_code == 200
@@ -99,7 +98,7 @@ def test_save_restarts_shared_audio_only_and_preserves_pcm_identity(api):
         setattr(services.rp, name, spy)
         spies.append(spy)
     data = document()
-    data['stages']['gain']['implementations']['GST_VOLUME']['gain_db'] = -3
+    data['stages']['input_gain']['implementations']['VOLUME']['gain_db'] = -3
     result = api.put(BASE + path, json=data)
     assert result.status_code == 200 and result.json()['applied'] is True
     for sid in (a, b):
@@ -146,11 +145,11 @@ def test_saved_but_restart_failed_keeps_file_and_ownership(api, failure):
 
 def test_plugin_preflight_precedes_save(api, monkeypatch):
     path = api.post(BASE + 'custom', json=document()).json()['path']
-    def missing(profile): raise DependencyUnavailable('Missing GStreamer element: rglimiter')
+    def missing(profile): raise DependencyUnavailable('Missing GStreamer element: audiocheblimit')
     monkeypatch.setattr(FakePipeline, 'validate_profile', missing)
     response = api.put(BASE + path, json={**document(), 'name': 'Not saved'})
     assert response.status_code == 503 and response.json()['error'] == 'PROFILE_PLUGIN_UNAVAILABLE'
-    assert api.get(BASE + path).json()['name'] == 'GST Basic'
+    assert api.get(BASE + path).json()['name'] == 'Basic'
 
 
 def test_missing_invalid_stereotool_fail_closed(api):
@@ -189,8 +188,8 @@ def test_invalid_running_profile_reports_source_only(api):
 def test_actual_gst_builder_gains_and_json_stages(tmp_path, builtin):
     files = AudioProfileFiles(DEFAULT, tmp_path)
     doc = document()
-    doc['stages']['gain']['implementations']['GST_VOLUME']['gain_db'] = -3
-    doc['stages']['processor']['implementations']['GST_BASIC']['highpass_hz'] = 80
+    doc['stages']['input_gain']['implementations']['VOLUME']['gain_db'] = -3
+    doc['stages']['hpf']['implementations']['CHEBYSHEV']['cutoff_hz'] = 80
     saved = files.create(doc)
     db = Database(':memory:')
     source = db.save('sources', InputSourceConfig(**SOURCE, input_gain_db=-6,
@@ -214,5 +213,5 @@ def test_actual_gst_builder_gains_and_json_stages(tmp_path, builtin):
         assert next(e for e in elements if e.factory == 'audiocheblimit').props['cutoff'] == 80
         assert [e.factory for e in links[0]][3:6] == ['volume', 'volume', 'audiocheblimit']
     else:
-        assert not any(e.factory in ('audiocheblimit', 'equalizer-3bands', 'audiodynamic', 'rglimiter') for e in elements)
+        assert not any(e.factory in ('audiocheblimit', 'lsp-plug-in-plugins-lv2-limiter-stereo') for e in elements)
     db.close()

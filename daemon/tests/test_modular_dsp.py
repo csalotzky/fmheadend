@@ -1,25 +1,17 @@
-import copy
-import json
-from pathlib import Path
 import pytest
 from pydantic import ValidationError
 from fmheadendd.models.audio_profile_file import AudioProfileFile
 from fmheadendd.models.dsp import STAGES, IMPLEMENTATIONS, neutral_stages
-from fmheadendd.sources.basic import basic_stages
-from fmheadendd.models.configuration import BasicConfig
 from fmheadendd.sources.dsp import dsp_stages, editor_description
 
 
 def profile():
-    return dict(schema_version=2, name='Neutral', compatibility=None, stages=neutral_stages())
+    return dict(schema_version=1, name='Neutral', stages=neutral_stages())
 
 
 class Element:
     def __init__(self, factory, props):
-        self.factory, self.props, self.bands = factory, props, {}
-    def get_child_by_index(self, index):
-        return self.bands.setdefault(index, Element('band', {}))
-    def set_property(self, key, value): self.props[key] = value
+        self.factory, self.props = factory, props
 
 
 def build(document):
@@ -31,21 +23,13 @@ def test_fixed_order_and_gain_domains():
     for key, gain in [('input_gain', -3), ('master_gain', 6), ('output_trim', -6)]:
         impl = doc['stages'][key]['selected']
         doc['stages'][key]['implementations'][impl]['gain_db'] = gain
+    doc['stages']['limiter']['selected'] = 'LSP_LIMITER'
     chain = build(doc)
     assert list(AudioProfileFile.model_validate(doc).stages) == list(STAGES)
-    assert [x.factory for x in chain] == ['volume', 'audiocheblimit', 'equalizer-nbands',
-        'volume', 'rglimiter', 'audiocheblimit', 'volume']
+    assert [x.factory for x in chain] == ['volume', 'audiocheblimit',
+        'volume', IMPLEMENTATIONS['LSP_LIMITER'][1], 'audiocheblimit', 'volume']
     assert [e.props['volume'] for e in chain if e.factory == 'volume'] == pytest.approx([10**(-3/20),10**(6/20),10**(-6/20)])
 
-
-def test_legacy_basic_chain_and_values_are_preserved():
-    original = json.loads((Path(__file__).parents[2] / 'audio-profiles/default/basic.json').read_text())
-    before = basic_stages(lambda factory, **p: Element(factory, p), BasicConfig())
-    after = [e for e in build(original) if e.factory != 'volume']
-    assert [(e.factory,e.props) for e in after] == [(e.factory,e.props) for e in before]
-    migrated = AudioProfileFile.model_validate(original)
-    assert migrated.schema_version == 2 and migrated.compatibility == 'gst_basic_v1'
-    assert AudioProfileFile.model_validate(migrated.model_dump()) == migrated
 
 
 def test_hidden_inactive_and_off_settings_preserved():
@@ -60,8 +44,8 @@ def test_hidden_inactive_and_off_settings_preserved():
 
 @pytest.mark.parametrize('stage,impl,key,value', [
     ('output_trim','TRIM','gain_db',.1), ('hpf','CHEBYSHEV','poles',3),
-    ('lpf','SINC','length',100), ('lpf','SINC','cutoff_hz',24000),
-    ('wideband','DYNAMIC','threshold_dbfs','-12'), ('input_gain','VOLUME','gain_db',float('nan')),
+    ('lpf','CHEBYSHEV','cutoff_hz',24000),
+    ('wideband','LSP_COMPRESSOR','threshold_dbfs','-12'), ('input_gain','VOLUME','gain_db',float('nan')),
     ('limiter','LSP_LIMITER','made_up_ceiling',-.5),
 ])
 def test_reject_invalid_including_inactive_settings(stage,impl,key,value):
@@ -75,20 +59,6 @@ def test_incomplete_and_unavailable_schema_rejected():
     doc = profile(); doc['stages']['agc']['selected'] = 'LOUDNORM'
     with pytest.raises(ValidationError): AudioProfileFile.model_validate(doc)
 
-
-def test_basic_dynamics_native_mapping_and_eq_bandwidth():
-    doc=profile(); doc['stages']['gate']['selected']='DYNAMIC'
-    doc['stages']['wideband']['selected']='DYNAMIC'
-    chain=build(doc)
-    dynamic=[e for e in chain if e.factory=='audiodynamic']
-    assert [e.props['mode'] for e in dynamic] == [1,0]
-    assert [e.props['ratio'] for e in dynamic] == [2,.5]
-    assert dynamic[0].props['threshold'] == pytest.approx(10**(-12/20))
-    eq=next(e for e in chain if e.factory=='equalizer-nbands')
-    assert len(eq.bands)==3 and eq.bands[1].props['bandwidth']==1100
-    assert 'q' not in eq.bands[1].props
-    doc['stages']['eq']['implementations']['EQ']['bands']=[]
-    assert not any(e.factory=='equalizer-nbands' for e in build(doc))
 
 
 @pytest.mark.parametrize('stage,impl', [('gate','LSP_GATE'),('gate','LSP_EXPANDER'),
@@ -113,12 +83,6 @@ def test_missing_plugin_is_source_failure_not_bypass(monkeypatch):
     with pytest.raises(DependencyUnavailable, match='Missing GStreamer element'):
         GstPipeline.validate_profile(AudioProfileFile.model_validate(profile()))
 
-
-def test_unreliable_native_sinc_is_blocked_not_substituted():
-    from fmheadendd.errors import DependencyUnavailable
-    doc=profile(); doc['stages']['lpf']['selected']='SINC'
-    with pytest.raises(DependencyUnavailable, match='sinc tests'):
-        build(doc)
 
 
 def test_lsp_eq_remove_disables_slot_and_q_is_not_bandwidth():
@@ -161,7 +125,8 @@ def test_editor_description_matches_every_validated_setting(monkeypatch):
     for key,(model,_,_) in IMPLEMENTATIONS.items():
         assert description['implementations'][key]['defaults']==model().model_dump()
         assert description['implementations'][key]['schema']==model.model_json_schema()
-    assert description['implementations']['SINC']['available'] is False
+    assert set(description['implementations']) == set(IMPLEMENTATIONS)
+    assert description['template']['schema_version'] == 1
 
 
 def test_native_property_clamping_is_not_reported_as_success():
@@ -170,3 +135,36 @@ def test_native_property_clamping_is_not_reported_as_success():
         def get_property(self, key): return .1
     with pytest.raises(DependencyUnavailable, match='native readback'):
         dsp_stages(lambda factory, **p: Clamp(factory,p), AudioProfileFile.model_validate(profile()))
+
+
+@pytest.mark.parametrize('stage,removed', [('gate','DYNAMIC'), ('eq','EQ'),
+    ('eq','LEGACY_EQ'), ('wideband','DYNAMIC'), ('limiter','RGLIMITER'), ('lpf','SINC')])
+def test_deleted_identifiers_rejected_even_when_inactive(stage, removed):
+    assert removed not in IMPLEMENTATIONS
+    assert removed not in STAGES[stage][1]
+    doc = profile()
+    doc['stages'][stage]['selected'] = removed
+    with pytest.raises(ValidationError, match='unsupported implementation'):
+        AudioProfileFile.model_validate(doc)
+    doc['stages'][stage]['selected'] = 'OFF'
+    doc['stages'][stage]['implementations'][removed] = {}
+    with pytest.raises(ValidationError, match='unsupported saved implementation'):
+        AudioProfileFile.model_validate(doc)
+
+
+@pytest.mark.parametrize('change', [{'schema_version': 2}, {'compatibility': None},
+    {'stages': {'gain': {}, 'processor': {}}}])
+def test_only_current_first_release_shape_is_supported(change):
+    with pytest.raises(ValidationError):
+        AudioProfileFile.model_validate(profile() | change)
+
+
+def test_all_surviving_settings_roundtrip_without_retuning():
+    doc = profile()
+    doc['stages']['limiter']['implementations']['LSP_LIMITER'].update(threshold_dbfs=-3., alr_release_ms=72.)
+    doc['stages']['eq']['implementations']['LSP_EQ']['bands'][0].update(q=.7, gain_db=.75)
+    doc['stages']['agc']['implementations']['LSP_AGC'].update(long_grow_ms=10000., maximum_gain_db=6.)
+    doc['stages']['master_gain']['implementations']['VOLUME']['gain_db'] = 18.
+    for key, (_, choices) in STAGES.items():
+        if 'OFF' in choices: doc['stages'][key]['selected'] = 'OFF'
+    assert AudioProfileFile.model_validate(doc).model_dump() == doc

@@ -168,7 +168,7 @@ M6B work was added. Physical RP/QN transmission is not tested.
 
 Review corrected the analog startup cache (source_state is null even before an
 unavailable RP can restore configuration), removed imports made obsolete by analog
-source removal, and consolidated stale README/milestone statements. Historical migration tests have since been removed by the pre-V1 format reset. Current database tests cover direct initialization, unchanged reopen and integrity. The wire protocol is unchanged.
+source removal, and consolidated stale README/milestone statements. Current database tests cover direct initialization, unchanged reopen and integrity. The wire protocol is unchanged.
 
 | Check | Passed | Failed | Skipped |
 |---|---:|---:|---:|

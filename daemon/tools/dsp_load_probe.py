@@ -66,7 +66,7 @@ with tempfile.TemporaryDirectory(prefix='fmheadend-dsp-load-') as directory:
             stages['multiband']['selected']='LSP_MULTIBAND' if heavy else 'OFF'
             if heavy:
                 for band in stages['multiband']['implementations']['LSP_MULTIBAND']['bands']: band['ratio']=4.
-            profile=AudioProfileFile.model_validate(dict(schema_version=2,name='Load',stages=stages))
+            profile=AudioProfileFile.model_validate(dict(schema_version=1,name='Load',stages=stages))
             began=time.monotonic()
             try:
                 for i in range(8):

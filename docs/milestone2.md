@@ -62,8 +62,8 @@ sufficient. No Python requirement has been lowered or silently bypassed.
   The callback checks actual sample caps before accepting PCM. No sample arithmetic
   occurs in production Python code.
 - AudioProfile gain always applies through the native volume element (maximum
-  +20 dB). The current NONE/GST_BASIC processors and typed Basic settings are
-  documented in M7B3/M7B4. Profile edits are applied on the source's next start.
+  +20 dB). Current file-based processing modes and modular settings are documented in
+  audio-profile-files.md. Profile Save rebuilds affected active audio pipelines only.
 - `gst_options` supports controlled `source` (`timeout`, `user-agent`,
   `buffer-size`), `queue` (`max-size-time`) and `resample` (`quality`,
   `sinc-filter-mode`) properties where the selected element supports them.
