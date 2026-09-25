@@ -31,8 +31,9 @@ def document():
 
 def test_default_and_list(store):
     item = store.get('default/basic.json')
-    assert item.profile.stages.processor.implementations.GST_BASIC == BasicConfig()
-    assert item.profile.stages.gain.implementations.GST_VOLUME.gain_db == 0
+    assert item.profile.compatibility == 'gst_basic_v1'
+    assert item.profile.stages['wideband'].implementations['DYNAMIC']['ratio'] == 1 / BasicConfig().compressor_ratio
+    assert item.profile.stages['input_gain'].implementations['VOLUME']['gain_db'] == 0
     assert [x.model_dump() for x in store.list()] == [
         {'path': 'default/basic.json', 'name': 'GST Basic', 'kind': 'default'}]
 
@@ -42,13 +43,13 @@ def test_crud_clone_stable_name_and_inactive_settings(store):
     assert first.path == 'custom/vitezy_david_for_president_20260924213515.json'
     data = first.profile.model_dump()
     data['name'] = 'Renamed'
-    data['stages']['processor']['selected'] = 'NONE'
-    data['stages']['processor']['implementations']['GST_BASIC']['eq_low_db'] = 3
+    data['stages']['eq']['selected'] = 'OFF'
+    data['stages']['eq']['implementations']['LEGACY_EQ']['low_db'] = 3
     saved = store.save(first.path, data)
     assert saved.path == first.path and saved.name == 'Renamed'
     cloned = store.clone(saved.path, 'Copy')
-    assert cloned.profile.stages.processor.selected == 'NONE'
-    assert cloned.profile.stages.processor.implementations.GST_BASIC.eq_low_db == 3
+    assert cloned.profile.stages['eq'].selected == 'OFF'
+    assert cloned.profile.stages['eq'].implementations['LEGACY_EQ']['low_db'] == 3
     assert len(store.list()) == 3
     store.delete(first.path)
     assert len(store.list()) == 2

@@ -55,7 +55,8 @@ The distribution maps `fmheadendd` directly to `daemon/` without an extra nested
 source directory. `muxd/` contains the C++ daemon; `systemd/` contains M6A service units; `webui/` contains the V1 Dashboard, Sources, Modulators, Audio Profiles and read-only System UI.
 
 The [file Audio Profile system](docs/audio-profile-files.md) integrates shared JSON
-profiles with Source selection, the WebUI and native GST Basic processing. Install its read-only JSON defaults separately as documented there, or use
+profiles with Source selection, the WebUI and modular native/LSP DSP. See
+[implemented mappings, dependencies and limits](docs/modular-dsp-implementation.md). Install its read-only JSON defaults separately as documented there, or use
 `--audio-profiles-default-dir ./audio-profiles/default` in development. The old DB profile entity is removed by guarded schema-2 migration; see that document
 before upgrading populated databases.
 

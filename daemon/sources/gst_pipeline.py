@@ -9,7 +9,8 @@ import time
 from ..errors import DependencyUnavailable
 from ..models.configuration import SourceType, SourceTestResult
 from .output import PCM_CAPS, PcmQueue, PcmOutput
-from .basic import PROCESSING_CAPS, basic_stages
+from .basic import PROCESSING_CAPS
+from .dsp import dsp_stages
 
 log = logging.getLogger(__name__)
 
@@ -95,9 +96,7 @@ class GstPipeline:
             for name, value in properties.items():
                 element.set_property(name.replace('_', '-'), value)
             return element
-        check('volume', volume=10 ** (profile.stages.gain.implementations.GST_VOLUME.gain_db / 20))
-        if profile.stages.processor.selected == 'GST_BASIC':
-            basic_stages(check, profile.stages.processor.implementations.GST_BASIC)
+        dsp_stages(check, profile)
 
     def __init__(self, source, *, profile=None, output=None, timeout_s=None, reconnect=True):
         if source.processor_mode == 'stereotool':
@@ -218,23 +217,19 @@ class GstPipeline:
         resample = self._make("audioresample")
         self._overrides(resample, "resample")
         volume = self._make('volume', volume=10 ** (self.source.input_gain_db / 20))
-        profile_gain = []
-        if self.profile:
-            profile_gain.append(self._make('volume', volume=10 ** (
-                self.profile.stages.gain.implementations.GST_VOLUME.gain_db / 20)))
         capsfilter = self._make("capsfilter", caps=Gst.Caps.from_string(PCM_CAPS))
         queue = self._make("queue", max_size_buffers=8, max_size_bytes=19200, max_size_time=100000000, leaky=0)
         self._overrides(queue, "queue")
         sink = self._make("appsink", caps=Gst.Caps.from_string(PCM_CAPS), emit_signals=True,
                           sync=True, max_buffers=2, drop=True, wait_on_eos=False, enable_last_sample=False)
         sink.connect("new-sample", self._sample)
-        if self.profile and self.profile.stages.processor.selected == "GST_BASIC":
+        if self.profile:
             domain = self._make("capsfilter", caps=Gst.Caps.from_string(PROCESSING_CAPS))
-            stages = basic_stages(self._make, self.profile.stages.processor.implementations.GST_BASIC)
+            stages = dsp_stages(self._make, self.profile)
             final_convert = self._make("audioconvert")
-            self._link(self._convert, resample, domain, volume, *profile_gain, *stages, final_convert, capsfilter, queue, sink)
+            self._link(self._convert, resample, domain, volume, *stages, final_convert, capsfilter, queue, sink)
         else:
-            self._link(self._convert, resample, volume, *profile_gain, capsfilter, queue, sink)
+            self._link(self._convert, resample, volume, capsfilter, queue, sink)
         self.sink = sink
         config = self.source.config
         if self.source.type == SourceType.HTTP:

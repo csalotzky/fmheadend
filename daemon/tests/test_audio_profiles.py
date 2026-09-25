@@ -55,6 +55,15 @@ def source(api, **values):
     assert response.status_code == 201, response.text
     return response.json()['id']
 
+
+def test_modular_editor_metadata_uses_existing_api_family(api):
+    result=api.get(BASE+'dsp')
+    assert result.status_code==200
+    data=result.json()
+    assert data['template']['schema_version']==2 and len(data['stages'])==11
+    assert data['implementations']['SINC']['available'] is False
+    assert 'sinc tests' in data['implementations']['SINC']['reason']
+
 def start(api, sid, tx):
     assert api.patch(f'/api/v1/modulators/{tx}', json={'input_source_id': sid, 'frequency_khz': 98100}).status_code == 200
     response = api.post(f'/api/v1/modulators/{tx}/start')
@@ -97,7 +106,7 @@ def test_save_restarts_shared_audio_only_and_preserves_pcm_identity(api):
         current = services.sources.pipelines[sid]
         assert current is not before[sid] and not before[sid].running
         assert current.output is before[sid].output
-        assert current.profile.stages.gain.implementations.GST_VOLUME.gain_db == -3
+        assert current.profile.stages['input_gain'].implementations['VOLUME']['gain_db'] == -3
     assert services.sources.consumers[a] == {0, 1}
     assert services.sources.pipelines[unrelated] is before[unrelated]
     for spy in spies: spy.assert_not_called()
@@ -200,7 +209,7 @@ def test_actual_gst_builder_gains_and_json_stages(tmp_path, builtin):
     pipeline._link = lambda *args: links.append(args)
     pipeline._build()
     gains = [el.props['volume'] for el in elements if el.factory == 'volume']
-    assert gains == pytest.approx([10 ** (-6/20)] + ([10 ** (-3/20)] if builtin else []))
+    assert gains == pytest.approx([10 ** (-6/20)] + ([10 ** (-3/20), 1, 1] if builtin else []))
     if builtin:
         assert next(e for e in elements if e.factory == 'audiocheblimit').props['cutoff'] == 80
         assert [e.factory for e in links[0]][3:6] == ['volume', 'volume', 'audiocheblimit']

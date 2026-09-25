@@ -359,7 +359,7 @@ def test_basic_native_chain_and_float_domain(gst,http_files):
             peer=pad.get_peer() if pad else None
             element=peer.get_parent_element() if peer else None
         assert factories==['audioconvert','audioresample','capsfilter','volume','volume','audiocheblimit',
-                           'equalizer-3bands','audiodynamic','audiocheblimit','rglimiter',
+                           'equalizer-3bands','audiodynamic','volume','audiocheblimit','rglimiter','volume',
                            'audioconvert','capsfilter','queue','appsink']
     finally:pipeline.stop()
 
@@ -370,7 +370,8 @@ def test_none_does_not_construct_basic(gst):
         update={'processor_mode': 'builtin', 'audio_profile_path': 'default/basic.json'}),
                          profile=file_profile(name='None',gain_db=-3))
     pipeline.Gst=gst
-    with patch('fmheadendd.sources.gst_pipeline.basic_stages',side_effect=AssertionError('Basic instantiated')):
+    make=gst.ElementFactory.make
+    with patch.object(gst.ElementFactory,'make',side_effect=lambda name,*args: (_ for _ in ()).throw(AssertionError('DSP instantiated')) if name in ('rglimiter','audiodynamic','audiocheblimit','equalizer-3bands') else make(name,*args)):
         pipeline._build()
     pipeline._pipeline.set_state(gst.State.NULL)
 

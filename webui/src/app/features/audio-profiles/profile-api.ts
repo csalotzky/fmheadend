@@ -1,15 +1,54 @@
-import { BasicConfig } from './basic-config';
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { timeout } from 'rxjs';
-export type Processor = 'NONE' | 'GST_BASIC';
+export interface DspStage {
+  selected: string;
+  implementations: Record<string, Record<string, any>>;
+}
+export interface DspSchema {
+  type?: string;
+  title?: string;
+  description?: string;
+  hidden?: boolean;
+  default?: any;
+  minimum?: number;
+  maximum?: number;
+  exclusiveMinimum?: number;
+  exclusiveMaximum?: number;
+  multipleOf?: number;
+  enum?: any[];
+  const?: any;
+  properties?: Record<string, DspSchema>;
+  items?: DspSchema;
+  $ref?: string;
+  $defs?: Record<string, DspSchema>;
+  minItems?: number;
+  maxItems?: number;
+  active_count_from?: string;
+  enabled_when?: string;
+  disabled_when?: Record<string, any>;
+}
+export interface DspDescription {
+  helpers?: Record<string, string>;
+  template: ProfileDraft;
+  stages: { key: string; label: string; choices: string[] }[];
+  implementations: Record<
+    string,
+    {
+      label: string;
+      available: boolean;
+      reason: string | null;
+      schema: DspSchema;
+      defaults: Record<string, any>;
+    }
+  >;
+  blocked: Record<string, string[]>;
+}
 export interface ProfileDraft {
-  schema_version: 1;
+  schema_version: 2;
   name: string;
-  stages: {
-    gain: { selected: 'GST_VOLUME'; implementations: { GST_VOLUME: { gain_db: number } } };
-    processor: { selected: Processor; implementations: { GST_BASIC: BasicConfig } };
-  };
+  compatibility: 'gst_basic_v1' | null;
+  stages: Record<string, DspStage>;
 }
 export interface AudioProfile {
   name: string;
@@ -32,6 +71,9 @@ export class ProfileApi {
   private http = inject(HttpClient);
   list() {
     return this.http.get<AudioProfile[]>(base).pipe(timeout(15000));
+  }
+  dsp() {
+    return this.http.get<DspDescription>(base + '/dsp').pipe(timeout(15000));
   }
   get(path: string) {
     return this.http.get<ProfileResult>(profileUrl(path)).pipe(timeout(15000));

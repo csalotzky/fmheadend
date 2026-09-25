@@ -3,8 +3,7 @@
 Sources select `processor_mode` (`bypass`, `builtin`, `stereotool`), independent
 `input_gain_db` (default 0, maximum +20 dB), and `audio_profile_path`.
 Bypass requires null path and applies Source Gain only. Built-in requires a valid
-shared JSON file and applies Source Gain -> Profile Input Gain -> existing Basic
-processing. Stereo Tool is modeled but explicitly rejected on start/test; the UI
+shared JSON file and applies Source Gain -> Profile Input Gain -> the fixed modular chain. Stereo Tool is modeled but explicitly rejected on start/test; the UI
 shows it disabled/coming soon. There is no silent processing fallback.
 
 The existing Audio Profiles and Source pages use file paths end to end. SQLite
@@ -52,41 +51,20 @@ for other local users. Symlinks/junctions in profile paths are rejected, includi
 root/ancestor links. Logical names are restricted to `default|custom` plus one
 ASCII alphanumeric/underscore/hyphen filename ending in `.json`. No arbitrary paths.
 
-## Schema 1
+## JSON schema 2 (schema 1 accepted for migration)
 
-The complete initial example is [basic.json](../audio-profiles/default/basic.json).
-The shape is:
+The current structured schema, stage mappings and compatibility rules are documented
+in [Modular DSP implementation](modular-dsp-implementation.md). All eleven stages
+use selected/implementation settings. New profiles use the fixed approved order;
+version-1 documents are strictly validated and converted on read without changing
+the original file. GET/Create/Clone/Save responses return normalized version 2.
+Save/Clone publish version 2; stable paths and shared Source references do not change.
 
-```json
-{
-  "schema_version": 1,
-  "name": "GST Basic",
-  "stages": {
-    "gain": {
-      "selected": "GST_VOLUME",
-      "implementations": {"GST_VOLUME": {"gain_db": 0}}
-    },
-    "processor": {
-      "selected": "GST_BASIC",
-      "implementations": {"GST_BASIC": {"highpass_hz": 40}}
-    }
-  }
-}
-```
-
-The abbreviated Basic settings above expand through the existing typed defaults;
-the shipped file contains them all explicitly: HP enabled/40 Hz; EQ 0/0/0 dB;
-compressor enabled/-12 dBFS/2:1; LP enabled/15000 Hz; limiter enabled. Gain is 0 dB.
-Ranges, fixed element properties and DSP ordering are unchanged from
-[M7B4](milestone7b4.md). Gain precedes processing. `processor.selected` supports
-`NONE` and `GST_BASIC`; the saved `implementations.GST_BASIC` object remains present
-even under `NONE`. Thus selecting bypass does not erase saved settings.
-
-These are the two currently implemented processing units. The selected/settings
-envelope can be extended to additional modular stages and validated implementations
-later; no unimplemented plugin identifiers, parameter bags or defaults are accepted
-now. Unknown fields, unsupported versions/implementations and invalid settings fail
-validation, including inactive settings. Name is editable; path is immutable.
+The shipped [basic.json](../audio-profiles/default/basic.json) remains unchanged as
+a version-1 compatibility fixture. Its actual HPF/EQ/compressor/LPF/limiter sound
+is retained using `compatibility: "gst_basic_v1"`, including LPF before limiter.
+New profiles have no compatibility marker and use limiter before LPF. The DB
+schema version is independent and unchanged by modular DSP.
 
 ## REST
 
@@ -95,8 +73,9 @@ All paths below start with `/api/v1/audio-profiles/files`. The old numeric-ID `/
 | Method/path | Operation |
 |---|---|
 | GET empty suffix | List both roots |
+| GET `/dsp` | Neutral template, stage schemas and local plugin availability |
 | GET `/{kind}/{filename}` | Read validated profile |
-| POST `/custom` | Create, body = structured schema-1 document |
+| POST `/custom` | Create, body = structured schema-2 document (v1 accepted) |
 | PUT `/custom/{filename}` | Replace complete custom document |
 | POST `/{kind}/{filename}/clone` | Clone, body = `{"name":"New name"}` |
 | DELETE `/custom/{filename}` | Delete; 204 |
@@ -104,24 +83,12 @@ All paths below start with `/api/v1/audio-profiles/files`. The old numeric-ID `/
 There are no default PUT/DELETE routes (405); storage also rejects direct default
 mutation with 403 `READ_ONLY_PROFILE`. Create/clone return 201; get/save return 200:
 
-```json
-{
-  "name": "My profile",
-  "path": "custom/my_profile_20260924213515.json",
-  "kind": "custom",
-  "profile": {
-    "schema_version": 1,
-    "name": "My profile",
-    "stages": {
-      "gain": {"selected": "GST_VOLUME", "implementations": {"GST_VOLUME": {"gain_db": 0}}},
-      "processor": {"selected": "GST_BASIC", "implementations": {"GST_BASIC": {}}}
-    }
-  }
-}
+```text
+{name, path: "custom/my_profile_<timestamp>.json", kind: "custom",
+ profile: {schema_version: 2, name, compatibility, stages: { /* eleven stages */ }}}
 ```
 
-The `profile` member is the full validated object, not JSON text (the empty Basic
-object above abbreviates the full expanded settings). List returns an array of the same
+The `profile` member is the full validated object, not JSON text. List returns an array of the same
 metadata without `profile`. Save/clone return the actual stable path; never rebuild
 it from the display name. Unicode NFKD transliteration generates ASCII slugs,
 with `profile` fallback, UTC timestamp and numeric collision suffix. Creation uses
@@ -184,7 +151,7 @@ a general legacy-preset importer. The local development DB was inspected read-on
 schema 1, zero Sources, zero profiles. It was not migrated by development tooling.
 
 Only migration code refers to the old table/foreign key; no permanent compatibility
-runtime is retained. Fresh databases use schema 2 directly. File JSON stays schema 1.
+runtime is retained. Fresh databases use schema 2 directly. File JSON uses schema 2; strict schema-1 read compatibility remains.
 Install the shipped defaults before running migrated Built-in Sources.
 
 ## Validation and limitations
@@ -196,14 +163,16 @@ Native GStreamer tests verify gains and negotiated DSP ordering where GI/plugins
 are available; mock/builder tests do not establish acoustic or hardware results.
 No physical RF/audio testing, deployment or flash was performed.
 
-Deferred: Stereo Tool runtime/presets, new modular/LSP stages, live editing and
+Deferred: Stereo Tool runtime/presets, blocked DSP options, live editing and
 automatic external-file reload. The Basic path keeps its existing F32LE DSP domain
 and S16LE/48 kHz/stereo output; no general float-domain redesign was introduced.
 
-Integration validation: full daemon suite **619 passed / 32 skipped**; final focused
+Previous file-profile integration results (historical): full daemon suite **619 passed / 32 skipped**; final focused
 file/profile/migration/Basic suite **94 passed / 1 skipped** (including the final
 Source ID high-water preservation case). Full frontend suite **160 passed**;
 TypeScript typecheck, production WebUI build and `git diff --check` passed.
 Skipped dependencies: 25 native GStreamer tests, five Linux mux tests, one Linux
 I2C test and one Windows symlink-creation test. Existing Starlette/httpx deprecation
 warning remains. No physical RF/audio testing was performed.
+
+Current modular DSP validation and Pi measurements are recorded in [the implementation report](modular-dsp-implementation.md).

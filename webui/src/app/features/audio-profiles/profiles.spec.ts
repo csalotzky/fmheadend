@@ -1,24 +1,114 @@
-import { basicDefaults } from './basic-config';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting, HttpTestingController } from '@angular/common/http/testing';
 import { ActivatedRoute, convertToParamMap, provideRouter, Router } from '@angular/router';
 import { ProfilesList } from './profiles-list';
 import { ProfileEditor } from './profile-editor';
-import { AudioProfile, ProfileResult } from './profile-api';
+import { AudioProfile, ProfileResult, DspDescription } from './profile-api';
 const base = '/api/v1/audio-profiles/files';
+const description: DspDescription = {
+  template: { schema_version: 2, name: '', compatibility: null, stages: {} },
+  stages: [
+    { key: 'input_gain', label: 'Profile Input Gain', choices: ['VOLUME'] },
+    { key: 'hpf', label: 'HPF', choices: ['OFF', 'CHEBYSHEV'] },
+    { key: 'gate', label: 'Gate / Expander', choices: ['OFF', 'DYNAMIC'] },
+    { key: 'agc', label: 'AGC / Leveller', choices: ['OFF', 'LSP_AGC'] },
+    { key: 'eq', label: 'EQ', choices: ['OFF', 'EQ'] },
+    { key: 'wideband', label: 'Wideband Compressor', choices: ['OFF', 'DYNAMIC'] },
+    { key: 'multiband', label: 'Multiband Compressor', choices: ['OFF'] },
+    { key: 'master_gain', label: 'Master Gain', choices: ['VOLUME'] },
+    { key: 'limiter', label: 'Limiter', choices: ['OFF'] },
+    { key: 'lpf', label: 'LPF', choices: ['OFF', 'CHEBYSHEV'] },
+    { key: 'output_trim', label: 'Output Trim', choices: ['TRIM'] },
+  ],
+  implementations: {
+    VOLUME: {
+      label: 'Gain',
+      available: true,
+      reason: null,
+      defaults: { gain_db: 0 },
+      schema: { properties: { gain_db: { type: 'number', title: 'Gain (dB)', maximum: 20 } } },
+    },
+    TRIM: {
+      label: 'Output Trim',
+      available: true,
+      reason: null,
+      defaults: { gain_db: 0 },
+      schema: {
+        properties: { gain_db: { type: 'number', title: 'Output Trim (dB)', maximum: 0 } },
+      },
+    },
+    CHEBYSHEV: {
+      label: 'Chebyshev',
+      available: true,
+      reason: null,
+      defaults: { cutoff_hz: 30, poles: 4, ripple_db: 0, type: 1 },
+      schema: {
+        properties: {
+          cutoff_hz: { type: 'number', title: 'Cutoff (Hz)', minimum: 1, maximum: 23999 },
+          poles: { type: 'integer', title: 'Poles', minimum: 2, maximum: 32, multipleOf: 2 },
+          ripple_db: { type: 'number', hidden: true },
+        },
+      },
+    },
+    DYNAMIC: {
+      label: 'Basic dynamics',
+      available: true,
+      reason: null,
+      defaults: { threshold_dbfs: -12, ratio: 0.5, knee: 'soft' },
+      schema: {
+        properties: {
+          threshold_dbfs: { type: 'number', title: 'Threshold (dBFS)', minimum: -120, maximum: 0 },
+          ratio: { type: 'number', title: 'Amplitude slope' },
+          knee: { enum: ['hard', 'soft'], title: 'Knee' },
+        },
+      },
+    },
+    LSP_AGC: {
+      label: 'LSP Autogain Stereo',
+      available: false,
+      reason: 'Plugin unavailable',
+      defaults: { short_grow_enabled: false },
+      schema: { properties: { short_grow_enabled: { type: 'boolean' } } },
+    },
+    EQ: {
+      label: 'GStreamer equalizer',
+      available: true,
+      reason: null,
+      defaults: { bands: [{ frequency_hz: 1000, gain_db: 0, bandwidth_hz: 100 }] },
+      schema: {
+        properties: {
+          bands: { type: 'array', minItems: 0, maxItems: 16, items: { $ref: '#/$defs/Band' } },
+        },
+        $defs: {
+          Band: {
+            properties: {
+              frequency_hz: { type: 'number', default: 1000, title: 'Frequency (Hz)' },
+              gain_db: { type: 'number', default: 0, title: 'Gain (dB)' },
+              bandwidth_hz: { type: 'number', default: 100, title: 'Bandwidth (Hz)' },
+            },
+          },
+        },
+      },
+    },
+  },
+  blocked: { multiband: ['Load verification pending'] },
+};
+for (const stage of description.stages) {
+  description.template.stages[stage.key] = {
+    selected: stage.choices[0],
+    implementations: Object.fromEntries(
+      stage.choices
+        .filter((c) => c !== 'OFF')
+        .map((c) => [c, structuredClone(description.implementations[c].defaults)]),
+    ),
+  };
+}
 const profile: ProfileResult = {
   name: 'Studio',
   path: 'custom/studio_123.json',
   kind: 'custom',
-  profile: {
-    schema_version: 1,
-    name: 'Studio',
-    stages: {
-      gain: { selected: 'GST_VOLUME', implementations: { GST_VOLUME: { gain_db: -3 } } },
-      processor: { selected: 'GST_BASIC', implementations: { GST_BASIC: { ...basicDefaults } } },
-    },
-  },
+  profile: { ...structuredClone(description.template), name: 'Studio' },
 };
 const factory = { ...profile, kind: 'default' as const, path: 'default/basic.json' };
 
@@ -54,6 +144,9 @@ describe('File Audio Profiles', () => {
     if (existing) route.snapshot.paramMap = convertToParamMap({ id: saved.path });
     const f = TestBed.createComponent(ProfileEditor);
     f.detectChanges();
+    http.expectOne(base + '/dsp').flush(description);
+    await Promise.resolve();
+    await Promise.resolve();
     if (existing) http.expectOne(base + '/' + saved.path).flush(saved);
     await f.whenStable();
     f.detectChanges();
@@ -138,8 +231,8 @@ describe('File Audio Profiles', () => {
     const pending = c.save();
     void c.save();
     const req = http.expectOne(base + '/custom');
-    expect(req.request.body.schema_version).toBe(1);
-    expect(req.request.body.stages.processor.implementations.GST_BASIC).toEqual(basicDefaults);
+    expect(req.request.body.schema_version).toBe(2);
+    expect(Object.keys(req.request.body.stages)).toHaveLength(11);
     expect(c.canLeave()).toBe(false);
     req.flush(profile);
     await pending;
@@ -153,25 +246,24 @@ describe('File Audio Profiles', () => {
     f.detectChanges();
     expect(f.nativeElement.querySelector('.editor-feedback').textContent).toContain('saved');
   });
-  it('preserves inactive settings and disabled controls through save', async () => {
+  it('preserves inactive and hidden settings through switches and Save', async () => {
     const f = await editor(),
       c = f.componentInstance;
-    c.basic.controls.eq_mid_db.setValue(-2.5);
-    c.basic.controls.highpass_hz.setValue(80);
-    c.basic.controls.highpass_enabled.setValue(false);
-    c.form.controls.processor.setValue('NONE');
-    c.form.controls.processor.setValue('GST_BASIC');
-    expect(c.basic.controls.eq_mid_db.value).toBe(-2.5);
-    expect(c.basic.controls.highpass_hz.disabled).toBe(true);
-    c.form.controls.processor.setValue('NONE');
-    const pending = c.save();
-    const req = http.expectOne(base + '/' + profile.path);
-    expect(req.request.method).toBe('PUT');
-    expect(req.request.body.stages.processor.selected).toBe('NONE');
-    expect(req.request.body.stages.processor.implementations.GST_BASIC).toMatchObject({
-      highpass_hz: 80,
-      highpass_enabled: false,
-      eq_mid_db: -2.5,
+    c.document!.stages['hpf'].implementations['CHEBYSHEV']['ripple_db'] = 0.75;
+    c.document!.stages['hpf'].implementations['CHEBYSHEV']['cutoff_hz'] = 80;
+    c.select('hpf', 'CHEBYSHEV');
+    c.select('hpf', 'OFF');
+    c.select('hpf', 'CHEBYSHEV');
+    expect(c.document!.stages['hpf'].implementations['CHEBYSHEV']['cutoff_hz']).toBe(80);
+    c.select('hpf', 'OFF');
+    const pending = c.save(),
+      req = http.expectOne(base + '/' + profile.path);
+    expect(req.request.body.stages.hpf.selected).toBe('OFF');
+    expect(req.request.body.stages.hpf.implementations.CHEBYSHEV).toMatchObject({
+      cutoff_hz: 80,
+      ripple_db: 0.75,
+      poles: 4,
+      type: 1,
     });
     req.flush({ ...profile, saved: true, applied: true, restart_errors: {} });
     await pending;
@@ -201,14 +293,12 @@ describe('File Audio Profiles', () => {
       c = f.componentInstance;
     c.form.markAsDirty();
     const pending = c.save();
-    http
-      .expectOne(base + '/' + profile.path)
-      .flush({
-        ...profile,
-        saved: true,
-        applied: false,
-        restart_errors: { 1: 'Audio start failed' },
-      });
+    http.expectOne(base + '/' + profile.path).flush({
+      ...profile,
+      saved: true,
+      applied: false,
+      restart_errors: { 1: 'Audio start failed' },
+    });
     await pending;
     f.detectChanges();
     expect(c.form.pristine).toBe(true);
@@ -217,38 +307,40 @@ describe('File Audio Profiles', () => {
     );
     expect(TestBed.inject(Router).navigate).not.toHaveBeenCalled();
   });
-  it('keeps exact implemented filter/EQ/compressor controls', async () => {
-    const f = await editor();
-    const options = (key: string) =>
-      Array.from(
-        (f.nativeElement.querySelector(`[formControlName="${key}"]`) as HTMLSelectElement).options,
-      ).map((o) => o.textContent?.trim());
-    expect(options('highpass_hz')).toEqual([
-      '20 Hz',
-      '30 Hz',
-      '40 Hz',
-      '50 Hz',
-      '60 Hz',
-      '80 Hz',
-      '100 Hz',
-    ]);
-    expect(options('lowpass_hz')).toEqual([
-      '12.0 kHz',
-      '13.0 kHz',
-      '14.0 kHz',
-      '15.0 kHz',
-      '16.0 kHz',
-    ]);
-    expect(options('compressor_ratio')).toEqual(['1:1', '1.5:1', '2:1', '3:1', '4:1']);
-    expect(options('compressor_threshold_dbfs')).toEqual(
-      Array.from({ length: 28 }, (_, i) => `${i - 30} dBFS`),
-    );
-    const inputs = f.nativeElement.querySelectorAll(
-      'section input[type="number"]',
-    ) as NodeListOf<HTMLInputElement>;
-    expect(inputs).toHaveLength(3);
-    inputs.forEach((input) =>
-      expect([input.min, input.max, input.step]).toEqual(['-24', '12', '0.5']),
-    );
+  it('shows eleven sections, native units and unavailable selections honestly', async () => {
+    const f = await editor(),
+      c = f.componentInstance;
+    c.select('gate', 'DYNAMIC');
+    f.detectChanges();
+    await f.whenStable();
+    f.detectChanges();
+    expect(f.nativeElement.querySelectorAll('details.stage')).toHaveLength(11);
+    expect(f.nativeElement.textContent).toContain('Amplitude slope');
+    expect(f.nativeElement.textContent).not.toContain('Attack (ms)');
+    const unavailable = f.nativeElement.querySelector('option[value="LSP_AGC"]');
+    expect(unavailable.disabled).toBe(true);
+    expect(unavailable.textContent).toContain('unavailable');
+    const trim = f.nativeElement.querySelectorAll('details.stage')[10].querySelector('input');
+    expect(trim.max).toBe('0');
+  });
+  it('EQ Add/Remove changes only that implementation and preserves Bandwidth units', async () => {
+    const f = await editor(),
+      c = f.componentInstance;
+    c.select('eq', 'EQ');
+    f.detectChanges();
+    await f.whenStable();
+    f.detectChanges();
+    const eq = f.nativeElement.querySelectorAll('details.stage')[4];
+    expect(eq.textContent).toContain('Bandwidth (Hz)');
+    const add = Array.from(eq.querySelectorAll('button') as NodeListOf<HTMLButtonElement>).find(
+      (b) => b.textContent?.trim() === 'Add band',
+    )!;
+    add.click();
+    f.detectChanges();
+    expect(c.document!.stages['eq'].implementations['EQ']['bands']).toHaveLength(2);
+    (eq.querySelector('button') as HTMLButtonElement).click();
+    f.detectChanges();
+    expect(c.document!.stages['eq'].implementations['EQ']['bands']).toHaveLength(1);
+    expect(c.form.dirty).toBe(true);
   });
 });

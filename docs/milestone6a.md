@@ -371,3 +371,6 @@ state/STOP ALL holds, or calls QN/RDS control. Source teardown failure retains
 ownership; saved-file/restart failure is a partial outcome, not failed RF control.
 Source configuration edits retain their existing stop-before-edit guard.
 See [file profiles](audio-profile-files.md) for migration and API response details.
+
+Modular DSP retains this audio-only lifecycle; see [implementation](modular-dsp-implementation.md).
+JSON profile version 2 does not change the SQLite schema or TX recovery rules.

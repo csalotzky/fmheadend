@@ -84,6 +84,13 @@ def create_profile_file(body: AudioProfileFile, request: Request):
     return request.app.state.services.profile_files.create(body.model_dump())
 
 
+@router.get('/audio-profiles/files/dsp', tags=['audio profiles'])
+@control_route
+def profile_dsp_editor(request: Request):
+    from ..sources.dsp import editor_description
+    return editor_description()
+
+
 @router.get("/audio-profiles/files/{kind}/{filename}", response_model=ProfileFileResult, tags=["audio profiles"])
 @control_route
 def get_profile_file(kind: str, filename: str, request: Request):

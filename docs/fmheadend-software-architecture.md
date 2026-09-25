@@ -344,11 +344,14 @@ transactional DB migration and audio restart/error semantics.
 Sources persist `processor_mode` (`bypass`, `builtin`, `stereotool`), Source Gain
 `input_gain_db`, and a single stable relative `audio_profile_path`. Bypass requires
 null path and still applies Source Gain. Built-in loads/validates its selected JSON:
-Source decode -> Source Gain -> Profile Input Gain -> existing GST Basic stages ->
+Source decode -> Source Gain -> fixed eleven-stage Built-in DSP ->
 fixed PCM output. Stereo Tool is explicitly unavailable, with no silent fallback.
 
-The existing typed Basic settings/order remain as in M7B4. Selected implementation
-and saved implementation settings are independent. No new plugins are introduced.
+The inherited Basic settings/order remain as in M7B4 through explicit v1 compatibility.
+New JSON schema-2 profiles use the approved eleven-stage order. Selected implementation
+and saved settings are independent. Native/LSP adapters and measured limitations are
+recorded in [Modular DSP implementation](modular-dsp-implementation.md); the canonical
+design is [Audio processing](fmheadend-audio-processing.md).
 Saving a custom profile validates required plugins, atomically persists, then
 rebuilds active Sources using it on the existing serialized control executor.
 Shared source consumers retain their PCM output object; RF, RDS, desired states and
@@ -1268,6 +1271,7 @@ Ez a külső script/Liquidsoap/custom automation integráció alapja is lehet.
 
 ```http
 GET    /api/v1/audio-profiles/files
+GET    /api/v1/audio-profiles/files/dsp
 POST   /api/v1/audio-profiles/files/custom
 GET    /api/v1/audio-profiles/files/{kind}/{filename}
 PUT    /api/v1/audio-profiles/files/custom/{filename}

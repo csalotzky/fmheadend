@@ -362,8 +362,13 @@ Defaults show Clone only; customs show Edit/Clone/Delete. Referenced custom file
 cannot be deleted. Display name and stable path are separate; Create/Clone use the
 actual backend-generated path. Renaming never changes Source references.
 
-The editor exposes Profile Input Gain and the existing GST Basic controls through
-structured schema-1 data. Inactive settings survive selection changes. Save/error
+The editor exposes eleven collapsible DSP stages through structured schema-2 data.
+Separate Wideband and Multiband stages, native/LSP choices, EQ Add/Remove, four-to-eight
+multiband crossover controls and per-band Compressor Bypass use backend-defined
+validated fields/units. Off and implementation switches preserve hidden/inactive
+settings. Unavailable implementations are disabled with a reason; sinc and loudnorm
+are not presented as working options. See [verified mappings](modular-dsp-implementation.md).
+Inherited Basic profiles retain their explicitly indicated compatibility order. Save/error
 feedback sits beside Save, values survive failures, and duplicate Saves/navigation
 while saving are blocked. Save restarts affected audio pipelines without TX/RDS
 commands. A saved-but-not-applied response is shown explicitly without discarding

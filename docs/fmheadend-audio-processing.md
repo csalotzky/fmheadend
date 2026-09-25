@@ -1,10 +1,11 @@
 # FM Headend — Audio Processing
 
-> Implementation status (2026-09-25): file-backed Source selection, Source Gain,
-> shared GST Basic profiles, existing WebUI integration and audio-only restarts are
-> implemented. See [file profiles](audio-profile-files.md). The larger modular DSP
-> stages and Stereo Tool runtime described below remain future work; this iteration
-> preserves the current Basic parameter defaults and ordering.
+> Implementation status (2026-09-25): eleven-stage file-backed modular DSP,
+> native GStreamer and LSP stereo adapters/editor are implemented. Inherited Basic
+> compatibility is preserved. Sinc is blocked after unsafe native output; loudnorm
+> is unavailable; advanced modes/load/RF acceptance have limits. See the separate
+> [implementation and measured evidence](modular-dsp-implementation.md). The approved
+> design below is unchanged and is not a claim that every option is operational.
 
 **Technical and UI specification · 2026-09-24 · design baseline**
 
