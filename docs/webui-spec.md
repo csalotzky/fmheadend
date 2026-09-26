@@ -526,3 +526,15 @@ Shared structural CSS belongs in `styles.css`; do not duplicate host centering,
 header alignment or action-row layout per feature. Keep genuinely specific form
 and channel styling local. The System page follows these same
 container, header and editor-action conventions, selecting the appropriate width.
+
+### Polling and audio isolation
+
+Periodic WebUI reads use control-thread-published observations, including Source
+runtime and profile summaries; they do not enter the hardware executor or sample
+PCM queues from HTTP handlers. Normal observation publication is attempted once
+per second; slow control work is exposed through explicit snapshot age/staleness.
+Profile summaries have a five-second collection interval, and mutating actions
+publish their resulting state before returning. Existing polling cadence and
+non-overlap remain unchanged in development and production builds. See
+[Status/PCM isolation](status-pcm-isolation.md) for endpoint inventory, freshness,
+measurements, limitations and the controlled live acceptance procedure.

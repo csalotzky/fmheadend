@@ -1,7 +1,7 @@
 """Serialize control/SQLite work off the ASGI loop while media workers run independently."""
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from functools import partial, wraps
+from functools import wraps
 from .errors import DomainError
 
 
@@ -29,5 +29,13 @@ def control_route(function):
     @wraps(function)
     async def wrapped(*args, **kwargs):
         request = kwargs["request"]
-        return await request.app.state.control.call(partial(function, *args, **kwargs))
+        def invoke():
+            try:
+                return function(*args, **kwargs)
+            finally:
+                # Failed actions can also change desired/actual state. Publish
+                # on the same owner thread; reads never multiply sampling work.
+                if request.method != 'GET':
+                    request.app.state.publish_status()
+        return await request.app.state.control.call(invoke)
     return wrapped

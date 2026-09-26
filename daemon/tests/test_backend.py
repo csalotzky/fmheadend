@@ -411,10 +411,10 @@ def test_dependency_errors_through_api(tmp_path):
 def test_internal_error_is_sanitized(tmp_path):
     app = create_app(Settings(tmp_path / "internal.db"))
     with TestClient(app, raise_server_exceptions=False) as client:
-        def fail(table):
+        def fail(table, record_id):
             raise RuntimeError("private internal details")
-        app.state.services.config.list = fail
-        response = client.get(P + "/sources")
+        app.state.services.config.get = fail
+        response = client.get(P + "/sources/1")
         assert response.status_code == 500
         assert response.json() == {"error": "INTERNAL_ERROR", "message": "Internal server error"}
 

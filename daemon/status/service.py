@@ -1,7 +1,7 @@
 import time
 import logging
 
-from ..errors import DependencyUnavailable
+from ..errors import DependencyUnavailable, DomainError
 from .. import __version__
 from ..rp2354.linux_client import Rp2354Client
 from ..rp2354.protocol import IncompatibleProtocol, RpResponseError
@@ -19,10 +19,15 @@ def communication_state(error):
 
 
 class StatusService:
-    def __init__(self, modulators, sources, rp, mux, clock=time.monotonic, recovery=None):
+    def __init__(self, modulators, sources, rp, mux, clock=time.monotonic, recovery=None,
+                 config=None, profile_files=None):
         self.modulators, self.sources, self.rp, self.mux = modulators, sources, rp, mux
         self.clock, self.started = clock, clock()
         self.recovery = recovery
+        self.config, self.profile_files = config, profile_files
+        self._profile_list = None
+        self._profile_list_at = None
+        self._publication_failed = False
         self._mux_state = None
         self._observed_at = None
         self.real_rp = isinstance(rp, Rp2354Client)
@@ -32,7 +37,74 @@ class StatusService:
                      "modulator_count": 8, "mocked": not self.real_rp}
         self.refresh()
 
-    def refresh(self):
+    def publish(self, *, max_age_s=2.0, configuration_changed=False):
+        """Control thread only. Build privately, then replace one owned snapshot.
+
+        Readers never collect Source diagnostics or enter PCM/control locks.
+        Publication failure leaves the previous observation aging normally.
+        """
+        source_statuses = {}
+        views = {}
+        if self.config is not None:
+            configs = self.config.list('sources')
+            source_statuses = {s.id: self.sources.status(s.id, source=s).model_copy(deep=True) for s in configs}
+            views = dict(sources=configs, modulators=self.modulators.list(),
+                         info=dict(self.info), source_statuses=source_statuses)
+            now = self.clock()
+            if (configuration_changed or self._profile_list_at is None
+                    or now - self._profile_list_at >= 5.0):
+                try:
+                    self._profile_list = self.profile_files.list()
+                except DomainError as exc:
+                    # Preserve the endpoint's typed failure, not a fake empty list.
+                    self._profile_list = (exc.status, exc.error, exc.message)
+                self._profile_list_at = self.clock()
+            views['profiles'] = self._profile_list
+            views['profiles_observed_at'] = self._profile_list_at
+        snapshot = self.snapshot(source_statuses).model_copy(deep=True)
+        self._published = (self.clock(), max_age_s, snapshot, views)
+        self._publication_failed = False
+
+    def publication_failed(self):
+        self._publication_failed = True
+
+    def publication_age(self, name=None):
+        published_at, _, _, views = self._published
+        if name == 'profiles':
+            published_at = views['profiles_observed_at']
+        return max(0, self.clock() - published_at)
+
+    def published_view(self, name):
+        value = self._published[3][name]
+        if name == 'profiles' and isinstance(value, tuple):
+            raise DomainError(*value)
+        return value
+
+    def published_source(self, source_id):
+        published_at, max_age_s, _, views = self._published
+        source = views['source_statuses'].get(source_id)
+        if source is None:
+            raise DomainError(404, 'NOT_FOUND', f'sources resource {source_id} does not exist')
+        age = max(0, self.clock() - published_at)
+        return source.model_copy(update={'observation_age_s': age,
+                                        'observation_stale': self._publication_failed or age > max_age_s})
+
+    def published_snapshot(self):
+        """ASGI reader: no dependency IO, DB access, or audio/control locks."""
+        published_at, max_age_s, snapshot, _ = self._published
+        age = max(0, self.clock() - published_at)
+        system = snapshot.system.model_copy()
+        system.snapshot_age_s = age
+        system.snapshot_stale = self._publication_failed or age > max_age_s
+        system.uptime_s += age
+        if system.rp_observation_age_s is not None:
+            system.rp_observation_age_s += age
+        if system.snapshot_stale:
+            system.rp_observation_stale = True
+        # Published nested models belong to this generation and are never mutated.
+        return snapshot.model_copy(update={'system': system})
+
+    def refresh(self, *, publish=True):
         errors = []
         try:
             rp_status = self.recovery.observe() if self.recovery else self.rp.get_status()
@@ -99,9 +171,11 @@ class StatusService:
             logger.info('mux state: %s', self.system.mux_state)
             self._mux_state = self.system.mux_state
         self.system.last_error = "; ".join(errors) or None
+        if publish:
+            self.publish()
 
-    def snapshot(self):
-        # No dependency IO in the HTTP request path; refresh runs periodically.
+    def snapshot(self, source_statuses=None):
+        # Control thread collection only: Source validation may access DB/files.
         system = self.system.model_copy(deep=True)
         if self.recovery and self.recovery.error is not None:
             system.rp_communication_state = communication_state(self.recovery.error)
@@ -110,7 +184,7 @@ class StatusService:
         system.rp_observation_age_s = None if self._observed_at is None else max(0, self.clock() - self._observed_at)
         system.uptime_s = max(0, self.clock() - self.started)
         rows = []
-        source_statuses = {}
+        source_statuses = {} if source_statuses is None else dict(source_statuses)
         writers = self.mux.pcm_snapshot() if hasattr(self.mux, 'pcm_snapshot') else {}
         for status in self.modulators.statuses.values():
             row = status.model_copy(deep=True)

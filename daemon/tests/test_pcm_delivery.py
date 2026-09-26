@@ -230,6 +230,7 @@ def test_status_exposes_stage_consumer_writer_and_mux_diagnostics_without_io():
     service = StatusService(modulators, sources, rp, mux)
     rp.get_status = Mock(side_effect=AssertionError('snapshot must not read hardware'))
     mux.get_status.reset_mock()
+    sources.status.reset_mock()
     status = service.snapshot()
     assert status.system.mux_late_frames == 9 and status.system.mux_transport_errors == 2
     assert status.modulators[0].pcm_consumer.buffered_bytes == 4

@@ -135,7 +135,7 @@ export class DashboardState {
         }
         this.channels.set(compose(snapshot, this.data() ?? undefined));
         this.data.set(snapshot);
-        this.stale.set(false);
+        this.stale.set(snapshot.status.system.snapshot_stale === true);
         this.updated.set(new Date());
       })
       .catch(() => this.stale.set(true))

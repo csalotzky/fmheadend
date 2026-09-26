@@ -13,6 +13,13 @@ router = APIRouter(prefix="/api/v1", responses={
 })
 
 
+def published_view(request, response, name):
+    status = request.app.state.services.status
+    response.headers['Cache-Control'] = 'no-store'
+    response.headers['X-Observation-Age-Seconds'] = f'{status.publication_age(name):.3f}'
+    return status.published_view(name)
+
+
 @router.get('/system/logs', response_model=list[dict], tags=['system'])
 async def recent_logs(request: Request):
     """Newest 100 backend log entries since startup; no hardware or journal I/O."""
@@ -20,9 +27,8 @@ async def recent_logs(request: Request):
 
 
 @router.get("/sources", response_model=list[InputSource], tags=["sources"])
-@control_route
-def list_sources(request: Request):
-    return request.app.state.services.config.list("sources")
+async def list_sources(request: Request, response: Response):
+    return published_view(request, response, 'sources')
 
 
 @router.post("/sources", response_model=InputSource, status_code=201, tags=["sources"])
@@ -66,15 +72,13 @@ def test_saved_source(id: int, request: Request):
 
 
 @router.get("/sources/{id}/status", response_model=InputSourceStatus, tags=["sources"])
-@control_route
-def source_status(id: int, request: Request):
-    return request.app.state.services.sources.status(id)
+async def source_status(id: int, request: Request):
+    return request.app.state.services.status.published_source(id)
 
 
 @router.get("/audio-profiles/files", response_model=list[ProfileFileSummary], tags=["audio profiles"])
-@control_route
-def list_profile_files(request: Request):
-    return request.app.state.services.profile_files.list()
+async def list_profile_files(request: Request, response: Response):
+    return published_view(request, response, 'profiles')
 
 
 @router.post("/audio-profiles/files/custom", response_model=ProfileFileResult, status_code=201, tags=["audio profiles"])
@@ -117,9 +121,8 @@ def delete_profile_file(filename: str, request: Request):
 
 
 @router.get("/modulators", response_model=list[Modulator], tags=["modulators"])
-@control_route
-def list_modulators(request: Request):
-    return request.app.state.services.modulators.list()
+async def list_modulators(request: Request, response: Response):
+    return published_view(request, response, 'modulators')
 
 
 @router.post("/modulators/start-all", tags=["modulators"])
@@ -193,9 +196,8 @@ def clear_rt(id: int, request: Request):
 
 
 @router.get("/status", response_model=HeadendStatus, tags=["system"])
-@control_route
-def status(request: Request):
-    return request.app.state.services.status.snapshot()
+async def status(request: Request):
+    return request.app.state.services.status.published_snapshot()
 
 
 @router.get("/system/config", response_model=SystemConfig, tags=["system"])
@@ -212,6 +214,5 @@ def update_system_config(body: SystemConfigPatch, request: Request):
 
 
 @router.get("/system/info", tags=["system"])
-@control_route
-def system_info(request: Request):
-    return request.app.state.services.info
+async def system_info(request: Request, response: Response):
+    return published_view(request, response, 'info')

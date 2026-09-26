@@ -41,6 +41,17 @@ describe('Dashboard API composition and operations', () => {
     expect(state.channels()[7].canStart).toBe(false);
     expect(state.channels()[0].runtime?.rf_attenuation_db).toBeNull();
   });
+  it('retains observations but marks an expired backend publication stale', async () => {
+    const data = sample();
+    data.status.system.snapshot_age_s = 3;
+    data.status.system.snapshot_stale = true;
+    data.status.system.rp_observation_stale = true;
+    await load(data);
+    expect(state.stale()).toBe(true);
+    expect(state.channels()).toHaveLength(8);
+    expect(state.channels()[0].confirmedOff).toBe(false);
+    expect(state.data()?.status).toEqual(data.status);
+  });
   it('handles missing sources without guessing', () => {
     const data = sample();
     data.sources = [];

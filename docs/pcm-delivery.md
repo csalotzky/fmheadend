@@ -193,3 +193,10 @@ the isolated temporary workspace, not the production venv. No production service
 database, profile, RT policy or hardware state was changed. No physical RF/audio
 acceptance or eight-live-source/tuned-DSP load success is claimed. The full-stack
 matrix above remains the operator's next validation step.
+
+## WebUI/status-plane follow-up
+
+The separate investigation of audible popping correlated with WebUI polling,
+request timing, complete endpoint inventory and published observation semantics
+is recorded in [Status/PCM isolation](status-pcm-isolation.md). No PCM queue,
+writer, DSP, mux scheduling or hardware-lifecycle change is part of that follow-up.

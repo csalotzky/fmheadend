@@ -1,4 +1,5 @@
 import logging
+import time
 from ..errors import DependencyUnavailable, DomainError
 from ..models.configuration import InputSourceConfig, SourceTestResult
 from ..models.runtime_status import InputSourceStatus, SourceState
@@ -8,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 class SourceManager:
-    def __init__(self, database, pipeline_factory=MockPipeline, profile_files=None):
+    def __init__(self, database, pipeline_factory=MockPipeline, profile_files=None, *, clock=time.monotonic):
         self.database = database
         self.pipeline_factory = pipeline_factory
         self.profile_files = profile_files
@@ -16,16 +17,17 @@ class SourceManager:
         self.consumers: dict[int, set[int]] = {}
         self.statuses: dict[int, InputSourceStatus] = {}
         self.restart_errors: dict[int, str] = {}
+        self.clock = clock
+        self._profile_observations = {}
 
-    def status(self, source_id):
-        source = self.database.get("sources", source_id)
+    def status(self, source_id, *, source=None):
+        source = source if source is not None else self.database.get("sources", source_id)
         status = self.statuses.setdefault(source_id, InputSourceStatus(source_id=source_id))
         pipeline = self.pipelines.get(source_id)
         if pipeline is not None:
-            try:
-                self.validate_config(source)
-            except DomainError as exc:
-                return InputSourceStatus(source_id=source_id, state=SourceState.ERROR, last_error=f'{exc.error}: {exc}')
+            error = self._observed_profile_error(source)
+            if error:
+                return InputSourceStatus(source_id=source_id, state=SourceState.ERROR, last_error=error)
         if source_id in self.restart_errors:
             return InputSourceStatus(source_id=source_id, state=SourceState.ERROR, last_error=self.restart_errors[source_id])
         if pipeline is not None and not getattr(pipeline, "mocked", True):
@@ -33,6 +35,26 @@ class SourceManager:
                                       pcm=pipeline.pcm_snapshot() if hasattr(pipeline, 'pcm_snapshot') else None)
             self.statuses[source_id] = status
         return status
+
+    def _observed_profile_error(self, source):
+        """Bound read-only validation work, including repeated metadata lookups.
+
+        Only control-thread observations use this one-second cache. Starting,
+        joining, testing and saving audio still validate synchronously. Runtime
+        metadata and PCM counters are never taken from this validation cache.
+        """
+        key = (source.processor_mode, source.audio_profile_path)
+        now = self.clock()
+        previous = self._profile_observations.get(source.id)
+        if previous is not None and previous[0] == key and 0 <= now - previous[1] < 1.0:
+            return previous[2]
+        error = None
+        try:
+            self.validate_config(source)
+        except DomainError as exc:
+            error = f'{exc.error}: {exc}'
+        self._profile_observations[source.id] = (key, self.clock(), error)
+        return error
 
     def _new_pipeline(self, source, **kwargs):
         if source.processor_mode == 'stereotool':
@@ -65,6 +87,7 @@ class SourceManager:
         profile = self.profile_files.validate(data)
         self.validate_profile(profile)
         saved = self.profile_files.save(path, data)
+        self._profile_observations.clear()
         errors = {}
         for source_id in list(self.pipelines):
             source = self.database.get('sources', source_id)
@@ -88,6 +111,7 @@ class SourceManager:
     def _restart_audio(self, source):
         """One ownership-preserving audio replacement, shared by Source/profile Save."""
         source_id = source.id
+        self._profile_observations.pop(source_id, None)
         old = self.pipelines[source_id]
         try:
             # Failed stop retains old ownership; never create a competing worker.
@@ -115,6 +139,7 @@ class SourceManager:
                                                         last_error=f'{exc.error}: {exc}')
             raise DependencyUnavailable(f'{exc.error}: {exc}') from exc
         consumers = self.consumers.setdefault(source_id, set())
+        self._profile_observations.pop(source_id, None)
         if modulator_id in consumers:
             return
         status = self.status(source_id)
@@ -172,6 +197,7 @@ class SourceManager:
             self.statuses[source_id] = InputSourceStatus(source_id=source_id)
             self.restart_errors.pop(source_id, None)
             logger.info("source %s stopped", source_id)
+            self._profile_observations.pop(source_id, None)
         consumers.discard(modulator_id)
         if not getattr(pipeline, "mocked", True):
             pipeline.output.detach(modulator_id)
@@ -212,3 +238,4 @@ class SourceManager:
                 logger.exception("source worker cleanup failed")
         self.pipelines.clear()
         self.consumers.clear()
+        self._profile_observations.clear()

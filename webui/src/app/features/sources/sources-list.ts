@@ -50,7 +50,7 @@ export class SourcesList {
           mergeMap(
             (s) =>
               this.api.status(s.id).pipe(
-                map((value) => ({ id: s.id, value })),
+                map((value) => ({ id: s.id, value: value.observation_stale ? null : value })),
                 catchError(() => of({ id: s.id, value: null })),
               ),
             4,

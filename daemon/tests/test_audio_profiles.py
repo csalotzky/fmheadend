@@ -176,6 +176,11 @@ def test_invalid_running_profile_reports_source_only(api):
     b = source(api)
     start(api, a, 0); start(api, b, 1)
     api.app.state.services.profile_files._path(path).unlink()
+    # External file edits are observed at the bounded validation/publication cadence.
+    manager = api.app.state.services.sources
+    now = manager.clock()
+    manager.clock = lambda: now + 2
+    api.app.state.control.executor.submit(api.app.state.publish_status).result()
     assert api.get(f'/api/v1/sources/{a}/status').json()['state'] == 'ERROR'
     assert api.get(f'/api/v1/sources/{b}/status').json()['state'] == 'RUNNING'
     api.patch('/api/v1/modulators/2', json={'input_source_id': a, 'frequency_khz': 98900})

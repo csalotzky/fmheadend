@@ -39,6 +39,16 @@ describe('Sources management', () => {
     vi.spyOn(shared, 'refresh').mockResolvedValue();
   });
   afterEach(() => http.verify());
+  it('does not present an expired published Source observation as current', () => {
+    const f = TestBed.createComponent(SourcesList);
+    f.detectChanges();
+    for (const request of http.match((r) => r.url.endsWith('/status'))) {
+      request.flush({ source_id: 1, state: 'RUNNING', last_error: null, observation_stale: true });
+    }
+    f.detectChanges();
+    expect(Object.values(f.componentInstance.runtime()).every((value) => value === null)).toBe(true);
+    f.destroy();
+  });
   function editor(id?: number) {
     if (id !== undefined)
       TestBed.overrideProvider(ActivatedRoute, {

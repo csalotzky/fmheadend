@@ -50,6 +50,8 @@ class WriterPcmStatus(Model):
 
 
 class InputSourceStatus(Model):
+    observation_age_s: float = 0
+    observation_stale: bool = False
     pcm: SourcePcmStatus | None = None
     source_id: int
     state: SourceState = SourceState.IDLE
@@ -93,6 +95,8 @@ class ModulatorStatus(Model):
 
 
 class SystemStatus(Model):
+    snapshot_age_s: float = 0
+    snapshot_stale: bool = False
     system_state: str = "RUNNING"
     rp2354_state: str = "OK"
     rp_communication_state: str = "UNAVAILABLE"

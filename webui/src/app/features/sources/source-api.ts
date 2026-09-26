@@ -14,6 +14,8 @@ export interface SourceDraft {
   gst_options: Record<string, Record<string, Json>>;
 }
 export interface SourceRuntime {
+  observation_age_s?: number;
+  observation_stale?: boolean;
   source_id: number;
   state: 'IDLE' | 'CONNECTING' | 'BUFFERING' | 'RUNNING' | 'ERROR';
   last_error: string | null;

@@ -61,6 +61,8 @@ export interface ModulatorStatus {
   last_error_scope?: 'TX' | 'GLOBAL';
 }
 export interface SystemStatus {
+  snapshot_age_s?: number;
+  snapshot_stale?: boolean;
   rp_observation_stale?: boolean;
   system_state: string;
   rp2354_state: string;

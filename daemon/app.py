@@ -49,7 +49,7 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
             database = Database(settings.database_path)
             profile_files = AudioProfileFiles(settings.audio_profiles_default_dir, settings.audio_profiles_custom_dir,
                 is_referenced=lambda path: any(s.audio_profile_path == path for s in database.list('sources')))
-            sources = SourceManager(database, pipeline_factory, profile_files)
+            sources = SourceManager(database, pipeline_factory, profile_files, clock=clock)
             rp_client = rp or MockRp2354Client()
             mux_client = mux or (mux_factory(sources) if mux_factory else MockMuxClient())
             modulators = ModulatorManager(database, sources, rp_client, mux_client, settings)
@@ -62,11 +62,13 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
             rds.can_communicate = recovery.can_communicate
             rds.channel_ready = lambda channel: channel not in recovery.pending
             rds.suspended = True
-            status = StatusService(modulators, sources, rp_client, mux_client, clock, recovery)
+            config = ConfigurationService(database, sources, modulators)
+            status = StatusService(modulators, sources, rp_client, mux_client, clock, recovery,
+                                   config=config, profile_files=profile_files)
             status.info.update(frequency_plan=PLANS[settings.region].as_dict(),
                                database_schema_version=SCHEMA_VERSION,
                                media_backend="MOCK" if getattr(pipeline_factory, "mocked", True) else "GStreamer")
-            config = ConfigurationService(database, sources, modulators)
+            status.publish()
             return SimpleNamespace(
                 profile_files=profile_files,
                 database=database, rp=rp_client, mux=mux_client, config=config, sources=sources, modulators=modulators, rt=rt, rds=rds, status=status, recovery=recovery,
@@ -78,6 +80,22 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
             control.close()
             raise
         services = app.state.services
+        next_snapshot = 0.0
+
+        def publish_status(*, force=True):
+            nonlocal next_snapshot
+            now = time.monotonic()
+            if not force and now < next_snapshot:
+                return
+            next_snapshot = now + 1.0
+            # Observation errors must not retroactively fail a confirmed action.
+            try:
+                interval = services.config.get_system().rp_status_poll_interval_ms / 1000
+                services.status.publish(max_age_s=max(2.0, 2 * interval), configuration_changed=force)
+            except Exception:
+                services.status.publication_failed()
+                logger.exception('Status publication failed; retaining stale observation')
+        app.state.publish_status = publish_status
 
         next_poll = 0.0
         def tick():
@@ -87,8 +105,9 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
             services.rds.tick()
             now = time.monotonic()
             if now >= next_poll:
-                services.status.refresh()
+                services.status.refresh(publish=False)
                 next_poll = now + services.config.get_system().rp_status_poll_interval_ms / 1000
+            publish_status(force=False)
             interval = min(POLL_SECONDS, max(0.01, next_poll - time.monotonic()))
             delay = services.recovery.retry_delay
             return min(interval, delay) if delay > 0 else interval

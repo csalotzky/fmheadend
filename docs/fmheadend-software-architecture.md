@@ -2185,3 +2185,15 @@ a discard policy. Status exposes separate staging/consumer loss, writer discard,
 mux late-frame and transport-error counters. No RF/RDS/DSP lifecycle changes are
 implied. See [PCM delivery](pcm-delivery.md) for scope, counter lifetimes and the
 controlled eight-source validation procedure.
+
+### Published status observations
+
+Normal WebUI polling reads owned snapshots published by the existing control
+executor. HTTP handlers for status, Source/modulator lists, Source runtime,
+profile summaries and system info do not access hardware, DB/profile files or
+PCM locks. Mutations remain serialized and publish the resulting desired/runtime
+state before returning; publication failure does not invalidate confirmed RF
+success. Snapshot age/staleness explicitly represents delayed maintenance.
+No extra hardware queries or workers are added. Source profile validation remains
+strict at audio lifecycle boundaries. See [status/PCM isolation](status-pcm-isolation.md)
+for measured costs and bounded observation-cache semantics.
