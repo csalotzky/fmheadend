@@ -29,7 +29,8 @@ class SourceManager:
         if source_id in self.restart_errors:
             return InputSourceStatus(source_id=source_id, state=SourceState.ERROR, last_error=self.restart_errors[source_id])
         if pipeline is not None and not getattr(pipeline, "mocked", True):
-            status = InputSourceStatus(source_id=source_id, **pipeline.snapshot())
+            status = InputSourceStatus(source_id=source_id, **pipeline.snapshot(),
+                                      pcm=pipeline.pcm_snapshot() if hasattr(pipeline, 'pcm_snapshot') else None)
             self.statuses[source_id] = status
         return status
 

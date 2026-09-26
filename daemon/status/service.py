@@ -5,7 +5,7 @@ from ..errors import DependencyUnavailable
 from .. import __version__
 from ..rp2354.linux_client import Rp2354Client
 from ..rp2354.protocol import IncompatibleProtocol, RpResponseError
-from ..models.runtime_status import HeadendStatus, SystemStatus, TxState
+from ..models.runtime_status import HeadendStatus, SystemStatus, TxState, WriterPcmStatus
 
 
 logger = logging.getLogger(__name__)
@@ -78,6 +78,8 @@ class StatusService:
             self.system.mux_transport = mux_status.get("transport", "mock")
             self.system.mux_transport_state = mux_status.get("transport_state", "RUNNING")
             self.system.mux_frames_sent = mux_status["frames_sent"]
+            self.system.mux_late_frames = mux_status.get("late_frames", 0)
+            self.system.mux_transport_errors = mux_status.get("transport_errors", 0)
             self.system.mux_mocked = mux_status.get("mocked", True)
             if mux_status.get("last_error"):
                 errors.append(mux_status["last_error"])
@@ -108,11 +110,21 @@ class StatusService:
         system.rp_observation_age_s = None if self._observed_at is None else max(0, self.clock() - self._observed_at)
         system.uptime_s = max(0, self.clock() - self.started)
         rows = []
+        source_statuses = {}
+        writers = self.mux.pcm_snapshot() if hasattr(self.mux, 'pcm_snapshot') else {}
         for status in self.modulators.statuses.values():
             row = status.model_copy(deep=True)
             source_id = self.modulators.active_sources.get(row.id)
             if source_id is not None:
-                row.source_state = self.sources.status(source_id).state.value
+                if source_id not in source_statuses:
+                    source_statuses[source_id] = self.sources.status(source_id)
+                source = source_statuses[source_id]
+                row.source_state = source.state.value
+                if source.pcm is not None:
+                    row.pcm_staging = source.pcm.staging
+                    row.pcm_consumer = source.pcm.consumers.get(row.id)
+            if row.id in writers:
+                row.pcm_writer = WriterPcmStatus(**writers[row.id])
             rows.append(row)
         if system.last_error or system.mux_state != "RUNNING" or any(r.tx_state == TxState.ERROR or r.source_state == "ERROR" or r.rds_last_error or r.last_error for r in rows):
             system.system_state = "DEGRADED"

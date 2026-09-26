@@ -61,13 +61,30 @@ def test_queue_is_bounded_drops_oldest_and_expires():
     assert not queue.put(b"x" * 12)
 
 
-def test_queue_producer_does_not_wait_on_lock():
-    queue = PcmQueue()
-    queue._lock.acquire()
+def test_queue_contention_preserves_valid_pcm():
+    queue = PcmQueue(clock=lambda: 0)
+    entered = threading.Event()
+    original = queue._lock
+    class ObservedLock:
+        def __enter__(self):
+            entered.set()
+            original.acquire()
+        def __exit__(self, *args):
+            original.release()
+    queue._lock = ObservedLock()
+    original.acquire()
+    result = []
+    worker = threading.Thread(target=lambda: result.append(queue.put(b"1234")))
+    worker.start()
     try:
-        assert queue.put(b"1234") is False
+        assert entered.wait(1)
+        assert result == []
     finally:
-        queue._lock.release()
+        original.release()
+        worker.join(1)
+    assert not worker.is_alive()
+    assert result == [True] and queue.pop() == b"1234"
+    assert queue.dropped == 0
 
 
 def test_fanout_slow_consumer_independent_and_clear():
@@ -264,6 +281,12 @@ def test_apps_sink_callback_only_enqueues_and_validates_caps(wrapped):
     def forbidden(data):
         pytest.fail("Callback performed downstream work")
     pipeline.output.publish = forbidden
+    original_put = pipeline.staging.put
+    def put_after_metadata(data):
+        assert pipeline._caps == PCM_CAPS
+        assert pipeline._last_sample > 0
+        return original_put(data)
+    pipeline.staging.put = put_after_metadata
     assert pipeline._sample(sink) == "OK"
     assert pipeline.staging.pop() == b"1234"
     values["rate"] = 44100
@@ -324,7 +347,8 @@ def test_input_format_reporting_scopes_structure_access():
     pipeline._pipeline = SimpleNamespace(set_state=lambda state: "SUCCESS")
     pipeline._convert = SimpleNamespace(get_static_pad=lambda name: SimpleNamespace(get_current_caps=lambda: caps))
     pipeline._build = lambda: None
-    def receive(unused):
+    def receive(timeout):
+        assert timeout == 0, "PCM must not wait behind GstBus polling"
         pipeline.staging.put(b"1234")
         pipeline._caps = PCM_CAPS
         pipeline._last_sample = time.monotonic()

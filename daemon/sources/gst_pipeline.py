@@ -110,7 +110,8 @@ class GstPipeline:
         self.output = output or PcmOutput()
         self.timeout_s = timeout_s or min(30, max(1, source.config.get("connect_timeout_ms", 10000) / 1000))
         self.reconnect = reconnect
-        self.staging = PcmQueue()
+        self._audio_ready = threading.Event()
+        self.staging = PcmQueue(wakeup=self._audio_ready)
         self._stop = threading.Event()
         self._ready = threading.Event()
         self._finished = threading.Event()
@@ -131,6 +132,9 @@ class GstPipeline:
         with self._lock:
             return dict(self._snapshot)
 
+    def pcm_snapshot(self):
+        return dict(staging=self.staging.snapshot(), consumers=self.output.snapshot())
+
     def _update(self, **values):
         with self._lock:
             self._snapshot.update(values)
@@ -149,6 +153,7 @@ class GstPipeline:
 
     def stop(self):
         self._stop.set()
+        self._audio_ready.set()
         if self._thread is not None:
             self._thread.join(timeout=self.timeout_s + 2)
             if self._thread.is_alive():
@@ -277,9 +282,11 @@ class GstPipeline:
         buffer = sample.get_buffer()
         size = buffer.get_size()
         if size and size <= self.staging.max_bytes and size % 4 == 0:
-            self.staging.put(buffer.extract_dup(0, size))
+            data = buffer.extract_dup(0, size)
             self._last_sample = time.monotonic()
             self._caps = caps.to_string()
+            # Publish metadata before waking the source worker/readiness path.
+            self.staging.put(data)
         elif size:
             self._callback_error = "PCM buffer exceeds the bounded output block size or is not frame-aligned"
             return Gst.FlowReturn.ERROR
@@ -341,8 +348,15 @@ class GstPipeline:
         started = time.monotonic()
         running_since = None
         while not self._stop.is_set():
-            message = self._bus.timed_pop(10 * Gst.MSECOND)
-            if message:
+            # Clear before inspecting work, so a concurrent callback cannot be
+            # lost between draining staging and waiting. GstBus never delays PCM.
+            self._audio_ready.clear()
+            bus_idle = False
+            for _ in range(32):
+                message = self._bus.timed_pop(0)
+                if message is None:
+                    bus_idle = True
+                    break
                 if message.type == Gst.MessageType.ERROR:
                     error, debug = message.parse_error()
                     raise DependencyUnavailable(error.message)
@@ -373,9 +387,20 @@ class GstPipeline:
                 if self.snapshot()["codec"] is None:
                     fields["codec"] = self.source.config.get("codec") or ("PCM" if self.source.type in (SourceType.UDP, SourceType.ALSA) else "decoded audio")
                 self._update(state="RUNNING", output_caps=self._caps, last_error=None, **fields)
+            else:
+                # Bounded work per pass; check stop/bus again before more PCM.
+                continue
+            if running_since is not None and bus_idle:
                 self._ready.set()
+            if not bus_idle:
+                # Startup headers/tags must be serviced before reporting ready,
+                # but PCM still drains between bounded bus batches.
+                continue
             if running_since and time.monotonic() - running_since >= 30:
                 self._backoff.reset()
+            # Idle timeout services bus/errors even when no PCM is arriving.
+            # New PCM and stop wake this wait immediately.
+            self._audio_ready.wait(0.01)
 
     def _run(self):
         self._backoff = RetryBackoff()

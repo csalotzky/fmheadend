@@ -1,5 +1,6 @@
 from enum import StrEnum
 from typing import Literal
+from pydantic import Field
 from .configuration import Model, Modulator
 
 
@@ -27,7 +28,29 @@ class ModulatorSaveResult(Model):
     configuration: Modulator | None = None
 
 
+class PcmQueueStatus(Model):
+    accepted_bytes: int = 0
+    buffered_bytes: int = 0
+    dropped_blocks: int = 0
+    capacity_dropped_bytes: int = 0
+    stale_dropped_bytes: int = 0
+    invalid_dropped_bytes: int = 0
+    cleared_bytes: int = 0
+
+
+class SourcePcmStatus(Model):
+    staging: PcmQueueStatus
+    consumers: dict[int, PcmQueueStatus] = Field(default_factory=dict)
+
+
+class WriterPcmStatus(Model):
+    disconnects: int = 0
+    stale_disconnects: int = 0
+    discarded_pending_bytes: int = 0
+
+
 class InputSourceStatus(Model):
+    pcm: SourcePcmStatus | None = None
     source_id: int
     state: SourceState = SourceState.IDLE
     codec: str | None = None
@@ -43,6 +66,9 @@ class InputSourceStatus(Model):
 
 
 class ModulatorStatus(Model):
+    pcm_staging: PcmQueueStatus | None = None
+    pcm_consumer: PcmQueueStatus | None = None
+    pcm_writer: WriterPcmStatus | None = None
     input_saturated: bool | None = None
     id: int
     source_state: str | None = "IDLE"
@@ -76,6 +102,8 @@ class SystemStatus(Model):
     mux_transport: str = "mock"
     mux_transport_state: str = "RUNNING"
     mux_frames_sent: int = 0
+    mux_late_frames: int = 0
+    mux_transport_errors: int = 0
     mux_mocked: bool = True
     spi_errors: int = 0
     i2c_errors: int = 0

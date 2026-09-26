@@ -20,6 +20,9 @@ class Producer:
     offset: int = 0
     since: float = 0
     retry_at: float = 0
+    disconnects: int = 0
+    stale_disconnects: int = 0
+    discarded_pending_bytes: int = 0
 
 
 class UnixMuxClient:
@@ -29,16 +32,18 @@ class UnixMuxClient:
         self.producers: dict[int, Producer] = {}
         self._lock = threading.Lock()
         self._stop = threading.Event()
+        self._work = threading.Event()
         self._thread = None
         self.last_error: str | None = None
 
     def _connect(self, channel):
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
-            sock.settimeout(0.1)
+            # Reconnect runs on the shared writer. Never wait for a channel's
+            # listen backlog while the other seven need PCM delivery.
+            sock.setblocking(False)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4096)
             sock.connect(str(self.runtime_dir / f"pcm{channel}.sock"))
-            sock.setblocking(False)
             return sock
         except OSError:
             sock.close()
@@ -67,7 +72,11 @@ class UnixMuxClient:
                 raise DependencyUnavailable("Mux client is closed")
             if existing and existing.sock:
                 existing.sock.close()
+            if existing:
+                existing.output.set_wakeup(modulator_id, None)
             self.producers[modulator_id] = Producer(source_id, output, sock)
+            output.set_wakeup(modulator_id, self._work)
+            self._work.set()
             if self._thread is None:
                 self._thread = threading.Thread(target=self._run, name="mux-pcm-output", daemon=True)
                 self._thread.start()
@@ -75,10 +84,15 @@ class UnixMuxClient:
     def detach(self, modulator_id: int):
         with self._lock:
             producer = self.producers.pop(modulator_id, None)
+            if producer:
+                producer.output.set_wakeup(modulator_id, None)
             if producer and producer.sock:
                 producer.sock.close()
+        self._work.set()
 
     def _disconnect(self, producer, now, error):
+        producer.disconnects += 1
+        producer.discarded_pending_bytes += len(producer.pending) - producer.offset
         if producer.sock:
             producer.sock.close()
         producer.sock = None
@@ -99,6 +113,7 @@ class UnixMuxClient:
         if producer.pending and now - producer.since > 0.1:
             # A partial stereo frame cannot be abandoned inside a stream.
             # Close the producer session so muxd discards its partial bytes too.
+            producer.stale_disconnects += 1
             self._disconnect(producer, now, "PCM writer stalled; discarded stale audio")
             return
         if not producer.pending:
@@ -114,17 +129,43 @@ class UnixMuxClient:
             if producer.offset == len(producer.pending):
                 producer.pending, producer.offset = b"", 0
                 self.last_error = None
+            return True
         except (BlockingIOError, InterruptedError):
             return
         except OSError as exc:
             self._disconnect(producer, now, exc)
 
-    def _run(self):
-        while not self._stop.is_set():
+    def _drain(self):
+        # One nonblocking send per channel per round. Bound catch-up work and
+        # release the ownership lock between rounds for attach/detach/close.
+        for _ in range(16):
+            if self._stop.is_set():
+                return False
+            progressed = False
             with self._lock:
                 for channel, producer in self.producers.items():
-                    self._step(channel, producer, time.monotonic())
-            self._stop.wait(0.002)
+                    progressed |= bool(self._step(channel, producer, time.monotonic()))
+            if not progressed:
+                return False
+        return True
+
+    def _run(self):
+        while not self._stop.is_set():
+            self._work.clear()
+            if self._drain():
+                continue
+            with self._lock:
+                pending = any(p.pending for p in self.producers.values())
+            # Incoming PCM wakes idle immediately. Only blocked socket writes
+            # need the existing 2 ms retry cadence; idle reconnects stay bounded.
+            self._work.wait(0.002 if pending else 0.05)
+
+    def pcm_snapshot(self):
+        with self._lock:
+            return {channel: dict(disconnects=p.disconnects,
+                                  stale_disconnects=p.stale_disconnects,
+                                  discarded_pending_bytes=p.discarded_pending_bytes)
+                    for channel, p in self.producers.items()}
 
     def get_status(self) -> dict:
         try:
@@ -163,10 +204,13 @@ class UnixMuxClient:
 
     def close(self):
         self._stop.set()
+        self._work.set()
         if self._thread:
             self._thread.join(timeout=2)
         with self._lock:
             for producer in self.producers.values():
                 if producer.sock:
                     producer.sock.close()
+            for channel, producer in self.producers.items():
+                producer.output.set_wakeup(channel, None)
             self.producers.clear()

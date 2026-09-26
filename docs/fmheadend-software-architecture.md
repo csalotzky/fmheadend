@@ -2174,3 +2174,14 @@ A runtime-only set of bulk-stopped channels prevents RP reconnect recovery from
 undoing STOP ALL during the current daemon session. Explicit START releases its
 channel hold; START ALL releases eligible holds. Daemon restart uses the existing
 persistent desired-state restoration. No second persistent enabled flag is added.
+
+
+### PCM forwarding diagnostics
+
+The existing per-source worker and shared mux writer now wake on queued PCM;
+GstBus handling is bounded and nonblocking. Queues retain their 19,200-byte /
+100 ms limits and discard stale audio. Queue-lock contention itself is no longer
+a discard policy. Status exposes separate staging/consumer loss, writer discard,
+mux late-frame and transport-error counters. No RF/RDS/DSP lifecycle changes are
+implied. See [PCM delivery](pcm-delivery.md) for scope, counter lifetimes and the
+controlled eight-source validation procedure.

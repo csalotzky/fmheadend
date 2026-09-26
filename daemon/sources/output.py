@@ -8,7 +8,7 @@ PCM_BYTES_PER_SECOND = 48000 * 2 * 2
 
 
 class PcmQueue:
-    def __init__(self, max_bytes=19200, max_age_s=0.1, clock=time.monotonic):
+    def __init__(self, max_bytes=19200, max_age_s=0.1, clock=time.monotonic, wakeup=None):
         self.max_bytes = max_bytes
         self.max_age_s = max_age_s
         self.clock = clock
@@ -16,25 +16,39 @@ class PcmQueue:
         self._bytes = 0
         self._lock = Lock()
         self.dropped = 0
+        self._wakeup = wakeup
+        self._counts = dict(capacity_dropped_bytes=0, stale_dropped_bytes=0,
+                            invalid_dropped_bytes=0, cleared_bytes=0, accepted_bytes=0)
+
+    def set_wakeup(self, wakeup):
+        with self._lock:
+            self._wakeup = wakeup
+
+    def snapshot(self):
+        with self._lock:
+            return dict(self._counts, dropped_blocks=self.dropped, buffered_bytes=self._bytes)
 
     def put(self, data: bytes) -> bool:
-        # Streaming producers never wait for a reader or a contended lock.
-        if not data or len(data) % 4 or len(data) > self.max_bytes:
-            self.dropped += 1
-            return False
-        if not self._lock.acquire(blocking=False):
-            self.dropped += 1
-            return False
-        try:
+        # Only bounded deque/accounting work under this lock: no IO, callbacks,
+        # downstream locks or waits for capacity. Contention is not PCM loss.
+        timestamp = self.clock()
+        with self._lock:
+            if not data or len(data) % 4 or len(data) > self.max_bytes:
+                self.dropped += 1
+                self._counts['invalid_dropped_bytes'] += len(data)
+                return False
             while self._items and self._bytes + len(data) > self.max_bytes:
                 _, old = self._items.popleft()
                 self._bytes -= len(old)
                 self.dropped += 1
-            self._items.append((self.clock(), data))
+                self._counts['capacity_dropped_bytes'] += len(old)
+            self._items.append((timestamp, data))
             self._bytes += len(data)
-            return True
-        finally:
-            self._lock.release()
+            self._counts['accepted_bytes'] += len(data)
+            wakeup = self._wakeup
+        if wakeup is not None:
+            wakeup.set()
+        return True
 
     def pop(self) -> bytes | None:
         with self._lock:
@@ -44,10 +58,12 @@ class PcmQueue:
                 if self.clock() - timestamp <= self.max_age_s:
                     return data
                 self.dropped += 1
+                self._counts['stale_dropped_bytes'] += len(data)
             return None
 
     def clear(self):
         with self._lock:
+            self._counts['cleared_bytes'] += self._bytes
             self._items.clear()
             self._bytes = 0
 
@@ -85,6 +101,17 @@ class PcmOutput:
         with self._lock:
             queue = self._queues.get(consumer_id)
         return queue.pop() if queue else None
+
+    def set_wakeup(self, consumer_id, wakeup):
+        with self._lock:
+            queue = self._queues.get(consumer_id)
+        if queue is not None:
+            queue.set_wakeup(wakeup)
+
+    def snapshot(self):
+        with self._lock:
+            queues = tuple(self._queues.items())
+        return {consumer: queue.snapshot() for consumer, queue in queues}
 
     def clear(self):
         with self._lock:
