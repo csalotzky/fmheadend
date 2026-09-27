@@ -33,6 +33,8 @@ from .services import ConfigurationService
 from .sources.manager import SourceManager
 from .sources.pipeline import MockPipeline
 from .sources.gst_pipeline import GstPipeline
+from .sources.output import (DEFAULT_STAGING_BUFFER_MS, DEFAULT_CONSUMER_BUFFER_MS,
+                             STAGING_MAX_AGE_S, pcm_capacity_bytes)
 from .status.service import StatusService
 
 logger = logging.getLogger(__name__)
@@ -49,7 +51,9 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
             database = Database(settings.database_path)
             profile_files = AudioProfileFiles(settings.audio_profiles_default_dir, settings.audio_profiles_custom_dir,
                 is_referenced=lambda path: any(s.audio_profile_path == path for s in database.list('sources')))
-            sources = SourceManager(database, pipeline_factory, profile_files, clock=clock)
+            sources = SourceManager(database, pipeline_factory, profile_files, clock=clock,
+                pcm_staging_buffer_ms=settings.pcm_staging_buffer_ms,
+                pcm_consumer_buffer_ms=settings.pcm_consumer_buffer_ms)
             rp_client = rp or MockRp2354Client()
             mux_client = mux or (mux_factory(sources) if mux_factory else MockMuxClient())
             modulators = ModulatorManager(database, sources, rp_client, mux_client, settings)
@@ -125,6 +129,8 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
         task = asyncio.create_task(maintenance())
         logger.info("fmheadendd started; media backend: %s; RP2354 control: %s",
                     pipeline_factory.__name__, type(services.rp).__name__)
+        logger.info("PCM buffers: staging_capacity_ms=%s staging_stale_age_ms=%s consumer_buffer_ms=%s",
+                    settings.pcm_staging_buffer_ms, int(STAGING_MAX_AGE_S * 1000), settings.pcm_consumer_buffer_ms)
         try:
             yield
         finally:
@@ -189,6 +195,17 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
     return app
 
 
+def pcm_buffer_ms(text):
+    try:
+        if not text.isascii() or not text.isdecimal():
+            raise ValueError("PCM buffer milliseconds must be a positive integer")
+        value = int(text)
+        pcm_capacity_bytes(value)
+        return value
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
 def argument_parser():
     parser = argparse.ArgumentParser(description="fmheadendd media and RP2354 control")
     parser.add_argument("--database", default="/var/lib/fmheadend/fmheadend.db")
@@ -201,6 +218,10 @@ def argument_parser():
     parser.add_argument("--i2c-timeout-ms", type=int, default=200)
     parser.add_argument("--mock-mux", action="store_true", help="Use real sources with the M2 mock mux")
     parser.add_argument("--mux-runtime-dir", default="/run/fmheadend")
+    parser.add_argument("--pcm-staging-buffer-ms", type=pcm_buffer_ms, default=DEFAULT_STAGING_BUFFER_MS,
+                        help="Staging byte capacity / burst headroom in ms (default 200); stale age remains 100 ms")
+    parser.add_argument("--pcm-consumer-buffer-ms", type=pcm_buffer_ms, default=DEFAULT_CONSUMER_BUFFER_MS,
+                        help="Per-consumer PCM capacity and maximum age in ms (default 300)")
     parser.add_argument("--region", type=int, choices=sorted(PLANS), default=1, help="Frequency selection plan: 0 Expert, 1 Europe (default), 2 US, 3 Japan")
     parser.add_argument("--webui-dir", help="Production Angular browser assets directory (optional)")
     parser.add_argument("--audio-profiles-default-dir", default="/usr/share/fmheadend/audio-profiles/default")
@@ -212,7 +233,9 @@ def main():
     parser = argument_parser()
     args = parser.parse_args()
     settings = Settings(args.database, args.region, args.webui_dir,
-                        args.audio_profiles_default_dir, args.audio_profiles_custom_dir)
+                        args.audio_profiles_default_dir, args.audio_profiles_custom_dir,
+                        pcm_staging_buffer_ms=args.pcm_staging_buffer_ms,
+                        pcm_consumer_buffer_ms=args.pcm_consumer_buffer_ms)
     database = Database(args.database)
     try:
         config = database.get_system()

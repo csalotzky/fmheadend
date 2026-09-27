@@ -4,12 +4,19 @@ from ..errors import DependencyUnavailable, DomainError
 from ..models.configuration import InputSourceConfig, SourceTestResult
 from ..models.runtime_status import InputSourceStatus, SourceState
 from .pipeline import MockPipeline, probe
+from .output import DEFAULT_STAGING_BUFFER_MS, DEFAULT_CONSUMER_BUFFER_MS, pcm_capacity_bytes
 
 logger = logging.getLogger(__name__)
 
 
 class SourceManager:
-    def __init__(self, database, pipeline_factory=MockPipeline, profile_files=None, *, clock=time.monotonic):
+    def __init__(self, database, pipeline_factory=MockPipeline, profile_files=None, *, clock=time.monotonic,
+                 pcm_staging_buffer_ms=DEFAULT_STAGING_BUFFER_MS,
+                 pcm_consumer_buffer_ms=DEFAULT_CONSUMER_BUFFER_MS):
+        pcm_capacity_bytes(pcm_staging_buffer_ms)
+        pcm_capacity_bytes(pcm_consumer_buffer_ms)
+        self.pcm_staging_buffer_ms = pcm_staging_buffer_ms
+        self.pcm_consumer_buffer_ms = pcm_consumer_buffer_ms
         self.database = database
         self.pipeline_factory = pipeline_factory
         self.profile_files = profile_files
@@ -65,7 +72,9 @@ class SourceManager:
             raise DependencyUnavailable(f'{exc.error}: {exc.message}') from exc
         if getattr(self.pipeline_factory, "mocked", True):
             return self.pipeline_factory(source)
-        return self.pipeline_factory(source, profile=profile, **kwargs)
+        return self.pipeline_factory(source, profile=profile,
+            pcm_staging_buffer_ms=self.pcm_staging_buffer_ms,
+            pcm_consumer_buffer_ms=self.pcm_consumer_buffer_ms, **kwargs)
 
     def validate_config(self, source):
         if source.processor_mode == 'builtin':

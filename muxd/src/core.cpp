@@ -4,16 +4,28 @@
 #include <stdexcept>
 
 namespace muxd {
+std::size_t ring_capacity_bytes(std::uint64_t milliseconds) {
+    constexpr auto bytes_per_ms = pcm_bytes_per_second / 1000;
+    if (!milliseconds || milliseconds > std::vector<std::uint8_t>().max_size() / bytes_per_ms)
+        throw std::invalid_argument("Ring buffer milliseconds must be positive and fit the byte container");
+    return static_cast<std::size_t>(milliseconds) * bytes_per_ms;
+}
+RingBuffer::RingBuffer(std::size_t capacity_bytes) {
+    if (!capacity_bytes || capacity_bytes % stereo_bytes)
+        throw std::invalid_argument("Ring capacity must contain whole stereo frames");
+    data_.resize(capacity_bytes);
+}
 void RingBuffer::push(const std::uint8_t* data, std::size_t size) {
+    const auto ring_bytes = capacity();
     if (size % stereo_bytes) throw std::invalid_argument("PCM must contain whole stereo frames");
     if (size == 0) return;
-    if (size_ + size > ring_bytes) ++overruns_;
+    if (size > ring_bytes - size_) ++overruns_;
     if (size >= ring_bytes) {
         data += size - ring_bytes;
         size = ring_bytes;
         clear();
-    } else if (size_ + size > ring_bytes) {
-        const auto discard = size_ + size - ring_bytes;
+    } else if (size > ring_bytes - size_) {
+        const auto discard = size - (ring_bytes - size_);
         head_ = (head_ + discard) % ring_bytes;
         size_ -= discard;
     }
@@ -25,6 +37,7 @@ void RingBuffer::push(const std::uint8_t* data, std::size_t size) {
 }
 
 std::size_t RingBuffer::pop(std::uint8_t* destination, std::size_t size) {
+    const auto ring_bytes = capacity();
     if (size % stereo_bytes) throw std::invalid_argument("Read must contain whole stereo frames");
     const auto available = std::min(size, size_);
     const auto first = std::min(available, ring_bytes - head_);

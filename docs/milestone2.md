@@ -74,14 +74,17 @@ sufficient. No Python requirement has been lowered or silently bypassed.
 
 The [appsink documentation](https://gstreamer.freedesktop.org/documentation/app/appsink.html)
 describes the streaming-thread callback and internal buffering. Here the callback
-only checks caps and copies at most 19,200 bytes into a bounded queue with a
+checks negotiated caps (reusing validation until they change) and copies at most
+the configured staging capacity (38,400 bytes by default) into a bounded queue with a
 short metadata lock (no IO or capacity wait). PCM arrival wakes the existing worker;
 GstBus polling is nonblocking. The worker fans blocks out to consumer queues.
 See [PCM delivery diagnostics and validation](pcm-delivery.md). The native
 upstream queue applies bounded backpressure to decoding, so HLS segments/files
 are paced rather than discarded simply because decoding runs faster than audio.
-Each output queue holds at most 100 ms, drops oldest data on overflow, and refuses
-to return data older than 100 ms. An empty read returns None for the future
+Staging age stays fixed at 100 ms independently of its 200 ms byte capacity.
+Each consumer output queue defaults to 300 ms of capacity and maximum age,
+controlled together by `--pcm-consumer-buffer-ms`; oldest data is dropped on overflow.
+`--pcm-staging-buffer-ms` changes only staging capacity. An empty read returns None for the future
 transport to interpret as silence. There is no SPI frame construction or mux IPC.
 
 ## Lifecycle, reconnect and probes

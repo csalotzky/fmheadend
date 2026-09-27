@@ -8,7 +8,8 @@ import time
 
 from ..errors import DependencyUnavailable
 from ..models.configuration import SourceType, SourceTestResult
-from .output import PCM_CAPS, PcmQueue, PcmOutput
+from .output import (PCM_CAPS, PcmQueue, PcmOutput, pcm_capacity_bytes,
+                     DEFAULT_STAGING_BUFFER_MS, DEFAULT_CONSUMER_BUFFER_MS, STAGING_MAX_AGE_S)
 from .dsp import PROCESSING_CAPS
 from .dsp import dsp_stages
 
@@ -98,7 +99,9 @@ class GstPipeline:
             return element
         dsp_stages(check, profile)
 
-    def __init__(self, source, *, profile=None, output=None, timeout_s=None, reconnect=True):
+    def __init__(self, source, *, profile=None, output=None, timeout_s=None, reconnect=True,
+                 pcm_staging_buffer_ms=DEFAULT_STAGING_BUFFER_MS,
+                 pcm_consumer_buffer_ms=DEFAULT_CONSUMER_BUFFER_MS):
         if source.processor_mode == 'stereotool':
             raise DependencyUnavailable('Stereo Tool processing is not implemented')
         if source.processor_mode == 'builtin' and profile is None:
@@ -107,11 +110,12 @@ class GstPipeline:
             raise DependencyUnavailable('Bypass must not load a processing profile')
         self.source = source
         self.profile = profile
-        self.output = output or PcmOutput()
+        self.output = output or PcmOutput(pcm_consumer_buffer_ms)
         self.timeout_s = timeout_s or min(30, max(1, source.config.get("connect_timeout_ms", 10000) / 1000))
         self.reconnect = reconnect
         self._audio_ready = threading.Event()
-        self.staging = PcmQueue(wakeup=self._audio_ready)
+        self.staging = PcmQueue(max_bytes=pcm_capacity_bytes(pcm_staging_buffer_ms),
+                                max_age_s=STAGING_MAX_AGE_S, wakeup=self._audio_ready)
         self._stop = threading.Event()
         self._ready = threading.Event()
         self._finished = threading.Event()
@@ -127,6 +131,8 @@ class GstPipeline:
         self._caps = None
         self._pipeline = None
         self._input_caps = None
+        self._validated_output_caps = None
+        self._validated_output_text = None
 
     def snapshot(self):
         with self._lock:
@@ -272,19 +278,27 @@ class GstPipeline:
         if sample is None:
             return Gst.FlowReturn.OK
         caps = sample.get_caps()
-        with caps_structure(caps) as structure:
-            valid = (structure.get_name() == "audio/x-raw" and structure.get_string("format") == "S16LE"
-                     and structure.get_value("rate") == 48000 and structure.get_value("channels") == 2
-                     and structure.get_string("layout") == "interleaved")
-        if not valid:
-            self._callback_error = "Unexpected appsink caps: " + caps.to_string()
+        # Samples retain their negotiated caps. Revalidate changed caps, but do
+        # not marshal the same structure/fields through GI on every PCM block.
+        if caps is None:
+            self._callback_error = "Missing appsink caps"
             return Gst.FlowReturn.ERROR
+        if self._validated_output_caps is None or not caps.is_equal(self._validated_output_caps):
+            with caps_structure(caps) as structure:
+                valid = (structure.get_name() == "audio/x-raw" and structure.get_string("format") == "S16LE"
+                         and structure.get_value("rate") == 48000 and structure.get_value("channels") == 2
+                         and structure.get_string("layout") == "interleaved")
+            if not valid:
+                self._callback_error = "Unexpected appsink caps: " + caps.to_string()
+                return Gst.FlowReturn.ERROR
+            self._validated_output_caps = caps
+            self._validated_output_text = caps.to_string()
         buffer = sample.get_buffer()
         size = buffer.get_size()
         if size and size <= self.staging.max_bytes and size % 4 == 0:
             data = buffer.extract_dup(0, size)
             self._last_sample = time.monotonic()
-            self._caps = caps.to_string()
+            self._caps = self._validated_output_text
             # Publish metadata before waking the source worker/readiness path.
             self.staging.put(data)
         elif size:
@@ -337,6 +351,7 @@ class GstPipeline:
     def _attempt(self):
         Gst = self.Gst
         self._callback_error, self._caps, self._input_caps = None, None, None
+        self._validated_output_caps = self._validated_output_text = None
         with self._lock:
             self._station_name = None
         self._last_sample = 0
@@ -347,6 +362,8 @@ class GstPipeline:
             raise DependencyUnavailable("GStreamer refused PLAYING state")
         started = time.monotonic()
         running_since = None
+        observed_input_caps = None
+        input_fields = {}
         while not self._stop.is_set():
             # Clear before inspecting work, so a concurrent callback cannot be
             # lost between draining staging and waiting. GstBus never delays PCM.
@@ -380,10 +397,14 @@ class GstPipeline:
                 if running_since is None:
                     running_since = time.monotonic()
                 caps = self._input_caps or self._convert.get_static_pad("sink").get_current_caps()
-                fields = {}
-                if caps:
-                    with caps_structure(caps) as structure:
-                        fields = {"input_sample_rate": structure.get_value("rate"), "input_channels": structure.get_value("channels")}
+                if caps is not observed_input_caps and (caps is None or observed_input_caps is None
+                                                        or not caps.is_equal(observed_input_caps)):
+                    input_fields = {}
+                    if caps:
+                        with caps_structure(caps) as structure:
+                            input_fields = {"input_sample_rate": structure.get_value("rate"), "input_channels": structure.get_value("channels")}
+                    observed_input_caps = caps
+                fields = dict(input_fields)
                 if self.snapshot()["codec"] is None:
                     fields["codec"] = self.source.config.get("codec") or ("PCM" if self.source.type in (SourceType.UDP, SourceType.ALSA) else "decoded audio")
                 self._update(state="RUNNING", output_caps=self._caps, last_error=None, **fields)
@@ -398,9 +419,11 @@ class GstPipeline:
                 continue
             if running_since and time.monotonic() - running_since >= 30:
                 self._backoff.reset()
-            # Idle timeout services bus/errors even when no PCM is arriving.
-            # New PCM and stop wake this wait immediately.
-            self._audio_ready.wait(0.01)
+            # PCM and stop wake immediately. Avoid 100 Hz empty-bus polling
+            # between 21-43 ms decoded blocks; this ceiling only bounds bus
+            # observation when no PCM arrives, never the audio/stall deadline.
+            remaining = self.timeout_s - (time.monotonic() - (self._last_sample or started))
+            self._audio_ready.wait(min(0.05, max(0.0, remaining)))
 
     def _run(self):
         self._backoff = RetryBackoff()

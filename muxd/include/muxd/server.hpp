@@ -10,7 +10,8 @@
 namespace muxd {
 class Server {
 public:
-    Server(std::string directory, Transport& transport);
+    Server(std::string directory, Transport& transport,
+           std::size_t ring_capacity = ring_capacity_bytes(default_ring_buffer_ms));
     ~Server();
     Server(const Server&) = delete;
     Server& operator=(const Server&) = delete;
@@ -21,6 +22,7 @@ private:
     std::string directory_;
     Transport& transport_;
     std::array<Channel, channels> inputs_;
+    const int receive_buffer_bytes_;
     std::array<int, channels> listeners_, producers_;
     int control_ = -1, lock_ = -1;
     std::vector<std::string> paths_;

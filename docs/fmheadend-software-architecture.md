@@ -793,7 +793,8 @@ A socket index maga a modulátor indexe.
 
 Csatornánként külön bounded ring buffer.
 
-Kiinduló ajánlás: kb. **100 ms** PCM/channel.
+Alapértelmezett ring kapacitás: **300 ms** PCM/channel, futásidőben a
+`fmheadend-muxd --ring-buffer-ms` kapcsolóval állítható.
 
 Egy stream adatsebessége:
 
@@ -801,7 +802,7 @@ Egy stream adatsebessége:
 48000 * 2 channel * 2 byte = 192000 byte/s
 ```
 
-100 ms kb. 19.2 kB/channel, nyolc csatorna kb. 154 kB.
+300 ms = 57.6 kB/channel, nyolc csatorna = 460.8 kB.
 
 A pontos méret belső config/konstans, nem normál web UI setting.
 
@@ -2179,8 +2180,12 @@ persistent desired-state restoration. No second persistent enabled flag is added
 ### PCM forwarding diagnostics
 
 The existing per-source worker and shared mux writer now wake on queued PCM;
-GstBus handling is bounded and nonblocking. Queues retain their 19,200-byte /
-100 ms limits and discard stale audio. Queue-lock contention itself is no longer
+GstBus handling is bounded and nonblocking; PCM/stop wakeups are immediate and
+the idle ceiling is 50 ms, capped by the audio-stall deadline. Staging defaults
+to 38,400 bytes / 100 ms age (`--pcm-staging-buffer-ms 200` changes capacity only).
+Consumer queues default to 57,600 bytes / 300 ms age (`--pcm-consumer-buffer-ms 300`
+controls both); mux rings default to 300 ms. Queues discard stale audio.
+Queue-lock contention itself is no longer
 a discard policy. Status exposes separate staging/consumer loss, writer discard,
 mux late-frame and transport-error counters. No RF/RDS/DSP lifecycle changes are
 implied. See [PCM delivery](pcm-delivery.md) for scope, counter lifetimes and the

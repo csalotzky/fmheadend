@@ -4,12 +4,14 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <limits>
 
 #define CHECK(condition) do { if (!(condition)) throw std::runtime_error("check failed: " #condition); } while (false)
 using namespace muxd;
 
 void ring_test() {
     RingBuffer ring;
+    const auto ring_bytes = ring.capacity();
     std::vector<std::uint8_t> input(ring_bytes, 0x71), out(ring_bytes);
     ring.push(input.data(), input.size());
     CHECK(ring.pop(out.data(), channel_bytes) == channel_bytes);
@@ -35,6 +37,7 @@ void underrun_test() {
 }
 void overrun_test() {
     RingBuffer ring;
+    const auto ring_bytes = ring.capacity();
     std::vector<std::uint8_t> data(ring_bytes + 8), out(ring_bytes);
     for (std::size_t i = 0; i < data.size(); ++i) data[i] = static_cast<std::uint8_t>(i);
     ring.push(data.data(), ring_bytes);
@@ -103,13 +106,38 @@ void disconnect_test() {
     CHECK(std::equal(fresh, fresh + 4, out.begin()));
     CHECK(std::all_of(out.begin() + 4, out.end(), [](auto v) { return v == 0; }));
 }
+void capacity_test() {
+    CHECK(RingBuffer().capacity() == 57600);
+    CHECK(ring_capacity_bytes(100) == 19200);
+    RingBuffer small(ring_capacity_bytes(1)), large(ring_capacity_bytes(200));
+    CHECK(small.capacity() == 192 && large.capacity() == 38400);
+    std::vector<std::uint8_t> data(384, 0x34), out(channel_bytes, 0xff);
+    small.push(data.data(), data.size());
+    large.push(data.data(), data.size());
+    CHECK(small.overruns() == 1 && large.overruns() == 0);
+    CHECK(small.pop(out.data(), out.size()) == 192);
+    CHECK(std::all_of(out.begin(), out.begin() + 192, [](auto v) { return v == 0x34; }));
+    CHECK(std::all_of(out.begin() + 192, out.end(), [](auto v) { return v == 0; }));
+    CHECK(small.underruns() == 1 && large.size() == 384);
+    for (auto ms : {std::uint64_t{0}, std::numeric_limits<std::uint64_t>::max()}) {
+        bool rejected = false;
+        try { ring_capacity_bytes(ms); } catch (const std::invalid_argument&) { rejected = true; }
+        CHECK(rejected);
+    }
+    for (auto bytes : {0, 3}) {
+        bool rejected = false;
+        try { RingBuffer invalid(bytes); } catch (const std::invalid_argument&) { rejected = true; }
+        CHECK(rejected);
+    }
+}
 int main(int argc, char** argv) {
     try {
         const std::string name = argc > 1 ? argv[1] : "";
         if (name == "ring") ring_test(); else if (name == "underrun") underrun_test();
         else if (name == "overrun") overrun_test(); else if (name == "fragmented") fragmented_test();
         else if (name == "frame") frame_test(); else if (name == "counter") counter_test();
-        else if (name == "disconnect") disconnect_test(); else throw std::runtime_error("unknown test");
+        else if (name == "disconnect") disconnect_test(); else if (name == "capacity") capacity_test();
+        else throw std::runtime_error("unknown test");
         std::cout << name << " passed\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

@@ -7,7 +7,8 @@ The production path remains:
 `GStreamer streaming callback -> staging queue -> source worker -> per-consumer
 queue -> shared Unix writer -> muxd channel ring -> fixed-rate frame builder`.
 
-The callback copies one whole, frame-aligned buffer, at most 19,200 bytes. It
+The callback copies one whole, frame-aligned buffer, bounded by staging capacity
+(38,400 bytes by default). It
 does not do socket/hardware IO. One source still has one decoder/DSP worker and
 independent consumer queues. All PCM remains interleaved S16LE/48 kHz/stereo.
 
@@ -25,7 +26,7 @@ Unix receiver thread. Average host CPU also does not measure per-core stalls.
 | GIL/GC is the root cause | Plausible, **not established**. No GC tuning, thread-priority change or new worker architecture is justified by the current evidence. |
 | Additional concrete hazard | `_connect()` could wait 100 ms while the sole writer held its ownership lock, delaying every channel. Relevant during reconnect, not proof of the steady-state failure. |
 
-The 100 ms bounds are **capacity ceilings**, not guaranteed prebuffered headroom.
+Queue capacities are **ceilings**, not guaranteed prebuffered headroom.
 Native decoder buffer sizes vary by codec; the 4,608-byte measurement is not a
 new chunk-size contract. Splitting it into 512-byte chunks cannot make decoded
 samples arrive earlier, and is not needed by muxd's existing stream assembler.
@@ -34,7 +35,7 @@ samples arrive earlier, and is not needed by muxd's existing stream assembler.
 
 * Queue insertion takes the same short metadata lock as removal. No IO, external
   callbacks, downstream locks or capacity waits occur inside it. Work is bounded
-  by the unchanged 19,200-byte queue. Contention alone no longer drops blocks.
+  by the configured queue capacity. Contention alone no longer drops blocks.
   This is bounded work, **not** a hard realtime mutex latency guarantee under OS
   preemption. Capacity eviction and 100 ms stale removal remain intentional.
 * The appsink callback records caps/time **before** publishing PCM and waking the
@@ -42,7 +43,11 @@ samples arrive earlier, and is not needed by muxd's existing stream assembler.
 * The source worker polls GstBus nonblocking, at most 32 messages per pass, and
   drains up to 16 PCM blocks. Queued startup headers/tags are serviced before
   readiness; PCM drains between bus batches. It waits on a PCM/stop Event only
-  when idle; a 10 ms idle timeout still services bus errors without audio.
+  when idle; a 50 ms idle ceiling services bus errors without audio, capped by
+  the remaining audio-stall deadline. PCM and stop still wake it immediately.
+* Negotiated output caps are validated once and revalidated when changed;
+  missing/incompatible caps still fail. Input metadata is reused until caps
+  change. Cached GI caps references are reset on every pipeline attempt.
 * Event clearing precedes checking/draining work, avoiding lost notifications.
 * The mux writer receives consumer-queue notifications. It performs at most 16
   fair rounds per pass, one nonblocking send per channel per round, releasing
@@ -56,9 +61,35 @@ samples arrive earlier, and is not needed by muxd's existing stream assembler.
   `PcmOutput` object and consumer notifications. No lifecycle/recovery policy was
   changed. No TX, QN, RDS, firmware, DSP or SPI code was changed.
 
-Queue age bounds remain per queue, not a promised end-to-end 100 ms latency.
-Kernel buffering and the mux ring also contribute. No buffer was enlarged and
-there is still no unbounded backlog; prolonged stalls intentionally discard audio.
+Queue age bounds remain per queue, not a promised end-to-end latency.
+Kernel buffering and the mux ring also contribute; prolonged stalls intentionally
+discard audio rather than accumulating unbounded backlog.
+
+## Runtime buffer controls
+
+| Process / option | Default | Meaning |
+|---|---|---|
+| fmheadendd `--pcm-staging-buffer-ms` | 200 | Byte capacity / burst headroom only; stale age stays **100 ms** |
+| fmheadendd `--pcm-consumer-buffer-ms` | 300 | Independent queue per consumer: both byte capacity and maximum age |
+| fmheadend-muxd `--ring-buffer-ms` | 300 | Per-channel ring byte capacity; discard oldest on overflow, zero-fill on underrun |
+
+At S16LE / 48 kHz / two channels, capacity = integer milliseconds × 192 bytes,
+always stereo-frame aligned. Defaults are 38,400 staging bytes and 57,600 bytes
+per consumer/ring. Values must be positive integers and fit the implementation's
+byte-container size; there is no arbitrary tuning maximum. A mux ring smaller
+than a 512-byte payload is allowed and naturally produces partial silence.
+Effective values are logged once at startup. Settings are instance-owned, including
+new source attempts and audio-only rebuilds; global `PcmQueue` defaults stay
+19,200 bytes / 100 ms.
+
+Staging headroom absorbs measured compressed PCM arrivals; it does not change
+the 100 ms stale policy or intentionally prebuffer 200 ms. The final defaults
+are deliberate production values, replacing experimental hard-coded buffers.
+
+The measured loaded Pi configuration requires **both muxd threads SCHED_RR 10**;
+Python, including `mux-pcm-output`, remains SCHED_OTHER. Restore and verify this
+after a live muxd restart. Persistent privileges/service scheduling remain a
+deployment item: these code changes do not modify systemd or acquire RT privileges.
 
 Upstream semantics: [appsink streaming callbacks](https://gstreamer.freedesktop.org/documentation/app/appsink.html),
 [GstBus timed_pop](https://gstreamer.freedesktop.org/documentation/gstreamer/gstbus.html#gst_bus_timed_pop),

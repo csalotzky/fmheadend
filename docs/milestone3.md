@@ -120,7 +120,8 @@ Milestone 6.
 
 ## Buffers and counters
 
-Each channel ring holds 19200 bytes (100 ms). A short 512-byte read zero-fills
+Each channel ring defaults to 57600 bytes (300 ms), configured per process with
+`--ring-buffer-ms` and stored per ring instance. A short 512-byte read zero-fills
 missing audio and increments `underruns` once per deficient channel/frame,
 including entirely disconnected channels. Each overflowing ring append discards
 the oldest complete stereo samples and increments `overruns` once. These counters
@@ -132,12 +133,13 @@ producer cannot inherit stale audio or a partial stereo sample.
 Counters persist across producer reconnects and reset when the daemon restarts.
 All eight slots are emitted continuously, including when every producer is absent.
 
-Python keeps the Milestone 2 bounded 100 ms queue per consumer. One independent
+Python keeps a bounded queue per consumer (default 300 ms capacity and age,
+`--pcm-consumer-buffer-ms`). One independent
 writer thread drains those queues, with at most one pending bounded chunk per
 channel. Writes are nonblocking; a partial write stalled for 100 ms closes the
 session before discarding it to preserve sample alignment. Failed connections
 retry after 250 ms without replaying a partially written chunk. Kernel socket
-buffers are also bounded and contribute additional latency; 100 ms describes
+buffers are also bounded and contribute additional latency; 300 ms describes
 the ring target, not an end-to-end latency guarantee. Appsink performs no socket
 or hardware I/O. Shared sources still use one pipeline, with separate consumer
 queues. ANALOG modulators create neither pipeline nor PCM producer.

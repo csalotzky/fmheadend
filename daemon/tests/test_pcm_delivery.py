@@ -101,7 +101,7 @@ def test_source_worker_bus_never_blocks_pcm_and_idle_wakes_on_staging():
             pipeline._stop.set()
     pipeline._audio_ready.wait = wait
     pipeline._attempt()
-    assert waits == [.01, .01]
+    assert waits == [.05, .05]
     pipeline._audio_ready.clear()
     pipeline.stop()
     assert pipeline._audio_ready.is_set()

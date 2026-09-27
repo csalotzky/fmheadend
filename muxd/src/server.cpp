@@ -14,9 +14,15 @@
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
+#include <utility>
+#include <limits>
 
 namespace muxd {
 namespace {
+template<std::size_t... I>
+std::array<Channel, channels> make_channels(std::size_t capacity, std::index_sequence<I...>) {
+    return {{Channel((static_cast<void>(I), capacity))...}};
+}
 void close_fd(int& fd) { if (fd >= 0) { ::close(fd); fd = -1; } }
 std::runtime_error system_error(const char* operation) {
     return std::runtime_error(std::string(operation) + ": " + std::strerror(errno));
@@ -32,7 +38,10 @@ std::string quote(const std::string& text) {
     return result + '"';
 }
 }
-Server::Server(std::string directory, Transport& transport) : directory_(std::move(directory)), transport_(transport) {
+Server::Server(std::string directory, Transport& transport, std::size_t ring_capacity)
+    : directory_(std::move(directory)), transport_(transport),
+      inputs_(make_channels(ring_capacity, std::make_index_sequence<channels>{})),
+      receive_buffer_bytes_(static_cast<int>(std::min<std::size_t>(ring_capacity, std::numeric_limits<int>::max()))) {
     listeners_.fill(-1); producers_.fill(-1);
 }
 Server::~Server() {
@@ -165,7 +174,8 @@ void Server::run(const volatile std::sig_atomic_t& interrupted) {
                 if (incoming >= 0) {
                     if (producers_[i] >= 0) close_fd(incoming); // One producer per channel.
                     else {
-                        int bytes = ring_bytes;
+                        // SO_RCVBUF takes int; the kernel also applies its own cap.
+                        const int bytes = receive_buffer_bytes_;
                         ::setsockopt(incoming, SOL_SOCKET, SO_RCVBUF, &bytes, sizeof(bytes));
                         producers_[i] = incoming; inputs_[i].connect();
                     }
