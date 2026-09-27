@@ -2182,7 +2182,8 @@ persistent desired-state restoration. No second persistent enabled flag is added
 The existing per-source worker and shared mux writer now wake on queued PCM;
 GstBus handling is bounded and nonblocking; PCM/stop wakeups are immediate and
 the idle ceiling is 50 ms, capped by the audio-stall deadline. Staging defaults
-to 38,400 bytes / 100 ms age (`--pcm-staging-buffer-ms 200` changes capacity only).
+to 38,400 bytes / 100 ms age (`--pcm-staging-buffer-ms 200` changes capacity only;
+`--pcm-staging-max-age-ms 100` independently changes staging age only).
 Consumer queues default to 57,600 bytes / 300 ms age (`--pcm-consumer-buffer-ms 300`
 controls both); mux rings default to 300 ms. Queues discard stale audio.
 Queue-lock contention itself is no longer

@@ -4,7 +4,7 @@ from ..errors import DependencyUnavailable, DomainError
 from ..models.configuration import InputSourceConfig, SourceTestResult
 from ..models.runtime_status import InputSourceStatus, SourceState
 from .pipeline import MockPipeline, probe
-from .output import DEFAULT_STAGING_BUFFER_MS, DEFAULT_CONSUMER_BUFFER_MS, pcm_capacity_bytes
+from .output import DEFAULT_STAGING_BUFFER_MS, DEFAULT_CONSUMER_BUFFER_MS, DEFAULT_STAGING_MAX_AGE_MS, pcm_capacity_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -12,9 +12,12 @@ logger = logging.getLogger(__name__)
 class SourceManager:
     def __init__(self, database, pipeline_factory=MockPipeline, profile_files=None, *, clock=time.monotonic,
                  pcm_staging_buffer_ms=DEFAULT_STAGING_BUFFER_MS,
-                 pcm_consumer_buffer_ms=DEFAULT_CONSUMER_BUFFER_MS):
+                 pcm_consumer_buffer_ms=DEFAULT_CONSUMER_BUFFER_MS,
+                 pcm_staging_max_age_ms=DEFAULT_STAGING_MAX_AGE_MS):
         pcm_capacity_bytes(pcm_staging_buffer_ms)
         pcm_capacity_bytes(pcm_consumer_buffer_ms)
+        pcm_capacity_bytes(pcm_staging_max_age_ms)
+        self.pcm_staging_max_age_ms = pcm_staging_max_age_ms
         self.pcm_staging_buffer_ms = pcm_staging_buffer_ms
         self.pcm_consumer_buffer_ms = pcm_consumer_buffer_ms
         self.database = database
@@ -74,6 +77,7 @@ class SourceManager:
             return self.pipeline_factory(source)
         return self.pipeline_factory(source, profile=profile,
             pcm_staging_buffer_ms=self.pcm_staging_buffer_ms,
+            pcm_staging_max_age_ms=self.pcm_staging_max_age_ms,
             pcm_consumer_buffer_ms=self.pcm_consumer_buffer_ms, **kwargs)
 
     def validate_config(self, source):

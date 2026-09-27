@@ -9,7 +9,7 @@ import time
 from ..errors import DependencyUnavailable
 from ..models.configuration import SourceType, SourceTestResult
 from .output import (PCM_CAPS, PcmQueue, PcmOutput, pcm_capacity_bytes,
-                     DEFAULT_STAGING_BUFFER_MS, DEFAULT_CONSUMER_BUFFER_MS, STAGING_MAX_AGE_S)
+                     DEFAULT_STAGING_BUFFER_MS, DEFAULT_CONSUMER_BUFFER_MS, DEFAULT_STAGING_MAX_AGE_MS)
 from .dsp import PROCESSING_CAPS
 from .dsp import dsp_stages
 
@@ -101,7 +101,8 @@ class GstPipeline:
 
     def __init__(self, source, *, profile=None, output=None, timeout_s=None, reconnect=True,
                  pcm_staging_buffer_ms=DEFAULT_STAGING_BUFFER_MS,
-                 pcm_consumer_buffer_ms=DEFAULT_CONSUMER_BUFFER_MS):
+                 pcm_consumer_buffer_ms=DEFAULT_CONSUMER_BUFFER_MS,
+                 pcm_staging_max_age_ms=DEFAULT_STAGING_MAX_AGE_MS):
         if source.processor_mode == 'stereotool':
             raise DependencyUnavailable('Stereo Tool processing is not implemented')
         if source.processor_mode == 'builtin' and profile is None:
@@ -114,8 +115,9 @@ class GstPipeline:
         self.timeout_s = timeout_s or min(30, max(1, source.config.get("connect_timeout_ms", 10000) / 1000))
         self.reconnect = reconnect
         self._audio_ready = threading.Event()
+        pcm_capacity_bytes(pcm_staging_max_age_ms)
         self.staging = PcmQueue(max_bytes=pcm_capacity_bytes(pcm_staging_buffer_ms),
-                                max_age_s=STAGING_MAX_AGE_S, wakeup=self._audio_ready)
+                                max_age_s=pcm_staging_max_age_ms / 1000.0, wakeup=self._audio_ready)
         self._stop = threading.Event()
         self._ready = threading.Event()
         self._finished = threading.Event()

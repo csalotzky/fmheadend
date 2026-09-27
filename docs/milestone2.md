@@ -81,7 +81,8 @@ GstBus polling is nonblocking. The worker fans blocks out to consumer queues.
 See [PCM delivery diagnostics and validation](pcm-delivery.md). The native
 upstream queue applies bounded backpressure to decoding, so HLS segments/files
 are paced rather than discarded simply because decoding runs faster than audio.
-Staging age stays fixed at 100 ms independently of its 200 ms byte capacity.
+Staging age defaults to 100 ms (`--pcm-staging-max-age-ms`), independently of
+its 200 ms byte capacity.
 Each consumer output queue defaults to 300 ms of capacity and maximum age,
 controlled together by `--pcm-consumer-buffer-ms`; oldest data is dropped on overflow.
 `--pcm-staging-buffer-ms` changes only staging capacity. An empty read returns None for the future

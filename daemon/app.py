@@ -34,7 +34,7 @@ from .sources.manager import SourceManager
 from .sources.pipeline import MockPipeline
 from .sources.gst_pipeline import GstPipeline
 from .sources.output import (DEFAULT_STAGING_BUFFER_MS, DEFAULT_CONSUMER_BUFFER_MS,
-                             STAGING_MAX_AGE_S, pcm_capacity_bytes)
+                             DEFAULT_STAGING_MAX_AGE_MS, pcm_capacity_bytes)
 from .status.service import StatusService
 
 logger = logging.getLogger(__name__)
@@ -53,6 +53,7 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
                 is_referenced=lambda path: any(s.audio_profile_path == path for s in database.list('sources')))
             sources = SourceManager(database, pipeline_factory, profile_files, clock=clock,
                 pcm_staging_buffer_ms=settings.pcm_staging_buffer_ms,
+                pcm_staging_max_age_ms=settings.pcm_staging_max_age_ms,
                 pcm_consumer_buffer_ms=settings.pcm_consumer_buffer_ms)
             rp_client = rp or MockRp2354Client()
             mux_client = mux or (mux_factory(sources) if mux_factory else MockMuxClient())
@@ -130,7 +131,7 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
         logger.info("fmheadendd started; media backend: %s; RP2354 control: %s",
                     pipeline_factory.__name__, type(services.rp).__name__)
         logger.info("PCM buffers: staging_capacity_ms=%s staging_stale_age_ms=%s consumer_buffer_ms=%s",
-                    settings.pcm_staging_buffer_ms, int(STAGING_MAX_AGE_S * 1000), settings.pcm_consumer_buffer_ms)
+                    settings.pcm_staging_buffer_ms, settings.pcm_staging_max_age_ms, settings.pcm_consumer_buffer_ms)
         try:
             yield
         finally:
@@ -219,7 +220,9 @@ def argument_parser():
     parser.add_argument("--mock-mux", action="store_true", help="Use real sources with the M2 mock mux")
     parser.add_argument("--mux-runtime-dir", default="/run/fmheadend")
     parser.add_argument("--pcm-staging-buffer-ms", type=pcm_buffer_ms, default=DEFAULT_STAGING_BUFFER_MS,
-                        help="Staging byte capacity / burst headroom in ms (default 200); stale age remains 100 ms")
+                        help="Staging byte capacity / burst headroom in ms (default 200); independent of staging maximum age")
+    parser.add_argument("--pcm-staging-max-age-ms", type=pcm_buffer_ms, default=DEFAULT_STAGING_MAX_AGE_MS,
+                        help="Staging maximum PCM age in ms (default 100); independent of staging byte capacity")
     parser.add_argument("--pcm-consumer-buffer-ms", type=pcm_buffer_ms, default=DEFAULT_CONSUMER_BUFFER_MS,
                         help="Per-consumer PCM capacity and maximum age in ms (default 300)")
     parser.add_argument("--region", type=int, choices=sorted(PLANS), default=1, help="Frequency selection plan: 0 Expert, 1 Europe (default), 2 US, 3 Japan")
@@ -235,6 +238,7 @@ def main():
     settings = Settings(args.database, args.region, args.webui_dir,
                         args.audio_profiles_default_dir, args.audio_profiles_custom_dir,
                         pcm_staging_buffer_ms=args.pcm_staging_buffer_ms,
+                        pcm_staging_max_age_ms=args.pcm_staging_max_age_ms,
                         pcm_consumer_buffer_ms=args.pcm_consumer_buffer_ms)
     database = Database(args.database)
     try:

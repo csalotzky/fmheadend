@@ -36,6 +36,22 @@ def test_defaults_and_unchanged_general_queue():
     assert (PcmQueue().max_bytes, PcmQueue().max_age_s) == (19200, .1)
     args = argument_parser().parse_args([])
     assert (args.pcm_staging_buffer_ms, args.pcm_consumer_buffer_ms) == (200, 300)
+    assert args.pcm_staging_max_age_ms == Settings().pcm_staging_max_age_ms == 100
+
+
+@pytest.mark.parametrize('capacity_ms,age_ms', [(200, 25), (7, 250)])
+def test_staging_age_override_is_independent(capacity_ms, age_ms):
+    pipeline = GstPipeline(source(), pcm_staging_buffer_ms=capacity_ms, pcm_staging_max_age_ms=age_ms)
+    queue = pipeline.staging
+    assert (queue.max_bytes, queue.max_age_s) == (capacity_ms * 192, age_ms / 1000.0)
+    now = [0.0]
+    queue.clock = lambda: now[0]
+    assert queue.put(b'abcd')
+    now[0] = age_ms / 1000.0 + .001
+    assert queue.pop() is None
+    pipeline.output.attach(0)
+    consumer = pipeline.output._queues[0]
+    assert (consumer.max_bytes, consumer.max_age_s) == (57600, .3)
 
 
 @pytest.mark.parametrize('duration', [300, 17])
@@ -55,7 +71,7 @@ def test_consumer_duration_controls_both_capacity_and_age(duration):
     assert output.snapshot()[1]['stale_dropped_bytes'] == 0
 
 
-@pytest.mark.parametrize('flag', ['--pcm-staging-buffer-ms', '--pcm-consumer-buffer-ms'])
+@pytest.mark.parametrize('flag', ['--pcm-staging-buffer-ms', '--pcm-consumer-buffer-ms', '--pcm-staging-max-age-ms'])
 @pytest.mark.parametrize('value', ['0', '-1', '1.5', 'abc', '1_000', str(sys.maxsize)])
 def test_cli_invalid_buffer(flag, value):
     with pytest.raises(SystemExit) as exc:
@@ -64,8 +80,10 @@ def test_cli_invalid_buffer(flag, value):
 
 
 def test_cli_overrides_and_conversion_bounds():
-    args = argument_parser().parse_args(['--pcm-staging-buffer-ms', '123', '--pcm-consumer-buffer-ms', '456'])
+    args = argument_parser().parse_args(['--pcm-staging-buffer-ms', '123', '--pcm-consumer-buffer-ms', '456',
+                                        '--pcm-staging-max-age-ms', '75'])
     assert (args.pcm_staging_buffer_ms, args.pcm_consumer_buffer_ms) == (123, 456)
+    assert args.pcm_staging_max_age_ms == 75
     assert pcm_capacity_bytes(sys.maxsize // 192) <= sys.maxsize
     for value in (0, -1, True, 1.5, sys.maxsize // 192 + 1):
         with pytest.raises(ValueError):
@@ -74,22 +92,29 @@ def test_cli_overrides_and_conversion_bounds():
             Settings(pcm_staging_buffer_ms=value)
         with pytest.raises(ValueError):
             Settings(pcm_consumer_buffer_ms=value)
+        with pytest.raises(ValueError):
+            Settings(pcm_staging_max_age_ms=value)
 
 
 def test_manager_rebuild_preserves_output_and_buffer_configuration():
-    manager = SourceManager(None, GstPipeline, pcm_staging_buffer_ms=123, pcm_consumer_buffer_ms=456)
+    manager = SourceManager(None, GstPipeline, pcm_staging_buffer_ms=123, pcm_consumer_buffer_ms=456,
+                            pcm_staging_max_age_ms=75)
     first = manager._new_pipeline(source())
     first.output.attach(0)
     replacement = manager._new_pipeline(source(), output=first.output)
     assert replacement.output is first.output
     assert replacement.staging.max_bytes == first.staging.max_bytes == 123 * 192
+    assert replacement.staging.max_age_s == first.staging.max_age_s == .075
     assert replacement.output._queues[0].max_bytes == 456 * 192
     assert replacement.output._queues[0].max_age_s == .456
 
 
-def test_application_passes_settings_to_source_manager(tmp_path):
+def test_application_passes_settings_to_source_manager(tmp_path, caplog):
     from fastapi.testclient import TestClient
+    caplog.set_level('INFO', logger='fmheadendd.app')
     with TestClient(create_app(Settings(tmp_path / 'buffers.db', pcm_staging_buffer_ms=123,
-                                       pcm_consumer_buffer_ms=456))) as client:
+                                       pcm_consumer_buffer_ms=456, pcm_staging_max_age_ms=75))) as client:
         manager = client.app.state.services.sources
         assert (manager.pcm_staging_buffer_ms, manager.pcm_consumer_buffer_ms) == (123, 456)
+        assert manager.pcm_staging_max_age_ms == 75
+        assert 'staging_stale_age_ms=75' in caplog.text

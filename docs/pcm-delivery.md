@@ -69,7 +69,8 @@ discard audio rather than accumulating unbounded backlog.
 
 | Process / option | Default | Meaning |
 |---|---|---|
-| fmheadendd `--pcm-staging-buffer-ms` | 200 | Byte capacity / burst headroom only; stale age stays **100 ms** |
+| fmheadendd `--pcm-staging-buffer-ms` | 200 | Byte capacity / burst headroom only; independent of maximum age |
+| fmheadendd `--pcm-staging-max-age-ms` | 100 | Staging maximum PCM age only; independent of byte capacity and consumer queues |
 | fmheadendd `--pcm-consumer-buffer-ms` | 300 | Independent queue per consumer: both byte capacity and maximum age |
 | fmheadend-muxd `--ring-buffer-ms` | 300 | Per-channel ring byte capacity; discard oldest on overflow, zero-fill on underrun |
 
@@ -83,7 +84,9 @@ new source attempts and audio-only rebuilds; global `PcmQueue` defaults stay
 19,200 bytes / 100 ms.
 
 Staging headroom absorbs measured compressed PCM arrivals; it does not change
-the 100 ms stale policy or intentionally prebuffer 200 ms. The final defaults
+the independently configured stale policy or intentionally prebuffer 200 ms.
+The default staging maximum age is 100 ms; milliseconds are converted to seconds
+once when constructing the staging queue. The final defaults
 are deliberate production values, replacing experimental hard-coded buffers.
 
 The measured loaded Pi configuration requires **both muxd threads SCHED_RR 10**;

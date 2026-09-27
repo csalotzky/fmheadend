@@ -7,7 +7,7 @@ import time
 PCM_CAPS = "audio/x-raw,format=S16LE,rate=48000,channels=2,layout=interleaved"
 PCM_BYTES_PER_SECOND = 48000 * 2 * 2
 DEFAULT_STAGING_BUFFER_MS = 200
-STAGING_MAX_AGE_S = 0.1
+DEFAULT_STAGING_MAX_AGE_MS = 100
 DEFAULT_CONSUMER_BUFFER_MS = 300
 
 
