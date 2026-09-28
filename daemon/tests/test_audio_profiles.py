@@ -63,6 +63,19 @@ def test_modular_editor_metadata_uses_existing_api_family(api):
     assert data['template']['schema_version']==1 and len(data['stages'])==11
     assert set(data['implementations']) == {'VOLUME','TRIM','CHEBYSHEV','LSP_EXPANDER','LSP_GATE','LSP_AGC','LSP_EQ','LSP_COMPRESSOR','LSP_MULTIBAND','LSP_LIMITER'}
 
+
+@pytest.mark.parametrize('weighting', ['off', '50us', '75us'])
+def test_weighting_api_roundtrip(api, weighting):
+    data = document()
+    data['stages']['limiter'] = dict(selected='LSP_LIMITER', implementations={'LSP_LIMITER': {'fm_limiter_weighting': weighting}})
+    created = api.post(BASE+'custom', json=data)
+    assert created.status_code == 201
+    path = created.json()['path']
+    loaded = api.get(BASE+path).json()['profile']
+    assert loaded['stages']['limiter']['implementations']['LSP_LIMITER']['fm_limiter_weighting'] == weighting
+    saved = api.put(BASE+path, json=loaded)
+    assert saved.status_code == 200 and saved.json()['profile'] == loaded
+
 def start(api, sid, tx):
     assert api.patch(f'/api/v1/modulators/{tx}', json={'input_source_id': sid, 'frequency_khz': 98100}).status_code == 200
     response = api.post(f'/api/v1/modulators/{tx}/start')

@@ -57,8 +57,8 @@
       "selected": "CHEBYSHEV",
       "implementations": {
         "CHEBYSHEV": {
-          "cutoff_hz": 15000,
-          "poles": 4,
+          "cutoff_hz": 16000,
+          "poles": 14,
           "ripple_db": 0,
           "type": 1
         }

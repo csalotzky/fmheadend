@@ -45,7 +45,7 @@ import { AudioProfile, ProfileApi } from './profile-api';
         <div class="actions">
           <span>Used by {{ usedBy(profile.path) }} sources</span>
           @if (profile.kind === 'custom') {
-            <a class="action-link" [routerLink]="['/audio-profiles', profile.path]">Edit</a>
+            <a class="action-link" routerLink="/audio-profiles/edit" [queryParams]="{ path: profile.path }">Edit</a>
             <button
               type="button"
               [disabled]="deleting() !== null || usedBy(profile.path) > 0"
@@ -102,7 +102,7 @@ export class ProfilesList implements OnInit {
     this.deleting.set(profile.path);
     try {
       const result = await firstValueFrom(this.api.clone(profile.path, name));
-      await this.router.navigate(['/audio-profiles', result.path]);
+      await this.router.navigate(['/audio-profiles/edit'], { queryParams: { path: result.path } });
     } catch (e) {
       this.error.set(errorMessage(e));
     } finally {

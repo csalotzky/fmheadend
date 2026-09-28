@@ -39,7 +39,7 @@ Example shape (abbreviated; all eleven stages are required):
     "multiband": {"selected":"OFF","implementations":{}},
     "master_gain": {"selected":"VOLUME","implementations":{"VOLUME":{"gain_db":0}}},
     "limiter": {"selected":"OFF","implementations":{}},
-    "lpf": {"selected":"CHEBYSHEV","implementations":{"CHEBYSHEV":{"cutoff_hz":15000,"poles":4,"ripple_db":0,"type":1}}},
+    "lpf": {"selected":"CHEBYSHEV","implementations":{"CHEBYSHEV":{"cutoff_hz":16000,"poles":14,"ripple_db":0,"type":1}}},
     "output_trim": {"selected":"TRIM","implementations":{"TRIM":{"gain_db":0}}}
   }
 }
@@ -55,12 +55,34 @@ and verify native readback; negotiation/start failures remain Source errors.
 ### First-release defaults
 
 `default/basic.json` keeps its stable filename. It now contains the eleven-stage
-schema directly: unity gains, Chebyshev HPF 40 Hz / LPF 15 kHz (4 poles, type I,
-ripple 0), other optional processors OFF. It is not a tuned broadcast preset.
+schema directly: unity gains, Chebyshev HPF 40 Hz / 4 poles and LPF 16 kHz / 14 poles
+(both type I, ripple 0), other optional processors OFF. It is not a tuned broadcast preset.
 The new-profile editor template uses HPF 30 Hz and the same LPF; EQ, dynamics
 and limiter start OFF. Selecting an LSP implementation loads its existing validated
 settings defaults. Hidden and inactive settings for supported implementations survive
 Save. Every profile uses Limiter before LPF, with no ordering exception.
+
+### FM limiter weighting
+
+The existing `LSP_LIMITER` settings include `fm_limiter_weighting`: `off` (default),
+`50us`, or `75us`. Missing values validate as `off`; schema version remains 1.
+Limiter OFF retains the saved setting without creating filters. Weighting OFF
+uses the unchanged limiter chain. Otherwise the limiter internally contains
+`audioiirfilter PRE -> LSP limiter -> audioiirfilter DE`, followed by the existing LPF.
+No LSP property or transmitter pre-emphasis setting is changed.
+
+At the fixed 48 kHz processing rate, `r = exp(-1 / (sample_rate * tau))` and
+`g = 1 / (1-r)`, with `tau=50e-6` or `75e-6`. PRE uses denominator `a=[1]`,
+numerator `b=[g,-g*r]`; DE swaps these arrays. Both have unity DC gain and compose
+to unity when gain reduction is absent. This weights limiting for the later FM
+response, then compensates it before PCM output; it is not an MPX limiter or an
+RF-deviation guarantee. Selected weighting requires `audioiirfilter` and fails
+explicitly if unavailable. The helper/adapter are in `daemon/sources/dsp.py`.
+
+Isolated Pi checks on GStreamer 1.26.2 verify both coefficient pairs, property
+readback, F32 stereo negotiation, native PRE/DE cancellation and the actual LSP
+wrapper. These software checks do not certify RF deviation or loaded eight-source
+performance. Reproduce with `pytest daemon/tests/test_gstreamer.py -k native_weighting_inverse`.
 
 ## Verified native mappings
 

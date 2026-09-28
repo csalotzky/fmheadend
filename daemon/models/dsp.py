@@ -75,6 +75,10 @@ class LspAutogain(Model):
 
 
 class LspLimiter(Model):
+    fm_limiter_weighting: Literal['off', '50us', '75us'] = Field(
+        'off', title='FM limiter weighting',
+        description="Weights the limiter for the transmitter's FM pre-emphasis response and compensates the weighting before output.",
+        json_schema_extra={'enum_labels': {'off': 'Off', '50us': '50 µs', '75us': '75 µs'}})
     threshold_dbfs: float = Field(0, ge=-48, le=0, title='Threshold (dBFS)')
     lookahead_ms: float = Field(5, ge=.1, le=20, title='Lookahead (ms)')
     attack_ms: float = Field(5, ge=.25, le=20, title='Attack (ms)')
@@ -163,5 +167,5 @@ def neutral_stages():
             name: IMPLEMENTATIONS[name][0]().model_dump() for name in choices if name != 'OFF'}}
     result['hpf']['selected'] = 'CHEBYSHEV'
     result['lpf']['selected'] = 'CHEBYSHEV'
-    result['lpf']['implementations']['CHEBYSHEV']['cutoff_hz'] = 15000
+    result['lpf']['implementations']['CHEBYSHEV'].update(cutoff_hz=16000, poles=14)
     return result

@@ -206,7 +206,7 @@ class ModulatorManager:
         status.tx_state = TxState.ON
         if self.recovery:
             self.recovery.pending.pop(modulator_id, None)
-        status.source_state = None if analog else "RUNNING"
+        status.source_state = None if analog else self.sources.statuses[source.id].state
         logger.info("modulator %s started at %s kHz", modulator_id, config.frequency_khz)
         return status
 
@@ -306,7 +306,7 @@ class ModulatorManager:
             self.sources.acquire(source.id, config.id)
             self.active_sources[config.id] = source.id
         self.mux.attach(config.id, source.id)
-        self.statuses[config.id].source_state = 'RUNNING'
+        self.statuses[config.id].source_state = self.sources.statuses[source.id].state
 
     def release_audio(self, channel):
         self.mux.detach(channel)

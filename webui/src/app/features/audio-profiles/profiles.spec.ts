@@ -5,6 +5,7 @@ import { ActivatedRoute, convertToParamMap, provideRouter, Router } from '@angul
 import { ProfilesList } from './profiles-list';
 import { ProfileEditor } from './profile-editor';
 import { AudioProfile, ProfileResult, DspDescription } from './profile-api';
+import { routes } from '../../app.routes';
 const base = '/api/v1/audio-profiles/files';
 const description: DspDescription = {
   helpers: {
@@ -127,6 +128,16 @@ for (const stage of description.stages) {
     ),
   };
 }
+description.implementations['LSP_LIMITER'].schema = {
+  properties: {
+    fm_limiter_weighting: {
+      type: 'string', title: 'FM limiter weighting', default: 'off',
+      enum: ['off', '50us', '75us'],
+      enum_labels: { off: 'Off', '50us': '50 µs', '75us': '75 µs' },
+    },
+  },
+};
+description.template.stages['limiter'].implementations['LSP_LIMITER']['fm_limiter_weighting'] = 'off';
 const profile: ProfileResult = {
   name: 'Studio',
   path: 'custom/studio_123.json',
@@ -137,9 +148,9 @@ const factory = { ...profile, kind: 'default' as const, path: 'default/basic.jso
 
 describe('File Audio Profiles', () => {
   let http: HttpTestingController;
-  const route = { snapshot: { paramMap: convertToParamMap({}) } };
+  const route = { snapshot: { queryParamMap: convertToParamMap({}) } };
   beforeEach(() => {
-    route.snapshot.paramMap = convertToParamMap({});
+    route.snapshot.queryParamMap = convertToParamMap({});
     TestBed.configureTestingModule({
       providers: [
         provideHttpClient(),
@@ -164,7 +175,7 @@ describe('File Audio Profiles', () => {
     return f;
   }
   async function editor(existing = true, saved = profile) {
-    if (existing) route.snapshot.paramMap = convertToParamMap({ id: saved.path });
+    if (existing) route.snapshot.queryParamMap = convertToParamMap({ path: saved.path });
     const f = TestBed.createComponent(ProfileEditor);
     f.detectChanges();
     http.expectOne(base + '/dsp').flush(description);
@@ -240,10 +251,9 @@ describe('File Audio Profiles', () => {
     expect(request.request.body).toEqual({ name: 'New name' });
     request.flush({ ...profile, path: 'custom/server_generated_2.json' });
     await pending;
-    expect(TestBed.inject(Router).navigate).toHaveBeenCalledWith([
-      '/audio-profiles',
-      'custom/server_generated_2.json',
-    ]);
+    expect(TestBed.inject(Router).navigate).toHaveBeenCalledWith(
+      ['/audio-profiles/edit'], { queryParams: { path: 'custom/server_generated_2.json' } },
+    );
   });
   it('blocks referenced deletion and default editing', async () => {
     const f = await list(undefined, true);
@@ -307,6 +317,11 @@ describe('File Audio Profiles', () => {
     req.flush(profile);
     await pending;
     expect(c.path).toBe(profile.path);
+    expect(TestBed.inject(Router).navigate).toHaveBeenCalledWith(
+      ['/audio-profiles/edit'], {
+        queryParams: { path: profile.path }, replaceUrl: true, state: { profileSaved: true },
+      },
+    );
     expect(c.form.pristine).toBe(true);
     const again = c.save();
     http
@@ -429,5 +444,42 @@ describe('File Audio Profiles', () => {
     f.detectChanges();
     expect(c.document!.stages['eq'].implementations['LSP_EQ']['bands']).toHaveLength(1);
     expect(c.form.dirty).toBe(true);
+  });
+  it('deep links keep the full profile path in a query, including after a fresh load', async () => {
+    const router = TestBed.inject(Router);
+    const path = 'custom/teszt2_20260928180555.json';
+    const url = router.serializeUrl(router.createUrlTree(['/audio-profiles/edit'], { queryParams: { path } }));
+    expect(url.split('?')[0]).toBe('/audio-profiles/edit');
+    const parsed = router.parseUrl(url);
+    expect(parsed.queryParamMap.get('path')).toBe(path);
+    expect(routes.find((r) => r.path === 'audio-profiles/edit')?.component).toBe(ProfileEditor);
+    route.snapshot.queryParamMap = parsed.queryParamMap;
+    const f = await editor(true, { ...profile, path });
+    expect(f.componentInstance.path).toBe(path);
+    const pending = f.componentInstance.save();
+    http.expectOne(base + '/' + path).flush({ ...profile, path });
+    await pending;
+    const listFixture = await list([{ ...profile, path }]);
+    expect(listFixture.nativeElement.querySelector('.source-row a').getAttribute('href')).toBe(url);
+  });
+  it('edits weighting as labelled choices and preserves it with the limiter off', async () => {
+    const f = await editor(), c = f.componentInstance;
+    c.select('limiter', 'LSP_LIMITER');
+    f.detectChanges();
+    await f.whenStable();
+    const section = f.nativeElement.querySelectorAll('details.stage')[8];
+    const select = section.querySelector('app-dsp-fields select') as HTMLSelectElement;
+    expect([...select.options].map((o) => o.textContent?.trim())).toEqual(['Off', '50 µs', '75 µs']);
+    select.selectedIndex = 2;
+    select.dispatchEvent(new Event('change'));
+    await f.whenStable();
+    expect(c.document!.stages['limiter'].implementations['LSP_LIMITER']['fm_limiter_weighting']).toBe('75us');
+    c.select('limiter', 'OFF');
+    const pending = c.save();
+    const request = http.expectOne(base + '/' + profile.path);
+    expect(request.request.body.stages.limiter.selected).toBe('OFF');
+    expect(request.request.body.stages.limiter.implementations.LSP_LIMITER.fm_limiter_weighting).toBe('75us');
+    request.flush({ ...profile, profile: request.request.body });
+    await pending;
   });
 });

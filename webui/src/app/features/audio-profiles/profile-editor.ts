@@ -157,9 +157,7 @@ export class ProfileEditor implements OnInit {
   private api = inject(ProfileApi);
   private route = inject(ActivatedRoute);
   private router = inject(Router);
-  path = this.route.snapshot.paramMap.has('id')
-    ? this.route.snapshot.paramMap.get('id')!
-    : undefined;
+  path = this.route.snapshot.queryParamMap.get('path') ?? undefined;
   readonly loading = signal(false);
   readonly failed = signal(false);
   readonly saving = signal(false);
@@ -244,7 +242,8 @@ export class ProfileEditor implements OnInit {
           'Audio Profile saved.' + (result.applied ? ' Active sources using it restarted.' : ''),
         );
         if (creating)
-          await this.router.navigate(['/audio-profiles', result.path], {
+          await this.router.navigate(['/audio-profiles/edit'], {
+            queryParams: { path: result.path },
             replaceUrl: true,
             state: { profileSaved: true },
           });

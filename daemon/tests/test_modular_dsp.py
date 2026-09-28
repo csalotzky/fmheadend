@@ -2,7 +2,7 @@ import pytest
 from pydantic import ValidationError
 from fmheadendd.models.audio_profile_file import AudioProfileFile
 from fmheadendd.models.dsp import STAGES, IMPLEMENTATIONS, neutral_stages
-from fmheadendd.sources.dsp import dsp_stages, editor_description
+from fmheadendd.sources.dsp import dsp_stages, editor_description, fm_limiter_coefficients
 
 
 def profile():
@@ -169,3 +169,82 @@ def test_all_surviving_settings_roundtrip_without_retuning():
     for key, (_, choices) in STAGES.items():
         if 'OFF' in choices: doc['stages'][key]['selected'] = 'OFF'
     assert AudioProfileFile.model_validate(doc).model_dump() == doc
+
+
+def test_missing_weighting_defaults_to_off_and_lpf_default_is_specific():
+    doc = profile()
+    del doc['stages']['limiter']['implementations']['LSP_LIMITER']['fm_limiter_weighting']
+    parsed = AudioProfileFile.model_validate(doc)
+    assert parsed.stages['limiter'].implementations['LSP_LIMITER']['fm_limiter_weighting'] == 'off'
+    assert parsed.stages['hpf'].implementations['CHEBYSHEV']['poles'] == 4
+    assert parsed.stages['lpf'].implementations['CHEBYSHEV'] == dict(cutoff_hz=16000, poles=14, ripple_db=0, type=1)
+
+
+@pytest.mark.parametrize('weighting', ['off', '50us', '75us'])
+@pytest.mark.parametrize('enabled', [False, True])
+def test_weighting_roundtrip_and_internal_limiter_order(weighting, enabled):
+    doc = profile()
+    stage = doc['stages']['limiter']
+    stage['selected'] = 'LSP_LIMITER' if enabled else 'OFF'
+    stage['implementations']['LSP_LIMITER']['fm_limiter_weighting'] = weighting
+    parsed = AudioProfileFile.model_validate_json(AudioProfileFile.model_validate(doc).model_dump_json())
+    assert parsed.model_dump() == doc
+    chain = build(doc)
+    if not enabled or weighting == 'off':
+        assert not any(e.factory == 'audioiirfilter' for e in chain)
+    else:
+        index = next(i for i, e in enumerate(chain) if e.factory == IMPLEMENTATIONS['LSP_LIMITER'][1])
+        pre, de = fm_limiter_coefficients(48000, 50e-6 if weighting == '50us' else 75e-6)
+        assert chain[index-1].factory == chain[index+1].factory == 'audioiirfilter'
+        assert chain[index-1].props == pre and chain[index+1].props == de
+        stage['implementations']['LSP_LIMITER']['fm_limiter_weighting'] = 'off'
+        plain = build(doc)
+        assert [(e.factory, e.props) for e in chain if e.factory != 'audioiirfilter'] == [(e.factory, e.props) for e in plain]
+
+
+@pytest.mark.parametrize('tau,g,r', [(50e-6, 2.9346221663346386, .6592406302004438),
+                                    (75e-6, 4.12311843402354, .7574651283969664)])
+def test_weighting_coefficients_exact_inverse_and_unity(tau, g, r):
+    import cmath
+    pre, de = fm_limiter_coefficients(48000, tau)
+    assert pre['a'] == de['b'] == [1.0]
+    assert pre['b'] == de['a'] == pytest.approx([g, -g*r])
+    assert sum(pre['b']) / sum(pre['a']) == pytest.approx(1)
+    assert sum(de['b']) / sum(de['a']) == pytest.approx(1)
+    for hz in [0, 30, 1000, 16000, 24000]:
+        z = cmath.exp(-2j * cmath.pi * hz / 48000)
+        transfer = lambda p: sum(v*z**i for i,v in enumerate(p['b'])) / sum(v*z**i for i,v in enumerate(p['a']))
+        assert transfer(pre) * transfer(de) == pytest.approx(1)
+
+
+def test_invalid_weighting_rejected_and_editor_choices_labelled():
+    from fmheadendd.models.dsp import LspLimiter
+    from fmheadendd.models.dsp_editor import editor_schema
+    doc = profile()
+    doc['stages']['limiter']['implementations']['LSP_LIMITER']['fm_limiter_weighting'] = '100us'
+    with pytest.raises(ValidationError):
+        AudioProfileFile.model_validate(doc)
+    field = editor_schema(LspLimiter)['properties']['fm_limiter_weighting']
+    assert field['enum'] == ['off', '50us', '75us']
+    assert [field['enum_labels'][v] for v in field['enum']] == ['Off', '50 µs', '75 µs']
+
+
+def test_selected_weighting_requires_iir_plugin(monkeypatch):
+    from types import SimpleNamespace
+    from fmheadendd.sources.gst_pipeline import GstPipeline
+    from fmheadendd.errors import DependencyUnavailable
+    class Native:
+        def __init__(self): self.props = {}
+        def set_property(self, key, value): self.props[key] = value
+        def get_property(self, key): return self.props[key]
+    monkeypatch.setattr('fmheadendd.sources.gst_pipeline.load_gst', lambda: SimpleNamespace(
+        ElementFactory=SimpleNamespace(make=lambda factory, name: None if factory == 'audioiirfilter' else Native())))
+    doc = profile()
+    doc['stages']['limiter']['selected'] = 'LSP_LIMITER'
+    settings = doc['stages']['limiter']['implementations']['LSP_LIMITER']
+    GstPipeline.validate_profile(AudioProfileFile.model_validate(doc))
+    settings['fm_limiter_weighting'] = '50us'
+    with pytest.raises(DependencyUnavailable, match='Missing GStreamer element: audioiirfilter'):
+        GstPipeline.validate_profile(AudioProfileFile.model_validate(doc))
+    doc['stages']['limiter']['selected'] = 'OFF'
+    GstPipeline.validate_profile(AudioProfileFile.model_validate(doc))

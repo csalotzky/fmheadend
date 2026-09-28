@@ -34,8 +34,21 @@ def test_default_and_list(store):
     assert item.profile.schema_version == 1
     assert item.profile.stages['wideband'].selected == 'OFF'
     assert item.profile.stages['input_gain'].implementations['VOLUME']['gain_db'] == 0
+    assert item.profile.stages['lpf'].implementations['CHEBYSHEV'] == dict(cutoff_hz=16000, poles=14, ripple_db=0, type=1)
     assert [x.model_dump() for x in store.list()] == [
         {'path': 'default/basic.json', 'name': 'Basic', 'kind': 'default'}]
+
+
+@pytest.mark.parametrize('weighting', ['off', '50us', '75us'])
+def test_weighting_persists_even_with_limiter_off(store, weighting):
+    data = document()
+    data['stages']['limiter']['implementations'] = {'LSP_LIMITER': {'fm_limiter_weighting': weighting}}
+    item = store.create(data)
+    loaded = store.get(item.path)
+    assert loaded.profile.stages['limiter'].selected == 'OFF'
+    assert loaded.profile.stages['limiter'].implementations['LSP_LIMITER']['fm_limiter_weighting'] == weighting
+    store.save(item.path, loaded.profile.model_dump())
+    assert store.get(item.path) == loaded
 
 
 def test_crud_clone_stable_name_and_inactive_settings(store):

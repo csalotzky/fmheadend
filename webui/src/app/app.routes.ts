@@ -17,7 +17,7 @@ export const routes: Routes = [
   { path: 'modulators/:id', component: ModulatorEditor, canDeactivate: [modulatorDirtyGuard] },
   { path: 'audio-profiles', component: ProfilesList },
   { path: 'audio-profiles/new', component: ProfileEditor, canDeactivate: [profileDirtyGuard] },
-  { path: 'audio-profiles/:id', component: ProfileEditor, canDeactivate: [profileDirtyGuard] },
+  { path: 'audio-profiles/edit', component: ProfileEditor, canDeactivate: [profileDirtyGuard] },
   { path: 'system', component: SystemPage },
   { path: '**', redirectTo: 'dashboard' },
 ];

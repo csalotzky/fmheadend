@@ -227,9 +227,18 @@ Stereo Link is documented as `slink` in the relevant GStreamer LV2 wrapper. The 
 
 **Starting threshold/lookahead/release:** results of physical validation and the desired programme sound, not asserted numbers. The previously discussed **−3 dBFS** is only a possible *initial test point*, not a finalized profile parameter.
 
+**FM limiter weighting:** the LSP limiter has `fm_limiter_weighting` with choices
+Off / 50 µs / 75 µs (serialized `off` / `50us` / `75us`, default `off`). This is an
+internal PRE -> limiter -> exact inverse DE pair using `audioiirfilter` at 48 kHz,
+not additional stages or transmitter pre-emphasis. Missing settings default to
+Off within schema 1; inactive settings survive. The coefficient formula and native
+checks are in [the implementation notes](modular-dsp-implementation.md#fm-limiter-weighting).
+
 ### 3.10. LPF — after the limiter
 
 **Selector:** Off / Chebyshev (`audiocheblimit`, low-pass).
+
+The default LPF is **16000 Hz / 14 poles**, type I, ripple 0. HPF defaults are independent.
 
 | Implementation | Visible fields | Preserve in background |
 |---|---|---|
@@ -258,7 +267,12 @@ Output Trim does not replace alignment of the QN's analogue/RF modulation chain.
 
 Final mux/RP PCM is S16LE/48 kHz/stereo; the audio transport remains unchanged.
 
-The QN8007B performs **50 µs pre-emphasis**, stereo pilot/MPX generation, and RDS; the Pi must not apply another 50 µs of pre-emphasis. A DSP sample-peak limiter **cannot guarantee FM deviation after pre-emphasis**. Finalize the 15 kHz LPF response, spectrum around the 19 kHz pilot, stereo behaviour, and actual modulation level through **RF/MPX measurement**.
+The QN8007B performs transmitter pre-emphasis, stereo pilot/MPX generation, and RDS;
+the Pi must not add uncompensated pre-emphasis. Optional FM limiter weighting is
+compensated inside the limiter stage and does not change the QN setting. A DSP
+sample-peak limiter **cannot guarantee FM deviation after pre-emphasis**. Validate
+the 16 kHz / 14-pole LPF response, spectrum around the 19 kHz pilot, stereo behaviour,
+and actual modulation level through **RF/MPX measurement**.
 
 The QN's own AGC, observed to perform poorly, must not remain “accidentally active” as a substitute for software AGC; clarify and verify this separately in the hardware configuration. Saving a software profile, however, is **not** grounds for restarting the QN or the RF lifecycle.
 
@@ -268,7 +282,7 @@ The QN's own AGC, observed to perform poorly, must not remain “accidentally ac
 
 **Keep these distinct:**
 
-- **Factory Basic:** unity gains, HPF 40 Hz and LPF 15 kHz, four poles/type I/ripple 0; optional processors OFF. Stable filename `basic.json` remains.
+- **Factory Basic:** unity gains, HPF 40 Hz / 4 poles and LPF 16 kHz / 14 poles, type I/ripple 0; optional processors OFF. Stable filename `basic.json` remains.
 - **New, neutral modular-profile template:** 0 dB Source/Profile/Master/Output gain; EQ/Gate/AGC/compressors/limiter Off; Short-time Grow Off; HPF and LPF proposed, with filter parameters finalized by measurement; the limiter's role and exact threshold require separate validation.
 - **Later target profiles:** conservative/music, milder general-purpose, CPU-conscious AGC + limiter, and compressor Off for already-processed streams. Do **not** promise “broadcast-ready” presets with invented loudness figures.
 

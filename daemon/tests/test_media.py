@@ -88,7 +88,7 @@ def test_queue_contention_preserves_valid_pcm():
 
 
 def test_fanout_slow_consumer_independent_and_clear():
-    output = PcmOutput()
+    output = PcmOutput(consumer_buffer_ms=100)
     output.attach(0)
     output.attach(1)
     for _ in range(30):
@@ -217,6 +217,7 @@ def test_supervisor_reconnect_and_stop_during_backoff(monkeypatch):
     class Drop(GstPipeline):
         def _attempt(self):
             self._update(state="RUNNING")
+            self._prepared.set()
             self._ready.set()
             retry_entered.set()
             raise DependencyUnavailable("Connection lost")
@@ -242,6 +243,7 @@ def test_supervisor_recovers_and_counts_retry(monkeypatch):
         attempts = 0
         def _attempt(self):
             self.attempts += 1
+            self._prepared.set()
             self._ready.set()
             if self.attempts == 1:
                 raise DependencyUnavailable("lost")
@@ -274,7 +276,8 @@ def test_apps_sink_callback_only_enqueues_and_validates_caps(wrapped):
     structure = SimpleNamespace(get_name=lambda: "audio/x-raw", get_string=values.get, get_value=values.get)
     if wrapped:
         structure = ContextOnlyStructure(values)
-    caps = SimpleNamespace(get_structure=lambda i: structure, to_string=lambda: PCM_CAPS)
+    caps = SimpleNamespace(get_structure=lambda i: structure, to_string=lambda: PCM_CAPS,
+                           is_equal=lambda other: False)  # second delivery models changed caps
     buffer = SimpleNamespace(get_size=lambda: 4, extract_dup=lambda a, b: b"1234")
     sample = SimpleNamespace(get_caps=lambda: caps, get_buffer=lambda: buffer)
     sink = SimpleNamespace(emit=lambda event: sample)

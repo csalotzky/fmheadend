@@ -342,6 +342,13 @@ edits to healthy audio do not restart it; idle Sources stay idle. A response wit
 and reports runtime failure. No TX/QN/RDS operation or STOP ALL hold release occurs.
 See [Source save contract](dsp-editor-controls.md#source-save-api-and-lifecycle).
 
+Momentary PCM availability is not a prerequisite for Source Save, TX ON/OFF or
+Save-and-Resume. Normal pipeline startup confirms construction/initiation and
+retains ownership while a missing sender reconnects; only explicit Source tests
+wait for decoded PCM. Source state remains CONNECTING/ERROR as appropriate, even
+when RF is ON. Static configuration, profile and plugin failures remain explicit.
+No additional PCM generator or source state machine is introduced.
+
 ## 6.2 `AudioProfile`
 
 Audio Profiles are shared versioned JSON files, not database entities. Defaults

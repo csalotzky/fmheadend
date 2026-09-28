@@ -103,7 +103,12 @@ control executor. Its HTTP 200 response contains the Source fields plus:
 ```
 
 `applied:true, apply_error:null` means no apply error, including an idle Source
-where no runtime work was needed; it is not proof that an idle Source is running.
+where no runtime work was needed; it is not proof that audio is flowing. For an
+active Source it confirms that the replacement pipeline was constructed/initiated,
+without waiting for its sender. A valid but offline HTTP/UDP/RTP/ALSA Source stays
+owned and reconnects; momentary no-PCM is not a Save/apply failure. Explicit tests
+still require actual PCM. Permanent construction/plugin errors and teardown failure
+retain the saved-but-not-applied result; later decode errors remain in Source status.
 Validation/persistence failure remains a normal error response before restart.
 GET and create retain their Source response contracts.
 

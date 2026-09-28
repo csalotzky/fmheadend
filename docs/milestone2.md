@@ -91,11 +91,16 @@ transport to interpret as silence. There is no SPI frame construction or mux IPC
 ## Lifecycle, reconnect and probes
 
 One active digital InputSource has one native pipeline. The first consumer starts
-it; subsequent consumers reuse it; the last consumer stops it. A transmitter is
-not enabled until the first valid PCM block arrives. Initial start failure leaves
-no active consumer and returns 503 with desired config retained, as in M1.
+it; subsequent consumers reuse it; the last consumer stops it. Normal startup waits
+for native pipeline construction and initiation, not decoded PCM. A temporarily
+unavailable sender does not block TX ON/OFF, Source edits or TX Save-and-Resume.
+The Source reports CONNECTING/reconnecting until PCM arrives; RF ON does not imply
+live audio. Missing plugins, invalid profiles/settings and permanent construction
+failures still fail explicitly. Errors discovered later during decoding remain
+Source errors, never a silent fallback. Shared consumers may join a waiting source,
+but not one with a known permanent failure or failed replacement/teardown.
 
-Once running, ERROR, EOS and audio inactivity clear pending PCM and reconnect
+Transient ERROR, EOS and audio inactivity, including before the first PCM, clear pending PCM and reconnect
 with 1, 2, 5, 10, 30, 30... second backoff. Status reports CONNECTING with the last
 error during retries. Reconnect count increments when a retry begins. Thirty
 seconds of stable playback resets backoff. Stream failure does not toggle RF.

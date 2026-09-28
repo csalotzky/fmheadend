@@ -133,7 +133,8 @@ class SourceManager:
             self.pipelines[source_id] = replacement
             replacement.start()
             self.restart_errors.pop(source_id, None)
-            self.statuses[source_id] = InputSourceStatus(source_id=source_id, state=SourceState.RUNNING)
+            self.statuses[source_id] = InputSourceStatus(source_id=source_id,
+                **({'state': SourceState.RUNNING} if getattr(replacement, 'mocked', True) else replacement.snapshot()))
             return None
         except (DependencyUnavailable, DomainError, ValueError, OSError) as exc:
             self.restart_errors[source_id] = str(exc)
@@ -178,7 +179,10 @@ class SourceManager:
                     self.statuses[source_id] = InputSourceStatus(
                         source_id=source_id, state=SourceState.ERROR, last_error=str(exc))
                 raise
-            status.state, status.last_error = SourceState.RUNNING, None
+            if getattr(pipeline, 'mocked', True):
+                status.state, status.last_error = SourceState.RUNNING, None
+            else:
+                self.statuses[source_id] = InputSourceStatus(source_id=source_id, **pipeline.snapshot())
             self.restart_errors.pop(source_id, None)
             if getattr(pipeline, "mocked", True):
                 status.codec = "MOCK"
@@ -186,11 +190,10 @@ class SourceManager:
             logger.info("source %s started", source_id)
         else:
             pipeline = self.pipelines[source_id]
-            if status.state == SourceState.ERROR:
-                raise DependencyUnavailable(status.last_error or 'Shared source audio failed')
+            error = self.restart_errors.get(source_id) or getattr(pipeline, 'fatal_error', None)
+            if error:
+                raise DependencyUnavailable(error)
             if not getattr(pipeline, "mocked", True):
-                if pipeline.snapshot()["state"] != "RUNNING":
-                    raise DependencyUnavailable("Shared source is not currently producing usable audio")
                 pipeline.output.attach(modulator_id)
         consumers.add(modulator_id)
 

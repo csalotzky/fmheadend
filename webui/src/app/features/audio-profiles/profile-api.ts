@@ -25,6 +25,7 @@ export interface DspSchema {
   exclusiveMaximum?: number;
   multipleOf?: number;
   enum?: any[];
+  enum_labels?: Record<string, string>;
   const?: any;
   properties?: Record<string, DspSchema>;
   items?: DspSchema;

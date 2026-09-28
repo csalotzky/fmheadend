@@ -16,6 +16,10 @@ from .dsp import dsp_stages
 log = logging.getLogger(__name__)
 
 
+class PipelineConfigurationError(DependencyUnavailable):
+    """Permanent construction/format failure, not temporary source availability."""
+
+
 def caps_structure(caps, index=0):
     """Scope borrowed structure access across gst-python binding versions.
 
@@ -120,6 +124,8 @@ class GstPipeline:
                                 max_age_s=pcm_staging_max_age_ms / 1000.0, wakeup=self._audio_ready)
         self._stop = threading.Event()
         self._ready = threading.Event()
+        self._prepared = threading.Event()
+        self.fatal_error = None
         self._finished = threading.Event()
         self._thread = None
         self._lock = threading.Lock()
@@ -153,11 +159,18 @@ class GstPipeline:
         self._thread = threading.Thread(target=self._run, name=f"source-{getattr(self.source, 'id', 'probe')}", daemon=True)
         self._thread.start()
         deadline = time.monotonic() + self.timeout_s
-        while not self._ready.wait(0.02):
+        # Normal operation needs a constructed pipeline, not a live sender.
+        # Explicit probes still require decoded PCM within their deadline.
+        ready = self._prepared if self.reconnect else self._ready
+        while not ready.wait(0.02):
             if self._finished.is_set() or time.monotonic() >= deadline:
-                message = self.snapshot()["last_error"] or "Timed out waiting for decoded PCM audio"
+                message = self.snapshot()["last_error"] or (
+                    "Timed out constructing audio pipeline" if self.reconnect else "Timed out waiting for decoded PCM audio")
                 self.stop()
                 raise DependencyUnavailable(message)
+        if self.fatal_error:
+            self.stop()
+            raise DependencyUnavailable(self.fatal_error)
 
     def stop(self):
         self._stop.set()
@@ -350,6 +363,14 @@ class GstPipeline:
             values["stream_title"] = f"{artist} - {title}" if artist and title else title or artist or None
         self._update(**values)
 
+    def _bus_failure(self, message):
+        error, debug = message.parse_error()
+        Gst = self.Gst
+        if error.matches(Gst.CoreError.quark(), Gst.CoreError.MISSING_PLUGIN) or error.matches(
+                Gst.StreamError.quark(), Gst.StreamError.CODEC_NOT_FOUND):
+            return PipelineConfigurationError(error.message)
+        return DependencyUnavailable(error.message)
+
     def _attempt(self):
         Gst = self.Gst
         self._callback_error, self._caps, self._input_caps = None, None, None
@@ -359,9 +380,22 @@ class GstPipeline:
         self._last_sample = 0
         self._update(state="CONNECTING", stream_title=None, artist=None, title=None,
                      codec=None, bitrate_bps=None, input_sample_rate=None, input_channels=None, output_caps=None)
-        self._build()
-        if self._pipeline.set_state(Gst.State.PLAYING) == Gst.StateChangeReturn.FAILURE:
-            raise DependencyUnavailable("GStreamer refused PLAYING state")
+        try:
+            self._build()
+        except Exception as exc:
+            raise PipelineConfigurationError(str(exc)) from exc
+        state_change = self._pipeline.set_state(Gst.State.PLAYING)
+        if self._callback_error:
+            raise PipelineConfigurationError(self._callback_error)
+        if state_change == Gst.StateChangeReturn.FAILURE:
+            # A failed state change may already have posted a missing-plugin
+            # error. Preserve that distinction before accepting a waiting source.
+            message = self._bus.timed_pop_filtered(0, Gst.MessageType.ERROR)
+            failure = self._bus_failure(message) if message else DependencyUnavailable("GStreamer refused PLAYING state")
+            if not isinstance(failure, PipelineConfigurationError):
+                self._prepared.set()
+            raise failure
+        self._prepared.set()
         started = time.monotonic()
         running_since = None
         observed_input_caps = None
@@ -377,8 +411,7 @@ class GstPipeline:
                     bus_idle = True
                     break
                 if message.type == Gst.MessageType.ERROR:
-                    error, debug = message.parse_error()
-                    raise DependencyUnavailable(error.message)
+                    raise self._bus_failure(message)
                 if message.type == Gst.MessageType.EOS:
                     raise DependencyUnavailable("Source reached end of stream")
                 if message.type == Gst.MessageType.ELEMENT:
@@ -388,7 +421,7 @@ class GstPipeline:
                 if message.type == Gst.MessageType.BUFFERING:
                     self._update(state="BUFFERING" if message.parse_buffering() < 100 else "CONNECTING")
             if self._callback_error:
-                raise DependencyUnavailable(self._callback_error)
+                raise PipelineConfigurationError(self._callback_error)
             if time.monotonic() - (self._last_sample or started) > self.timeout_s:
                 raise DependencyUnavailable("Timed out waiting for audio (source stalled)")
             for _ in range(16):
@@ -435,6 +468,8 @@ class GstPipeline:
                 try:
                     self._attempt()
                 except Exception as exc:
+                    if isinstance(exc, PipelineConfigurationError) or not isinstance(exc, DependencyUnavailable):
+                        self.fatal_error = str(exc)
                     self._update(state="ERROR", last_error=str(exc))
                     log.warning("source %s: %s", getattr(self.source, "id", "probe"), exc)
                 finally:
@@ -443,7 +478,7 @@ class GstPipeline:
                         self._pipeline = None
                     self.staging.clear()
                     self.output.clear()
-                if self._stop.is_set() or not self.reconnect or not self._ready.is_set():
+                if self._stop.is_set() or not self.reconnect or self.fatal_error:
                     break
                 delay = self._backoff.next_delay()
                 self._update(state="CONNECTING", stream_title=None, artist=None, title=None)
@@ -451,6 +486,7 @@ class GstPipeline:
                     break
                 self._update(reconnect_count=self.snapshot()["reconnect_count"] + 1)
         except Exception as exc:
+            self.fatal_error = str(exc)
             self._update(state="ERROR", last_error=str(exc))
         finally:
             self._finished.set()

@@ -358,6 +358,10 @@ See [M7B2](milestone7b2.md) for implementation and verification.
 ## 8. Audio Profiles
 
 The existing list/editor uses the file API under `/api/v1/audio-profiles/files`.
+Editor links use `/audio-profiles/edit?path=custom%2Fname.json`; the complete stable
+identifier is a query value, never an encoded slash inside a route segment.
+Direct navigation/reload uses the normal SPA fallback in development and production.
+Create and Clone navigate using the actual backend-returned path.
 Defaults show Clone only; customs show Edit/Clone/Delete. Kind remains API data
 for permissions but is not rendered as a label, icon or badge; the stable path
 uses the available width. Referenced custom files
@@ -399,6 +403,16 @@ Stage helpers describe audible consequences. Overall Gain is the UI label for
 unchanged `master_gain`; fixed Classic multiband mode stays internal. Output Trim
 is attenuation-only, with a note directing users to Modulator settings for QN
 pre-emphasis. The editor does not permanently display Save lifecycle trivia.
+
+The existing LSP Limiter card includes **FM limiter weighting**: Off / 50 µs / 75 µs.
+This profile setting weights limiting and compensates it before output; it does
+not enable transmitter pre-emphasis or guarantee FM deviation. Limiter OFF preserves
+the selection. New-profile LPF defaults are Chebyshev 16 kHz / 14 poles, independently
+of HPF defaults. No additional user-visible processing stage is added.
+
+Offline/no-PCM Sources remain editable; TX ON and Save-and-Resume may succeed while
+Source status reports CONNECTING/reconnecting. TX OFF has no PCM readiness gate.
+Configuration/plugin errors remain errors. Source Test still checks for actual PCM.
 
 Each PS entry has one row of text plus Duration (when dynamic), then one inline
 Up/Down/Remove row. Static PS hides Duration. Narrow screens may stack the fields.

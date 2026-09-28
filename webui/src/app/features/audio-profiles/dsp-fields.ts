@@ -35,7 +35,7 @@ import { DspSchema } from './profile-api';
                 [ngModelOptions]="{ standalone: true }"
               >
                 @for (option of field.schema.enum; track option) {
-                  <option [ngValue]="option">{{ option }}</option>
+                  <option [ngValue]="option">{{ field.schema.enum_labels?.[option] ?? option }}</option>
                 }
               </select>
             } @else if (field.schema.type === 'boolean') {

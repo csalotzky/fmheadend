@@ -58,6 +58,8 @@ def config(kind, values):
 
 
 def assert_pcm(pipeline, gst):
+    # Normal start now confirms construction; only an explicit probe waits for PCM.
+    assert pipeline._ready.wait(pipeline.timeout_s), pipeline.snapshot()
     result = pipeline.probe_result()
     assert result.ok and not result.mocked, result.message
     caps = gst.Caps.from_string(result.output_caps)
@@ -354,3 +356,75 @@ def test_missing_filter_plugin_fails_explicitly(gst):
         with pytest.raises(DependencyUnavailable,match='Missing GStreamer element: audiocheblimit'):
             pipeline._build()
     pipeline._pipeline.set_state(gst.State.NULL)
+
+
+@pytest.mark.parametrize('weighting,tau', [('50us', 50e-6), ('75us', 75e-6)])
+def test_native_weighting_inverse_and_limiter_wrapper(gst, weighting, tau):
+    """Short isolated F32 stereo render: real property arrays, negotiation and PCM."""
+    import array
+    import math
+    from fmheadendd.sources.dsp import dsp_stages, fm_limiter_coefficients, PROCESSING_CAPS
+    limiter = 'lsp-plug-in-plugins-lv2-limiter-stereo'
+    require(gst, 'appsrc', 'appsink', 'audioiirfilter', limiter)
+    profile = file_profile('Weighting')
+    profile.stages['limiter'].selected = 'LSP_LIMITER'
+    profile.stages['limiter'].implementations['LSP_LIMITER']['fm_limiter_weighting'] = weighting
+    GstPipeline.validate_profile(profile)  # includes native readback checks
+    samples = array.array('f', [v for i in range(4096) for v in
+        (.01 * math.sin(2*math.pi*1000*i/48000), .02 * math.sin(2*math.pi*3000*i/48000))])
+    for wrapped in (False, True):
+        pipeline = gst.Pipeline.new(None)
+        def make(factory, **properties):
+            element = gst.ElementFactory.make(factory, None)
+            for key, value in properties.items(): element.set_property(key.replace('_', '-'), value)
+            pipeline.add(element)
+            return element
+        src = make('appsrc', caps=gst.Caps.from_string(PROCESSING_CAPS), format=gst.Format.TIME)
+        if wrapped:
+            elements = dsp_stages(make, profile)
+        else:
+            elements = [make('audioiirfilter', **p) for p in fm_limiter_coefficients(48000, tau)]
+        sink = make('appsink', sync=False, wait_on_eos=False)
+        chain = [src, *elements, sink]
+        for left, right in zip(chain, chain[1:]): assert left.link(right)
+        try:
+            assert pipeline.set_state(gst.State.PLAYING) != gst.StateChangeReturn.FAILURE
+            data = samples.tobytes()
+            buf = gst.Buffer.new_allocate(None, len(data), None)
+            buf.fill(0, data)
+            buf.pts = 0
+            buf.duration = 4096 * gst.SECOND // 48000
+            assert src.emit('push-buffer', buf) == gst.FlowReturn.OK
+            src.emit('end-of-stream')
+            result = sink.emit('try-pull-sample', 3 * gst.SECOND)
+            assert result is not None
+            assert result.get_caps().is_equal(gst.Caps.from_string(PROCESSING_CAPS))
+            rendered = array.array('f')
+            buffer = result.get_buffer()
+            rendered.frombytes(buffer.extract_dup(0, buffer.get_size()))
+            assert len(rendered) == len(samples)
+            assert all(math.isfinite(x) for x in rendered) and max(map(abs, rendered)) > .005
+            if not wrapped:
+                assert list(rendered) == pytest.approx(list(samples), abs=1e-7)
+        finally:
+            pipeline.set_state(gst.State.NULL)
+
+
+@pytest.mark.parametrize('kind', ['HTTP', 'UDP'])
+def test_native_start_without_sender_remains_owned_until_stop(gst, http_files, kind):
+    require(gst, 'souphttpsrc' if kind == 'HTTP' else 'udpsrc')
+    _, url = http_files
+    values = {'uri': url + '/absent'} if kind == 'HTTP' else {
+        'host': '127.0.0.1', 'port': free_udp_port(), 'format': 'S16LE', 'sample_rate': 48000, 'channels': 2}
+    pipeline = GstPipeline(config(kind, values), timeout_s=.1)
+    pipeline.output.attach(0)
+    try:
+        pipeline.start()
+        assert pipeline._prepared.is_set()
+        assert not pipeline._ready.is_set()
+        assert pipeline._thread.is_alive()
+        assert not pipeline.probe_result().ok
+        assert pipeline.output.read(0) is None
+    finally:
+        pipeline.stop()
+    assert not pipeline._thread.is_alive()
