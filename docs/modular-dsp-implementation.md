@@ -7,7 +7,7 @@ This document records implementation and measurement, not an RF acceptance repor
 
 The existing file API, Source selection, ownership, output fan-out and audio-only
 Save lifecycle are retained. No TX/QN/RDS, mux, SPI or protocol code changes.
-The editor has eleven collapsible stages in the approved order:
+The editor has twelve collapsible stages in the approved order:
 
 `Input Gain → HPF → Gate/Expander → AGC → EQ → Wideband → Multiband → Overall Gain → Limiter → LPF → Output Trim`
 
@@ -23,7 +23,7 @@ implementations are validated and preserved. `OFF` creates no element. A stage's
 settings are not erased by switching it off. No arbitrary native property bag is
 accepted. Authoritative fields, bounds and defaults are in `daemon/models/dsp.py`.
 
-Example shape (abbreviated; all eleven stages are required):
+Example shape (abbreviated; all twelve stages are required):
 
 ```json
 {
@@ -40,6 +40,7 @@ Example shape (abbreviated; all eleven stages are required):
     "master_gain": {"selected":"VOLUME","implementations":{"VOLUME":{"gain_db":0}}},
     "limiter": {"selected":"OFF","implementations":{}},
     "lpf": {"selected":"CHEBYSHEV","implementations":{"CHEBYSHEV":{"cutoff_hz":16000,"poles":14,"ripple_db":0,"type":1}}},
+    "clipper": {"selected":"OFF","implementations":{"FM_HEADEND_CLIPPER":{"threshold_dbfs":-9,"weighting_us":50,"bypass":false}}},
     "output_trim": {"selected":"TRIM","implementations":{"TRIM":{"gain_db":0}}}
   }
 }
@@ -54,7 +55,7 @@ and verify native readback; negotiation/start failures remain Source errors.
 
 ### First-release defaults
 
-`default/basic.json` keeps its stable filename. It now contains the eleven-stage
+`default/basic.json` keeps its stable filename. It now contains the twelve-stage
 schema directly: unity gains, Chebyshev HPF 40 Hz / 4 poles and LPF 16 kHz / 14 poles
 (both type I, ripple 0), other optional processors OFF. It is not a tuned broadcast preset.
 The new-profile editor template uses HPF 30 Hz and the same LPF; EQ, dynamics
@@ -247,3 +248,29 @@ file/database checks are recorded in [pre-production cleanup](preproduction-sche
 See [DSP editor controls](dsp-editor-controls.md) for verified ranges, official
 documentation links, precision-preserving sliders and Source hot-save semantics.
 Overall Gain is a UI label only; `master_gain` and all DSP mappings remain unchanged.
+
+
+## Optional final Clipper
+
+The independent `clipper` stage follows LPF and precedes attenuation-only Output
+Trim. Its choices are `OFF` (all existing profiles and new templates) and
+`FM_HEADEND_CLIPPER`. No limiter implementation or tuning changes.
+
+Installed `fmheadendclipper` 0.1.0 accepts F32LE interleaved stereo at 8-192 kHz;
+the application uses 48 kHz. `threshold_dbfs` maps to `threshold-dbfs` (-60..0,
+default -9 dBFS), `weighting_us` to `weighting-us` (0/50/75, default 50), and
+`bypass` to `bypass` (default false, hidden as with the custom limiter).
+These bounds/defaults come from Pi `gst-inspect-1.0 fmheadendclipper`.
+Stage OFF creates no element. Read-only detector peak, clip count and clipping
+depth are not configuration. No latency compensation is added.
+
+Current schema remains version 1 and requires all twelve stages. Existing files
+are structurally patched by adding only the OFF branch; there is no runtime
+conversion. Limiter, LPF and other saved values must remain identical.
+Native adapter coverage: `pytest daemon/tests/test_gstreamer.py -k native_fm_headend_clipper`.
+Pi verification on 2026-09-29 passed all four Clipper cases (OFF, 0/50/75 us):
+F32 stereo negotiation, property readback, PCM processing, unchanged timestamps
+and zero added latency. The three existing custom-limiter native cases also passed.
+Hard clipping can regenerate high-frequency energy after the LPF. Final deviation,
+spectrum and audible quality still require RF/MPX measurement; this integration
+does not certify those results.

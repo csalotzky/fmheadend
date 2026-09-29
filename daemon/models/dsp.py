@@ -103,6 +103,13 @@ class FmHeadendLimiter(Model):
     bypass: bool = Field(False, json_schema_extra={'hidden': True})
 
 
+class FmHeadendClipper(Model):
+    threshold_dbfs: float = Field(-9, ge=-60, le=0, title='Threshold (dBFS)')
+    weighting_us: Literal[0, 50, 75] = Field(50, title='FM weighting',
+        json_schema_extra={'enum_labels': {'0': 'Off', '50': '50 \u00b5s', '75': '75 \u00b5s'}})
+    bypass: bool = Field(False, json_schema_extra={'hidden': True})
+
+
 class LspEqBand(Model):
     filter: Literal['bell', 'low_shelf', 'high_shelf', 'notch'] = 'bell'
     frequency_hz: float = Field(1000, ge=10, lt=24000, title='Frequency (Hz)')
@@ -154,6 +161,7 @@ IMPLEMENTATIONS = {
     'LSP_COMPRESSOR': (LspDynamics, 'lsp-plug-in-plugins-lv2-compressor-stereo', 'LSP Compressor Stereo'),
     'LSP_LIMITER': (LspLimiter, 'lsp-plug-in-plugins-lv2-limiter-stereo', 'LSP Limiter Stereo'),
     'FM_HEADEND_LIMITER': (FmHeadendLimiter, 'fmheadendlimiter', 'FM Headend Limiter'),
+    'FM_HEADEND_CLIPPER': (FmHeadendClipper, 'fmheadendclipper', 'FM Headend Clipper'),
     'LSP_EQ': (LspEq, 'lsp-plug-in-plugins-lv2-para-equalizer-x16-stereo', 'LSP Parametric EQ x16 Stereo'),
     'LSP_MULTIBAND': (Multiband, 'lsp-plug-in-plugins-lv2-mb-compressor-stereo', 'LSP Multiband Compressor x8 Stereo'),
 }
@@ -168,6 +176,7 @@ STAGES = {
     'master_gain': ('Overall Gain', ['VOLUME']),
     'limiter': ('Limiter', ['OFF', 'LSP_LIMITER', 'FM_HEADEND_LIMITER']),
     'lpf': ('LPF', ['OFF', 'CHEBYSHEV']),
+    'clipper': ('Clipper', ['OFF', 'FM_HEADEND_CLIPPER']),
     'output_trim': ('Output Trim', ['TRIM']),
 }
 

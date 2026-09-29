@@ -242,3 +242,14 @@ def test_file_api(store, tmp_path):
         assert api.delete(base + '/' + path).status_code == 204
         assert api.get(base + '/' + path).status_code == 404
         assert api.get('/api/v1/audio-profiles').status_code == 404
+
+
+def test_bundled_profiles_current_structure_and_clipper_off():
+    from fmheadendd.models.audio_profile_file import AudioProfileFile
+    from fmheadendd.models.dsp import STAGES
+    for path in DEFAULT.parent.rglob('*.json'):
+        data = json.loads(path.read_text(encoding='utf-8'))
+        parsed = AudioProfileFile.model_validate(data)
+        assert list(parsed.stages) == list(STAGES)
+        assert parsed.stages['clipper'].selected == 'OFF'
+        assert parsed.model_dump() == data

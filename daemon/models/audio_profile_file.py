@@ -29,7 +29,7 @@ class AudioProfileFile(Model):
     @model_validator(mode='after')
     def settings(self):
         if set(self.stages) != set(STAGES):
-            raise ValueError('Profile must contain exactly the eleven ordered DSP stages')
+            raise ValueError('Profile must contain exactly the twelve ordered DSP stages')
         for key, stage in self.stages.items():
             choices = STAGES[key][1]
             if stage.selected not in choices:

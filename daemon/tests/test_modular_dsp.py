@@ -246,3 +246,50 @@ def test_selected_fm_limiter_requires_plugin(monkeypatch):
     doc['stages']['limiter']['selected'] = 'FM_HEADEND_LIMITER'
     with pytest.raises(DependencyUnavailable, match='Missing GStreamer element: fmheadendlimiter'):
         GstPipeline.validate_profile(AudioProfileFile.model_validate(doc))
+
+
+@pytest.mark.parametrize('selected', ['OFF', 'FM_HEADEND_CLIPPER'])
+@pytest.mark.parametrize('weighting', [0, 50, 75])
+@pytest.mark.parametrize('limiter', ['LSP_LIMITER', 'FM_HEADEND_LIMITER'])
+def test_clipper_independent_stage_order_properties_and_roundtrip(selected, weighting, limiter):
+    doc = profile()
+    assert doc['stages']['clipper']['selected'] == 'OFF'
+    doc['stages']['limiter']['selected'] = limiter
+    doc['stages']['clipper']['selected'] = selected
+    settings = doc['stages']['clipper']['implementations']['FM_HEADEND_CLIPPER']
+    settings.update(threshold_dbfs=-12., weighting_us=weighting, bypass=False)
+    parsed = AudioProfileFile.model_validate_json(AudioProfileFile.model_validate(doc).model_dump_json())
+    assert parsed.model_dump() == doc
+    chain = build(doc)
+    expected = ['volume', 'audiocheblimit', 'volume', IMPLEMENTATIONS[limiter][1], 'audiocheblimit']
+    if selected != 'OFF': expected.append('fmheadendclipper')
+    assert [e.factory for e in chain] == expected + ['volume']
+    if selected != 'OFF': assert chain[-2].props == settings
+    doc['stages']['clipper']['selected'] = 'OFF'
+    original = build(doc)
+    assert [(e.factory,e.props) for e in chain if e.factory != 'fmheadendclipper'] == [(e.factory,e.props) for e in original]
+
+
+@pytest.mark.parametrize('key,value', [('threshold_dbfs', -61.), ('threshold_dbfs', 1.),
+    ('weighting_us', 25), ('bypass', 'false'), ('clip_count', 0), ('max_clipping_db', 0.)])
+def test_clipper_rejects_invalid_or_runtime_fields(key, value):
+    doc = profile()
+    doc['stages']['clipper']['implementations']['FM_HEADEND_CLIPPER'][key] = value
+    with pytest.raises(ValidationError): AudioProfileFile.model_validate(doc)
+
+
+def test_missing_clipper_is_explicit_only_when_selected(monkeypatch):
+    from types import SimpleNamespace
+    from fmheadendd.sources.gst_pipeline import GstPipeline
+    from fmheadendd.errors import DependencyUnavailable
+    class Native:
+        def __init__(self): self.props = {}
+        def set_property(self,key,value): self.props[key] = value
+        def get_property(self,key): return self.props[key]
+    monkeypatch.setattr('fmheadendd.sources.gst_pipeline.load_gst', lambda: SimpleNamespace(
+        ElementFactory=SimpleNamespace(make=lambda factory,name: None if factory=='fmheadendclipper' else Native())))
+    doc = profile()
+    GstPipeline.validate_profile(AudioProfileFile.model_validate(doc))
+    doc['stages']['clipper']['selected'] = 'FM_HEADEND_CLIPPER'
+    with pytest.raises(DependencyUnavailable, match='Missing GStreamer element: fmheadendclipper'):
+        GstPipeline.validate_profile(AudioProfileFile.model_validate(doc))

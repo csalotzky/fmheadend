@@ -13,8 +13,10 @@ const description: DspDescription = {
     gate: 'Controls low-level dynamics using either expansion or gating.',
     eq: 'Adjusts tonal balance with configurable parametric EQ bands.',
     wideband: 'Controls full-band dynamics independently of the Multiband Compressor.',
-    multiband: 'Splits the audio into frequency bands and controls the dynamics of each band independently.',
-    master_gain: 'Adjusts the overall signal level. Higher gain may increase loudness and, when limiting is enabled, make the limiter work harder.',
+    multiband:
+      'Splits the audio into frequency bands and controls the dynamics of each band independently.',
+    master_gain:
+      'Adjusts the overall signal level. Higher gain may increase loudness and, when limiting is enabled, make the limiter work harder.',
     output_trim: 'Adjusts the final output level. Attenuation only.',
   },
   template: { schema_version: 1, name: '', stages: {} },
@@ -29,6 +31,7 @@ const description: DspDescription = {
     { key: 'master_gain', label: 'Overall Gain', choices: ['VOLUME'] },
     { key: 'limiter', label: 'Limiter', choices: ['OFF', 'LSP_LIMITER', 'FM_HEADEND_LIMITER'] },
     { key: 'lpf', label: 'LPF', choices: ['OFF', 'CHEBYSHEV'] },
+    { key: 'clipper', label: 'Clipper', choices: ['OFF', 'FM_HEADEND_CLIPPER'] },
     { key: 'output_trim', label: 'Output Trim', choices: ['TRIM'] },
   ],
   implementations: {
@@ -110,6 +113,7 @@ for (const [key, label] of Object.entries({
   LSP_MULTIBAND: 'LSP Multiband Compressor x8 Stereo',
   LSP_LIMITER: 'LSP Limiter Stereo',
   FM_HEADEND_LIMITER: 'FM Headend Limiter',
+  FM_HEADEND_CLIPPER: 'FM Headend Clipper',
 })) {
   description.implementations[key] = {
     label,
@@ -139,15 +143,40 @@ description.implementations['FM_HEADEND_LIMITER'].schema = {
     safety_margin_db: { type: 'number', title: 'Safety margin (dB)', minimum: 0, maximum: 12 },
     bypass: { type: 'boolean', hidden: true },
     weighting_us: {
-      type: 'integer', title: 'FM detector weighting', default: 50,
+      type: 'integer',
+      title: 'FM detector weighting',
+      default: 50,
       enum: [0, 50, 75],
       enum_labels: { '0': 'Off', '50': '50 \u00b5s', '75': '75 \u00b5s' },
     },
   },
 };
 description.template.stages['limiter'].implementations['FM_HEADEND_LIMITER'] = {
-  threshold_dbfs: -9, lookahead_ms: 5, attack_ms: 0.25, release_ms: 20,
-  stereo_link_percent: 100, weighting_us: 50, safety_margin_db: 2.5, bypass: false,
+  threshold_dbfs: -9,
+  lookahead_ms: 5,
+  attack_ms: 0.25,
+  release_ms: 20,
+  stereo_link_percent: 100,
+  weighting_us: 50,
+  safety_margin_db: 2.5,
+  bypass: false,
+};
+description.implementations['FM_HEADEND_CLIPPER'].schema = {
+  properties: {
+    threshold_dbfs: { type: 'number', title: 'Threshold (dBFS)', minimum: -60, maximum: 0 },
+    weighting_us: {
+      type: 'integer',
+      title: 'FM weighting',
+      enum: [0, 50, 75],
+      enum_labels: { '0': 'Off', '50': '50 \u00b5s', '75': '75 \u00b5s' },
+    },
+    bypass: { type: 'boolean', hidden: true },
+  },
+};
+description.template.stages['clipper'].implementations['FM_HEADEND_CLIPPER'] = {
+  threshold_dbfs: -9,
+  weighting_us: 50,
+  bypass: false,
 };
 const profile: ProfileResult = {
   name: 'Studio',
@@ -262,9 +291,9 @@ describe('File Audio Profiles', () => {
     expect(request.request.body).toEqual({ name: 'New name' });
     request.flush({ ...profile, path: 'custom/server_generated_2.json' });
     await pending;
-    expect(TestBed.inject(Router).navigate).toHaveBeenCalledWith(
-      ['/audio-profiles/edit'], { queryParams: { path: 'custom/server_generated_2.json' } },
-    );
+    expect(TestBed.inject(Router).navigate).toHaveBeenCalledWith(['/audio-profiles/edit'], {
+      queryParams: { path: 'custom/server_generated_2.json' },
+    });
   });
   it('blocks referenced deletion and default editing', async () => {
     const f = await list(undefined, true);
@@ -323,16 +352,16 @@ describe('File Audio Profiles', () => {
     void c.save();
     const req = http.expectOne(base + '/custom');
     expect(req.request.body.schema_version).toBe(1);
-    expect(Object.keys(req.request.body.stages)).toHaveLength(11);
+    expect(Object.keys(req.request.body.stages)).toHaveLength(12);
     expect(c.canLeave()).toBe(false);
     req.flush(profile);
     await pending;
     expect(c.path).toBe(profile.path);
-    expect(TestBed.inject(Router).navigate).toHaveBeenCalledWith(
-      ['/audio-profiles/edit'], {
-        queryParams: { path: profile.path }, replaceUrl: true, state: { profileSaved: true },
-      },
-    );
+    expect(TestBed.inject(Router).navigate).toHaveBeenCalledWith(['/audio-profiles/edit'], {
+      queryParams: { path: profile.path },
+      replaceUrl: true,
+      state: { profileSaved: true },
+    });
     expect(c.form.pristine).toBe(true);
     const again = c.save();
     http
@@ -403,20 +432,20 @@ describe('File Audio Profiles', () => {
     );
     expect(TestBed.inject(Router).navigate).not.toHaveBeenCalled();
   });
-  it('shows eleven sections, native units and unavailable selections honestly', async () => {
+  it('shows twelve sections, native units and unavailable selections honestly', async () => {
     const f = await editor(),
       c = f.componentInstance;
     c.select('gate', 'LSP_EXPANDER');
     f.detectChanges();
     await f.whenStable();
     f.detectChanges();
-    expect(f.nativeElement.querySelectorAll('details.stage')).toHaveLength(11);
+    expect(f.nativeElement.querySelectorAll('details.stage')).toHaveLength(12);
     expect(f.nativeElement.textContent).toContain('Ratio (N:1)');
     expect(f.nativeElement.textContent).toContain('Attack (ms)');
     const unavailable = f.nativeElement.querySelector('option[value="LSP_AGC"]');
     expect(unavailable.disabled).toBe(true);
     expect(unavailable.textContent).toContain('unavailable');
-    const trim = f.nativeElement.querySelectorAll('details.stage')[10].querySelector('input');
+    const trim = f.nativeElement.querySelectorAll('details.stage')[11].querySelector('input');
     expect(trim.max).toBe('0');
     const choices = Array.from(
       f.nativeElement.querySelectorAll('option') as NodeListOf<HTMLOptionElement>,
@@ -433,6 +462,7 @@ describe('File Audio Profiles', () => {
         'LSP_MULTIBAND',
         'LSP_LIMITER',
         'FM_HEADEND_LIMITER',
+        'FM_HEADEND_CLIPPER',
       ]),
     );
     expect(f.nativeElement.textContent).not.toContain('Inherited');
@@ -460,7 +490,9 @@ describe('File Audio Profiles', () => {
   it('deep links keep the full profile path in a query, including after a fresh load', async () => {
     const router = TestBed.inject(Router);
     const path = 'custom/teszt2_20260928180555.json';
-    const url = router.serializeUrl(router.createUrlTree(['/audio-profiles/edit'], { queryParams: { path } }));
+    const url = router.serializeUrl(
+      router.createUrlTree(['/audio-profiles/edit'], { queryParams: { path } }),
+    );
     expect(url.split('?')[0]).toBe('/audio-profiles/edit');
     const parsed = router.parseUrl(url);
     expect(parsed.queryParamMap.get('path')).toBe(path);
@@ -475,19 +507,32 @@ describe('File Audio Profiles', () => {
     expect(listFixture.nativeElement.querySelector('.source-row a').getAttribute('href')).toBe(url);
   });
   it('edits weighting as labelled choices and preserves it with the limiter off', async () => {
-    const f = await editor(), c = f.componentInstance;
+    const f = await editor(),
+      c = f.componentInstance;
     c.select('limiter', 'FM_HEADEND_LIMITER');
     f.detectChanges();
     await f.whenStable();
     const section = f.nativeElement.querySelectorAll('details.stage')[8];
     const select = section.querySelector('app-dsp-fields select') as HTMLSelectElement;
-    expect([...select.options].map((o) => o.textContent?.trim())).toEqual(['Off', '50 µs', '75 µs']);
+    expect([...select.options].map((o) => o.textContent?.trim())).toEqual([
+      'Off',
+      '50 µs',
+      '75 µs',
+    ]);
     select.selectedIndex = 2;
     select.dispatchEvent(new Event('change'));
     await f.whenStable();
-    expect(c.document!.stages['limiter'].implementations['FM_HEADEND_LIMITER']['weighting_us']).toBe(75);
-    for (const label of ['Threshold (dBFS)', 'Lookahead (ms)', 'Attack (ms)',
-      'Release (ms)', 'Stereo Link (%)', 'Safety margin (dB)']) {
+    expect(
+      c.document!.stages['limiter'].implementations['FM_HEADEND_LIMITER']['weighting_us'],
+    ).toBe(75);
+    for (const label of [
+      'Threshold (dBFS)',
+      'Lookahead (ms)',
+      'Attack (ms)',
+      'Release (ms)',
+      'Stereo Link (%)',
+      'Safety margin (dB)',
+    ]) {
       expect(section.textContent).toContain(label);
     }
     c.select('limiter', 'LSP_LIMITER');
@@ -495,12 +540,53 @@ describe('File Audio Profiles', () => {
     expect(section.textContent).not.toContain('FM detector weighting');
     expect(section.textContent).not.toContain('FM limiter weighting');
     c.select('limiter', 'FM_HEADEND_LIMITER');
-    expect(c.document!.stages['limiter'].implementations['FM_HEADEND_LIMITER']['weighting_us']).toBe(75);
+    expect(
+      c.document!.stages['limiter'].implementations['FM_HEADEND_LIMITER']['weighting_us'],
+    ).toBe(75);
     c.select('limiter', 'OFF');
     const pending = c.save();
     const request = http.expectOne(base + '/' + profile.path);
     expect(request.request.body.stages.limiter.selected).toBe('OFF');
-    expect(request.request.body.stages.limiter.implementations.FM_HEADEND_LIMITER.weighting_us).toBe(75);
+    expect(
+      request.request.body.stages.limiter.implementations.FM_HEADEND_LIMITER.weighting_us,
+    ).toBe(75);
+    request.flush({ ...profile, profile: request.request.body });
+    await pending;
+  });
+  it('renders Clipper after LPF and round-trips it independently of Limiter', async () => {
+    const f = await editor(),
+      c = f.componentInstance;
+    const original = structuredClone(c.document!.stages);
+    expect(original['clipper'].selected).toBe('OFF');
+    const keys = c.description!.stages.map((s) => s.key);
+    expect(keys.slice(-4)).toEqual(['limiter', 'lpf', 'clipper', 'output_trim']);
+    c.select('clipper', 'FM_HEADEND_CLIPPER');
+    f.detectChanges();
+    await f.whenStable();
+    const section = f.nativeElement.querySelectorAll('details.stage')[10];
+    expect(section.textContent).toContain('Clipper');
+    expect(section.textContent).toContain('Threshold (dBFS)');
+    const select = section.querySelector('app-dsp-fields select') as HTMLSelectElement;
+    expect([...select.options].map((o) => o.textContent?.trim())).toEqual([
+      'Off',
+      '50 \u00b5s',
+      '75 \u00b5s',
+    ]);
+    select.selectedIndex = 2;
+    select.dispatchEvent(new Event('change'));
+    await f.whenStable();
+    expect(
+      c.document!.stages['clipper'].implementations['FM_HEADEND_CLIPPER']['weighting_us'],
+    ).toBe(75);
+    c.select('clipper', 'OFF');
+    const pending = c.save();
+    const request = http.expectOne(base + '/' + profile.path);
+    expect(request.request.body.stages.clipper.selected).toBe('OFF');
+    expect(
+      request.request.body.stages.clipper.implementations.FM_HEADEND_CLIPPER.weighting_us,
+    ).toBe(75);
+    for (const key of keys.filter((k) => k !== 'clipper'))
+      expect(request.request.body.stages[key]).toEqual(original[key]);
     request.flush({ ...profile, profile: request.request.body });
     await pending;
   });

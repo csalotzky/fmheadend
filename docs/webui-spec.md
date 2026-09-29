@@ -368,7 +368,7 @@ uses the available width. Referenced custom files
 cannot be deleted. Display name and stable path are separate; Create/Clone use the
 actual backend-generated path. Renaming never changes Source references.
 
-The editor exposes eleven collapsible DSP stages through structured schema-1 data.
+The editor exposes twelve collapsible DSP stages through structured schema-1 data.
 Separate Wideband and Multiband stages, Chebyshev/LSP choices, EQ Add/Remove, four-to-eight
 multiband crossover controls and per-band Compressor Bypass use backend-defined
 validated fields/units. Off and implementation switches preserve hidden/inactive
@@ -554,3 +554,9 @@ publish their resulting state before returning. Existing polling cadence and
 non-overlap remain unchanged in development and production builds. See
 [Status/PCM isolation](status-pcm-isolation.md) for endpoint inventory, freshness,
 measurements, limitations and the controlled live acceptance procedure.
+
+
+Clipper is a separate card between LPF and Output Trim, default OFF. Selecting
+FM Headend Clipper shows Threshold (dBFS) and FM weighting (Off / 50 us / 75 us).
+Bypass is retained as hidden configuration, matching the custom limiter convention;
+selecting OFF removes the element. Runtime diagnostics are not editable controls.

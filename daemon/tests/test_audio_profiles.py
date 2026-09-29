@@ -60,8 +60,8 @@ def test_modular_editor_metadata_uses_existing_api_family(api):
     result=api.get(BASE+'dsp')
     assert result.status_code==200
     data=result.json()
-    assert data['template']['schema_version']==1 and len(data['stages'])==11
-    assert set(data['implementations']) == {'VOLUME','TRIM','CHEBYSHEV','LSP_EXPANDER','LSP_GATE','LSP_AGC','LSP_EQ','LSP_COMPRESSOR','LSP_MULTIBAND','LSP_LIMITER','FM_HEADEND_LIMITER'}
+    assert data['template']['schema_version']==1 and len(data['stages'])==12
+    assert set(data['implementations']) == {'VOLUME','TRIM','CHEBYSHEV','LSP_EXPANDER','LSP_GATE','LSP_AGC','LSP_EQ','LSP_COMPRESSOR','LSP_MULTIBAND','LSP_LIMITER','FM_HEADEND_LIMITER','FM_HEADEND_CLIPPER'}
 
 
 @pytest.mark.parametrize('weighting', [0, 50, 75])
@@ -325,3 +325,21 @@ def test_source_invalid_edit_does_not_save_or_replace_audio(api):
     assert response.status_code == 422
     assert api.app.state.services.sources.pipelines[sid] is old and old.running
     assert api.get(f'/api/v1/sources/{sid}').json()['config']['uri'] == SOURCE['config']['uri']
+
+
+@pytest.mark.parametrize('weighting', [0,50,75])
+def test_clipper_api_roundtrip_preserves_other_stages(api, weighting):
+    data = document()
+    original = {k:v for k,v in data['stages'].items() if k != 'clipper'}
+    data['stages']['clipper'] = dict(selected='FM_HEADEND_CLIPPER', implementations={
+        'FM_HEADEND_CLIPPER': dict(threshold_dbfs=-12., weighting_us=weighting, bypass=False)})
+    response = api.post(BASE+'custom',json=data)
+    assert response.status_code == 201, response.text
+    path = response.json()['path']
+    loaded = api.get(BASE+path).json()['profile']
+    assert loaded == data
+    loaded['stages']['clipper']['selected'] = 'OFF'
+    assert api.put(BASE+path,json=loaded).status_code == 200
+    saved = api.get(BASE+path).json()['profile']
+    assert saved == loaded
+    assert {k:v for k,v in saved['stages'].items() if k != 'clipper'} == original

@@ -359,10 +359,10 @@ direct schema-1 creation and audio restart/error semantics.
 Sources persist `processor_mode` (`bypass`, `builtin`, `stereotool`), Source Gain
 `input_gain_db`, and a single stable relative `audio_profile_path`. Bypass requires
 null path and still applies Source Gain. Built-in loads/validates its selected JSON:
-Source decode -> Source Gain -> fixed eleven-stage Built-in DSP ->
+Source decode -> Source Gain -> fixed twelve-stage Built-in DSP ->
 fixed PCM output. Stereo Tool is explicitly unavailable, with no silent fallback.
 
-JSON schema-1 profiles use the current eleven-stage order with no compatibility exceptions. Selected implementation
+JSON schema-1 profiles use the current twelve-stage order with no compatibility exceptions. Selected implementation
 and saved settings are independent. Native/LSP adapters and measured limitations are
 recorded in [Modular DSP implementation](modular-dsp-implementation.md); the canonical
 design is [Audio processing](fmheadend-audio-processing.md).

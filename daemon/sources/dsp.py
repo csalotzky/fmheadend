@@ -60,7 +60,7 @@ def dsp_stages(make, profile):
             props = dict(enabled=True, th=linear(p['threshold_dbfs']), lk=p['lookahead_ms'], at=p['attack_ms'],
                          rt=p['release_ms'], slink=p['stereo_link_percent'], ovs=p['oversampling'], mode=p['mode'],
                          boost=p['boost'], alr=p['alr'], alr_at=p['alr_attack_ms'], alr_rt=p['alr_release_ms'])
-        elif name == 'FM_HEADEND_LIMITER':
+        elif name in ('FM_HEADEND_LIMITER', 'FM_HEADEND_CLIPPER'):
             props = dict(p)  # Same units; _make converts underscores to native hyphens.
         elif name == 'LSP_EQ':
             props = dict(enabled=True, mode=0)
@@ -119,5 +119,6 @@ def editor_description():
                     'wideband': 'Controls full-band dynamics independently of the Multiband Compressor.',
                     'multiband': 'Splits the audio into frequency bands and controls the dynamics of each band independently.',
                     'master_gain': 'Adjusts the overall signal level. Higher gain may increase loudness and, when limiting is enabled, make the limiter work harder.',
+                    'clipper': 'Clips residual peaks after filtering. Hard clipping can add distortion and high-frequency content; verify final FM deviation.',
                     'output_trim': 'Adjusts the final output level. Attenuation only.',
                 })

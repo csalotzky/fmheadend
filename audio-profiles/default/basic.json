@@ -64,6 +64,16 @@
         }
       }
     },
+    "clipper": {
+      "selected": "OFF",
+      "implementations": {
+        "FM_HEADEND_CLIPPER": {
+          "threshold_dbfs": -9,
+          "weighting_us": 50,
+          "bypass": false
+        }
+      }
+    },
     "output_trim": {
       "selected": "TRIM",
       "implementations": {

@@ -425,3 +425,58 @@ def test_native_start_without_sender_remains_owned_until_stop(gst, http_files, k
     finally:
         pipeline.stop()
     assert not pipeline._thread.is_alive()
+
+
+@pytest.mark.parametrize('weighting', [None, 0, 50, 75])
+def test_native_fm_headend_clipper(gst, weighting):
+    import array
+    import math
+    from fmheadendd.sources.dsp import dsp_stages, PROCESSING_CAPS
+    require(gst, 'appsrc', 'appsink', 'fmheadendclipper')
+    profile = file_profile('Clipper')
+    if weighting is not None:
+        profile.stages['clipper'].selected = 'FM_HEADEND_CLIPPER'
+        profile.stages['clipper'].implementations['FM_HEADEND_CLIPPER'].update(
+            threshold_dbfs=-12., weighting_us=weighting, bypass=False)
+    GstPipeline.validate_profile(profile)
+    samples = array.array('f', [v for i in range(4096) for v in
+        (.8 * math.cos(2*math.pi*1000*i/48000), .6 * math.cos(2*math.pi*3000*i/48000))])
+    pipeline = gst.Pipeline.new(None)
+    def make(factory, **properties):
+        element = gst.ElementFactory.make(factory, None)
+        for key,value in properties.items(): element.set_property(key.replace('_','-'), value)
+        pipeline.add(element)
+        return element
+    src = make('appsrc', caps=gst.Caps.from_string(PROCESSING_CAPS), format=gst.Format.TIME)
+    elements = dsp_stages(make,profile)
+    sink = make('appsink',sync=False,wait_on_eos=False)
+    chain = [src,*elements,sink]
+    for left,right in zip(chain,chain[1:]): assert left.link(right)
+    try:
+        assert pipeline.set_state(gst.State.PLAYING) != gst.StateChangeReturn.FAILURE
+        data = samples.tobytes()
+        buf = gst.Buffer.new_allocate(None,len(data),None)
+        buf.fill(0,data);buf.pts=0;buf.duration=4096*gst.SECOND//48000
+        assert src.emit('push-buffer',buf) == gst.FlowReturn.OK
+        src.emit('end-of-stream')
+        result = sink.emit('try-pull-sample',3*gst.SECOND)
+        assert result is not None
+        assert result.get_caps().is_equal(gst.Caps.from_string(PROCESSING_CAPS))
+        output = result.get_buffer()
+        assert output.pts == 0 and output.duration == buf.duration
+        raw = output.extract_dup(0,output.get_size())
+        rendered = array.array('f');rendered.frombytes(raw)
+        assert len(rendered) == len(samples) and all(math.isfinite(x) for x in rendered)
+        clippers = [e for e in elements if e.get_factory().get_name()=='fmheadendclipper']
+        if weighting is None:
+            assert not clippers and raw == data
+        else:
+            assert len(clippers)==1
+            assert clippers[0].get_property('clip-count') > 0
+            assert clippers[0].get_property('max-clipping-db') > 0
+            assert 0 < rendered[0] < samples[0]  # No leading lookahead silence.
+            query = gst.Query.new_latency()
+            assert clippers[0].query(query)
+            assert query.parse_latency()[1] == 0
+    finally:
+        pipeline.set_state(gst.State.NULL)
