@@ -85,7 +85,7 @@ def test_offline_probe_still_requires_pcm(native, body):
     assert not pipeline._thread.is_alive() and not pipeline.probe_result().ok
 
 
-@pytest.mark.parametrize('failure', [DependencyUnavailable('Missing GStreamer element: audioiirfilter'),
+@pytest.mark.parametrize('failure', [DependencyUnavailable('Missing GStreamer element: fmheadendlimiter'),
                                     ValueError('Unsupported property'), RuntimeError('broken construction')])
 def test_construction_errors_are_not_source_outages(native, failure):
     class Broken(NoPcmPipeline):
@@ -177,3 +177,20 @@ def test_reconnect_before_first_pcm_and_late_audio(native, monkeypatch):
         retry_allowed.set()
         pipeline.stop()
     assert not pipeline._thread.is_alive()
+
+
+@pytest.mark.parametrize('body', SOURCES)
+def test_unavailable_source_preserves_desired_on_across_restart(native, tmp_path, body):
+    settings = Settings(tmp_path / 'restart.db')
+    with TestClient(create_app(settings, pipeline_factory=NoPcmPipeline)) as api:
+        sid = api.post('/api/v1/sources', json=body).json()['id']
+        assert api.patch('/api/v1/modulators/0', json={
+            'frequency_khz': 98100, 'input_source_id': sid}).status_code == 200
+        assert api.post('/api/v1/modulators/0/start').status_code == 200
+        assert api.get('/api/v1/modulators/0').json()['enabled'] is True
+    with TestClient(create_app(settings, pipeline_factory=NoPcmPipeline)) as api:
+        services = api.app.state.services
+        api.app.state.control.executor.submit(services.status.refresh).result()
+        assert services.recovery.ready and services.rp.enabled[0]
+        assert not services.sources.pipelines[sid]._ready.is_set()
+        assert api.get('/api/v1/modulators/0').json()['enabled'] is True

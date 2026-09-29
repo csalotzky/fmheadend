@@ -358,56 +358,53 @@ def test_missing_filter_plugin_fails_explicitly(gst):
     pipeline._pipeline.set_state(gst.State.NULL)
 
 
-@pytest.mark.parametrize('weighting,tau', [('50us', 50e-6), ('75us', 75e-6)])
-def test_native_weighting_inverse_and_limiter_wrapper(gst, weighting, tau):
-    """Short isolated F32 stereo render: real property arrays, negotiation and PCM."""
+@pytest.mark.parametrize('weighting', [0, 50, 75])
+def test_native_fm_headend_limiter(gst, weighting):
+    """Isolated real adapter: property readback, F32 stereo negotiation and PCM."""
     import array
     import math
-    from fmheadendd.sources.dsp import dsp_stages, fm_limiter_coefficients, PROCESSING_CAPS
-    limiter = 'lsp-plug-in-plugins-lv2-limiter-stereo'
-    require(gst, 'appsrc', 'appsink', 'audioiirfilter', limiter)
-    profile = file_profile('Weighting')
-    profile.stages['limiter'].selected = 'LSP_LIMITER'
-    profile.stages['limiter'].implementations['LSP_LIMITER']['fm_limiter_weighting'] = weighting
-    GstPipeline.validate_profile(profile)  # includes native readback checks
+    from fmheadendd.models.dsp import FmHeadendLimiter
+    from fmheadendd.sources.dsp import dsp_stages, PROCESSING_CAPS
+    require(gst, 'appsrc', 'appsink', 'fmheadendlimiter')
+    profile = file_profile('FM limiter')
+    profile.stages['limiter'].selected = 'FM_HEADEND_LIMITER'
+    profile.stages['limiter'].implementations['FM_HEADEND_LIMITER'] = FmHeadendLimiter(weighting_us=weighting).model_dump()
+    GstPipeline.validate_profile(profile)
     samples = array.array('f', [v for i in range(4096) for v in
-        (.01 * math.sin(2*math.pi*1000*i/48000), .02 * math.sin(2*math.pi*3000*i/48000))])
-    for wrapped in (False, True):
-        pipeline = gst.Pipeline.new(None)
-        def make(factory, **properties):
-            element = gst.ElementFactory.make(factory, None)
-            for key, value in properties.items(): element.set_property(key.replace('_', '-'), value)
-            pipeline.add(element)
-            return element
-        src = make('appsrc', caps=gst.Caps.from_string(PROCESSING_CAPS), format=gst.Format.TIME)
-        if wrapped:
-            elements = dsp_stages(make, profile)
-        else:
-            elements = [make('audioiirfilter', **p) for p in fm_limiter_coefficients(48000, tau)]
-        sink = make('appsink', sync=False, wait_on_eos=False)
-        chain = [src, *elements, sink]
-        for left, right in zip(chain, chain[1:]): assert left.link(right)
-        try:
-            assert pipeline.set_state(gst.State.PLAYING) != gst.StateChangeReturn.FAILURE
-            data = samples.tobytes()
-            buf = gst.Buffer.new_allocate(None, len(data), None)
-            buf.fill(0, data)
-            buf.pts = 0
-            buf.duration = 4096 * gst.SECOND // 48000
-            assert src.emit('push-buffer', buf) == gst.FlowReturn.OK
-            src.emit('end-of-stream')
-            result = sink.emit('try-pull-sample', 3 * gst.SECOND)
-            assert result is not None
-            assert result.get_caps().is_equal(gst.Caps.from_string(PROCESSING_CAPS))
-            rendered = array.array('f')
-            buffer = result.get_buffer()
-            rendered.frombytes(buffer.extract_dup(0, buffer.get_size()))
-            assert len(rendered) == len(samples)
-            assert all(math.isfinite(x) for x in rendered) and max(map(abs, rendered)) > .005
-            if not wrapped:
-                assert list(rendered) == pytest.approx(list(samples), abs=1e-7)
-        finally:
-            pipeline.set_state(gst.State.NULL)
+        (.5 * math.sin(2*math.pi*1000*i/48000), .4 * math.sin(2*math.pi*3000*i/48000))])
+    pipeline = gst.Pipeline.new(None)
+    def make(factory, **properties):
+        element = gst.ElementFactory.make(factory, None)
+        for key, value in properties.items(): element.set_property(key.replace('_', '-'), value)
+        pipeline.add(element)
+        return element
+    src = make('appsrc', caps=gst.Caps.from_string(PROCESSING_CAPS), format=gst.Format.TIME)
+    elements = dsp_stages(make, profile)
+    sink = make('appsink', sync=False, wait_on_eos=False)
+    chain = [src, *elements, sink]
+    for left, right in zip(chain, chain[1:]): assert left.link(right)
+    try:
+        assert pipeline.set_state(gst.State.PLAYING) != gst.StateChangeReturn.FAILURE
+        data = samples.tobytes()
+        buf = gst.Buffer.new_allocate(None, len(data), None)
+        buf.fill(0, data)
+        buf.pts = 0
+        buf.duration = 4096 * gst.SECOND // 48000
+        assert src.emit('push-buffer', buf) == gst.FlowReturn.OK
+        src.emit('end-of-stream')
+        result = sink.emit('try-pull-sample', 3 * gst.SECOND)
+        assert result is not None
+        assert result.get_caps().is_equal(gst.Caps.from_string(PROCESSING_CAPS))
+        rendered = array.array('f')
+        buffer = result.get_buffer()
+        rendered.frombytes(buffer.extract_dup(0, buffer.get_size()))
+        assert len(rendered) == len(samples)
+        assert all(math.isfinite(x) for x in rendered) and .005 < max(map(abs, rendered)) < .5
+        limiter = next(e for e in elements if e.get_factory().get_name() == 'fmheadendlimiter')
+        assert limiter.get_property('latency-samples') == 240
+        assert limiter.get_property('gain-reduction-db') > 0
+    finally:
+        pipeline.set_state(gst.State.NULL)
 
 
 @pytest.mark.parametrize('kind', ['HTTP', 'UDP'])

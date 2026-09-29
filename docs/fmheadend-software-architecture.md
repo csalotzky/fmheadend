@@ -1493,6 +1493,11 @@ commands recover only the affected FIFO, uncertain enable writes reapply only
 the target state, and uncertain configuration writes reconcile only their TX.
 Suspicious uptime values or status mismatches do not justify global restoration.
 Shutdown never overwrites persistent desired enabled state.
+Individual ON/OFF commands persist `Modulator.enabled` in SQLite before runtime
+application. Restart attempts only saved ON channels; source unavailability and
+startup failures do not rewrite that preference. STOP ALL remains a session-only
+hold and therefore does not prevent a saved-ON channel returning after restart.
+No additional restart-state field or schema migration is used.
 See [Milestone 6A](milestone6a.md) for deployment and exact lifecycle semantics;
 Zero 2 W stress/performance validation is deferred to M6B.
 

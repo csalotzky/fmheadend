@@ -75,10 +75,6 @@ class LspAutogain(Model):
 
 
 class LspLimiter(Model):
-    fm_limiter_weighting: Literal['off', '50us', '75us'] = Field(
-        'off', title='FM limiter weighting',
-        description="Weights the limiter for the transmitter's FM pre-emphasis response and compensates the weighting before output.",
-        json_schema_extra={'enum_labels': {'off': 'Off', '50us': '50 µs', '75us': '75 µs'}})
     threshold_dbfs: float = Field(0, ge=-48, le=0, title='Threshold (dBFS)')
     lookahead_ms: float = Field(5, ge=.1, le=20, title='Lookahead (ms)')
     attack_ms: float = Field(5, ge=.25, le=20, title='Attack (ms)')
@@ -90,6 +86,21 @@ class LspLimiter(Model):
     alr: bool = Field(False, json_schema_extra={'hidden': True})
     alr_attack_ms: float = Field(5, ge=.1, le=200, json_schema_extra={'hidden': True})
     alr_release_ms: float = Field(50, ge=10, le=1000, json_schema_extra={'hidden': True})
+
+
+class FmHeadendLimiter(Model):
+    threshold_dbfs: float = Field(-9, ge=-60, le=0, title='Threshold (dBFS)')
+    lookahead_ms: float = Field(5, ge=0, le=20, title='Lookahead (ms)')
+    attack_ms: float = Field(.25, ge=0, le=20, title='Attack (ms)',
+        description='The plugin limits attack time to the lookahead time.')
+    release_ms: float = Field(20, ge=1, le=1000, title='Release (ms)',
+        description='Time for 90% recovery toward unity gain.')
+    stereo_link_percent: float = Field(100, ge=0, le=100, title='Stereo Link (%)')
+    weighting_us: Literal[0, 50, 75] = Field(50, title='FM detector weighting',
+        description='Weights the detector while leaving the programme path flat. Does not configure transmitter pre-emphasis.',
+        json_schema_extra={'enum_labels': {'0': 'Off', '50': '50 µs', '75': '75 µs'}})
+    safety_margin_db: float = Field(2.5, ge=0, le=12, title='Safety margin (dB)')
+    bypass: bool = Field(False, json_schema_extra={'hidden': True})
 
 
 class LspEqBand(Model):
@@ -142,6 +153,7 @@ IMPLEMENTATIONS = {
     'LSP_AGC': (LspAutogain, 'lsp-plug-in-plugins-lv2-autogain-stereo', 'LSP Autogain Stereo'),
     'LSP_COMPRESSOR': (LspDynamics, 'lsp-plug-in-plugins-lv2-compressor-stereo', 'LSP Compressor Stereo'),
     'LSP_LIMITER': (LspLimiter, 'lsp-plug-in-plugins-lv2-limiter-stereo', 'LSP Limiter Stereo'),
+    'FM_HEADEND_LIMITER': (FmHeadendLimiter, 'fmheadendlimiter', 'FM Headend Limiter'),
     'LSP_EQ': (LspEq, 'lsp-plug-in-plugins-lv2-para-equalizer-x16-stereo', 'LSP Parametric EQ x16 Stereo'),
     'LSP_MULTIBAND': (Multiband, 'lsp-plug-in-plugins-lv2-mb-compressor-stereo', 'LSP Multiband Compressor x8 Stereo'),
 }
@@ -154,7 +166,7 @@ STAGES = {
     'wideband': ('Wideband Compressor', ['OFF', 'LSP_COMPRESSOR']),
     'multiband': ('Multiband Compressor', ['OFF', 'LSP_MULTIBAND']),
     'master_gain': ('Overall Gain', ['VOLUME']),
-    'limiter': ('Limiter', ['OFF', 'LSP_LIMITER']),
+    'limiter': ('Limiter', ['OFF', 'LSP_LIMITER', 'FM_HEADEND_LIMITER']),
     'lpf': ('LPF', ['OFF', 'CHEBYSHEV']),
     'output_trim': ('Output Trim', ['TRIM']),
 }

@@ -39,14 +39,14 @@ def test_default_and_list(store):
         {'path': 'default/basic.json', 'name': 'Basic', 'kind': 'default'}]
 
 
-@pytest.mark.parametrize('weighting', ['off', '50us', '75us'])
+@pytest.mark.parametrize('weighting', [0, 50, 75])
 def test_weighting_persists_even_with_limiter_off(store, weighting):
     data = document()
-    data['stages']['limiter']['implementations'] = {'LSP_LIMITER': {'fm_limiter_weighting': weighting}}
+    data['stages']['limiter']['implementations'] = {'FM_HEADEND_LIMITER': {'weighting_us': weighting}}
     item = store.create(data)
     loaded = store.get(item.path)
     assert loaded.profile.stages['limiter'].selected == 'OFF'
-    assert loaded.profile.stages['limiter'].implementations['LSP_LIMITER']['fm_limiter_weighting'] == weighting
+    assert loaded.profile.stages['limiter'].implementations['FM_HEADEND_LIMITER']['weighting_us'] == weighting
     store.save(item.path, loaded.profile.model_dump())
     assert store.get(item.path) == loaded
 

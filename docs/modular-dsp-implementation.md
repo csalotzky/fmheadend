@@ -62,27 +62,46 @@ and limiter start OFF. Selecting an LSP implementation loads its existing valida
 settings defaults. Hidden and inactive settings for supported implementations survive
 Save. Every profile uses Limiter before LPF, with no ordering exception.
 
-### FM limiter weighting
+### FM Headend Limiter
 
-The existing `LSP_LIMITER` settings include `fm_limiter_weighting`: `off` (default),
-`50us`, or `75us`. Missing values validate as `off`; schema version remains 1.
-Limiter OFF retains the saved setting without creating filters. Weighting OFF
-uses the unchanged limiter chain. Otherwise the limiter internally contains
-`audioiirfilter PRE -> LSP limiter -> audioiirfilter DE`, followed by the existing LPF.
-No LSP property or transmitter pre-emphasis setting is changed.
+Limiter choices are `OFF`, `LSP_LIMITER`, and `FM_HEADEND_LIMITER`. Exactly one
+implementation runs. LSP uses its unchanged native properties without filter
+wrappers. The standalone `fmheadendlimiter` 0.1.0 element accepts F32LE interleaved
+stereo (8-192 kHz); the application uses 48 kHz. Neither implementation changes QN
+pre-emphasis. Limiter remains before LPF and attenuation-only Output Trim.
 
-At the fixed 48 kHz processing rate, `r = exp(-1 / (sample_rate * tau))` and
-`g = 1 / (1-r)`, with `tau=50e-6` or `75e-6`. PRE uses denominator `a=[1]`,
-numerator `b=[g,-g*r]`; DE swaps these arrays. Both have unity DC gain and compose
-to unity when gain reduction is absent. This weights limiting for the later FM
-response, then compensates it before PCM output; it is not an MPX limiter or an
-RF-deviation guarantee. Selected weighting requires `audioiirfilter` and fails
-explicitly if unavailable. The helper/adapter are in `daemon/sources/dsp.py`.
+The new implementation stores these properties in the existing stage's
+`implementations.FM_HEADEND_LIMITER` object. Underscores map directly to native
+hyphens, without unit conversion:
 
-Isolated Pi checks on GStreamer 1.26.2 verify both coefficient pairs, property
-readback, F32 stereo negotiation, native PRE/DE cancellation and the actual LSP
-wrapper. These software checks do not certify RF deviation or loaded eight-source
-performance. Reproduce with `pytest daemon/tests/test_gstreamer.py -k native_weighting_inverse`.
+| JSON field | Native property | Range | Default |
+|---|---|---|---|
+| threshold_dbfs | threshold-dbfs | -60..0 dBFS | -9 |
+| lookahead_ms | lookahead-ms | 0..20 ms | 5 |
+| attack_ms | attack-ms | 0..20 ms (internally limited to lookahead) | 0.25 |
+| release_ms | release-ms | 1..1000 ms, 90% recovery | 20 |
+| stereo_link_percent | stereo-link-percent | 0..100% | 100 |
+| weighting_us | weighting-us | 0 / 50 / 75 | 50 |
+| safety_margin_db | safety-margin-db | 0..12 dB | 2.5 |
+| bypass | bypass | boolean; hidden, preserves latency | false |
+
+Bounds were read from `gst-inspect-1.0 fmheadendlimiter` on `fmheadend@fmheadend`.
+FM detector weighting leaves the programme path flat; it is not a composite MPX
+limiter or an RF-deviation guarantee. Native read-only detector/gain-reduction and
+latency properties are not saved profile fields. No published plugin manual URL
+is supplied; the editor retains its concise field help.
+
+Schema version stays 1. Existing ordinary Off/LSP profiles require no new settings;
+inactive supported implementation settings survive Save. The removed experimental
+LSP weighting field is no longer accepted; remove that field from experimental
+files without changing the retained LSP settings. There is no migration or fallback.
+A selected missing plugin fails explicitly. Reproduce isolated native checks with
+`pytest daemon/tests/test_gstreamer.py -k native_fm_headend_limiter`.
+
+On 2026-09-29, all three isolated Pi renders (weighting 0/50/75) passed with
+GStreamer 1.26.2 and plugin 0.1.0: native property readback, F32 stereo caps,
+finite nonzero PCM, gain reduction, and 240-sample latency at 5 ms lookahead.
+No application deployment, service restart or RF test was involved.
 
 ## Verified native mappings
 

@@ -5,7 +5,10 @@ from fmheadendd.models.dsp_editor import editor_schema, DOCUMENTATION
 def test_editor_metadata_preserves_schema_limits_and_default_values():
     for key, (model, factory, _) in IMPLEMENTATIONS.items():
         schema = editor_schema(model)
-        assert DOCUMENTATION[key].startswith(('https://lsp-plug.in/?page=manuals&section=',
+        if key == 'FM_HEADEND_LIMITER':
+            assert DOCUMENTATION.get(key) is None  # No published plugin manual URL.
+        else:
+            assert DOCUMENTATION[key].startswith(('https://lsp-plug.in/?page=manuals&section=',
                                              'https://gstreamer.freedesktop.org/documentation/'))
         if key.startswith('LSP_'):
             assert DOCUMENTATION[key].endswith(factory.removeprefix('lsp-plug-in-plugins-lv2-').replace('-', '_'))

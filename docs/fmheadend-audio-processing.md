@@ -209,7 +209,7 @@ Do not confuse this with Compressor Makeup Gain (compensation within the compres
 
 ### 3.9. Limiter
 
-**Selector:** Off / LSP Limiter Stereo. Default factory/template selection is OFF;
+**Selector:** Off / LSP Limiter Stereo / FM Headend Limiter. Default factory/template selection is OFF;
 operator tuning and RF measurements determine an appropriate limiting setup.
 
 **LSP Stereo — visible fields:**
@@ -227,12 +227,10 @@ Stereo Link is documented as `slink` in the relevant GStreamer LV2 wrapper. The 
 
 **Starting threshold/lookahead/release:** results of physical validation and the desired programme sound, not asserted numbers. The previously discussed **−3 dBFS** is only a possible *initial test point*, not a finalized profile parameter.
 
-**FM limiter weighting:** the LSP limiter has `fm_limiter_weighting` with choices
-Off / 50 µs / 75 µs (serialized `off` / `50us` / `75us`, default `off`). This is an
-internal PRE -> limiter -> exact inverse DE pair using `audioiirfilter` at 48 kHz,
-not additional stages or transmitter pre-emphasis. Missing settings default to
-Off within schema 1; inactive settings survive. The coefficient formula and native
-checks are in [the implementation notes](modular-dsp-implementation.md#fm-limiter-weighting).
+**FM Headend Limiter:** alternative `fmheadendlimiter` implementation of this same
+stage, never chained with LSP. Its detector supports Off / 50 us / 75 us weighting
+with a flat programme path. Properties, defaults and native bounds are documented
+in [the implementation notes](modular-dsp-implementation.md#fm-headend-limiter).
 
 ### 3.10. LPF — after the limiter
 
@@ -268,8 +266,7 @@ Output Trim does not replace alignment of the QN's analogue/RF modulation chain.
 Final mux/RP PCM is S16LE/48 kHz/stereo; the audio transport remains unchanged.
 
 The QN8007B performs transmitter pre-emphasis, stereo pilot/MPX generation, and RDS;
-the Pi must not add uncompensated pre-emphasis. Optional FM limiter weighting is
-compensated inside the limiter stage and does not change the QN setting. A DSP
+the Pi must not add uncompensated pre-emphasis. FM Headend Limiter weights only its detector and does not change the QN setting. A DSP
 sample-peak limiter **cannot guarantee FM deviation after pre-emphasis**. Validate
 the 16 kHz / 14-pole LPF response, spectrum around the 19 kHz pilot, stereo behaviour,
 and actual modulation level through **RF/MPX measurement**.

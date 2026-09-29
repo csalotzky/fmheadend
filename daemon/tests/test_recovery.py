@@ -234,3 +234,55 @@ def test_stream_error_keeps_rf_and_pipeline_during_rp_recovery(tmp_path):
         s.rp.available=True;now[0]=3;refresh(app)
         assert s.sources.pipelines[sid] is pipeline
         assert s.rp.enabled[0]
+
+
+@pytest.mark.parametrize('enabled', [set(), {0}, {0, 2, 5, 7}])
+def test_explicit_user_choices_survive_normal_shutdown_and_restart(tmp_path, enabled):
+    path = tmp_path / 'restart.db'
+    rp = MockRp2354Client()
+    with TestClient(create_app(Settings(path), rp=rp)) as api:
+        for channel in range(8):
+            assert api.patch(P+f'/modulators/{channel}', json={
+                'audio_mode': 'ANALOG', 'frequency_khz': 98100}).status_code == 200
+            # Exercise both explicit commands, including OFF after a prior ON.
+            assert api.post(P+f'/modulators/{channel}/start').status_code == 200
+            assert api.get(P+f'/modulators/{channel}').json()['enabled'] is True
+            if channel not in enabled:
+                assert api.post(P+f'/modulators/{channel}/stop').status_code == 200
+            assert api.get(P+f'/modulators/{channel}').json()['enabled'] == (channel in enabled)
+        assert rp.enabled == [i in enabled for i in range(8)]
+    assert rp.enabled == [False] * 8  # Hardware cleanup is not a desired-state edit.
+    db = Database(path)
+    assert [m.enabled for m in db.list('modulators')] == [i in enabled for i in range(8)]
+    db.close()
+    restored = MockRp2354Client()
+    with TestClient(create_app(Settings(path), rp=restored)) as api:
+        refresh(api.app)
+        assert api.app.state.services.recovery.ready
+        assert restored.enabled == [i in enabled for i in range(8)]
+
+
+def test_stop_all_hold_is_session_only_across_restart(tmp_path):
+    path = tmp_path / 'hold.db'
+    seed(path)
+    with TestClient(create_app(Settings(path))) as api:
+        assert api.post(P+'/modulators/stop-all').status_code == 200
+        assert not any(api.app.state.services.rp.enabled)
+        assert api.get(P+'/modulators/0').json()['enabled'] is True
+    with TestClient(create_app(Settings(path))) as api:
+        refresh(api.app)
+        assert api.app.state.services.rp.enabled == [True] + [False] * 7
+
+
+def test_failed_desired_startup_survives_restart_without_erasing_preference(tmp_path):
+    path = tmp_path / 'failed.db'
+    seed(path)
+    rp = MockRp2354Client()
+    rp.set_tx_config = Mock(side_effect=DependencyUnavailable('configuration unavailable'))
+    with TestClient(create_app(Settings(path), rp=rp)) as api:
+        assert not api.app.state.services.recovery.ready
+        assert 'configuration unavailable' in str(api.app.state.services.recovery.error)
+        assert api.get(P+'/modulators/0').json()['enabled'] is True
+    with TestClient(create_app(Settings(path))) as api:
+        refresh(api.app)
+        assert api.app.state.services.rp.enabled == [True] + [False] * 7

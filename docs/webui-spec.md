@@ -404,11 +404,13 @@ unchanged `master_gain`; fixed Classic multiband mode stays internal. Output Tri
 is attenuation-only, with a note directing users to Modulator settings for QN
 pre-emphasis. The editor does not permanently display Save lifecycle trivia.
 
-The existing LSP Limiter card includes **FM limiter weighting**: Off / 50 µs / 75 µs.
-This profile setting weights limiting and compensates it before output; it does
-not enable transmitter pre-emphasis or guarantee FM deviation. Limiter OFF preserves
-the selection. New-profile LPF defaults are Chebyshev 16 kHz / 14 poles, independently
-of HPF defaults. No additional user-visible processing stage is added.
+The Limiter card selects Off / LSP Limiter Stereo / FM Headend Limiter. Only the
+selected implementation's controls appear. LSP has its normal controls. FM Headend
+Limiter exposes Threshold, Lookahead, Attack, Release, Stereo Link, FM detector
+weighting (Off / 50 us / 75 us), and Safety margin from backend schema metadata.
+Inactive settings survive Save. Detector weighting does not enable transmitter
+pre-emphasis or guarantee FM deviation. New-profile LPF defaults remain Chebyshev
+16 kHz / 14 poles independently of HPF defaults.
 
 Offline/no-PCM Sources remain editable; TX ON and Save-and-Resume may succeed while
 Source status reports CONNECTING/reconnecting. TX OFF has no PCM readiness gate.

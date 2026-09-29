@@ -27,7 +27,7 @@ const description: DspDescription = {
     { key: 'wideband', label: 'Wideband Compressor', choices: ['OFF', 'LSP_COMPRESSOR'] },
     { key: 'multiband', label: 'Multiband Compressor', choices: ['OFF', 'LSP_MULTIBAND'] },
     { key: 'master_gain', label: 'Overall Gain', choices: ['VOLUME'] },
-    { key: 'limiter', label: 'Limiter', choices: ['OFF', 'LSP_LIMITER'] },
+    { key: 'limiter', label: 'Limiter', choices: ['OFF', 'LSP_LIMITER', 'FM_HEADEND_LIMITER'] },
     { key: 'lpf', label: 'LPF', choices: ['OFF', 'CHEBYSHEV'] },
     { key: 'output_trim', label: 'Output Trim', choices: ['TRIM'] },
   ],
@@ -109,6 +109,7 @@ for (const [key, label] of Object.entries({
   LSP_COMPRESSOR: 'LSP Compressor Stereo',
   LSP_MULTIBAND: 'LSP Multiband Compressor x8 Stereo',
   LSP_LIMITER: 'LSP Limiter Stereo',
+  FM_HEADEND_LIMITER: 'FM Headend Limiter',
 })) {
   description.implementations[key] = {
     label,
@@ -128,16 +129,26 @@ for (const stage of description.stages) {
     ),
   };
 }
-description.implementations['LSP_LIMITER'].schema = {
+description.implementations['FM_HEADEND_LIMITER'].schema = {
   properties: {
-    fm_limiter_weighting: {
-      type: 'string', title: 'FM limiter weighting', default: 'off',
-      enum: ['off', '50us', '75us'],
-      enum_labels: { off: 'Off', '50us': '50 µs', '75us': '75 µs' },
+    threshold_dbfs: { type: 'number', title: 'Threshold (dBFS)', minimum: -60, maximum: 0 },
+    lookahead_ms: { type: 'number', title: 'Lookahead (ms)', minimum: 0, maximum: 20 },
+    attack_ms: { type: 'number', title: 'Attack (ms)', minimum: 0, maximum: 20 },
+    release_ms: { type: 'number', title: 'Release (ms)', minimum: 1, maximum: 1000 },
+    stereo_link_percent: { type: 'number', title: 'Stereo Link (%)', minimum: 0, maximum: 100 },
+    safety_margin_db: { type: 'number', title: 'Safety margin (dB)', minimum: 0, maximum: 12 },
+    bypass: { type: 'boolean', hidden: true },
+    weighting_us: {
+      type: 'integer', title: 'FM detector weighting', default: 50,
+      enum: [0, 50, 75],
+      enum_labels: { '0': 'Off', '50': '50 \u00b5s', '75': '75 \u00b5s' },
     },
   },
 };
-description.template.stages['limiter'].implementations['LSP_LIMITER']['fm_limiter_weighting'] = 'off';
+description.template.stages['limiter'].implementations['FM_HEADEND_LIMITER'] = {
+  threshold_dbfs: -9, lookahead_ms: 5, attack_ms: 0.25, release_ms: 20,
+  stereo_link_percent: 100, weighting_us: 50, safety_margin_db: 2.5, bypass: false,
+};
 const profile: ProfileResult = {
   name: 'Studio',
   path: 'custom/studio_123.json',
@@ -421,6 +432,7 @@ describe('File Audio Profiles', () => {
         'LSP_COMPRESSOR',
         'LSP_MULTIBAND',
         'LSP_LIMITER',
+        'FM_HEADEND_LIMITER',
       ]),
     );
     expect(f.nativeElement.textContent).not.toContain('Inherited');
@@ -464,7 +476,7 @@ describe('File Audio Profiles', () => {
   });
   it('edits weighting as labelled choices and preserves it with the limiter off', async () => {
     const f = await editor(), c = f.componentInstance;
-    c.select('limiter', 'LSP_LIMITER');
+    c.select('limiter', 'FM_HEADEND_LIMITER');
     f.detectChanges();
     await f.whenStable();
     const section = f.nativeElement.querySelectorAll('details.stage')[8];
@@ -473,12 +485,22 @@ describe('File Audio Profiles', () => {
     select.selectedIndex = 2;
     select.dispatchEvent(new Event('change'));
     await f.whenStable();
-    expect(c.document!.stages['limiter'].implementations['LSP_LIMITER']['fm_limiter_weighting']).toBe('75us');
+    expect(c.document!.stages['limiter'].implementations['FM_HEADEND_LIMITER']['weighting_us']).toBe(75);
+    for (const label of ['Threshold (dBFS)', 'Lookahead (ms)', 'Attack (ms)',
+      'Release (ms)', 'Stereo Link (%)', 'Safety margin (dB)']) {
+      expect(section.textContent).toContain(label);
+    }
+    c.select('limiter', 'LSP_LIMITER');
+    f.detectChanges();
+    expect(section.textContent).not.toContain('FM detector weighting');
+    expect(section.textContent).not.toContain('FM limiter weighting');
+    c.select('limiter', 'FM_HEADEND_LIMITER');
+    expect(c.document!.stages['limiter'].implementations['FM_HEADEND_LIMITER']['weighting_us']).toBe(75);
     c.select('limiter', 'OFF');
     const pending = c.save();
     const request = http.expectOne(base + '/' + profile.path);
     expect(request.request.body.stages.limiter.selected).toBe('OFF');
-    expect(request.request.body.stages.limiter.implementations.LSP_LIMITER.fm_limiter_weighting).toBe('75us');
+    expect(request.request.body.stages.limiter.implementations.FM_HEADEND_LIMITER.weighting_us).toBe(75);
     request.flush({ ...profile, profile: request.request.body });
     await pending;
   });

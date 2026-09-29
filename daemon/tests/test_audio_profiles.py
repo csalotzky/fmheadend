@@ -61,18 +61,18 @@ def test_modular_editor_metadata_uses_existing_api_family(api):
     assert result.status_code==200
     data=result.json()
     assert data['template']['schema_version']==1 and len(data['stages'])==11
-    assert set(data['implementations']) == {'VOLUME','TRIM','CHEBYSHEV','LSP_EXPANDER','LSP_GATE','LSP_AGC','LSP_EQ','LSP_COMPRESSOR','LSP_MULTIBAND','LSP_LIMITER'}
+    assert set(data['implementations']) == {'VOLUME','TRIM','CHEBYSHEV','LSP_EXPANDER','LSP_GATE','LSP_AGC','LSP_EQ','LSP_COMPRESSOR','LSP_MULTIBAND','LSP_LIMITER','FM_HEADEND_LIMITER'}
 
 
-@pytest.mark.parametrize('weighting', ['off', '50us', '75us'])
+@pytest.mark.parametrize('weighting', [0, 50, 75])
 def test_weighting_api_roundtrip(api, weighting):
     data = document()
-    data['stages']['limiter'] = dict(selected='LSP_LIMITER', implementations={'LSP_LIMITER': {'fm_limiter_weighting': weighting}})
+    data['stages']['limiter'] = dict(selected='FM_HEADEND_LIMITER', implementations={'FM_HEADEND_LIMITER': {'weighting_us': weighting}})
     created = api.post(BASE+'custom', json=data)
     assert created.status_code == 201
     path = created.json()['path']
     loaded = api.get(BASE+path).json()['profile']
-    assert loaded['stages']['limiter']['implementations']['LSP_LIMITER']['fm_limiter_weighting'] == weighting
+    assert loaded['stages']['limiter']['implementations']['FM_HEADEND_LIMITER']['weighting_us'] == weighting
     saved = api.put(BASE+path, json=loaded)
     assert saved.status_code == 200 and saved.json()['profile'] == loaded
 

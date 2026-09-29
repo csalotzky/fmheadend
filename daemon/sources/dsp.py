@@ -6,13 +6,6 @@ from ..errors import DependencyUnavailable
 PROCESSING_CAPS = "audio/x-raw,format=F32LE,rate=48000,channels=2,layout=interleaved"
 
 
-def fm_limiter_coefficients(sample_rate, tau):
-    """Return audioiirfilter PRE/DE properties (a denominator, b numerator)."""
-    r = math.exp(-1 / (sample_rate * tau))
-    g = 1 / (1 - r)
-    return dict(a=[1.0], b=[g, -g * r]), dict(a=[g, -g * r], b=[1.0])
-
-
 def linear(db):
     return 10 ** (db / 20)
 
@@ -26,12 +19,8 @@ def dsp_stages(make, profile):
         if hasattr(element, 'get_property'):
             for key, value in properties.items():
                 actual = element.get_property(key.replace('_', '-'))
-                if isinstance(value, list):
-                    equal = len(actual) == len(value) and all(
-                        math.isclose(a, b, rel_tol=1e-5, abs_tol=1e-7) for a, b in zip(actual, value))
-                else:
-                    equal = (math.isclose(actual, value, rel_tol=1e-5, abs_tol=1e-7)
-                             if isinstance(value, float) else actual == value)
+                equal = (math.isclose(actual, value, rel_tol=1e-5, abs_tol=1e-7)
+                         if isinstance(value, float) else actual == value)
                 if not equal:
                     raise DependencyUnavailable(f'{factory}.{key}: requested {value}, native readback {actual}')
         return element
@@ -71,6 +60,8 @@ def dsp_stages(make, profile):
             props = dict(enabled=True, th=linear(p['threshold_dbfs']), lk=p['lookahead_ms'], at=p['attack_ms'],
                          rt=p['release_ms'], slink=p['stereo_link_percent'], ovs=p['oversampling'], mode=p['mode'],
                          boost=p['boost'], alr=p['alr'], alr_at=p['alr_attack_ms'], alr_rt=p['alr_release_ms'])
+        elif name == 'FM_HEADEND_LIMITER':
+            props = dict(p)  # Same units; _make converts underscores to native hyphens.
         elif name == 'LSP_EQ':
             props = dict(enabled=True, mode=0)
             for i in range(16):
@@ -97,11 +88,7 @@ def dsp_stages(make, profile):
                     f'ht_{i}': band['hold_ms']})
         else:
             raise ValueError(f'No verified adapter for {name}')
-        if name == 'LSP_LIMITER' and p['fm_limiter_weighting'] != 'off':
-            pre, de = fm_limiter_coefficients(48000, {'50us': 50e-6, '75us': 75e-6}[p['fm_limiter_weighting']])
-            result.extend((make('audioiirfilter', **pre), make(factory, **props), make('audioiirfilter', **de)))
-        else:
-            result.append(make(factory, **props))
+        result.append(make(factory, **props))
     return result
 
 
@@ -119,7 +106,7 @@ def editor_description():
         available = bool(Gst and Gst.ElementFactory.find(factory))
         implementations[key] = dict(label=label, factory=factory, available=available,
             reason=None if available else f'GStreamer element unavailable on this daemon: {factory}',
-            schema=editor_schema(model), defaults=model().model_dump(), documentation_url=DOCUMENTATION[key])
+            schema=editor_schema(model), defaults=model().model_dump(), documentation_url=DOCUMENTATION.get(key))
     return dict(template=dict(schema_version=1, name='', stages=neutral_stages()),
                 stages=[dict(key=k, label=v[0], choices=v[1]) for k, v in STAGES.items()],
                 implementations=implementations,
