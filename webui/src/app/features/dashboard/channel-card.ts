@@ -14,6 +14,14 @@ export class ChannelCard {
   readonly profileName = input<string | null | undefined>(null);
   readonly locked = input(false);
   readonly pending = input(false);
+  readonly pendingAction = input<'start' | 'stop' | null>(null);
+  readonly commandState = input<'ON' | 'OFF' | undefined>();
+  readonly feedback = input('');
+  readonly displayState = computed(() => {
+    if (this.pending()) return this.pendingAction() === 'stop' ? 'Stopping...' : 'Starting...';
+    if (this.reportedState() === 'ERROR') return 'ERROR';
+    return this.commandState() ? `${this.commandState()} (command)` : this.reportedState();
+  });
   readonly operate = output<'start' | 'stop'>();
   readonly attenuation = computed(() =>
     this.stale()
@@ -24,11 +32,11 @@ export class ChannelCard {
   );
   readonly stopping = computed(
     () =>
-      ['ON', 'STARTING'].includes(this.channel().runtime?.tx_state ?? '') ||
+      ['ON', 'STARTING'].includes(this.commandState() ?? this.channel().runtime?.tx_state ?? '') ||
       (this.channel().runtime?.tx_state === 'ERROR' && !!this.channel().config?.enabled),
   );
   readonly reportedState = computed(() => {
-    if (this.stale()) return 'UNKNOWN';
+    if (this.stale() || this.channel().observationStale) return 'UNKNOWN';
     const state = this.channel().runtime?.hardware_tx_state;
     return state === 'ON' || state === 'OFF' || state === 'ERROR' ? state : 'UNKNOWN';
   });

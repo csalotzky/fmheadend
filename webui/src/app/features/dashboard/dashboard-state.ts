@@ -1,5 +1,14 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
-import { Subject, Subscription, exhaustMap, filter, firstValueFrom, takeUntil, timer } from 'rxjs';
+import {
+  Subject,
+  Subscription,
+  exhaustMap,
+  filter,
+  firstValueFrom,
+  takeUntil,
+  tap,
+  timer,
+} from 'rxjs';
 import { HeadendApi, errorMessage } from '../../core/api/headend-api';
 import { InputSource, Modulator, ModulatorStatus, Snapshot } from '../../core/api/models';
 
@@ -14,6 +23,7 @@ export interface ChannelView {
   pcm: string;
   error: string | null;
   confirmedOff?: boolean;
+  observationStale?: boolean;
 }
 export function compose(snapshot: Snapshot, previous?: Snapshot): ChannelView[] {
   return Array.from({ length: 8 }, (_, id) => {
@@ -50,6 +60,7 @@ export function compose(snapshot: Snapshot, previous?: Snapshot): ChannelView[] 
       analog,
       pcm,
       error,
+      observationStale: snapshot.status.system.rp_observation_stale === true,
       confirmedOff:
         snapshot.status.system.rp_observation_stale !== true &&
         runtime?.hardware_tx_state === 'OFF' &&
@@ -82,16 +93,34 @@ export class DashboardState {
   readonly updated = signal<Date | null>(null);
   readonly busy = signal<number | 'start-all' | 'stop-all' | null>(null);
   readonly notice = signal('');
+  readonly pendingAction = signal<'start' | 'stop' | null>(null);
+  readonly commandStates = signal<Record<number, 'ON' | 'OFF'>>({});
+  readonly actionFeedback = signal<Record<number, string>>({});
+  private confirmations = new Map<
+    number,
+    {
+      state: 'ON' | 'OFF';
+      receivedAt: number;
+      deadline: number;
+      expired: boolean;
+      messageGeneration: number;
+    }
+  >();
+  private snapshotGeneration = 0;
+  private nextRefreshAt = 0;
   readonly profileNames = signal<Record<string, string>>({});
   private messageGeneration = 0;
   clearMessages() {
     this.messageGeneration++;
     this.notice.set('');
     this.failures.set([]);
+    this.actionFeedback.set({});
   }
   readonly failures = signal<{ id: number; message: string }[]>([]);
   readonly activeCount = computed(
-    () => this.channels().filter((c) => c.runtime?.tx_state === 'ON').length,
+    () =>
+      this.channels().filter((c) => (this.commandStates()[c.id] ?? c.runtime?.tx_state) === 'ON')
+        .length,
   );
   private polling?: Subscription;
   private readonly cancelled = new Subject<void>();
@@ -100,10 +129,12 @@ export class DashboardState {
 
   start() {
     this.closed = false;
+    this.nextRefreshAt = 0;
     if (!this.polling)
-      this.polling = timer(0, 5000)
+      this.polling = timer(0, 1000)
         .pipe(
-          filter(() => this.busy() === null),
+          tap(() => this.expireConfirmations()),
+          filter(() => this.busy() === null && Date.now() >= this.nextRefreshAt),
           exhaustMap(() => this.refresh()),
         )
         .subscribe();
@@ -112,17 +143,33 @@ export class DashboardState {
     this.closed = true;
     this.polling?.unsubscribe();
     this.polling = undefined;
+    this.snapshotGeneration++;
+    this.messageGeneration++;
     this.cancelled.next();
+    this.confirmations.clear();
+    this.commandStates.set({});
+    this.actionFeedback.set({});
+    this.pendingAction.set(null);
+    this.busy.set(null);
+  }
+  ngOnDestroy() {
+    this.stop();
   }
   async refreshAfterMutation() {
+    // An older in-flight request is neither post-action evidence nor our refresh.
+    // Concurrent callers wait on it, then share the next request.
+    this.snapshotGeneration++;
     await this.inFlight;
     await this.refresh();
   }
   refresh(): Promise<void> {
     if (this.closed) return Promise.resolve();
     if (this.inFlight) return this.inFlight;
+    const generation = this.snapshotGeneration;
+    const requestedAt = Date.now();
     this.inFlight = firstValueFrom(this.api.snapshot().pipe(takeUntil(this.cancelled)))
       .then((snapshot) => {
+        if (this.closed || generation !== this.snapshotGeneration) return;
         // Reject incomplete channel inventories instead of displaying fake healthy cards.
         for (const rows of [snapshot.modulators, snapshot.status.modulators]) {
           if (
@@ -133,43 +180,129 @@ export class DashboardState {
             throw new Error('Invalid physical channel inventory');
           }
         }
+        this.confirmObservations(snapshot, requestedAt);
         this.channels.set(compose(snapshot, this.data() ?? undefined));
         this.data.set(snapshot);
         this.stale.set(snapshot.status.system.snapshot_stale === true);
         this.updated.set(new Date());
       })
-      .catch(() => this.stale.set(true))
+      .catch(() => {
+        if (!this.closed && generation === this.snapshotGeneration) this.stale.set(true);
+      })
       .finally(() => {
         this.loading.set(false);
         this.inFlight = undefined;
+        this.nextRefreshAt = Date.now() + (this.accelerating() ? 1000 : 5000);
       });
     return this.inFlight;
   }
+  private accelerating() {
+    return [...this.confirmations.values()].some((c) => c.deadline > Date.now());
+  }
+  private expireConfirmations() {
+    for (const [id, c] of this.confirmations) {
+      if (!c.expired && Date.now() >= c.deadline) {
+        c.expired = true;
+        if (c.messageGeneration === this.messageGeneration)
+          this.actionFeedback.update((v) => ({
+            ...v,
+            [id]: `${c.state} command confirmed; RP confirmation delayed.`,
+          }));
+      }
+    }
+  }
+  private confirmObservations(snapshot: Snapshot, requestedAt: number) {
+    const system = snapshot.status.system;
+    const age = system.rp_observation_age_s;
+    if (
+      system.snapshot_stale === true ||
+      system.rp_observation_stale !== false ||
+      age == null ||
+      !Number.isFinite(age) ||
+      age < 0
+    )
+      return;
+    for (const [id, c] of this.confirmations) {
+      // Request start minus server-reported age is a conservative lower bound:
+      // network/serialization delay must never make an old observation look new.
+      if (requestedAt - age * 1000 < c.receivedAt) continue;
+      const row = snapshot.status.modulators.find((r) => r.id === id);
+      if (row?.hardware_tx_state !== c.state) continue;
+      this.confirmations.delete(id);
+      this.commandStates.update((v) => {
+        const next = { ...v };
+        delete next[id];
+        return next;
+      });
+      if (c.messageGeneration === this.messageGeneration)
+        this.actionFeedback.update((v) => ({ ...v, [id]: `RP observation confirms ${c.state}.` }));
+    }
+  }
   async operate(id: number, action: 'start' | 'stop') {
-    if (this.busy() !== null) return;
+    if (this.closed || this.busy() !== null) return;
     const generation = this.messageGeneration;
     this.busy.set(id);
+    this.pendingAction.set(action);
+    this.confirmations.delete(id);
+    this.commandStates.update((v) => {
+      const next = { ...v };
+      delete next[id];
+      return next;
+    });
     this.failures.set([]);
+    this.actionFeedback.update((v) => ({
+      ...v,
+      [id]: action === 'start' ? 'Starting...' : 'Stopping...',
+    }));
     this.notice.set(`TX ${id}: ${action.toUpperCase()} pending`);
     try {
-      await this.inFlight;
-      await firstValueFrom(this.api.channel(id, action).pipe(takeUntil(this.cancelled)));
-      if (generation === this.messageGeneration)
-        this.notice.set(`TX ${id}: ${action.toUpperCase()} accepted. Status refreshed below.`);
-    } catch (error) {
+      const result = await firstValueFrom(
+        this.api.channel(id, action).pipe(takeUntil(this.cancelled)),
+      );
+      if (this.closed) return;
+      if (result.id !== id) throw new Error('Unexpected action target');
+      // Only tx_state is a command result. Do not copy RP readbacks or source state.
+      if (result.tx_state === 'ON' || result.tx_state === 'OFF') {
+        const receivedAt = Date.now();
+        this.confirmations.set(id, {
+          state: result.tx_state,
+          receivedAt,
+          deadline: receivedAt + 10000,
+          expired: false,
+          messageGeneration: generation,
+        });
+        this.commandStates.update((v) => ({ ...v, [id]: result.tx_state as 'ON' | 'OFF' }));
+      }
       if (generation === this.messageGeneration) {
+        this.notice.set(`TX ${id}: command returned ${result.tx_state}. Refreshing observations.`);
+        this.actionFeedback.update((v) => ({
+          ...v,
+          [id]: `Command returned ${result.tx_state}; awaiting RP observation.`,
+        }));
+      }
+    } catch (error) {
+      if (!this.closed && generation === this.messageGeneration) {
         this.failures.set([{ id, message: errorMessage(error) }]);
         this.notice.set('Operation failed or outcome unknown.');
+        this.actionFeedback.update((v) => ({
+          ...v,
+          [id]: 'Operation failed or outcome unknown; reconciling status.',
+        }));
       }
     } finally {
-      await this.refresh();
+      // Release request pending even if the observation refresh is slow or fails.
+      this.pendingAction.set(null);
       this.busy.set(null);
+      await this.refreshAfterMutation();
     }
   }
   async all(action: 'start' | 'stop') {
-    if (this.busy() !== null) return;
+    if (this.closed || this.busy() !== null) return;
     const generation = this.messageGeneration;
     this.busy.set(action === 'start' ? 'start-all' : 'stop-all');
+    this.confirmations.clear();
+    this.commandStates.set({});
+    this.actionFeedback.set({});
     this.failures.set([]);
     this.notice.set(`${action.toUpperCase()} ALL pending`);
     const eligible = this.channels().filter(
@@ -179,6 +312,7 @@ export class DashboardState {
     let accepted = 0;
     try {
       await this.inFlight;
+      if (this.closed) return;
       const results = await firstValueFrom(
         (action === 'start' ? this.api.startAll() : this.api.stopAll()).pipe(
           takeUntil(this.cancelled),
@@ -204,7 +338,7 @@ export class DashboardState {
         this.notice.set(`${action.toUpperCase()} ALL failed or outcome unknown.`);
     } finally {
       if (generation === this.messageGeneration) this.failures.set(failed);
-      await this.refresh();
+      await this.refreshAfterMutation();
       this.busy.set(null);
     }
   }

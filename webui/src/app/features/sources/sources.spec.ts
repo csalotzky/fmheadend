@@ -46,7 +46,9 @@ describe('Sources management', () => {
       request.flush({ source_id: 1, state: 'RUNNING', last_error: null, observation_stale: true });
     }
     f.detectChanges();
-    expect(Object.values(f.componentInstance.runtime()).every((value) => value === null)).toBe(true);
+    expect(Object.values(f.componentInstance.runtime()).every((value) => value === null)).toBe(
+      true,
+    );
     f.destroy();
   });
   function editor(id?: number) {
@@ -442,6 +444,46 @@ describe('Sources management', () => {
     shared.stale.set(true);
     f.detectChanges();
     expect(f.nativeElement.textContent).toContain('Backend unavailable');
+  });
+  it('resolves Audio profile from shared names, falling back without extra requests', () => {
+    const data = sample();
+    data.sources = [
+      {
+        ...data.sources[0],
+        id: 1,
+        processor_mode: 'builtin',
+        audio_profile_path: 'custom/studio.json',
+      },
+      {
+        ...data.sources[0],
+        id: 2,
+        processor_mode: 'builtin',
+        audio_profile_path: 'custom/missing.json',
+      },
+      { ...data.sources[0], id: 3, processor_mode: 'bypass' },
+      { ...data.sources[0], id: 4, processor_mode: 'stereotool' },
+    ];
+    shared.data.set(data);
+    shared.profileNames.set({ 'custom/studio.json': 'Studio processing' });
+    const f = TestBed.createComponent(SourcesList);
+    f.detectChanges();
+    for (const request of http.match((r) => r.url.endsWith('/status')))
+      request.flush({ state: 'IDLE' });
+    const labels = () =>
+      Array.from(f.nativeElement.querySelectorAll('.audio-profile') as NodeListOf<HTMLElement>).map(
+        (e) => e.textContent?.trim(),
+      );
+    expect(labels()).toEqual([
+      'Audio profile: Studio processing',
+      'Audio profile: custom/missing.json',
+      'Audio profile: Bypass',
+      'Audio profile: Stereo Tool (unavailable)',
+    ]);
+    shared.profileNames.set({});
+    f.detectChanges();
+    expect(labels()[0]).toBe('Audio profile: custom/studio.json');
+    http.expectNone('/api/v1/audio-profiles/files');
+    f.destroy();
   });
 });
 describe('Saved source editor', () => {

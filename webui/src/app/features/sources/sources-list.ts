@@ -60,6 +60,12 @@ export class SourcesList {
       cleanup(() => sub.unsubscribe());
     });
   }
+  profileLabel(source: InputSource): string {
+    if (source.processor_mode === 'bypass') return 'Bypass';
+    if (source.processor_mode === 'stereotool') return 'Stereo Tool (unavailable)';
+    const path = source.audio_profile_path;
+    return path ? this.shared.profileNames()[path] || path : '\u2014';
+  }
   references(id: number) {
     return this.shared.data()?.modulators.filter((m) => m.input_source_id === id).length ?? 0;
   }

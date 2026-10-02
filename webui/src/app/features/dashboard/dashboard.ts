@@ -22,6 +22,9 @@ import { ChannelCard } from './channel-card';
           [stale]="state.stale()"
           [locked]="state.busy() !== null"
           [pending]="state.busy() === channel.id"
+          [pendingAction]="state.pendingAction()"
+          [commandState]="state.commandStates()[channel.id]"
+          [feedback]="state.actionFeedback()[channel.id] || ''"
           (operate)="state.operate(channel.id, $event)"
         />
       }

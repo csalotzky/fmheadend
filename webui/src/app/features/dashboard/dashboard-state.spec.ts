@@ -12,6 +12,9 @@ describe('Dashboard API composition and operations', () => {
     http.expectOne('/api/v1/modulators').flush(snapshot.modulators);
     http.expectOne('/api/v1/sources').flush(snapshot.sources);
   }
+  async function settle() {
+    for (let i = 0; i < 8; i++) await Promise.resolve();
+  }
   async function load(snapshot = sample()) {
     const done = state.refresh();
     respond(snapshot);
@@ -92,13 +95,13 @@ describe('Dashboard API composition and operations', () => {
       await load();
       const before = state.channels()[1].runtime?.tx_state;
       const done = state.operate(1, action);
-      await Promise.resolve();
+      await settle();
       expect(state.busy()).toBe(1);
       expect(state.channels()[1].runtime?.tx_state).toBe(before);
       const request = http.expectOne(`/api/v1/modulators/1/${action}`);
       expect(request.request.method).toBe('POST');
       request.flush(sample().status.modulators[1]);
-      await Promise.resolve();
+      await settle();
       respond();
       await done;
       expect(state.busy()).toBeNull();
@@ -107,18 +110,18 @@ describe('Dashboard API composition and operations', () => {
   it('prevents duplicate and concurrent lifecycle requests', async () => {
     await load();
     const done = state.operate(0, 'stop');
-    await Promise.resolve();
+    await settle();
     await state.operate(0, 'stop');
     await state.all('stop');
     http.expectOne('/api/v1/modulators/0/stop').flush(sample().status.modulators[0]);
-    await Promise.resolve();
+    await settle();
     respond();
     await done;
   });
   it('START ALL uses desired-enabled bulk semantics and reports failures', async () => {
     await load();
     const done = state.all('start');
-    await Promise.resolve();
+    await settle();
     http
       .expectOne('/api/v1/modulators/start-all')
       .flush(
@@ -126,7 +129,7 @@ describe('Dashboard API composition and operations', () => {
           m.id === 0 ? { id: 0, error: 'ERROR', message: 'RP unavailable' } : m,
         ),
       );
-    await Promise.resolve();
+    await settle();
     respond();
     await done;
     expect(state.notice()).toContain('0 accepted, 1 failed');
@@ -136,10 +139,10 @@ describe('Dashboard API composition and operations', () => {
   it('navigation clears pending messages and prevents late result messages returning', async () => {
     await load();
     const done = state.operate(0, 'start');
-    await Promise.resolve();
+    await settle();
     state.clearMessages();
     http.expectOne('/api/v1/modulators/0/start').flush(sample().status.modulators[0]);
-    await Promise.resolve();
+    await settle();
     respond();
     await done;
     expect(state.notice()).toBe('');
@@ -148,7 +151,7 @@ describe('Dashboard API composition and operations', () => {
   it('STOP ALL uses the bulk endpoint and preserves per-ID failures', async () => {
     await load();
     const done = state.all('stop');
-    await Promise.resolve();
+    await settle();
     http
       .expectOne('/api/v1/modulators/stop-all')
       .flush(
@@ -156,7 +159,7 @@ describe('Dashboard API composition and operations', () => {
           m.id === 4 ? { id: 4, error: 'ERROR', message: 'Disable not confirmed' } : m,
         ),
       );
-    await Promise.resolve();
+    await settle();
     respond();
     await done;
     expect(state.failures()[0].id).toBe(4);
@@ -165,9 +168,9 @@ describe('Dashboard API composition and operations', () => {
   it('STOP ALL transport failure does not claim success', async () => {
     await load();
     const done = state.all('stop');
-    await Promise.resolve();
+    await settle();
     http.expectOne('/api/v1/modulators/stop-all').error(new ProgressEvent('network'));
-    await Promise.resolve();
+    await settle();
     respond();
     await done;
     expect(state.failures()).toHaveLength(8);
@@ -199,6 +202,158 @@ describe('Dashboard API composition and operations', () => {
     state.stop();
     expect(pending.every((r) => r.cancelled)).toBe(true);
     await vi.advanceTimersByTimeAsync(10000);
+    http.expectNone('/api/v1/status');
+  });
+  function observed(on: boolean, age: number | null = 0, stale = false) {
+    const value = sample();
+    value.status.system.rp_observation_stale = stale;
+    value.status.system.rp_observation_age_s = age;
+    value.status.modulators[1].hardware_tx_state = on ? 'ON' : 'OFF';
+    value.status.modulators[1].tx_state = on ? 'ON' : 'OFF';
+    return value;
+  }
+  async function acceptedStart() {
+    const done = state.operate(1, 'start');
+    expect(state.pendingAction()).toBe('start');
+    expect(state.actionFeedback()[1]).toBe('Starting...');
+    http.expectOne('/api/v1/modulators/1/start').flush(observed(true).status.modulators[1]);
+    await settle();
+    expect(state.busy()).toBeNull();
+    expect(state.commandStates()[1]).toBe('ON');
+    return { done };
+  }
+  it('rejects a pre-action in-flight generation and performs a separate post-action refresh', async () => {
+    await load(observed(false));
+    const original = state.data();
+    const old = state.refresh();
+    const requests = http.match(() => true);
+    const { done } = await acceptedStart();
+    http.expectNone('/api/v1/status'); // Old request must finish; never overlap.
+    const outdated = observed(false);
+    outdated.modulators[1].rds_rt = 'Obsolete configuration';
+    requests.find((r) => r.request.url.endsWith('/status'))!.flush(outdated.status);
+    requests.find((r) => r.request.url.endsWith('/modulators'))!.flush(outdated.modulators);
+    requests.find((r) => r.request.url.endsWith('/sources'))!.flush(outdated.sources);
+    await old;
+    await settle();
+    expect(state.data()).toBe(original);
+    expect(state.commandStates()[1]).toBe('ON');
+    respond(observed(false));
+    await done;
+    expect(state.channels()[1].runtime?.hardware_tx_state).toBe('OFF');
+    expect(state.channels()[1].runtime?.source_state).toBe('IDLE');
+    expect(state.commandStates()[1]).toBe('ON');
+    expect(state.notice()).not.toContain('Status refreshed below');
+  });
+  it('coalesces simultaneous mutation refreshes after the old request', async () => {
+    const old = state.refresh();
+    const first = state.refreshAfterMutation();
+    const second = state.refreshAfterMutation();
+    respond();
+    await old;
+    await settle();
+    expect(state.data()).toBeNull();
+    respond();
+    await Promise.all([first, second]);
+    http.expectNone('/api/v1/status');
+  });
+  it('accelerates only until a fresh post-command RP observation confirms the target', async () => {
+    vi.useFakeTimers();
+    state.start();
+    await vi.advanceTimersByTimeAsync(0);
+    respond(observed(false));
+    await settle();
+    const { done } = await acceptedStart();
+    respond(observed(false));
+    await done;
+    await vi.advanceTimersByTimeAsync(1000);
+    respond(observed(true));
+    await settle();
+    expect(state.commandStates()[1]).toBeUndefined();
+    expect(state.actionFeedback()[1]).toContain('RP observation confirms ON');
+    await vi.advanceTimersByTimeAsync(4999);
+    http.expectNone('/api/v1/status');
+    await vi.advanceTimersByTimeAsync(1);
+    respond(observed(true));
+    await settle();
+  });
+  it.each(['old', 'stale', 'unknown', 'publication stale'])(
+    'does not mistake %s RP evidence for confirmation and bounds acceleration',
+    async (kind) => {
+      vi.useFakeTimers();
+      state.start();
+      await vi.advanceTimersByTimeAsync(0);
+      respond(observed(false));
+      await settle();
+      const { done } = await acceptedStart();
+      const lag = observed(
+        true,
+        kind === 'old' ? 100 : kind === 'unknown' ? null : 0,
+        kind === 'stale',
+      );
+      lag.status.system.snapshot_stale = kind === 'publication stale';
+      respond(lag);
+      await done;
+      for (let i = 0; i < 10; i++) {
+        await vi.advanceTimersByTimeAsync(1000);
+        respond(lag);
+        await settle();
+      }
+      expect(state.commandStates()[1]).toBe('ON');
+      expect(state.actionFeedback()[1]).toContain('confirmation delayed');
+      expect(state.failures()).toEqual([]);
+      await vi.advanceTimersByTimeAsync(4999);
+      http.expectNone('/api/v1/status');
+      await vi.advanceTimersByTimeAsync(1);
+      respond(observed(true));
+      await settle();
+      expect(state.commandStates()[1]).toBeUndefined();
+    },
+  );
+  it('never overlaps slow accelerated refreshes and cancels them on teardown', async () => {
+    vi.useFakeTimers();
+    state.start();
+    await vi.advanceTimersByTimeAsync(0);
+    respond(observed(false));
+    await settle();
+    const { done } = await acceptedStart();
+    respond(observed(false));
+    await done;
+    await vi.advanceTimersByTimeAsync(1000);
+    const requests = http.match(() => true);
+    expect(requests).toHaveLength(3);
+    await vi.advanceTimersByTimeAsync(9000);
+    http.expectNone('/api/v1/status');
+    expect(state.actionFeedback()[1]).toContain('confirmation delayed');
+    state.ngOnDestroy();
+    expect(requests.every((r) => r.cancelled)).toBe(true);
+    await vi.advanceTimersByTimeAsync(20000);
+    http.expectNone('/api/v1/status');
+    expect(state.commandStates()).toEqual({});
+  });
+  it('releases timed-out commands without retrying them or claiming a target state', async () => {
+    vi.useFakeTimers();
+    await load(observed(false));
+    const done = state.operate(1, 'start');
+    const request = http.expectOne('/api/v1/modulators/1/start');
+    await vi.advanceTimersByTimeAsync(120000);
+    expect(request.cancelled).toBe(true);
+    expect(state.busy()).toBeNull();
+    expect(state.commandStates()[1]).toBeUndefined();
+    expect(state.actionFeedback()[1]).toContain('outcome unknown');
+    respond(observed(true));
+    await done;
+    expect(state.channels()[1].runtime?.hardware_tx_state).toBe('ON');
+    http.expectNone('/api/v1/modulators/1/start');
+  });
+  it('cancels a pending command without launching a refresh after teardown', async () => {
+    await load();
+    const done = state.operate(1, 'start');
+    const request = http.expectOne('/api/v1/modulators/1/start');
+    state.ngOnDestroy();
+    await done;
+    expect(request.cancelled).toBe(true);
+    expect(state.busy()).toBeNull();
     http.expectNone('/api/v1/status');
   });
 });

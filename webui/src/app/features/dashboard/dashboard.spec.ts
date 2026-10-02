@@ -387,4 +387,50 @@ describe('Operational display', () => {
       expect(f.nativeElement.querySelector('.rf').textContent).not.toContain('-6.0 dB');
     },
   );
+  it('shows saved fallback RT and QN soft clipping configuration without live RT inference', () => {
+    const state = setup(),
+      data = sample();
+    data.modulators[0].rds_rt = 'X'.repeat(64);
+    data.modulators[0].soft_clipping = true;
+    data.modulators[0].rds_rt_enabled = false;
+    data.modulators[1].rds_rt = '';
+    state.channels.set(compose(data));
+    const f = TestBed.createComponent(Dashboard);
+    f.detectChanges();
+    const cards = f.nativeElement.querySelectorAll('app-channel-card');
+    expect(cards[0].querySelector('.rt dd').textContent).toBe('X'.repeat(64));
+    expect(cards[0].querySelector('.rt').title).toContain('Saved fallback RadioText');
+    expect(cards[1].querySelector('.rt dd').textContent).toBe('\u2014');
+    expect(cards[0].querySelector('.audio-settings').textContent).toContain('Soft clipping ON');
+    expect(cards[1].querySelector('.audio-settings').textContent).toContain('Soft clipping OFF');
+    data.modulators[0].rds_rt = 'New saved fallback';
+    state.channels.set(compose(data));
+    f.detectChanges();
+    expect(cards[0].querySelector('.rt dd').textContent).toBe('New saved fallback');
+  });
+  it('separates pending and command-confirmed state from hardware observations', () => {
+    const state = setup();
+    const f = TestBed.createComponent(Dashboard);
+    state.busy.set(1);
+    state.pendingAction.set('start');
+    f.detectChanges();
+    const card = f.nativeElement.querySelectorAll('app-channel-card')[1];
+    expect(card.querySelector('button').disabled).toBe(true);
+    expect(card.querySelector('.tx-state').textContent.trim()).toBe('Starting...');
+    state.pendingAction.set('stop');
+    f.detectChanges();
+    expect(card.querySelector('.tx-state').textContent.trim()).toBe('Stopping...');
+    state.busy.set(null);
+    state.pendingAction.set(null);
+    state.commandStates.set({ 1: 'ON' });
+    f.detectChanges();
+    expect(card.querySelector('.tx-state').textContent.trim()).toBe('ON (command)');
+    expect(card.querySelector('.channel-control span').textContent).toContain(
+      'Reported state: OFF',
+    );
+    expect(card.querySelector('button').textContent.trim()).toBe('STOP');
+    state.stale.set(true);
+    f.detectChanges();
+    expect(card.querySelector('.channel-control span').textContent).toContain('UNKNOWN');
+  });
 });

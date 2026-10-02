@@ -110,3 +110,9 @@ summary {
 .stream-row > button {
   flex: 0 0 auto;
 }
+
+.audio-profile {
+  margin: 6px 0 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}

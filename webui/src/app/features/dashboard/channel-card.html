@@ -11,7 +11,7 @@
     <div class="channel-top">
       <span class="channel-id">TX {{ channel().id }}</span
       ><span class="tx-state" [class.warning]="reportedState() === 'UNKNOWN'">{{
-        reportedState()
+        displayState()
       }}</span>
     </div>
     <div class="frequency">
@@ -26,6 +26,10 @@
       <div>
         <dt>PS{{ (channel().config?.rds_ps?.length ?? 0) > 1 ? ' carousel' : '' }}</dt>
         <dd [title]="ps()">{{ ps() }}</dd>
+      </div>
+      <div class="rt" title="Saved fallback RadioText; not live on-air content">
+        <dt>RT</dt>
+        <dd>{{ channel().config?.rds_rt || '\u2014' }}</dd>
       </div>
       <div class="codes">
         <dt>PI</dt>
@@ -43,6 +47,9 @@
     <div class="audio-settings">
       {{ channel().config ? (channel().config!.stereo ? 'Stereo' : 'Mono') : '\u2014' }}
       <span>&middot;</span> {{ channel().config?.preemphasis_us ?? '\u2014' }} &micro;s
+      @if (channel().config) {
+        <span>&middot;</span> Soft clipping {{ channel().config!.soft_clipping ? 'ON' : 'OFF' }}
+      }
     </div>
     <div class="rf">
       <span>RF output</span
@@ -89,15 +96,26 @@
   @if (reportedError()) {
     <p class="card-error" role="status">{{ reportedError() }}</p>
   }
+  @if (feedback()) {
+    <p class="action-feedback" role="status">{{ feedback() }}</p>
+  }
   <div class="channel-control">
     <span class="muted">Reported state: {{ reportedState() }}</span>
     <button
       [class.stop]="stopping()"
-      [disabled]="locked() || (!stopping() && (stale() || !channel().canStart))"
+      [disabled]="pending() || locked() || (!stopping() && (stale() || !channel().canStart))"
       [attr.aria-label]="(stopping() ? 'STOP' : 'START') + ' TX ' + channel().id"
       (click)="operate.emit(stopping() ? 'stop' : 'start')"
     >
-      {{ pending() ? 'WORKING\u2026' : stopping() ? 'STOP' : 'START' }}
+      {{
+        pending()
+          ? pendingAction() === 'stop'
+            ? 'Stopping...'
+            : 'Starting...'
+          : stopping()
+            ? 'STOP'
+            : 'START'
+      }}
     </button>
   </div>
 </article>

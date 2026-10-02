@@ -494,7 +494,30 @@ A roughly 5-second refresh interval is acceptable for normal dashboard/status da
 
 WebSockets are not required for V1.
 
-User-triggered operations such as START / STOP should update the relevant UI immediately and then reconcile with backend runtime status.
+Individual START / STOP shows per-card progress immediately and blocks duplicate
+commands while the request is pending. A successful response's `tx_state` is
+shown explicitly as command-confirmed, separately from reported RP state; it
+does not supply hardware readbacks or Source RUNNING. An immediate shared refresh
+follows the action. Pre-action requests are discarded by generation and cannot
+satisfy that refresh. Simultaneous refresh requests coalesce without overlap.
+
+The same shared poller accelerates to approximately one second for at most ten
+seconds after command success, ending early on a matching fresh post-command RP
+observation. Existing observation age/staleness fields establish freshness;
+missing or stale evidence cannot confirm a command. Delayed confirmation is
+reported separately from failure. HTTP failures/timeouts report an unknown or
+failed outcome, release pending controls, and reconcile without retrying the
+command. Teardown cancels polling and requests. Normal polling remains roughly
+five seconds; bulk-control semantics are unchanged.
+
+Dashboard cards show saved fallback RadioText (RT), explicitly identified as
+configuration rather than live on-air text, with wrapping for long values. The
+compact audio configuration line also shows the QN Soft clipping ON/OFF setting.
+Neither field introduces new requests or editable Dashboard controls.
+
+The Sources list resolves Built-in audio-profile names from the existing shared
+profile inventory, falling back to the stable stored path. Bypass and unavailable
+Stereo Tool modes are labeled directly; there are no per-row profile requests.
 
 ## 14. Non-goals for the initial Web UI
 

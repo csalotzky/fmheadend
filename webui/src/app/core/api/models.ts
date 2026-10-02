@@ -64,6 +64,7 @@ export interface SystemStatus {
   snapshot_age_s?: number;
   snapshot_stale?: boolean;
   rp_observation_stale?: boolean;
+  rp_observation_age_s?: number | null;
   system_state: string;
   rp2354_state: string;
   mux_state: string;
