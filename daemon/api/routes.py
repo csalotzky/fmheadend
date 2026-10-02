@@ -184,7 +184,7 @@ def set_rt(id: int, body: RtOverride, request: Request):
 @router.get("/modulators/{id}/rds/rt", response_model=RtStatus, tags=["runtime RDS"])
 @control_route
 def get_rt(id: int, request: Request):
-    """Inspect effective runtime text without adding it to dashboard status."""
+    """Inspect effective runtime text, its origin and remaining override TTL."""
     return request.app.state.services.rt.effective(id)
 
 

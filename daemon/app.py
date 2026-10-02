@@ -69,7 +69,7 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
             rds.suspended = True
             config = ConfigurationService(database, sources, modulators)
             status = StatusService(modulators, sources, rp_client, mux_client, clock, recovery,
-                                   config=config, profile_files=profile_files)
+                                   config=config, profile_files=profile_files, radiotext=rt)
             status.info.update(frequency_plan=PLANS[settings.region].as_dict(),
                                database_schema_version=SCHEMA_VERSION,
                                media_backend="MOCK" if getattr(pipeline_factory, "mocked", True) else "GStreamer")

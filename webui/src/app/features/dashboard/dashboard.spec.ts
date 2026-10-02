@@ -387,27 +387,67 @@ describe('Operational display', () => {
       expect(f.nativeElement.querySelector('.rf').textContent).not.toContain('-6.0 dB');
     },
   );
-  it('shows saved fallback RT and QN soft clipping configuration without live RT inference', () => {
+  it('shows published selected RT and QN soft clipping without frontend RT selection', () => {
     const state = setup(),
       data = sample();
-    data.modulators[0].rds_rt = 'X'.repeat(64);
+    for (const config of data.modulators) {
+      config.rds_enabled = true;
+      config.rds_rt_enabled = true;
+      config.rds_rt = 'Saved fallback must not override selection';
+    }
+    data.status.modulators[0].rds_rt_effective = 'X'.repeat(64);
+    data.status.modulators[1].rds_rt_effective = '';
     data.modulators[0].soft_clipping = true;
-    data.modulators[0].rds_rt_enabled = false;
-    data.modulators[1].rds_rt = '';
     state.channels.set(compose(data));
     const f = TestBed.createComponent(Dashboard);
     f.detectChanges();
     const cards = f.nativeElement.querySelectorAll('app-channel-card');
     expect(cards[0].querySelector('.rt dd').textContent).toBe('X'.repeat(64));
-    expect(cards[0].querySelector('.rt').title).toContain('Saved fallback RadioText');
+    expect(cards[0].querySelector('.rt').title).toContain('queued RDS transmission may lag');
     expect(cards[1].querySelector('.rt dd').textContent).toBe('\u2014');
     expect(cards[0].querySelector('.audio-settings').textContent).toContain('Soft clipping ON');
     expect(cards[1].querySelector('.audio-settings').textContent).toContain('Soft clipping OFF');
-    data.modulators[0].rds_rt = 'New saved fallback';
-    state.channels.set(compose(data));
-    f.detectChanges();
-    expect(cards[0].querySelector('.rt dd').textContent).toBe('New saved fallback');
+    for (const selected of ['Artist - Track', 'Runtime override', 'Selected fallback']) {
+      data.status.modulators[0].rds_rt_effective = selected;
+      state.channels.set(compose(data));
+      f.detectChanges();
+      expect(cards[0].querySelector('.rt dd').textContent).toBe(selected);
+    }
+    expect(cards[0].textContent).not.toContain('Saved fallback must not override selection');
   });
+  it.each([
+    [false, true],
+    [true, false],
+    [false, false],
+  ])(
+    'hides the whole RT row with RDS=%s RT=%s and preserves configuration',
+    (rdsEnabled, rtEnabled) => {
+      const state = setup(),
+        data = sample();
+      const config = data.modulators[0];
+      config.rds_enabled = rdsEnabled;
+      config.rds_rt_enabled = rtEnabled;
+      config.rds_rt = 'Saved fallback';
+      data.status.modulators[0].rds_rt_effective = 'Selected metadata';
+      state.channels.set(compose(data));
+      const f = TestBed.createComponent(Dashboard);
+      f.detectChanges();
+      const card = f.nativeElement.querySelector('app-channel-card');
+      expect(card.querySelector('.rt')).toBeNull();
+      expect(
+        Array.from(card.querySelectorAll('dt') as NodeListOf<HTMLElement>).map(
+          (e) => e.textContent,
+        ),
+      ).not.toContain('RT');
+      expect(card.textContent).not.toContain('Selected metadata');
+      expect(config.rds_rt).toBe('Saved fallback');
+      config.rds_enabled = true;
+      config.rds_rt_enabled = true;
+      state.channels.set(compose(data));
+      f.detectChanges();
+      expect(card.querySelector('.rt dd').textContent).toBe('Selected metadata');
+    },
+  );
   it('separates pending and command-confirmed state from hardware observations', () => {
     const state = setup();
     const f = TestBed.createComponent(Dashboard);

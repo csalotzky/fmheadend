@@ -20,8 +20,9 @@ def communication_state(error):
 
 class StatusService:
     def __init__(self, modulators, sources, rp, mux, clock=time.monotonic, recovery=None,
-                 config=None, profile_files=None):
+                 config=None, profile_files=None, radiotext=None):
         self.modulators, self.sources, self.rp, self.mux = modulators, sources, rp, mux
+        self.radiotext = radiotext
         self.clock, self.started = clock, clock()
         self.recovery = recovery
         self.config, self.profile_files = config, profile_files
@@ -62,6 +63,9 @@ class StatusService:
             views['profiles'] = self._profile_list
             views['profiles_observed_at'] = self._profile_list_at
         snapshot = self.snapshot(source_statuses).model_copy(deep=True)
+        if self.radiotext is not None:
+            for row in snapshot.modulators:
+                row.rds_rt_effective = self.radiotext.effective(row.id).text
         self._published = (self.clock(), max_age_s, snapshot, views)
         self._publication_failed = False
 

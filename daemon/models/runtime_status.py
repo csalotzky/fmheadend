@@ -80,6 +80,8 @@ class ModulatorStatus(Model):
     overruns: int = 0
     pcm_bytes_received: int = 0
     pcm_bytes_consumed: int = 0
+    # Selected text at publication time; queued RDS transmission may lag.
+    rds_rt_effective: str | None = None
     rds_state: str = "DISABLED"
     rds_last_error: str | None = None
     rds_last_error_scope: Literal['TX', 'GLOBAL'] = 'TX'

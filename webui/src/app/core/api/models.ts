@@ -38,6 +38,7 @@ export interface InputSource {
   timestamp: string;
 }
 export interface ModulatorStatus {
+  rds_rt_effective?: string | null;
   input_saturated: boolean | null;
   id: number;
   tx_state: TxState;

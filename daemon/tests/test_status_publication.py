@@ -51,7 +51,8 @@ def test_all_periodic_reads_bypass_busy_control_and_audio_locks(tmp_path, monkey
                     with monkeypatch.context() as m:
                         for obj, method in ((services.status, 'snapshot'), (services.sources, 'status'),
                                 (services.profile_files, 'list'), (services.rp, 'get_status'),
-                                (services.mux, 'get_status'), (services.config, 'list')):
+                                (services.mux, 'get_status'), (services.config, 'list'),
+                                (services.rt, 'effective')):
                             m.setattr(obj, method, Mock(side_effect=AssertionError('poll touched owner')))
                         paths = ['/status', '/status', '/sources', '/modulators',
                                  f'/sources/{sid}/status', '/system/info',
@@ -161,3 +162,40 @@ def test_validation_cache_never_substitutes_for_join_validation(tmp_path,monkeyp
             now[0]=1
             observed=app.state.control.executor.submit(manager.status,sid).result()
             assert observed.state=='ERROR' and 'PROFILE_NOT_FOUND' in observed.last_error
+
+
+def test_published_rt_uses_existing_selector_and_preserves_snapshot(tmp_path):
+    now = [0.0]
+    app = configured(tmp_path, lambda: now[0])
+    with TestClient(app) as api:
+        sid = api.post(P+'/sources', json={'name':'Feed', 'type':'HTTP',
+            'config':{'uri':'http://localhost/live'}}).json()['id']
+        services = app.state.services
+        assert api.patch(P+'/modulators/0', json={
+            'input_source_id': sid, 'rds_rt': 'Fallback', 'rds_metadata_to_rt': True}).status_code == 200
+
+        def selected_text():
+            return api.get(P+'/status').json()['modulators'][0]['rds_rt_effective']
+
+        def metadata(text):
+            services.sources.status(sid).stream_title = text
+            app.state.publish_status()
+
+        assert selected_text() == 'Fallback'
+        old = services.status.published_snapshot()
+        app.state.control.executor.submit(metadata, 'Artist - Track').result()
+        assert selected_text() == 'Artist - Track'
+        assert old.modulators[0].rds_rt_effective == 'Fallback'
+        assert api.put(P+'/modulators/0/rds/rt', json={
+            'text': 'Override', 'ttl_s': 10}).status_code == 200
+        assert selected_text() == 'Override'
+        now[0] = 10.0
+        app.state.control.executor.submit(app.state.publish_status).result()
+        assert selected_text() == 'Artist - Track'
+        # An explicit empty override must not become frontend fallback text.
+        assert api.put(P+'/modulators/0/rds/rt', json={'text': ''}).status_code == 200
+        assert selected_text() == ''
+        assert api.delete(P+'/modulators/0/rds/rt').status_code == 204
+        assert selected_text() == 'Artist - Track'
+        assert api.patch(P+'/modulators/0', json={'rds_metadata_to_rt': False}).status_code == 200
+        assert selected_text() == 'Fallback'

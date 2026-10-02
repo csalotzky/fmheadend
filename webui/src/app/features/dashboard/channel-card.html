@@ -27,10 +27,12 @@
         <dt>PS{{ (channel().config?.rds_ps?.length ?? 0) > 1 ? ' carousel' : '' }}</dt>
         <dd [title]="ps()">{{ ps() }}</dd>
       </div>
-      <div class="rt" title="Saved fallback RadioText; not live on-air content">
-        <dt>RT</dt>
-        <dd>{{ channel().config?.rds_rt || '\u2014' }}</dd>
-      </div>
+      @if (channel().config?.rds_enabled && channel().config?.rds_rt_enabled) {
+        <div class="rt" title="Selected RadioText; queued RDS transmission may lag">
+          <dt>RT</dt>
+          <dd>{{ channel().runtime?.rds_rt_effective || '\u2014' }}</dd>
+        </div>
+      }
       <div class="codes">
         <dt>PI</dt>
         <dd>{{ hex(channel().config?.rds_pi, 4) }}</dd>

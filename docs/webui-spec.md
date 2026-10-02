@@ -510,8 +510,13 @@ failed outcome, release pending controls, and reconcile without retrying the
 command. Teardown cancels polling and requests. Normal polling remains roughly
 five seconds; bulk-control semantics are unchanged.
 
-Dashboard cards show saved fallback RadioText (RT), explicitly identified as
-configuration rather than live on-air text, with wrapping for long values. The
+Dashboard cards show selected effective RadioText (RT) from published Modulator
+status (`rds_rt_effective`): the existing backend selector applies runtime override,
+metadata and persistent fallback precedence. Queued RDS transmission may lag this
+selection; it is not receiver-confirmed content. The entire row is hidden unless
+both persisted `rds_enabled` and `rds_rt_enabled` are true, without clearing text.
+Long values wrap. Selection is collected during control-thread status publication;
+HTTP readers use that snapshot without new requests or hardware/PCM lock access. The
 compact audio configuration line also shows the QN Soft clipping ON/OFF setting.
 Neither field introduces new requests or editable Dashboard controls.
 
