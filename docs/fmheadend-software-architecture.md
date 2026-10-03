@@ -1495,9 +1495,10 @@ Suspicious uptime values or status mismatches do not justify global restoration.
 Shutdown never overwrites persistent desired enabled state.
 Individual ON/OFF commands persist `Modulator.enabled` in SQLite before runtime
 application. Restart attempts only saved ON channels; source unavailability and
-startup failures do not rewrite that preference. STOP ALL remains a session-only
-hold and therefore does not prevent a saved-ON channel returning after restart.
-No additional restart-state field or schema migration is used.
+startup failures do not rewrite that preference. STOP ALL persists the global
+hold in `system_config.data.global_stopped`, independently of individual enabled
+settings. Startup restores that hold before any automatic TX activation. No schema
+version change or migration is used.
 See [Milestone 6A](milestone6a.md) for deployment and exact lifecycle semantics;
 Zero 2 W stress/performance validation is deferred to M6B.
 
@@ -1537,7 +1538,7 @@ the target's desired ON/OFF. Uncertain SET_TX_CONFIG reconciles only that TX.
 Full restoration is limited to application startup in the current daemon. Any
 future explicit reset path must establish actual global state loss before using
 it. V1 has no boot identifier; this milestone adds no reset-detection heuristics.
-The database and session STOP ALL holds remain the desired-state authority.
+The database and restored STOP ALL holds remain the desired-state authority.
 
 Explicit START/STOP may reacquire the control session once only when metadata
 proves the requested command was NOT_SENT (open/backoff/implicit GET_INFO failure).
@@ -2182,11 +2183,18 @@ service is required. See `docs/milestone7b5.md` for the region table and deploym
 
 Individual START/STOP persist the channel's desired enabled/disabled state.
 STOP ALL disables RF and releases consumers without changing any persistent
-Modulator configuration. START ALL starts only configured desired-enabled channels.
-A runtime-only set of bulk-stopped channels prevents RP reconnect recovery from
-undoing STOP ALL during the current daemon session. Explicit START releases its
-channel hold; START ALL releases eligible holds. Daemon restart uses the existing
-persistent desired-state restoration. No second persistent enabled flag is added.
+Modulator configuration. Global START starts only configured desired-enabled channels.
+`system_config.data.global_stopped` persists the global hold; a missing field defaults
+to false. The manager restores all eight holds before startup recovery can enable TXs.
+Repeated STOP ALL never changes the existing resume selection (saved enabled settings).
+Both global commands persist intent before changing holds or issuing hardware commands;
+a failed write rejects command acceptance. Global START clears the persisted flag and
+uses the unchanged eligibility/resume loop. Per-channel failures remain explicit and
+do not rewrite desired state. Normal shutdown preserves both kinds of saved intent.
+Individual START still releases its channel hold; it does not clear the global flag,
+so a subsequent daemon restart reasserts the global hold until global START is used.
+The flag is published as `status.system.global_stopped`; it is not a hardware
+observation and cannot be changed through ordinary system-configuration PATCH.
 
 
 ### PCM forwarding diagnostics

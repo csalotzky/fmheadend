@@ -97,6 +97,7 @@ class ModulatorStatus(Model):
 
 
 class SystemStatus(Model):
+    global_stopped: bool = False
     snapshot_age_s: float = 0
     snapshot_stale: bool = False
     system_state: str = "RUNNING"

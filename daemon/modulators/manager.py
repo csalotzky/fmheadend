@@ -21,7 +21,8 @@ class ModulatorManager:
         self.statuses = {config.id: ModulatorStatus(id=config.id, source_state=None if config.audio_mode == "ANALOG" else "IDLE")
                          for config in database.list("modulators")}
         self.active_sources: dict[int, int] = {}
-        self.bulk_stopped: set[int] = set()
+        self.global_stopped = database.get_system().global_stopped
+        self.bulk_stopped: set[int] = set(range(8)) if self.global_stopped else set()
 
     def list(self):
         return self.database.list("modulators")
@@ -263,10 +264,19 @@ class ModulatorManager:
         return self.get(channel).enabled and channel not in self.bulk_stopped
 
     def all(self, start):
+        # Persist accepted global intent before changing holds or issuing commands.
+        # Per-TX enabled settings remain the existing resume selection.
+        config = self.database.get_system().model_copy(update={"global_stopped": not start})
+        try:
+            self.database.save_system(config)
+        except sqlite3.Error as exc:
+            raise DomainError(503, "GLOBAL_STATE_SAVE_FAILED",
+                              "Global control state could not be saved; command not accepted") from exc
+        self.global_stopped = not start
         results = []
         retry_budget = [1]  # One extra reacquisition for the entire bulk request.
         if not start:
-            # Session-only operational hold; recovery must not undo STOP ALL.
+            # Recovery, including startup, must not undo STOP ALL.
             self.bulk_stopped.update(range(8))
         for modulator_id in range(8):
             try:

@@ -162,6 +162,7 @@ class Modulator(ModulatorConfig):
 
 
 class SystemConfig(Model):
+    global_stopped: bool = False
     spi_device: Name = "/dev/spidev0.0"
     spi_clock_hz: int = Field(default=25000000, gt=0)
     i2c_device: Name = "/dev/i2c-1"
@@ -172,17 +173,17 @@ class SystemConfig(Model):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
 
-def patch_model(name, model):
+def patch_model(name, model, *, exclude=()):
     # Missing fields are omitted; explicit null is checked against the full
     # model after merging, so nullable relationships can be cleared safely.
     return create_model(name, __base__=Model, **{
-        key: (field.annotation | None, None) for key, field in model.model_fields.items()
+        key: (field.annotation | None, None) for key, field in model.model_fields.items() if key not in exclude
     })
 
 
 InputSourcePatch = patch_model("InputSourcePatch", InputSourceConfig)
 ModulatorPatch = patch_model("ModulatorPatch", ModulatorConfig)
-SystemConfigPatch = patch_model("SystemConfigPatch", SystemConfig)
+SystemConfigPatch = patch_model("SystemConfigPatch", SystemConfig, exclude={"global_stopped"})
 
 
 class RtOverride(Model):

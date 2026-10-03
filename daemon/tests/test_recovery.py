@@ -262,16 +262,63 @@ def test_explicit_user_choices_survive_normal_shutdown_and_restart(tmp_path, ena
         assert restored.enabled == [i in enabled for i in range(8)]
 
 
-def test_stop_all_hold_is_session_only_across_restart(tmp_path):
+@pytest.mark.parametrize('disable_before_resume', [False, True])
+def test_global_stop_survives_restart_and_start_keeps_resume_selection(tmp_path, disable_before_resume):
     path = tmp_path / 'hold.db'
     seed(path)
+    db = Database(path)
+    config = db.get('modulators', 0)
+    db.save('modulators', ModulatorConfig.model_validate(
+        config.model_dump(exclude={'id', 'timestamp'})), 2)
+    db.close()
     with TestClient(create_app(Settings(path))) as api:
+        for _ in range(2):
+            assert api.post(P+'/modulators/stop-all').status_code == 200
+        assert api.get(P+'/status').json()['system']['global_stopped'] is True
+        assert [m['id'] for m in api.get(P+'/modulators').json() if m['enabled']] == [0, 2]
+    rp = MockRp2354Client()
+    rp.set_tx_enabled = Mock(wraps=rp.set_tx_enabled)
+    with TestClient(create_app(Settings(path), rp=rp)) as api:
+        refresh(api.app)
+        assert api.app.state.services.recovery.ready
+        assert not any(rp.enabled)
+        assert all(not call.args[1] for call in rp.set_tx_enabled.call_args_list)
+        assert api.get(P+'/status').json()['system']['global_stopped'] is True
         assert api.post(P+'/modulators/stop-all').status_code == 200
-        assert not any(api.app.state.services.rp.enabled)
-        assert api.get(P+'/modulators/0').json()['enabled'] is True
+        # Ordinary system edits cannot release the hold.
+        assert api.patch(P+'/system/config', json={'log_level': 'DEBUG'}).status_code == 200
+        assert api.patch(P+'/system/config', json={'global_stopped': False}).status_code == 422
+        if disable_before_resume:
+            assert api.post(P+'/modulators/2/stop').status_code == 200
+        assert api.post(P+'/modulators/start-all').status_code == 200
+        assert rp.enabled == [i == 0 or (i == 2 and not disable_before_resume) for i in range(8)]
+        assert api.get(P+'/status').json()['system']['global_stopped'] is False
     with TestClient(create_app(Settings(path))) as api:
         refresh(api.app)
-        assert api.app.state.services.rp.enabled == [True] + [False] * 7
+        assert api.app.state.services.rp.enabled == [
+            i == 0 or (i == 2 and not disable_before_resume) for i in range(8)]
+
+
+@pytest.mark.parametrize('start', [False, True])
+def test_global_command_persistence_failure_is_not_accepted(tmp_path, start):
+    import sqlite3
+    from unittest.mock import patch
+    path = tmp_path / 'save-failure.db'
+    seed(path)
+    with TestClient(create_app(Settings(path))) as api:
+        services = api.app.state.services
+        if start:
+            assert api.post(P+'/modulators/stop-all').status_code == 200
+        before = list(services.rp.enabled)
+        holds = set(services.modulators.bulk_stopped)
+        with patch.object(services.database, 'save_system', side_effect=sqlite3.OperationalError('disk full')):
+            result = api.post(P+'/modulators/'+('start-all' if start else 'stop-all'))
+        assert result.status_code == 503
+        assert result.json()['error'] == 'GLOBAL_STATE_SAVE_FAILED'
+        assert services.rp.enabled == before
+        assert services.modulators.bulk_stopped == holds
+        assert api.get(P+'/system/config').json()['global_stopped'] is start
+        assert api.get(P+'/status').json()['system']['global_stopped'] is start
 
 
 def test_failed_desired_startup_survives_restart_without_erasing_preference(tmp_path):

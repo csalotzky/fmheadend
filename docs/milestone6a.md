@@ -121,8 +121,8 @@ No RF measurement or successful physical RDS transmission is inferred.
 Plain PATCH remains persistence-only. Editing requires confirmed runtime OFF,
 released source ownership, completed startup and no target reconciliation pending.
 The old `enabled=true` guard incorrectly rejected successful STOP ALL edits:
-desired enabled is saved startup/START ALL intent, while the session operational
-hold keeps that target stopped. Neither PATCH nor stopped editor Save clears it.
+desired enabled is saved startup/START ALL intent, while the persistent global
+hold keeps that target stopped across daemon restarts. Neither PATCH nor stopped editor Save clears it.
 
 `POST /api/v1/modulators/{id}/save-and-resume` accepts the existing ModulatorPatch.
 It runs entirely within one existing serialized control-executor call:

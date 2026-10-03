@@ -181,6 +181,7 @@ class StatusService:
     def snapshot(self, source_statuses=None):
         # Control thread collection only: Source validation may access DB/files.
         system = self.system.model_copy(deep=True)
+        system.global_stopped = self.modulators.global_stopped
         if self.recovery and self.recovery.error is not None:
             system.rp_communication_state = communication_state(self.recovery.error)
             system.rp_observation_stale = True

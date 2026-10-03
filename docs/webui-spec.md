@@ -61,10 +61,17 @@ separate and retain their success, failure and uncertain-outcome messages.
 
 Global actions:
 
-- `START ALL`
+- `START`
 - `STOP ALL`
 
 These are operational controls and should be visually distinct from passive status information.
+
+The shell shows START when published `status.system.global_stopped` is true,
+and STOP ALL otherwise. This is persistent command intent, independent of per-TX
+RF observations or failures. Global START retains the existing saved-enabled
+eligibility rules. Pending feedback and shared post-action refresh are unchanged;
+no optimistic global state is fabricated. Before status is available, STOP ALL
+remains available as the safety action; START requires a non-stale snapshot.
 
 `STOP ALL` must be easy to find and difficult to confuse with navigation or configuration controls.
 
@@ -509,7 +516,7 @@ reported separately from failure. HTTP failures/timeouts report an unknown or
 failed outcome, release pending controls, and reconcile without retrying the
 command. Teardown cancels polling and requests. Normal polling remains roughly
 five seconds. Bulk actions use the same per-card progress, command-result handling
-and bounded shared confirmation polling. START ALL progress follows the backend's
+and bounded shared confirmation polling. START progress follows the backend's
 desired-enabled/configured eligibility; STOP ALL progress covers active or
 unconfirmed channels. Each result/error is shown on its own card; missing results
 and request failures remain unconfirmed and are never replayed automatically.

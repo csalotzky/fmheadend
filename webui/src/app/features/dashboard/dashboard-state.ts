@@ -358,7 +358,7 @@ export class DashboardState {
       ),
     );
     this.failures.set([]);
-    this.notice.set(`${action.toUpperCase()} ALL pending`);
+    this.notice.set(`${action === 'start' ? 'START' : 'STOP ALL'} pending`);
     const failed: { id: number; message: string }[] = [];
     let accepted = 0;
     try {
@@ -390,7 +390,7 @@ export class DashboardState {
       }
       if (generation === this.messageGeneration)
         this.notice.set(
-          `${action.toUpperCase()} ALL: ${accepted} accepted, ${failed.length} failed or unconfirmed.` +
+          `${action === 'start' ? 'START' : 'STOP ALL'}: ${accepted} accepted, ${failed.length} failed or unconfirmed.` +
             (action === 'start' && eligible.length < 8
               ? ' Skipped disabled or unconfigured channels.'
               : ''),
@@ -403,7 +403,7 @@ export class DashboardState {
         this.unconfirmedResult(c.id, action, message, generation);
       }
       if (generation === this.messageGeneration)
-        this.notice.set(`${action.toUpperCase()} ALL failed or outcome unknown.`);
+        this.notice.set(`${action === 'start' ? 'START' : 'STOP ALL'} failed or outcome unknown.`);
     } finally {
       if (generation === this.messageGeneration) this.failures.set(failed);
       this.bulkPendingIds.set([]);

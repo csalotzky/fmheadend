@@ -258,11 +258,25 @@ describe('Operational display', () => {
     expect(
       Array.from(el.querySelectorAll('nav a')).map((link) => link.getAttribute('href')),
     ).toEqual(['/dashboard', '/sources', '/modulators', '/audio-profiles', '/system']);
-    const buttons = el.querySelectorAll('.global-actions button');
-    (buttons[0] as HTMLButtonElement).click();
-    expect(action).toHaveBeenCalledWith('start');
-    (buttons[1] as HTMLButtonElement).click();
+    let buttons = el.querySelectorAll<HTMLButtonElement>('.global-actions button');
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0].textContent?.trim()).toBe('STOP ALL');
+    buttons[0].click();
     expect(action).toHaveBeenCalledWith('stop');
+    // Selection follows published global intent, even with a TX still reported ON.
+    state.data.set({
+      ...data,
+      status: { ...data.status, system: { ...data.status.system, global_stopped: true } },
+    });
+    fixture.detectChanges();
+    buttons = el.querySelectorAll<HTMLButtonElement>('.global-actions button');
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0].textContent?.trim()).toBe('START');
+    buttons[0].click();
+    expect(action).toHaveBeenCalledWith('start');
+    state.busy.set('stop-all');
+    fixture.detectChanges();
+    expect(buttons[0].disabled).toBe(true);
   });
   it('retains shell/navigation without displaying fake healthy status when offline', () => {
     const state = setup();

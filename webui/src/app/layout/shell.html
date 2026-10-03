@@ -48,11 +48,15 @@
       </div>
     </div>
     <div class="global-actions">
-      <button [disabled]="state.busy() !== null || state.stale()" (click)="state.all('start')">
-        START ALL</button
-      ><button class="stop" [disabled]="state.busy() !== null" (click)="state.all('stop')">
-        STOP ALL
-      </button>
+      @if (state.data()?.status?.system?.global_stopped) {
+        <button [disabled]="state.busy() !== null || state.stale()" (click)="state.all('start')">
+          START
+        </button>
+      } @else {
+        <button class="stop" [disabled]="state.busy() !== null" (click)="state.all('stop')">
+          STOP ALL
+        </button>
+      }
     </div>
   </header>
   <div class="connection-line">

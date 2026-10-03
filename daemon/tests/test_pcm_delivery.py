@@ -219,7 +219,7 @@ def test_status_exposes_stage_consumer_writer_and_mux_diagnostics_without_io():
     output.publish(b'1234')
     pcm = SourcePcmStatus(staging=PcmQueue().snapshot(), consumers=output.snapshot())
     sources = SimpleNamespace(status=Mock(return_value=InputSourceStatus(source_id=1, state='RUNNING', pcm=pcm)))
-    modulators = SimpleNamespace(statuses={i: ModulatorStatus(id=i) for i in range(8)}, active_sources={0: 1, 1: 1},
+    modulators = SimpleNamespace(global_stopped=False, statuses={i: ModulatorStatus(id=i) for i in range(8)}, active_sources={0: 1, 1: 1},
         get=lambda channel: SimpleNamespace(audio_mode='DIGITAL', rf_attenuation_db=0), desired_on=lambda channel: False)
     mux = MockMuxClient()
     raw = mux.get_status()
