@@ -183,3 +183,23 @@ def test_initialization_rolls_back_ddl_seeds_and_version(tmp_path, monkeypatch):
     db = Database(path)
     assert len(db.list("modulators")) == 8
     db.close()
+
+
+def test_single_selection_transaction_rolls_back_all_tx_updates_on_system_write_failure(tmp_path):
+    db = Database(tmp_path / 'atomic-selection.db')
+    try:
+        for channel in (0, 2):
+            db.save('modulators', ModulatorConfig(enabled=True, audio_mode='ANALOG', frequency_khz=98100), channel)
+        db.save_system(db.get_system().model_copy(update={'global_stopped': True}))
+        before = snapshot(db.connection)
+        db.connection.execute("CREATE TEMP TRIGGER fail_global_update BEFORE UPDATE ON system_config "
+                              "BEGIN SELECT RAISE(ABORT, 'test write failure'); END")
+        with pytest.raises(sqlite3.IntegrityError, match='test write failure'):
+            db.select_single_modulator(1)
+        assert snapshot(db.connection) == before
+        db.connection.execute('DROP TRIGGER fail_global_update')
+        db.select_single_modulator(1)
+        assert [m.id for m in db.list('modulators') if m.enabled] == [1]
+        assert db.get_system().global_stopped is False
+    finally:
+        db.close()

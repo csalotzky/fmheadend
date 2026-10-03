@@ -122,5 +122,21 @@ class Database:
             self.connection.execute("UPDATE system_config SET data = ? WHERE id = 1", (config.model_dump_json(),))
         return config
 
+    def select_single_modulator(self, modulator_id):
+        """Atomically replace a globally stopped selection with one desired TX."""
+        self.get("modulators", modulator_id)  # Reject invalid IDs before writing.
+        # Do not call save/save_system here: their contexts commit independently.
+        with self.connection:
+            for row in self.connection.execute("SELECT id, data FROM modulators ORDER BY id").fetchall():
+                data = json.loads(row["data"])
+                enabled = row["id"] == modulator_id
+                if data["enabled"] != enabled:
+                    data.update(enabled=enabled, timestamp=utcnow().isoformat())
+                    self.connection.execute("UPDATE modulators SET data = ? WHERE id = ?",
+                                            (json.dumps(data), row["id"]))
+            system = self.get_system().model_copy(update={"global_stopped": False})
+            self.connection.execute("UPDATE system_config SET data = ? WHERE id = 1",
+                                    (system.model_dump_json(),))
+
     def close(self):
         self.connection.close()

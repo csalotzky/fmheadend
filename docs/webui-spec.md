@@ -70,7 +70,10 @@ The shell shows START when published `status.system.global_stopped` is true,
 and STOP ALL otherwise. This is persistent command intent, independent of per-TX
 RF observations or failures. Global START retains the existing saved-enabled
 eligibility rules. Pending feedback and shared post-action refresh are unchanged;
-no optimistic global state is fabricated. Before status is available, STOP ALL
+no optimistic global state is fabricated. Explicit individual START while globally
+stopped replaces the previous resume selection with that TX only. The next shared
+refresh shows the persisted selection and switches the global action to STOP ALL;
+reported hardware observations remain independent. Before status is available, STOP ALL
 remains available as the safety action; START requires a non-stale snapshot.
 
 `STOP ALL` must be easy to find and difficult to confuse with navigation or configuration controls.

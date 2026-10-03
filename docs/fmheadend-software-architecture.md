@@ -2191,8 +2191,13 @@ Both global commands persist intent before changing holds or issuing hardware co
 a failed write rejects command acceptance. Global START clears the persisted flag and
 uses the unchanged eligibility/resume loop. Per-channel failures remain explicit and
 do not rewrite desired state. Normal shutdown preserves both kinds of saved intent.
-Individual START still releases its channel hold; it does not clear the global flag,
-so a subsequent daemon restart reasserts the global hold until global START is used.
+Explicit individual START while globally stopped replaces the saved resume selection:
+one SQLite transaction enables only that TX, disables all others and clears the global
+flag. Only after persistence succeeds are runtime holds cleared and the selected TX
+started. A runtime failure preserves this new desired selection with the existing
+error/uncertainty handling. Individual START during normal operation preserves the
+other channels' settings. Configuration saves and status observations do not replace
+selections. STOP ALL followed by global START retains its existing resume behavior.
 The flag is published as `status.system.global_stopped`; it is not a hardware
 observation and cannot be changed through ordinary system-configuration PATCH.
 

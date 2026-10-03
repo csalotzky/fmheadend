@@ -333,3 +333,82 @@ def test_failed_desired_startup_survives_restart_without_erasing_preference(tmp_
     with TestClient(create_app(Settings(path))) as api:
         refresh(api.app)
         assert api.app.state.services.rp.enabled == [True] + [False] * 7
+
+
+def test_individual_start_replaces_global_hold_selection_and_survives_restart(tmp_path):
+    path = tmp_path / 'new-selection.db'
+    seed(path)
+    with TestClient(create_app(Settings(path))) as api:
+        for channel in (1, 2):
+            assert api.patch(P+f'/modulators/{channel}', json={
+                'audio_mode': 'ANALOG', 'frequency_khz': 98100}).status_code == 200
+        # Normal individual START preserves the other enabled TX.
+        assert api.post(P+'/modulators/2/start').status_code == 200
+        assert api.app.state.services.rp.enabled == [True, False, True] + [False] * 5
+        assert api.post(P+'/modulators/stop-all').status_code == 200
+        before = api.get(P+'/modulators').json()
+        rp = api.app.state.services.rp
+        rp.set_tx_enabled = Mock(wraps=rp.set_tx_enabled)
+        assert api.post(P+'/modulators/1/start').status_code == 200
+        assert rp.set_tx_enabled.call_args_list == [((1, True),)]
+        assert rp.enabled == [False, True] + [False] * 6
+        assert api.get(P+'/status').json()['system']['global_stopped'] is False
+        assert api.app.state.services.modulators.bulk_stopped == set()
+        after = api.get(P+'/modulators').json()
+        assert [m['id'] for m in after if m['enabled']] == [1]
+        for old, new in zip(before, after):
+            assert {k: v for k, v in old.items() if k not in ('enabled', 'timestamp')} == {
+                k: v for k, v in new.items() if k not in ('enabled', 'timestamp')}
+    rp = MockRp2354Client()
+    rp.set_tx_enabled = Mock(wraps=rp.set_tx_enabled)
+    with TestClient(create_app(Settings(path), rp=rp)) as api:
+        refresh(api.app)
+        assert rp.enabled == [False, True] + [False] * 6
+        assert all(call.args[0] == 1 for call in rp.set_tx_enabled.call_args_list if call.args[1])
+        assert api.get(P+'/status').json()['system']['global_stopped'] is False
+        assert api.post(P+'/modulators/stop-all').status_code == 200
+        assert api.post(P+'/modulators/start-all').status_code == 200
+        assert rp.enabled == [False, True] + [False] * 6
+
+
+def test_individual_selection_save_failure_preserves_global_hold(tmp_path):
+    import sqlite3
+    from unittest.mock import patch
+    path = tmp_path / 'selection-failure.db'
+    seed(path)
+    with TestClient(create_app(Settings(path))) as api:
+        assert api.patch(P+'/modulators/1', json={
+            'audio_mode': 'ANALOG', 'frequency_khz': 98100}).status_code == 200
+        assert api.post(P+'/modulators/stop-all').status_code == 200
+        services = api.app.state.services
+        before = api.get(P+'/modulators').json()
+        services.rp.set_tx_enabled = Mock(wraps=services.rp.set_tx_enabled)
+        with patch.object(services.database, 'select_single_modulator',
+                          side_effect=sqlite3.OperationalError('disk full')):
+            result = api.post(P+'/modulators/1/start')
+        assert result.status_code == 503
+        assert result.json()['error'] == 'GLOBAL_STATE_SAVE_FAILED'
+        assert api.get(P+'/modulators').json() == before
+        assert api.get(P+'/status').json()['system']['global_stopped'] is True
+        assert services.modulators.bulk_stopped == set(range(8))
+        services.rp.set_tx_enabled.assert_not_called()
+        # Invalid explicit START must not replace the selection either.
+        assert api.post(P+'/modulators/7/start').status_code == 409
+        assert api.get(P+'/modulators').json() == before
+
+
+def test_new_individual_selection_survives_runtime_start_failure(tmp_path):
+    path = tmp_path / 'selection-runtime-failure.db'
+    seed(path)
+    with TestClient(create_app(Settings(path))) as api:
+        assert api.patch(P+'/modulators/1', json={
+            'audio_mode': 'ANALOG', 'frequency_khz': 98100}).status_code == 200
+        assert api.post(P+'/modulators/stop-all').status_code == 200
+        services = api.app.state.services
+        services.rp.set_tx_config = Mock(side_effect=DependencyUnavailable('unavailable'))
+        assert api.post(P+'/modulators/1/start').status_code == 503
+        assert [m['id'] for m in api.get(P+'/modulators').json() if m['enabled']] == [1]
+        assert api.get(P+'/status').json()['system']['global_stopped'] is False
+    with TestClient(create_app(Settings(path))) as api:
+        refresh(api.app)
+        assert api.app.state.services.rp.enabled == [False, True] + [False] * 6

@@ -107,6 +107,37 @@ describe('Dashboard API composition and operations', () => {
       expect(state.busy()).toBeNull();
       expect(state.failures()).toEqual([]);
     });
+  it('refreshes the replaced selection after individual START during global STOP ALL', async () => {
+    const before = sample();
+    before.status.system.global_stopped = true;
+    before.modulators.forEach((m) => (m.enabled = m.id === 0 || m.id === 2));
+    before.status.modulators.forEach((m) => {
+      m.tx_state = 'OFF';
+      m.hardware_tx_state = 'OFF';
+    });
+    await load(before);
+    const done = state.operate(1, 'start');
+    await settle();
+    expect(state.busy()).toBe(1);
+    expect(state.data()?.status.system.global_stopped).toBe(true);
+    http.expectOne('/api/v1/modulators/1/start').flush({
+      ...before.status.modulators[1], tx_state: 'ON',
+    });
+    await settle();
+    // Neither the global intent nor other saved settings are guessed from a TX ACK.
+    expect(state.data()?.status.system.global_stopped).toBe(true);
+    expect(state.data()?.modulators.filter((m) => m.enabled).map((m) => m.id)).toEqual([0, 2]);
+    const after = structuredClone(before);
+    after.status.system.global_stopped = false;
+    after.modulators.forEach((m) => (m.enabled = m.id === 1));
+    after.status.modulators[1].tx_state = 'ON';
+    respond(after);
+    await done;
+    expect(state.busy()).toBeNull();
+    expect(state.data()?.status.system.global_stopped).toBe(false);
+    expect(state.data()?.modulators.filter((m) => m.enabled).map((m) => m.id)).toEqual([1]);
+    expect(state.channels()[1].runtime?.hardware_tx_state).toBe('OFF');
+  });
   it('prevents duplicate and concurrent lifecycle requests', async () => {
     await load();
     const done = state.operate(0, 'stop');

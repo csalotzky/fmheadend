@@ -112,8 +112,17 @@ class ModulatorManager:
         current = self.get(modulator_id)
         config = ModulatorConfig.model_validate(current.model_dump(exclude={"id", "timestamp"}) | {"enabled": True})
         self.validate(config)
-        self.database.save("modulators", config, modulator_id)
-        self.bulk_stopped.discard(modulator_id)
+        if self.global_stopped:
+            try:
+                self.database.select_single_modulator(modulator_id)
+            except sqlite3.Error as exc:
+                raise DomainError(503, "GLOBAL_STATE_SAVE_FAILED",
+                                  "New TX selection could not be saved; command not accepted") from exc
+            self.global_stopped = False
+            self.bulk_stopped.clear()
+        else:
+            self.database.save("modulators", config, modulator_id)
+            self.bulk_stopped.discard(modulator_id)
         return self._start(modulator_id)
 
     def _lifecycle_command(self, command, operation, retry_budget):

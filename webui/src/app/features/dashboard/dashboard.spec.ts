@@ -277,6 +277,18 @@ describe('Operational display', () => {
     state.busy.set('stop-all');
     fixture.detectChanges();
     expect(buttons[0].disabled).toBe(true);
+    // A published replacement selection after individual ENABLE releases global stop.
+    state.busy.set(null);
+    state.data.set({
+      ...data,
+      modulators: data.modulators.map((m) => ({ ...m, enabled: m.id === 1 })),
+      status: { ...data.status, system: { ...data.status.system, global_stopped: false } },
+    });
+    fixture.detectChanges();
+    buttons = el.querySelectorAll<HTMLButtonElement>('.global-actions button');
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0].textContent?.trim()).toBe('STOP ALL');
+    expect(buttons[0].disabled).toBe(false);
   });
   it('retains shell/navigation without displaying fake healthy status when offline', () => {
     const state = setup();
