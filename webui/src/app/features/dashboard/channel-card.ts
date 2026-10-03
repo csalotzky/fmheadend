@@ -20,7 +20,7 @@ export class ChannelCard {
   readonly displayState = computed(() => {
     if (this.pending()) return this.pendingAction() === 'stop' ? 'Stopping...' : 'Starting...';
     if (this.reportedState() === 'ERROR') return 'ERROR';
-    return this.commandState() ? `${this.commandState()} (command)` : this.reportedState();
+    return this.commandState() ? `${this.commandState()} (requested)` : this.reportedState();
   });
   readonly operate = output<'start' | 'stop'>();
   readonly attenuation = computed(() =>
