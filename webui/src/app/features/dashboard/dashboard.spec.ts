@@ -227,7 +227,7 @@ describe('Operational display', () => {
   });
   it('loads real version branding and clears transient messages on navigation', () => {
     const state = setup();
-    vi.spyOn(state, 'start').mockImplementation(() => {});
+    vi.spyOn(state, 'start').mockImplementation(() => { });
     state.notice.set('Operation accepted');
     const f = TestBed.createComponent(Shell);
     f.detectChanges();
@@ -245,7 +245,7 @@ describe('Operational display', () => {
   });
   it('shows DEGRADED and global operations in the persistent shell', () => {
     const state = setup();
-    vi.spyOn(state, 'start').mockImplementation(() => {});
+    vi.spyOn(state, 'start').mockImplementation(() => { });
     const action = vi.spyOn(state, 'all').mockResolvedValue();
     const data = sample();
     data.status.system.system_state = 'DEGRADED';
@@ -266,7 +266,7 @@ describe('Operational display', () => {
   });
   it('retains shell/navigation without displaying fake healthy status when offline', () => {
     const state = setup();
-    vi.spyOn(state, 'start').mockImplementation(() => {});
+    vi.spyOn(state, 'start').mockImplementation(() => { });
     state.stale.set(true);
     const fixture = TestBed.createComponent(Shell);
     fixture.detectChanges();
@@ -277,7 +277,7 @@ describe('Operational display', () => {
   });
   it('omits global banners on every route and retains action notifications', () => {
     const state = setup();
-    vi.spyOn(state, 'start').mockImplementation(() => {});
+    vi.spyOn(state, 'start').mockImplementation(() => { });
     const data = sample();
     data.status.system.last_error = 'GET_INFO response CRC mismatch';
     data.status.system.system_state = 'DEGRADED';
@@ -464,7 +464,7 @@ describe('Operational display', () => {
     state.pendingAction.set(null);
     state.commandStates.set({ 1: 'ON' });
     f.detectChanges();
-    expect(card.querySelector('.tx-state').textContent.trim()).toBe('ON (command)');
+    expect(card.querySelector('.tx-state').textContent.trim()).toBe('ON (requested)');
     expect(card.querySelector('.channel-control span').textContent).toContain(
       'Reported state: OFF',
     );
@@ -498,7 +498,7 @@ describe('Operational display', () => {
     state.bulkPendingIds.set([]);
     state.commandStates.set({ 0: 'OFF' });
     f.detectChanges();
-    expect(cards[0].querySelector('.tx-state').textContent).toContain('OFF (command)');
+    expect(cards[0].querySelector('.tx-state').textContent).toContain('OFF (requested)');
     expect(cards[0].querySelector('.channel-control span').textContent).toContain(
       'Reported state: ON',
     );
