@@ -1,4 +1,3 @@
-import { combiningMarks } from './combining-marks';
 // Presentation conversions follow configuration.py and rds/characters.py.
 export const ptyLabels = [
   'None',
@@ -57,32 +56,13 @@ export function parseHex(raw: string, width: number, optional = false): number |
     throw new Error(`Enter ${width === 4 ? 'PI' : 'ECC'} as up to ${width} hexadecimal digits.`);
   return Number.parseInt(text, 16);
 }
-const replacements: Record<string, string> = {
-  '\u2018': "'",
-  '\u2019': "'",
-  '\u201c': '"',
-  '\u201d': '"',
-  '\u2013': '-',
-  '\u2014': '-',
-  '\u00df': 'ss',
-  '\u00c6': 'AE',
-  '\u00e6': 'ae',
-  '\u0152': 'OE',
-  '\u0153': 'oe',
-  '\u00d8': 'O',
-  '\u00f8': 'o',
-};
+// Fill from source keeps Unicode; only the Linux encoder maps it to RDS bytes.
 export function rdsText(text: string, limit: number): string {
-  let result = '';
-  for (const char of text.normalize('NFC')) {
-    const plain = (replacements[char] ?? char).normalize('NFKD').replace(combiningMarks, '');
-    for (const c of plain) {
-      const code = c.codePointAt(0)!;
-      result += code >= 32 && code < 127 && ![36, 94, 96, 126].includes(code) ? c : '?';
-    }
-    if (result.length >= limit) break;
-  }
-  return result.slice(0, limit);
+  return Array.from(text.normalize('NFC'), (char) =>
+    char !== ' ' && /[\p{C}\p{Z}]/u.test(char) ? '?' : char,
+  )
+    .slice(0, limit)
+    .join('');
 }
 export function checkText(text: string, max: number, required = false): string {
   if (

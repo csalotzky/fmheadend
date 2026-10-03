@@ -340,7 +340,7 @@ metadata selection and CR/PAD setting; the UI implements no encoding/scheduling.
 Runtime RadioText override and metadata-derived RadioText may be displayed where useful, but the persistent fallback RT should remain clearly distinguishable from runtime content.
 
 Manual Fill from source sets PI to FF00 + physical TX ID, replaces PS with one
-static entry, and sets fallback RT. It uses the current conservative RDS conversion,
+static entry, and sets fallback RT. It preserves NFC-normalized Unicode (encoding occurs only in Linux),
 with 8/64-character limits, and confirms before replacing a carousel. Nothing follows
 source changes automatically; values remain unsaved until Save. There is no Station entity.
 

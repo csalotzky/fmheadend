@@ -38,12 +38,18 @@ describe('Modulator value conversions', () => {
     for (const value of ['10000', '-1', 'xyz']) expect(() => parseHex(value, 4)).toThrow();
     expect(() => parseHex('100', 2)).toThrow();
   });
-  it('uses the conservative RDS conversion policy', () => {
-    expect(rdsText('Caf\u00e9 \u2014 Stra\u00dfe \u00c6\u00d8', 64)).toBe('Cafe - Strasse AEO');
-    expect(rdsText('$^`~\u{1f600}', 64)).toBe('?????');
+  it('keeps Unicode in Fill from source and leaves encoding to Linux', () => {
+    const name = 'Caf\u00e9 \u2014 Stra\u00dfe \u00c6\u00d8';
+    expect(rdsText(name, 64)).toBe(name);
+    expect(rdsText('$^`~\u{1f600}', 64)).toBe('$^`~\u{1f600}');
+    expect(rdsText('Cafe\u0301', 8)).toBe('Caf\u00e9');
+    expect(rdsText('\u00e1\u00e9\u00ed\u00f3\u00f6\u0151\u00fa\u00fc\u0171', 8)).toBe(
+      '\u00e1\u00e9\u00ed\u00f3\u00f6\u0151\u00fa\u00fc',
+    );
     expect(rdsText('Klubradio Budapest Livestream', 8)).toBe('Klubradi');
     expect(rdsText('x'.repeat(100), 64)).toHaveLength(64);
-    expect(rdsText('A\u034fB\ufe0f', 64)).toBe('A?B?');
+    expect(rdsText('A\nB\u001b\u00a0', 64)).toBe('A?B??');
+    expect(rdsText('x'.repeat(7) + '\u{1f600}tail', 8)).toBe('x'.repeat(7) + '\u{1f600}');
   });
   it('has exactly 30 European programme types', () => {
     expect(ptyLabels).toHaveLength(30);
@@ -586,11 +592,11 @@ describe('Modulator configuration', () => {
     await f.whenStable();
     const c = f.componentInstance;
     const data = sample();
-    data.sources[0].name = 'Klubradio Budapest Livestream';
+    data.sources[0].name = 'Caf\u00e9 R\u00e1di\u00f3 Budapest';
     shared.data.set(data);
     c.fillFromSource();
     expect(c.form.controls.pi.value).toBe(`FF0${id}`);
-    expect(c.ps.getRawValue()).toEqual([{ text: 'Klubradi', duration_s: '5' }]);
+    expect(c.ps.getRawValue()).toEqual([{ text: 'Caf\u00e9 R\u00e1d', duration_s: '5' }]);
     expect(c.form.controls.rds_rt.value).toBe(data.sources[0].name);
     const before = c.form.getRawValue();
     shared.data.set({ ...data, sources: [{ ...data.sources[0], name: 'Changed' }] });

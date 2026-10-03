@@ -72,15 +72,16 @@ Fallback RT and Use source metadata for RadioText are persistent modulator field
 Override > enabled metadata selection > fallback runtime precedence is unchanged.
 
 Fill from source is a manual unsaved convenience: PI = FF00 + TX ID; static PS is the
-first eight converted characters of the selected source name; fallback RT is the first
+first eight NFC-normalized Unicode code points of the selected source name; fallback RT is the first
 64. Setting PS from the source occurs through this action, not a second automatic path.
 It confirms before replacing a multi-entry carousel and never changes metadata selection.
 No source/name/metadata refresh automatically updates these fields.
 
-`values.ts` mirrors the current conservative encoder: NFC, specified punctuation/ligature
-transliterations, NFKD, nonzero-combining-class removal, safe ASCII subset, '?' replacement.
-The combining-class table mirrors the target Python Unicode data (including class-zero
-marks, which must not be silently discarded). This is not an EBU character-set redesign.
+`values.ts` preserves Unicode for Fill from source instead of mirroring the RDS
+encoder. It NFC-normalizes and limits code points, replacing controls/non-space
+separators with `?` so the draft passes the existing printable-text validation.
+Supported accents are not erased. Linux alone applies the basic RDS mapping and
+encoded-byte limits; see [character policy](milestone5.md#character-policy).
 
 ## Validation and smoke commands
 

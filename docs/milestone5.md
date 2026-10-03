@@ -70,17 +70,41 @@ wire representation; character order inside a word is high-byte first.
 
 ## Character policy
 
-`rds/characters.py` implements a deliberately conservative subset of the RDS basic
-character table. It accepts ASCII printable positions 0x20..0x7E except 0x24, 0x5E,
-0x60 and 0x7E, whose RDS glyphs differ. Unsupported characters become `?` (0x3F).
-This includes raw controls, emoji and unsupported scripts; UTF-8 bytes never reach
-an information group.
+`rds/characters.py` maps the complete printable **basic RDS** repertoire from
+IEC 62106-4:2018 section 5.2, Table 4, using Table 5's numeric UCS-2 identities.
+References: [Table 4 PDF, printed page 13](https://cdn.standards.iteh.ai/samples/100538/ee04406257214dc9bd918fa69ca0f9ef/IEC-62106-4-2018.pdf)
+and [Table 5, printed pages 14-20, distributor's standards text](https://www.theiteh.com/catalog/standards/iec/a9170081-7d7e-4d69-b316-231429d024c0/iec-62106-4-2018).
+The supplied PDF preview stops at Table 4; Table 5 was checked separately.
+Columns in Table 4 are the high nibble and rows the low nibble. All 222 printable
+entries are independently checked against Table 5 numeric vectors in
+`test_rds_characters.py`; 0x7F and 0xFF are unassigned, not printable entries.
+This is neither Latin-1 nor the revised DAB EBU Latin table.
 
-Input is NFC normalized, then NFKD transliterated with combining marks removed.
-Explicit mappings cover curly quotes, long dashes, sharp-s to ss, AE/OE ligatures
-and stroked O. Conversion occurs before the byte-length limit: an expansion can
-be truncated. The original persistent Unicode text is preserved. This policy is
-isolated so a fuller RDS character map can be added without changing group scheduling.
+Table 5 disambiguates similar-looking glyphs: 0x24 is U+00A4 currency sign,
+0x5E U+2015 horizontal bar, 0x60 U+2016 double vertical line (not U+2551),
+0x7E U+203E overline (not U+00AF). Dollar is 0xAB. At 0xCE the numeric identity
+is U+00D0 capital ETH, not U+0110 D with stroke. Numeric identities also resolve
+misleading glyph extraction/descriptions at 0xA5 (U+011B), 0xD3 (U+00CB), and
+0xEB (U+0106). No alternate glyph aliases are silently added.
+
+Input is NFC normalized at the encoder boundary and **direct mapping is tried
+first**, preserving supported accents, ligatures, symbols and fractions. Only
+unsupported characters use fallback: curly quotes become straight quotes,
+en/em dashes become hyphen, ellipsis becomes three dots, stroked L becomes L/l,
+and capital sharp S becomes SS. Then NFKD decomposition removes nonzero-class
+combining marks and maps remaining characters through the same RDS table;
+unmappable characters (or an empty fallback) become `?` (0x3F).
+Uppercase Hungarian double-acutes U+0150/U+0170 have no entries and fall back to
+O/U; lowercase U+0151/U+0171 directly encode as 0xA7/0xB7. Unsupported emoji,
+scripts and user controls become question marks, never control/repertoire
+switch sequences. Only the RT terminator below deliberately emits CR.
+
+Fallback expansion occurs before final byte truncation. Original Unicode stays
+in configuration/API/database/metadata and the Dashboard; no saved values are
+rewritten. Static/dynamic PS and all RT origins use this one encoding boundary.
+Text A/B still compares final encoded RT bytes: canonical equivalents do not
+change A/B, but different transmitted accents do. Software vectors and mocked
+FIFO checks do not establish physical receiver font/character acceptance.
 
 PS is truncated to eight encoded characters and space padded to exactly eight.
 CR mode reserves one byte for 0x0D: up to 63 encoded text characters followed by

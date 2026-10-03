@@ -80,9 +80,9 @@ def test_ecc_nullable_and_boundaries():
 
 def test_character_policy_and_padding():
     assert ps_bytes('FM') == b'FM      '
-    assert ps_bytes('Caf\u00e9') == b'Cafe    '
-    assert convert('\u0150r\u00fclt \u00df\u2014\U0001f600',64) == b'Orult ss-?'
-    assert convert('$^`~\n',64) == b'?????'
+    assert ps_bytes('Caf\u00e9') == b'Caf\x82    '
+    assert convert('\u0150r\u00fclt \u00df\u2014\U0001f600',64) == b'Or\x99lt \x8d-?'
+    assert convert('$^`~\n',64) == b'\xab????'
     assert convert('Cafe\u0301',64) == convert('Caf\u00e9',64)
     assert rt_bytes('Hi') == b'Hi\r '
     assert rt_bytes('ABCD') == b'ABCD\r   '
@@ -583,3 +583,52 @@ def test_rt_options_persist_through_api_and_default_existing_records(tmp_path):
     assert db.get('modulators',0).rds_rt_termination=='PAD'
     db.close()
     assert ModulatorConfig.model_validate({'rds_rt':'existing text'}).rds_rt_enabled
+
+
+def test_unicode_selected_rt_reaches_fifo_without_mutating_sources_or_config(rig):
+    r = rig
+    c = r.db.get('modulators', 0)
+    c.rds_rt = '\u00e9\u00f6\u0151\u0171'
+    r.db.save('modulators', c, 0)
+    metadata = '\u0151\u0171\u00c1\u00c9'
+    r.sources.status = Mock(return_value=SimpleNamespace(stream_title=metadata))
+    r.refill.tick()
+    groups = [g for channel, g in r.rp.rds_history
+              if channel == 0 and g[1] >> 12 == 2 and g[1] & 15 == 0]
+    assert groups[0][2:] == (0xa7b7, 0xc0c2)
+    assert r.rt.effective(0).text == metadata
+    r.rt.set(0, RtOverride(text='\u00f6\u00fc\u00d6\u00dc', ttl_s=1))
+    r.rp.rds_history.clear()  # Bounded mock history: inspect only this update.
+    r.clock.advance(.2); r.refill.tick()
+    groups = [g for channel, g in r.rp.rds_history
+              if channel == 0 and g[1] >> 12 == 2 and g[1] & 15 == 0]
+    assert groups[0][2:] == (0x9799, 0xd7d9)
+    assert r.refill.channels[0].scheduler.text_ab == 1
+    r.sources.status.return_value.stream_title = None
+    r.rp.rds_history.clear()  # Bounded mock history: inspect only this update.
+    r.clock.advance(1); r.refill.tick()
+    groups = [g for channel, g in r.rp.rds_history
+              if channel == 0 and g[1] >> 12 == 2 and g[1] & 15 == 0]
+    assert groups[0][2:] == (0x8297, 0xa7b7)
+    assert r.refill.channels[0].scheduler.text_ab == 0
+    assert r.db.get('modulators', 0).rds_rt == c.rds_rt
+
+
+def test_api_and_database_keep_original_unicode(tmp_path):
+    path = tmp_path / 'unicode.db'
+    text = 'Cafe\u0301 \u0151\u0171 \U0001f600'
+    ps = '\u00e1\u00e9\u0151\u0171'
+    with TestClient(create_app(Settings(path))) as api:
+        saved = api.patch('/api/v1/modulators/0', json={
+            'rds_rt': text, 'rds_ps': [{'text': ps, 'duration_s': 5}]})
+        assert saved.status_code == 200
+        assert saved.json()['rds_rt'] == text
+        assert saved.json()['rds_ps'][0]['text'] == ps
+        assert api.put('/api/v1/modulators/0/rds/rt', json={'text': text}).json()['text'] == text
+        assert api.get('/api/v1/status').json()['modulators'][0]['rds_rt_effective'] == text
+    db = Database(path)
+    try:
+        assert db.get('modulators', 0).rds_rt == text
+        assert db.get('modulators', 0).rds_ps[0].text == ps
+    finally:
+        db.close()
