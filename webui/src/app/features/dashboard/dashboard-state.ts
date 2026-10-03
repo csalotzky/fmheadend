@@ -93,6 +93,10 @@ export class DashboardState {
   readonly updated = signal<Date | null>(null);
   readonly busy = signal<number | 'start-all' | 'stop-all' | null>(null);
   readonly notice = signal('');
+  readonly bulkPendingIds = signal<number[]>([]);
+  isPending(id: number) {
+    return this.busy() === id || this.bulkPendingIds().includes(id);
+  }
   readonly pendingAction = signal<'start' | 'stop' | null>(null);
   readonly commandStates = signal<Record<number, 'ON' | 'OFF'>>({});
   readonly actionFeedback = signal<Record<number, string>>({});
@@ -104,6 +108,7 @@ export class DashboardState {
       deadline: number;
       expired: boolean;
       messageGeneration: number;
+      commandConfirmed: boolean;
     }
   >();
   private snapshotGeneration = 0;
@@ -150,6 +155,7 @@ export class DashboardState {
     this.commandStates.set({});
     this.actionFeedback.set({});
     this.pendingAction.set(null);
+    this.bulkPendingIds.set([]);
     this.busy.set(null);
   }
   ngOnDestroy() {
@@ -206,7 +212,9 @@ export class DashboardState {
         if (c.messageGeneration === this.messageGeneration)
           this.actionFeedback.update((v) => ({
             ...v,
-            [id]: `${c.state} command confirmed; RP confirmation delayed.`,
+            [id]: c.commandConfirmed
+              ? `${c.state} command confirmed; RP confirmation delayed.`
+              : 'Outcome unknown; RP confirmation delayed.',
           }));
       }
     }
@@ -261,25 +269,9 @@ export class DashboardState {
       );
       if (this.closed) return;
       if (result.id !== id) throw new Error('Unexpected action target');
-      // Only tx_state is a command result. Do not copy RP readbacks or source state.
-      if (result.tx_state === 'ON' || result.tx_state === 'OFF') {
-        const receivedAt = Date.now();
-        this.confirmations.set(id, {
-          state: result.tx_state,
-          receivedAt,
-          deadline: receivedAt + 10000,
-          expired: false,
-          messageGeneration: generation,
-        });
-        this.commandStates.update((v) => ({ ...v, [id]: result.tx_state as 'ON' | 'OFF' }));
-      }
-      if (generation === this.messageGeneration) {
+      this.acceptResult(result, generation);
+      if (generation === this.messageGeneration)
         this.notice.set(`TX ${id}: command returned ${result.tx_state}. Refreshing observations.`);
-        this.actionFeedback.update((v) => ({
-          ...v,
-          [id]: `Command returned ${result.tx_state}; awaiting RP observation.`,
-        }));
-      }
     } catch (error) {
       if (!this.closed && generation === this.messageGeneration) {
         this.failures.set([{ id, message: errorMessage(error) }]);
@@ -296,50 +288,128 @@ export class DashboardState {
       await this.refreshAfterMutation();
     }
   }
+  private trackConfirmation(
+    id: number,
+    state: 'ON' | 'OFF',
+    generation: number,
+    commandConfirmed: boolean,
+  ) {
+    const receivedAt = Date.now();
+    this.confirmations.set(id, {
+      state,
+      receivedAt,
+      deadline: receivedAt + 10000,
+      expired: false,
+      messageGeneration: generation,
+      commandConfirmed,
+    });
+    if (commandConfirmed) this.commandStates.update((v) => ({ ...v, [id]: state }));
+  }
+  private acceptResult(result: ModulatorStatus, generation: number) {
+    // Only tx_state is command-confirmed; never copy RP readbacks or source state.
+    if (result.tx_state === 'ON' || result.tx_state === 'OFF')
+      this.trackConfirmation(result.id, result.tx_state, generation, true);
+    if (generation === this.messageGeneration)
+      this.actionFeedback.update((v) => ({
+        ...v,
+        [result.id]: `Command returned ${result.tx_state}; awaiting RP observation.`,
+      }));
+  }
+  private unconfirmedResult(
+    id: number,
+    action: 'start' | 'stop',
+    message: string,
+    generation: number,
+  ) {
+    this.trackConfirmation(id, action === 'start' ? 'ON' : 'OFF', generation, false);
+    if (generation === this.messageGeneration)
+      this.actionFeedback.update((v) => ({
+        ...v,
+        [id]: `${message} Outcome unconfirmed; reconciling status.`,
+      }));
+  }
   async all(action: 'start' | 'stop') {
     if (this.closed || this.busy() !== null) return;
     const generation = this.messageGeneration;
+    // Match the backend's skip rules; dependency validation remains backend-owned.
+    const eligible = this.channels().filter(
+      (c) =>
+        action === 'stop' ||
+        (c.config?.enabled &&
+          c.config.frequency_khz != null &&
+          (c.config.audio_mode === 'ANALOG' || c.config.input_source_id != null)),
+    );
+    const pending = eligible.filter(
+      (c) =>
+        action === 'start' ||
+        this.stale() ||
+        !c.confirmedOff ||
+        this.data()?.status.system.rp_observation_stale !== false ||
+        this.confirmations.has(c.id),
+    );
     this.busy.set(action === 'start' ? 'start-all' : 'stop-all');
+    this.pendingAction.set(action);
+    this.bulkPendingIds.set(pending.map((c) => c.id));
     this.confirmations.clear();
     this.commandStates.set({});
-    this.actionFeedback.set({});
+    this.actionFeedback.set(
+      Object.fromEntries(
+        pending.map((c) => [c.id, action === 'start' ? 'Starting...' : 'Stopping...']),
+      ),
+    );
     this.failures.set([]);
     this.notice.set(`${action.toUpperCase()} ALL pending`);
-    const eligible = this.channels().filter(
-      (c) => action === 'stop' || (c.config?.enabled && c.canStart),
-    );
     const failed: { id: number; message: string }[] = [];
     let accepted = 0;
     try {
-      await this.inFlight;
-      if (this.closed) return;
       const results = await firstValueFrom(
         (action === 'start' ? this.api.startAll() : this.api.stopAll()).pipe(
           takeUntil(this.cancelled),
         ),
       );
+      if (this.closed) return;
       for (const c of eligible) {
-        const result = results.find((r) => r.id === c.id);
-        if (!result || 'error' in result)
-          failed.push({
-            id: c.id,
-            message: result && 'message' in result ? result.message : 'No result returned',
-          });
-        else accepted++;
+        const matches = results.filter((r) => r.id === c.id);
+        const result = matches.length === 1 ? matches[0] : undefined;
+        if (
+          !result ||
+          'error' in result ||
+          (result.tx_state !== 'ON' && result.tx_state !== 'OFF')
+        ) {
+          const message = !result
+            ? 'No unique result returned.'
+            : 'error' in result
+              ? result.message
+              : `Command returned ${result.tx_state}.`;
+          failed.push({ id: c.id, message });
+          this.unconfirmedResult(c.id, action, message, generation);
+        } else {
+          accepted++;
+          this.acceptResult(result, generation);
+        }
       }
       if (generation === this.messageGeneration)
         this.notice.set(
-          `${action.toUpperCase()} ALL: ${accepted} accepted, ${failed.length} failed.` +
-            (eligible.length < 8 ? ' Skipped disabled or unconfigured channels.' : ''),
+          `${action.toUpperCase()} ALL: ${accepted} accepted, ${failed.length} failed or unconfirmed.` +
+            (action === 'start' && eligible.length < 8
+              ? ' Skipped disabled or unconfigured channels.'
+              : ''),
         );
     } catch (error) {
-      for (const c of eligible) failed.push({ id: c.id, message: errorMessage(error) });
+      if (this.closed) return;
+      for (const c of eligible) {
+        const message = errorMessage(error);
+        failed.push({ id: c.id, message });
+        this.unconfirmedResult(c.id, action, message, generation);
+      }
       if (generation === this.messageGeneration)
         this.notice.set(`${action.toUpperCase()} ALL failed or outcome unknown.`);
     } finally {
       if (generation === this.messageGeneration) this.failures.set(failed);
-      await this.refreshAfterMutation();
+      this.bulkPendingIds.set([]);
+      this.pendingAction.set(null);
       this.busy.set(null);
+      await this.refreshAfterMutation();
     }
   }
 }

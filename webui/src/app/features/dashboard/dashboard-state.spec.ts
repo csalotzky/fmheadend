@@ -356,4 +356,156 @@ describe('Dashboard API composition and operations', () => {
     expect(state.busy()).toBeNull();
     http.expectNone('/api/v1/status');
   });
+  it('shows START ALL progress only for backend-eligible channels and blocks conflicting commands', async () => {
+    const data = observed(false);
+    data.modulators[1].enabled = true;
+    data.modulators[1].audio_mode = 'ANALOG';
+    data.modulators[1].input_source_id = null;
+    data.modulators[2].enabled = true;
+    data.modulators[2].input_source_id = null;
+    data.modulators[3].enabled = true;
+    data.modulators[3].input_source_id = 999; // Backend attempts validation, not a skip.
+    data.modulators[7].enabled = true; // Missing frequency: skipped.
+    await load(data);
+    const done = state.all('start');
+    expect(state.bulkPendingIds()).toEqual([0, 1, 3]);
+    expect(state.pendingAction()).toBe('start');
+    expect(state.actionFeedback()[1]).toBe('Starting...');
+    expect(state.commandStates()).toEqual({});
+    await state.operate(0, 'stop');
+    await state.all('stop');
+    http.expectNone('/api/v1/modulators/0/stop');
+    http.expectNone('/api/v1/modulators/stop-all');
+    http.expectOne('/api/v1/modulators/start-all').flush([
+      { ...data.status.modulators[0], tx_state: 'ON' },
+      { id: 1, error: 'RP_ERROR', message: 'Enable failed' },
+      // Missing id=3 is unconfirmed, not successful.
+    ]);
+    await settle();
+    expect(state.bulkPendingIds()).toEqual([]);
+    expect(state.busy()).toBeNull();
+    expect(state.commandStates()).toEqual({ 0: 'ON' });
+    expect(state.actionFeedback()[1]).toContain('Enable failed');
+    expect(state.actionFeedback()[3]).toContain('No unique result');
+    expect(state.actionFeedback()[2]).toBeUndefined();
+    expect(state.channels()[1].runtime?.hardware_tx_state).toBe('OFF');
+    respond(data);
+    await done;
+    expect(state.failures().map((v) => v.id)).toEqual([1, 3]);
+  });
+  it('shows STOP ALL progress for active, uncertain or stale channels, not freshly confirmed OFF', async () => {
+    const data = observed(false);
+    data.status.modulators[2].tx_state = 'ERROR';
+    data.status.modulators[3].hardware_tx_state = 'ON';
+    data.status.modulators[4].hardware_tx_state = null;
+    await load(data);
+    let done = state.all('stop');
+    expect(state.bulkPendingIds()).toEqual([0, 2, 3, 4]);
+    expect(state.pendingAction()).toBe('stop');
+    expect(state.isPending(1)).toBe(false);
+    http
+      .expectOne('/api/v1/modulators/stop-all')
+      .flush(data.status.modulators.map((r) => ({ ...r, tx_state: 'OFF' })));
+    await settle();
+    respond(data);
+    await done;
+    state.stale.set(true);
+    done = state.all('stop');
+    expect(state.bulkPendingIds()).toHaveLength(8);
+    http
+      .expectOne('/api/v1/modulators/stop-all')
+      .flush(data.status.modulators.map((r) => ({ ...r, tx_state: 'OFF' })));
+    await settle();
+    respond(data);
+    await done;
+  });
+  it('bulk actions reject pre-action refresh results and share accelerated confirmation polling', async () => {
+    vi.useFakeTimers();
+    state.start();
+    await vi.advanceTimersByTimeAsync(0);
+    const initial = observed(false);
+    initial.modulators[1].enabled = true;
+    respond(initial);
+    await settle();
+    const previous = state.data();
+    const old = state.refresh();
+    const requests = http.match(() => true);
+    const done = state.all('start');
+    http
+      .expectOne('/api/v1/modulators/start-all')
+      .flush(initial.status.modulators.map((r) => ({ ...r, tx_state: 'ON' })));
+    await settle();
+    expect(state.commandStates()).toEqual({ 0: 'ON', 1: 'ON' });
+    expect(state.bulkPendingIds()).toEqual([]);
+    for (const r of requests)
+      r.flush(
+        r.request.url.endsWith('/status')
+          ? initial.status
+          : r.request.url.endsWith('/sources')
+            ? initial.sources
+            : initial.modulators,
+      );
+    await old;
+    await settle();
+    expect(state.data()).toBe(previous);
+    respond(initial);
+    await done;
+    await vi.advanceTimersByTimeAsync(1000);
+    const confirmed = observed(true);
+    respond(confirmed);
+    await settle();
+    expect(state.commandStates()).toEqual({});
+    expect(state.actionFeedback()[0]).toContain('RP observation confirms ON');
+    expect(state.actionFeedback()[1]).toContain('RP observation confirms ON');
+    await vi.advanceTimersByTimeAsync(4999);
+    http.expectNone('/api/v1/status');
+    await vi.advanceTimersByTimeAsync(1);
+    respond(confirmed);
+    await settle();
+  });
+  it('bulk request failure releases progress, never retries and bounds unknown-outcome polling', async () => {
+    vi.useFakeTimers();
+    state.start();
+    await vi.advanceTimersByTimeAsync(0);
+    const lag = observed(false, 100, true);
+    respond(lag);
+    await settle();
+    const done = state.all('stop');
+    http.expectOne('/api/v1/modulators/stop-all').error(new ProgressEvent('network'));
+    await settle();
+    expect(state.busy()).toBeNull();
+    expect(state.bulkPendingIds()).toEqual([]);
+    expect(state.commandStates()).toEqual({});
+    expect(state.actionFeedback()[0]).toContain('Outcome unconfirmed');
+    respond(lag);
+    await done;
+    for (let i = 0; i < 10; i++) {
+      await vi.advanceTimersByTimeAsync(1000);
+      respond(lag);
+      await settle();
+    }
+    expect(state.actionFeedback()[0]).toBe('Outcome unknown; RP confirmation delayed.');
+    http.expectNone('/api/v1/modulators/stop-all');
+    await vi.advanceTimersByTimeAsync(4999);
+    http.expectNone('/api/v1/status');
+    await vi.advanceTimersByTimeAsync(1);
+    const requests = http.match(() => true);
+    expect(requests).toHaveLength(3);
+    state.stop();
+    expect(requests.every((r) => r.cancelled)).toBe(true);
+    await vi.advanceTimersByTimeAsync(20000);
+    http.expectNone('/api/v1/status');
+  });
+  it('teardown cancels a pending bulk command and clears every card without another refresh', async () => {
+    await load();
+    const done = state.all('stop');
+    const request = http.expectOne('/api/v1/modulators/stop-all');
+    state.stop();
+    await done;
+    expect(request.cancelled).toBe(true);
+    expect(state.bulkPendingIds()).toEqual([]);
+    expect(state.pendingAction()).toBeNull();
+    expect(state.actionFeedback()).toEqual({});
+    http.expectNone('/api/v1/status');
+  });
 });

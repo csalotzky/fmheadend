@@ -508,7 +508,14 @@ missing or stale evidence cannot confirm a command. Delayed confirmation is
 reported separately from failure. HTTP failures/timeouts report an unknown or
 failed outcome, release pending controls, and reconcile without retrying the
 command. Teardown cancels polling and requests. Normal polling remains roughly
-five seconds; bulk-control semantics are unchanged.
+five seconds. Bulk actions use the same per-card progress, command-result handling
+and bounded shared confirmation polling. START ALL progress follows the backend's
+desired-enabled/configured eligibility; STOP ALL progress covers active or
+unconfirmed channels. Each result/error is shown on its own card; missing results
+and request failures remain unconfirmed and are never replayed automatically.
+Progress ends with the request, while delayed RP confirmation is separate feedback.
+All conflicting controls are locked during a bulk request. STOP ALL holds and
+persistent desired-state semantics are unchanged.
 
 Dashboard cards show selected effective RadioText (RT) from published Modulator
 status (`rds_rt_effective`): the existing backend selector applies runtime override,

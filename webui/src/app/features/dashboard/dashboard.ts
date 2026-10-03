@@ -21,7 +21,7 @@ import { ChannelCard } from './channel-card';
           "
           [stale]="state.stale()"
           [locked]="state.busy() !== null"
-          [pending]="state.busy() === channel.id"
+          [pending]="state.isPending(channel.id)"
           [pendingAction]="state.pendingAction()"
           [commandState]="state.commandStates()[channel.id]"
           [feedback]="state.actionFeedback()[channel.id] || ''"

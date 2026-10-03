@@ -473,4 +473,34 @@ describe('Operational display', () => {
     f.detectChanges();
     expect(card.querySelector('.channel-control span').textContent).toContain('UNKNOWN');
   });
+  it('renders bulk progress on affected cards and locks all conflicting controls', () => {
+    const state = setup();
+    state.busy.set('start-all');
+    state.pendingAction.set('start');
+    state.bulkPendingIds.set([0, 2]);
+    const f = TestBed.createComponent(Dashboard);
+    f.detectChanges();
+    const cards = f.nativeElement.querySelectorAll('app-channel-card');
+    for (let id = 0; id < 8; id++) {
+      expect(cards[id].querySelector('button').disabled).toBe(true);
+      expect(cards[id].querySelector('.tx-state').textContent.includes('Starting...')).toBe(
+        [0, 2].includes(id),
+      );
+    }
+    state.busy.set('stop-all');
+    state.pendingAction.set('stop');
+    state.bulkPendingIds.set([0]);
+    f.detectChanges();
+    expect(cards[0].querySelector('.tx-state').textContent).toContain('Stopping...');
+    expect(cards[2].querySelector('.tx-state').textContent).not.toContain('Stopping...');
+    state.busy.set(null);
+    state.pendingAction.set(null);
+    state.bulkPendingIds.set([]);
+    state.commandStates.set({ 0: 'OFF' });
+    f.detectChanges();
+    expect(cards[0].querySelector('.tx-state').textContent).toContain('OFF (command)');
+    expect(cards[0].querySelector('.channel-control span').textContent).toContain(
+      'Reported state: ON',
+    );
+  });
 });
