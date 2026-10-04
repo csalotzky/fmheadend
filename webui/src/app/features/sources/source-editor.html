@@ -38,13 +38,16 @@
                   >
                     Browse...
                   </button>
-                  <output
-                    id="source-path-selected"
-                    class="selected-local-path"
+                  <input
+                    id="source-path"
+                    class="local-path-input"
+                    [formControlName]="'path'"
+                    type="text"
+                    required
                     [attr.title]="config.controls['path'].value || null"
-                  >
-                    {{ config.controls['path'].value || 'No path selected' }}
-                  </output>
+                    aria-labelledby="source-path-label"
+                    [attr.aria-describedby]="field.help ? 'source-path-help' : null"
+                  />
                   @if (localMode() === 'folder') {
                     <label class="recursive-toggle">
                       <input
@@ -55,28 +58,7 @@
                       Include subfolders
                     </label>
                   }
-                  <button
-                    type="button"
-                    class="manual-path-toggle"
-                    [attr.aria-expanded]="manualPathEditing()"
-                    aria-controls="manual-server-path"
-                    (click)="toggleManualPathEditing()"
-                  >
-                    {{ manualPathEditing() ? 'Hide manual editing' : 'Edit manually' }}
-                  </button>
                 </div>
-                @if (manualPathEditing()) {
-                  <label class="manual-path-input"
-                    >Manual server path
-                    <input
-                      id="manual-server-path"
-                      [formControlName]="'path'"
-                      type="text"
-                      required
-                      [attr.aria-describedby]="field.help ? 'source-path-help' : null"
-                    />
-                  </label>
-                }
                 @if (field.help) {
                   <small id="source-path-help">{{ field.help }}</small>
                 }
@@ -132,19 +114,6 @@
             }
           }
         </div>
-        <details>
-          <summary>Advanced source options</summary>
-          <label
-            >GStreamer element properties (JSON)<textarea
-              formControlName="gst_options"
-              rows="5"
-              spellcheck="false"
-            ></textarea>
-          </label>
-          <p class="muted">
-            Optional source, queue and resample property objects. Leave blank to use the defaults.
-          </p>
-        </details>
       </section>
       <section class="source-editor-panel" aria-labelledby="audio-processing-heading">
         <h2 id="audio-processing-heading">Audio processing</h2>
@@ -182,6 +151,19 @@
         @if (profileError()) {
           <p class="warning">Audio profiles unavailable: {{ profileError() }}</p>
         }
+        <details>
+          <summary>Advanced source options</summary>
+          <label
+            >GStreamer element properties (JSON)<textarea
+              formControlName="gst_options"
+              rows="5"
+              spellcheck="false"
+            ></textarea>
+          </label>
+          <p class="muted">
+            Optional source, queue and resample property objects. Leave blank to use the defaults.
+          </p>
+        </details>
       </section>
     </fieldset>
     <div class="editor-feedback" aria-live="polite">

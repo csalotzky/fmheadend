@@ -45,40 +45,29 @@ describe('Local media source configuration', () => {
     }
     return f;
   }
-  it('prioritizes Browse while retaining collapsible manual absolute-path editing', () => {
+  it('keeps one editable Server path input beside Browse without manual-edit controls', () => {
     const f = editor(),
       c = f.componentInstance;
-    expect(f.nativeElement.querySelector('#source-path-selected')?.textContent).toContain(
-      'No path selected',
-    );
-    expect(f.nativeElement.querySelector('#manual-server-path')).toBeNull();
     const browse = [...f.nativeElement.querySelectorAll('button')].find(
       (button: HTMLButtonElement) => button.textContent?.trim() === 'Browse...',
     ) as HTMLButtonElement;
     expect(browse.classList.contains('path-browse')).toBe(true);
     const controls = f.nativeElement.querySelector('.local-path-control-group') as HTMLElement;
     expect(controls.firstElementChild).toBe(browse);
-    expect(controls.querySelector('#source-path-selected')).toBeTruthy();
-    let edit = [...f.nativeElement.querySelectorAll('button')].find(
-      (button: HTMLButtonElement) => button.textContent?.trim() === 'Edit manually',
-    ) as HTMLButtonElement;
-    edit.click();
-    f.detectChanges();
-    const manual = f.nativeElement.querySelector('#manual-server-path') as HTMLInputElement;
-    expect(manual.value).toBe('');
-    manual.value = '/custom/media';
-    manual.dispatchEvent(new Event('input'));
+    const path = controls.querySelector('#source-path') as HTMLInputElement;
+    expect(path).toBeTruthy();
+    expect(f.nativeElement.querySelectorAll('.local-path-panel input[type="text"]')).toHaveLength(
+      1,
+    );
+    expect(path.disabled).toBe(false);
+    expect(path.readOnly).toBe(false);
+    expect(f.nativeElement.textContent).not.toContain('Edit manually');
+    expect(f.nativeElement.textContent).not.toContain('Hide manual editing');
+    path.value = '/custom/media';
+    path.dispatchEvent(new Event('input'));
     expect(c.config.controls['path'].value).toBe('/custom/media');
     f.detectChanges();
-    expect(f.nativeElement.querySelector('#source-path-selected')?.getAttribute('title')).toBe(
-      '/custom/media',
-    );
-    edit = [...f.nativeElement.querySelectorAll('button')].find(
-      (button: HTMLButtonElement) => button.textContent?.trim() === 'Hide manual editing',
-    ) as HTMLButtonElement;
-    edit.click();
-    f.detectChanges();
-    expect(f.nativeElement.querySelector('#manual-server-path')).toBeNull();
+    expect(path.title).toBe('/custom/media');
   });
   it('keeps Recursive with Folder path controls and hides it for Playlist mode', () => {
     const f = editor(),
@@ -116,14 +105,14 @@ describe('Local media source configuration', () => {
     expect(c.config.controls['path'].value).toBe('/mnt/music-link//album/../ music');
     expect(c.dirty()).toBe(true);
   });
-  it('renders long selected paths with their complete accessible title', () => {
+  it('renders long editable paths with their complete title', () => {
     const f = editor();
     const path = '/mnt/nas/ZENE/2026/2026 10 October/Some Very Long Directory Name/Favorites';
     f.componentInstance.config.controls['path'].setValue(path);
     f.detectChanges();
-    const selected = f.nativeElement.querySelector('#source-path-selected') as HTMLOutputElement;
-    expect(selected.textContent).toContain(path);
-    expect(selected.title).toBe(path);
+    const input = f.nativeElement.querySelector('#source-path') as HTMLInputElement;
+    expect(input.value).toBe(path);
+    expect(input.title).toBe(path);
   });
   const configs: LocalSourceConfig[] = [
     { mode: 'folder', path: '/mnt/music', order: 'sequential', recursive: false },

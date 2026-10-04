@@ -140,10 +140,11 @@ describe('Sources management', () => {
     expect(source.querySelector('[formControlName="name"]')).toBeTruthy();
     expect(source.querySelector('[formControlName="type"]')).toBeTruthy();
     expect(source.querySelector('.stream-row')).toBeTruthy();
-    expect(source.querySelector('details')?.textContent).toContain('Advanced source options');
+    expect(source.querySelector('details')).toBeNull();
     expect(audio.querySelector('[formControlName="processor_mode"]')).toBeTruthy();
     expect(audio.querySelector('[formControlName="input_gain_db"]')).toBeTruthy();
     expect(audio.querySelector('.stream-row')).toBeNull();
+    expect(audio.querySelector('details')?.textContent).toContain('Advanced source options');
     c.form.controls.processor_mode.setValue('builtin');
     f.detectChanges();
     expect(audio.querySelector('[formControlName="audio_profile_path"]')).toBeTruthy();
