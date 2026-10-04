@@ -419,6 +419,20 @@ describe('Sources management', () => {
     expect(f.nativeElement.textContent).toContain('Studio feed');
     expect(f.nativeElement.querySelector('a.button-link')?.getAttribute('href')).toBe('/sources/1');
   });
+  it('marks each source card with its type for the colour indicator, not its state', () => {
+    const data = sample();
+    const types = ['HTTP', 'UDP', 'RTP', 'ALSA', 'LOCAL', 'PODCAST'] as const;
+    data.sources = types.map((type, i) => ({ ...data.sources[0], id: i + 1, type }));
+    shared.data.set(data);
+    const f = list();
+    for (const i of types.keys())
+      http.expectOne(`/api/v1/sources/${i + 1}/status`).flush({ state: 'RUNNING' });
+    f.detectChanges();
+    const rows = [...f.nativeElement.querySelectorAll('.source-row')] as HTMLElement[];
+    expect(rows.map((row) => row.dataset['sourceType'])).toEqual([...types]);
+    expect(rows.map((row) => row.className).every((name) => name === 'source-row')).toBe(true);
+    for (const type of types) expect(f.nativeElement.textContent).toContain(type);
+  });
   it('shows unavailable runtime on failed status request', () => {
     const f = list();
     http.expectOne('/api/v1/sources/1/status').error(new ProgressEvent('error'));

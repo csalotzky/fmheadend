@@ -14,7 +14,7 @@
   <p>No Sources configured. Add a source to make an input available to the transmitters.</p>
 }
 @for (source of sources(); track source.id) {
-  <section class="source-row" [attr.aria-label]="source.name">
+  <section class="source-row" [attr.data-source-type]="source.type" [attr.aria-label]="source.name">
     <div class="source-summary">
       <div>
         <a [routerLink]="['/sources', source.id]"

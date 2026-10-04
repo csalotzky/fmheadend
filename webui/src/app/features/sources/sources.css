@@ -9,8 +9,28 @@ a {
 .source-row {
   background: var(--surface);
   border: 1px solid var(--border);
+  border-left: 5px solid var(--source-type-color, var(--border));
   padding: 16px;
   margin-bottom: 8px;
+}
+/* Type colors avoid the green, amber and red used for runtime state. */
+.source-row[data-source-type='HTTP'] {
+  --source-type-color: #6f9fd8;
+}
+.source-row[data-source-type='UDP'] {
+  --source-type-color: #8f84d9;
+}
+.source-row[data-source-type='RTP'] {
+  --source-type-color: #cf7fae;
+}
+.source-row[data-source-type='ALSA'] {
+  --source-type-color: #5bb7c7;
+}
+.source-row[data-source-type='LOCAL'] {
+  --source-type-color: #a89a86;
+}
+.source-row[data-source-type='PODCAST'] {
+  --source-type-color: #c98a6b;
 }
 .source-summary {
   display: grid;
