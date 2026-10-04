@@ -32,7 +32,6 @@ export const fields: Record<SourceType, Field[]> = {
       key: 'path',
       label: 'Server path',
       required: true,
-      help: 'Absolute path on the FMHeadend host. Storage may be offline when saving.',
     },
     {
       key: 'order',
