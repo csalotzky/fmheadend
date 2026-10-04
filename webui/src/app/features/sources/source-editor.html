@@ -17,7 +17,7 @@
           <label
             >Source type<select formControlName="type" (change)="changeType()">
               @for (type of types; track type) {
-                <option [value]="type">{{ type === 'LOCAL' ? 'Local media' : type }}</option>
+                <option [value]="type">{{ typeLabels[type] }}</option>
               }
             </select></label
           >
@@ -221,14 +221,25 @@
             @if (feedsError(feeds); as message) {
               <small class="field-error" role="alert">Error: {{ message }}</small>
             }
-            <button
-              type="button"
-              class="feed-add"
-              (click)="addFeed()"
-              [disabled]="feeds.length >= maxFeeds"
-            >
-              + Add feed
-            </button>
+            <div class="feed-actions">
+              <button
+                type="button"
+                class="feed-add"
+                (click)="addFeed()"
+                [disabled]="feeds.length >= maxFeeds"
+              >
+                + Add feed
+              </button>
+              <button
+                type="button"
+                class="feed-test"
+                (click)="test()"
+                [disabled]="testing() || saving()"
+              >
+                {{ testing() ? 'Testing...' : 'Test feeds' }}
+              </button>
+            </div>
+            <app-source-test-result [result]="result()" [feeds]="testedFeeds()" />
             <div class="fields podcast-settings">
               <label
                 >Schedule mode<select
@@ -361,19 +372,15 @@
       <span class="muted source-action-info"
         >Testing does not save changes or prove RF transmission.</span
       >
-      @if (form.controls.type.value !== 'HTTP') {
+      @if (form.controls.type.value !== 'HTTP' && form.controls.type.value !== 'PODCAST') {
         <button type="button" (click)="test()" [disabled]="testing() || saving()">
-          {{
-            testing()
-              ? 'Testing...'
-              : form.controls.type.value === 'PODCAST'
-                ? 'Test feeds'
-                : 'Test unsaved configuration'
-          }}
+          {{ testing() ? 'Testing...' : 'Test unsaved configuration' }}
         </button>
       }
     </div>
-    <app-source-test-result [result]="result()" [feeds]="testedFeeds()" />
+    @if (form.controls.type.value !== 'PODCAST') {
+      <app-source-test-result [result]="result()" />
+    }
   </form>
   @if (form.controls.type.value === 'LOCAL') {
     <dialog

@@ -336,4 +336,71 @@ describe('Podcast source configuration', () => {
         [...el(f).querySelectorAll('button')].some((b) => b.textContent?.trim() === word),
       ).toBe(false);
   });
+
+  it('humanizes type labels while keeping backend enum values', async () => {
+    const f = await editor();
+    const select: HTMLSelectElement = el(f).querySelector('[formControlName="type"]')!;
+    const labels = Object.fromEntries(
+      [...select.options].map((o) => [o.value, o.textContent?.trim()]),
+    );
+    expect(labels).toEqual({
+      HTTP: 'HTTP',
+      UDP: 'UDP',
+      RTP: 'RTP',
+      ALSA: 'Sound card (ALSA)',
+      LOCAL: 'Local media',
+      PODCAST: 'Podcast',
+    });
+    expect(f.componentInstance.form.controls.type.value).toBe('PODCAST');
+    select.value = 'ALSA';
+    select.dispatchEvent(new Event('change'));
+    f.detectChanges();
+    expect(f.componentInstance.form.controls.type.value).toBe('ALSA');
+    expect(select.selectedOptions[0].textContent?.trim()).toBe('Sound card (ALSA)');
+  });
+
+  it('places the single Test feeds button beside Add feed with results below it', async () => {
+    const f = await editor();
+    type(f, input(f, 'Feed 1 URL'), 'https://one.example/rss');
+    const tests = [...el(f).querySelectorAll('button')].filter((b) =>
+      b.textContent?.includes('Test feeds'),
+    );
+    expect(tests).toHaveLength(1);
+    const actions = el(f).querySelector('.feed-actions')!;
+    expect(actions.firstElementChild).toBe(button(f, '+ Add feed'));
+    expect(actions.lastElementChild).toBe(tests[0]);
+    expect(el(f).querySelector('.source-editor-actions')!.contains(tests[0])).toBe(false);
+    expect(el(f).querySelector('[aria-labelledby="source-heading"]')!.contains(tests[0])).toBe(
+      true,
+    );
+    const done = f.componentInstance.test();
+    await Promise.resolve();
+    http.expectOne('/api/v1/sources/test').flush({
+      ok: true,
+      mocked: false,
+      message: 'Podcast catalog available; audio playback was not tested',
+      podcast: {
+        feeds_attempted: 1,
+        feeds_succeeded: 1,
+        discovered_episodes: 2,
+        eligible_episodes: 2,
+        feeds: [{ feed_id: 'a', error: null, discovered_episodes: 2 }],
+      },
+    });
+    await done;
+    f.detectChanges();
+    const results = el(f).querySelectorAll('app-source-test-result');
+    expect(results).toHaveLength(1);
+    expect(actions.nextElementSibling).toBe(results[0]);
+    expect(results[0].nextElementSibling?.classList.contains('podcast-settings')).toBe(true);
+  });
+
+  it('keeps saved source types unchanged on round trip', async () => {
+    const f = await editor(
+      saved([{ url: 'https://a.example/f.xml', max_age_days: null, max_episodes: null }]),
+    );
+    expect(f.componentInstance.form.controls.type.value).toBe('PODCAST');
+    const body = await save(f, 'PATCH', '/api/v1/sources/1');
+    expect(body.type).toBe('PODCAST');
+  });
 });

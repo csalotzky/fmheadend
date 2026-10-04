@@ -370,3 +370,10 @@ summary {
 .podcast-settings {
   margin-top: 4px;
 }
+
+.feed-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+}

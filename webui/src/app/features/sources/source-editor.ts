@@ -53,6 +53,14 @@ export class SourceEditor implements OnInit {
     ? Number(this.route.snapshot.paramMap.get('id'))
     : undefined;
   readonly types: SourceType[] = ['HTTP', 'UDP', 'RTP', 'ALSA', 'LOCAL', 'PODCAST'];
+  readonly typeLabels: Record<SourceType, string> = {
+    HTTP: 'HTTP',
+    UDP: 'UDP',
+    RTP: 'RTP',
+    ALSA: 'Sound card (ALSA)',
+    LOCAL: 'Local media',
+    PODCAST: 'Podcast',
+  };
   readonly fields = fields;
   readonly maxFeeds = PODCAST_MAX_FEEDS;
   readonly scheduleDescriptions = scheduleDescriptions;
