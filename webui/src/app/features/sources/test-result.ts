@@ -35,9 +35,6 @@ import { feedErrorText, feedStatus } from './podcast-form';
             }
           </ul>
         }
-        @if (r.ok) {
-          <p>{{ r.message }}</p>
-        }
       </div>
     } @else {
       <div role="status" [class.error]="!r.ok">

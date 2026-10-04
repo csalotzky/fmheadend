@@ -266,13 +266,18 @@ describe('Podcast source configuration', () => {
     f.detectChanges();
     const text = el(f).querySelector('app-source-test-result')!.textContent!;
     expect(text).toContain('Feed test successful');
+    expect(text).not.toContain('Podcast catalog available');
+    expect(text).not.toContain('audio playback');
+    expect(el(f).textContent).not.toContain('reachable');
+    expect(el(f).querySelector('#podcast-feeds-label')!.textContent!.trim()).toBe('Feeds');
+    expect(el(f).textContent).not.toMatch(/[\u2013\u2014]/);
     expect(text).toContain('1 / 1');
     expect(text).toContain('47 discovered');
     expect(text).toContain('10');
     expect(text).not.toContain('https://one.example/rss');
     const card = el(f).querySelector('.feed-card')!;
     expect(card.querySelector('.feed-result')!.textContent).toContain(
-      'OK — 47 discovered / 10 eligible',
+      'OK: 47 discovered / 10 eligible',
     );
     expect(card.querySelector('.feed-result')!.textContent).toContain('Telex Podcast');
     expect(card.querySelector('.feed-result')!.textContent).not.toContain('https://');
@@ -319,11 +324,11 @@ describe('Podcast source configuration', () => {
     expect(result.querySelector('.warning')).toBeTruthy();
     expect(result.querySelector('.error')).toBeNull();
     expect(result.textContent).toContain('1 of 2 feeds failed');
-    expect(result.textContent).not.toContain('OK — 180');
+    expect(result.textContent).not.toContain('OK: 180');
     expect(result.textContent).not.toContain('Timed out');
     const cards = el(f).querySelectorAll('.feed-card');
     expect(cards[0].querySelector('.feed-result')!.textContent).toContain(
-      'OK — 180 discovered / 12 eligible',
+      'OK: 180 discovered / 12 eligible',
     );
     expect(cards[0].querySelector('.feed-result .error')).toBeNull();
     expect(cards[1].querySelector('.feed-result')!.textContent).toContain('Feed title unavailable');
@@ -331,7 +336,7 @@ describe('Podcast source configuration', () => {
     expect(cards[0].querySelector('.feed-result')!.textContent).toContain('Good Show');
     expect(cards[1].querySelector('.feed-result')!.textContent).not.toContain('eligible');
     expect(cards[1].querySelector('.feed-result .error')!.textContent).toContain(
-      'Error — Timed out',
+      'Error: Timed out',
     );
     expect(result.textContent).toContain('180 discovered');
   });
@@ -359,7 +364,7 @@ describe('Podcast source configuration', () => {
     expect(result.querySelector('.error')).toBeTruthy();
     expect(result.textContent).toContain('Feed test failed');
     expect(el(f).querySelector('.feed-card .feed-result')!.textContent).toContain(
-      'Error — Not a usable RSS/Atom feed',
+      'Error: Not a usable RSS/Atom feed',
     );
   });
 
@@ -477,11 +482,11 @@ describe('Podcast source configuration', () => {
     f.detectChanges();
     const cards = el(f).querySelectorAll('.feed-card');
     expect(cards[0].querySelector('.feed-result')!.textContent).toContain(
-      'OK — 5 discovered / 0 eligible',
+      'OK: 5 discovered / 0 eligible',
     );
     expect(cards[0].querySelector('.feed-result')!.textContent).toContain('Show A');
     expect(cards[1].querySelector('.feed-result')!.textContent).toContain(
-      'OK — 3 discovered / 3 eligible',
+      'OK: 3 discovered / 3 eligible',
     );
     expect(cards[1].querySelector('.feed-result')!.textContent).toContain('Feed title unavailable');
     expect(cards[0].querySelector('.feed-url')!.nextElementSibling?.className).toContain(
@@ -494,11 +499,11 @@ describe('Podcast source configuration', () => {
     expect(el(f).querySelectorAll('.feed-result')).toHaveLength(1);
     expect(
       el(f).querySelectorAll('.feed-card')[1].querySelector('.feed-result')!.textContent,
-    ).toContain('OK — 3 discovered / 3 eligible');
+    ).toContain('OK: 3 discovered / 3 eligible');
     (el(f).querySelectorAll('.feed-remove')[0] as HTMLButtonElement).click();
     f.detectChanges();
     expect(el(f).querySelector('.feed-result')!.textContent).toContain(
-      'OK — 3 discovered / 3 eligible',
+      'OK: 3 discovered / 3 eligible',
     );
   });
 });

@@ -169,5 +169,5 @@ export function feedStatus(feed: {
   eligible_episodes?: number | null;
 }): string {
   const eligible = feed.eligible_episodes == null ? '' : ` / ${feed.eligible_episodes} eligible`;
-  return `OK — ${feed.discovered_episodes} discovered${eligible}`;
+  return `OK: ${feed.discovered_episodes} discovered${eligible}`;
 }

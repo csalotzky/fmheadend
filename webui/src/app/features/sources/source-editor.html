@@ -116,12 +116,9 @@
         </div>
         @if (form.controls.type.value === 'PODCAST') {
           <div class="podcast-config" [formGroup]="podcast">
-            <div id="podcast-feeds-label" class="podcast-label">
-              Feeds <span aria-hidden="true">*</span>
-            </div>
+            <div id="podcast-feeds-label" class="podcast-label">Feeds</div>
             <p id="podcast-feeds-help" class="muted">
-              Episode age eligibility is set per feed with Max age. Feeds do not need to be
-              reachable to save.
+              Episode age eligibility is set per feed with Max age.
             </p>
             <div
               class="feed-list"

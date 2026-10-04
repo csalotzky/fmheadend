@@ -81,7 +81,7 @@ export class SourceEditor implements OnInit {
       ? {
           label: feed.title || FEED_TITLE_UNAVAILABLE,
           ok: false,
-          status: `Error — ${feedErrorText(feed.error)}`,
+          status: `Error: ${feedErrorText(feed.error)}`,
         }
       : {
           label: feed.title || FEED_TITLE_UNAVAILABLE,
