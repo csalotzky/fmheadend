@@ -793,6 +793,10 @@ Crossfade may be appropriate for music but undesirable for spoken-word podcast c
 
 # Part II — Podcast / RSS Source
 
+The catalog/configuration/scheduler/history core is now implemented; see
+[Podcast core](podcast-core.md) for the exact API, selection policy, schema-1
+history and refresh limits. Playback, metadata publication and UI remain deferred.
+
 ## 18. Podcast Source Goal
 
 A future `podcast` source should allow FMHeadend to behave like an automated spoken-word/talk-radio scheduler.

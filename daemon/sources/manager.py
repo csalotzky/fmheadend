@@ -67,6 +67,8 @@ class SourceManager:
         return error
 
     def _new_pipeline(self, source, **kwargs):
+        if source.type == 'PODCAST':
+            raise DependencyUnavailable('PODCAST_PLAYBACK_NOT_IMPLEMENTED: podcast playback is not implemented')
         if source.processor_mode == 'stereotool':
             raise DependencyUnavailable('Stereo Tool processing is not implemented')
         try:
@@ -223,6 +225,10 @@ class SourceManager:
             return SourceTestResult(ok=False, mocked=getattr(self.pipeline_factory, 'mocked', True),
                                     message='Stereo Tool processing is not implemented')
         self.validate_config(source)
+        if source.type == 'PODCAST':
+            from ..models.configuration import PodcastConfig
+            from .podcast_fetch import probe_podcast
+            return probe_podcast(PodcastConfig.model_validate(source.config))
         if getattr(self.pipeline_factory, "mocked", True):
             return probe(source)
         # Testing an active saved source reads its existing pipeline: no duplicate

@@ -247,7 +247,7 @@ Az `InputSource` egy újrahasznosítható logikai audioforrás. Nem tartalmaz FM
 |---|---|---:|---|
 | `id` | integer | igen | SQLite primary key |
 | `name` | string | igen | Emberi név, pl. `KEXP` |
-| `type` | enum | igen | `HTTP`, `UDP`, `RTP`, `ALSA`, `LOCAL` |
+| `type` | enum | igen | `HTTP`, `UDP`, `RTP`, `ALSA`, `LOCAL`, `PODCAST` |
 | `config` | JSON object | igen | Type-specifikus config |
 | `processor_mode` / `input_gain_db` / `audio_profile_path` | mode / dB / relative path | yes | Source processing selection; see 6.2 |
 | `gst_options` | JSON object | igen | Haladó GStreamer property override-ok; default `{}` |
@@ -269,6 +269,14 @@ The usual source CRUD, references, config replacement PATCH and SQLite schema 1
 apply without migrations or persisted playback state. LOCAL uses one shared
 GstPipeline/playbin3 player, the existing PCM fanout, and transient resolver/queue
 state. See [the core/API/runtime contract](local-media-core.md).
+
+### Podcast configuration and core (playback deferred)
+
+`PODCAST` uses the same source CRUD/config JSON with feed URLs and optional
+age/count limits, SMART/RANDOM scheduling, refresh minutes and cooldown hours.
+Saving does not fetch feeds. Source tests perform bounded RSS/Atom catalog probes,
+without decoding or history mutations. Durable rotation history is separate from
+the transient catalog/bag; see [Podcast core](podcast-core.md) for the exact contract.
 
 ### 6.1.1 `HTTP` config
 
@@ -1656,8 +1664,10 @@ Ajánlott:
 
 ## 16.4 Schema version
 
-The current SQLite format is schema version 1. Tables are sources, modulators and
-system_config, plus sqlite_sequence for Source IDs. Modulators reference Sources
+The current SQLite format is schema version 1. Tables are sources, modulators,
+system_config and podcast_history, plus sqlite_sequence for Source IDs. Podcast
+history persists rotation counts/times, not runtime queues; see [Podcast core](podcast-core.md).
+Modulators reference Sources
 with ON DELETE RESTRICT. Fixed 0..7 IDs, delete/ID-update triggers and startup
 validation remain. No AudioProfile table or Source profile FK remains.
 

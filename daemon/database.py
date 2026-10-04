@@ -1,4 +1,4 @@
-"""Versioned SQLite configuration repository. No runtime state is stored here."""
+"""SQLite configuration and durable podcast play history; no runtime queues."""
 import json
 import sqlite3
 from pathlib import Path
@@ -11,6 +11,7 @@ SCHEMA_STATEMENTS = (
     "CREATE TABLE sources (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT NOT NULL)",
     "CREATE TABLE modulators (id INTEGER PRIMARY KEY CHECK(id BETWEEN 0 AND 7), input_source_id INTEGER REFERENCES sources(id) ON DELETE RESTRICT, data TEXT NOT NULL)",
     "CREATE TABLE system_config (id INTEGER PRIMARY KEY CHECK(id = 1), data TEXT NOT NULL)",
+    "CREATE TABLE podcast_history (source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE, feed_id TEXT NOT NULL, episode_id TEXT NOT NULL, play_count INTEGER NOT NULL DEFAULT 0 CHECK(play_count >= 0), last_played_at TEXT, last_seen_at TEXT NOT NULL, PRIMARY KEY(source_id, feed_id, episode_id))",
     "CREATE TRIGGER fixed_modulator_delete BEFORE DELETE ON modulators BEGIN SELECT RAISE(ABORT, 'Modulators are fixed'); END",
     "CREATE TRIGGER fixed_modulator_id BEFORE UPDATE OF id ON modulators BEGIN SELECT RAISE(ABORT, 'Modulator IDs are fixed'); END",
 )
@@ -50,6 +51,7 @@ class Database:
                 self.connection.execute("INSERT INTO system_config VALUES (1, ?)", (SystemConfig().model_dump_json(),))
                 self.connection.execute("PRAGMA user_version = 1")
         expected_columns = {'sources': ['id', 'data'],
+                            'podcast_history': ['source_id', 'feed_id', 'episode_id', 'play_count', 'last_played_at', 'last_seen_at'],
                             'modulators': ['id', 'input_source_id', 'data'],
                             'system_config': ['id', 'data'], 'sqlite_sequence': ['name', 'seq']}
         tables = {r[0] for r in self.connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}

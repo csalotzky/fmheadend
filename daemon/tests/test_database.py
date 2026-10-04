@@ -25,7 +25,8 @@ def test_fresh_schema_and_model_defaults(tmp_path):
         assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 1
         tables = {row[0] for row in db.connection.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
-        assert tables == set(TABLES) | {"sqlite_sequence"}
+        assert tables == set(TABLES) | {"sqlite_sequence", "podcast_history"}
+        assert db.connection.execute('SELECT * FROM podcast_history').fetchall() == []
         assert db.list("sources") == []
         assert db.get_system() == SystemConfig()
         assert [m.id for m in db.list("modulators")] == list(range(8))

@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, create_model, field_validator, model_validator
 
 from ..sources.local_media import LocalMediaConfig, LocalMediaMode, PlaybackOrder
+from ..sources.podcast import PodcastScheduleMode, valid_http_url
 
 
 def utcnow() -> datetime:
@@ -30,6 +31,7 @@ class SourceType(StrEnum):
     RTP = "RTP"
     ALSA = "ALSA"
     LOCAL = "LOCAL"
+    PODCAST = "PODCAST"
 
 
 class HttpConfig(Model):
@@ -93,9 +95,33 @@ class LocalConfig(Model):
         return LocalMediaConfig(self.mode, Path(self.path), self.recursive, self.order)
 
 
+class PodcastFeedConfig(Model):
+    url: str = Field(min_length=1, max_length=8192, strict=True)
+    max_age_days: int | None = Field(default=None, ge=0, strict=True)
+    max_episodes: int | None = Field(default=None, ge=0, strict=True)
+    _url = field_validator("url")(valid_http_url)
+
+
+class PodcastConfig(Model):
+    # Bound source-test diagnostics/work on this small appliance. No reachability
+    # checks occur at save time; query-bearing URLs keep their original spelling.
+    feeds: list[PodcastFeedConfig] = Field(min_length=1, max_length=32)
+    schedule_mode: PodcastScheduleMode = PodcastScheduleMode.SMART
+    refresh_interval_minutes: int = Field(default=30, gt=0, strict=True)
+    replay_cooldown_hours: int = Field(default=24, ge=0, strict=True)
+
+    @field_validator("feeds")
+    @classmethod
+    def unique_feeds(cls, value):
+        if len({f.url for f in value}) != len(value):
+            raise ValueError("Feed URLs must be unique within a source")
+        return value
+
+
 SOURCE_CONFIGS = {
     SourceType.HTTP: HttpConfig, SourceType.UDP: UdpConfig,
     SourceType.RTP: RtpConfig, SourceType.ALSA: AlsaConfig, SourceType.LOCAL: LocalConfig,
+    SourceType.PODCAST: PodcastConfig,
 }
 
 
@@ -228,7 +254,22 @@ class ErrorResponse(Model):
     message: str
 
 
+class PodcastFeedProbe(Model):
+    feed_id: str
+    error: str | None = None
+    discovered_episodes: int
+
+
+class PodcastProbe(Model):
+    feeds_attempted: int
+    feeds_succeeded: int
+    discovered_episodes: int
+    eligible_episodes: int
+    feeds: list[PodcastFeedProbe]
+
+
 class SourceTestResult(Model):
+    podcast: PodcastProbe | None = None
     input_bitrate_bps: int | None = Field(default=None, gt=0)
     station_name: str | None = None
     ok: bool = True
