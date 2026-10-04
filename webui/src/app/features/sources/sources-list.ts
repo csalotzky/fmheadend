@@ -8,6 +8,7 @@ import { errorMessage } from '../../core/api/headend-api';
 import { SourceApi, SourceRuntime, SourceTest } from './source-api';
 import { TestResult } from './test-result';
 export function endpoint(source: InputSource): string {
+  if (source.type === 'LOCAL') return String(source.config['path'] ?? '\u2014');
   if (source.type === 'ALSA') return String(source.config['device'] ?? '\u2014');
   if (source.type === 'HTTP') {
     try {

@@ -29,7 +29,7 @@ export interface Modulator {
 export interface InputSource {
   id: number;
   name: string;
-  type: 'HTTP' | 'UDP' | 'RTP' | 'ALSA';
+  type: 'HTTP' | 'UDP' | 'RTP' | 'ALSA' | 'LOCAL';
   config: Record<string, unknown>;
   processor_mode: 'bypass' | 'builtin' | 'stereotool';
   input_gain_db: number;

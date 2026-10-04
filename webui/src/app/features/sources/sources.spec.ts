@@ -125,7 +125,7 @@ describe('Sources management', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(false);
     expect(f.componentInstance.canLeave()).toBe(false);
   });
-  it.each<SourceType>(['HTTP', 'UDP', 'RTP', 'ALSA'])('renders only %s fields', (type) => {
+  it.each<SourceType>(['HTTP', 'UDP', 'RTP', 'ALSA', 'LOCAL'])('renders only %s fields', (type) => {
     const f = editor(),
       c = f.componentInstance;
     c.form.controls.type.setValue(type);
@@ -230,6 +230,7 @@ describe('Sources management', () => {
       'UDP',
       'RTP',
       'ALSA',
+      'LOCAL',
     ]);
   });
   it('accepts actual numeric input events', () => {
@@ -427,6 +428,15 @@ describe('Sources management', () => {
     await p;
     if (success) expect(shared.refreshAfterMutation).toHaveBeenCalled();
     else expect(c.errors()[1]).toContain('referenced');
+  });
+  it('shows the stored LOCAL path instead of a network endpoint', () => {
+    expect(
+      endpoint({
+        ...sample().sources[0],
+        type: 'LOCAL',
+        config: { path: '/mnt/music-link//album' },
+      }),
+    ).toBe('/mnt/music-link//album');
   });
   it('redacts URL credentials and query from list summaries', () => {
     const source = sample().sources[0];

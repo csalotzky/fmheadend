@@ -1,10 +1,13 @@
-import { SourceType } from './source-api';
+import { LocalSourceConfig, SourceType } from './source-api';
 export interface Field {
   key: string;
   label: string;
   help?: string;
   required?: boolean;
   numeric?: boolean;
+  checkbox?: boolean;
+  defaultValue?: string | boolean;
+  optionLabels?: Record<string, string>;
   min?: number;
   max?: number;
   options?: string[];
@@ -16,6 +19,31 @@ const network: Field[] = [
   { key: 'multicast_group', label: 'Multicast group (optional)' },
 ];
 export const fields: Record<SourceType, Field[]> = {
+  LOCAL: [
+    {
+      key: 'mode',
+      label: 'Mode',
+      required: true,
+      defaultValue: 'folder',
+      options: ['playlist', 'folder'] satisfies LocalSourceConfig['mode'][],
+      optionLabels: { playlist: 'Playlist', folder: 'Folder' },
+    },
+    {
+      key: 'path',
+      label: 'Server path',
+      required: true,
+      help: 'Absolute path on the FMHeadend host. Storage may be offline when saving.',
+    },
+    {
+      key: 'order',
+      label: 'Playback order',
+      required: true,
+      defaultValue: 'sequential',
+      options: ['sequential', 'random'] satisfies LocalSourceConfig['order'][],
+      optionLabels: { sequential: 'Sequential', random: 'Random' },
+    },
+    { key: 'recursive', label: 'Recursive', checkbox: true, defaultValue: false },
+  ],
   HTTP: [
     { key: 'uri', label: 'Stream URL (HTTP / HTTPS / HLS)', required: true },
     { key: 'buffer_ms', label: 'Buffer (ms)', help: defaultHelp, numeric: true, min: 0 },

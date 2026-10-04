@@ -15,28 +15,36 @@
         <label
           >Source type<select formControlName="type" (change)="changeType()">
             @for (type of types; track type) {
-              <option [value]="type">{{ type }}</option>
+              <option [value]="type">{{ type === 'LOCAL' ? 'Local media' : type }}</option>
             }
           </select></label
         >
       </div>
       <div class="fields" [formGroup]="config">
-        @for (field of fields[form.controls.type.value]; track field.key) {
+        @for (field of visibleFields(); track field.key) {
           <div [class.stream-row]="form.controls.type.value === 'HTTP' && field.key === 'uri'">
             <label
               >{{ field.label }}
               @if (field.required) {
                 <span aria-hidden="true">*</span>
               }
-              @if (field.options) {
-                <select [formControlName]="field.key" [required]="!!field.required">
+              @if (field.checkbox) {
+                <input type="checkbox" [id]="'source-' + field.key" [formControlName]="field.key" />
+              } @else if (field.options) {
+                <select
+                  [id]="'source-' + field.key"
+                  [formControlName]="field.key"
+                  [required]="!!field.required"
+                  (change)="changeConfig(field.key)"
+                >
                   <option value="">Select...</option>
                   @for (option of field.options; track option) {
-                    <option [value]="option">{{ option }}</option>
+                    <option [value]="option">{{ field.optionLabels?.[option] ?? option }}</option>
                   }
                 </select>
               } @else {
                 <input
+                  [id]="'source-' + field.key"
                   [formControlName]="field.key"
                   [type]="field.numeric ? 'number' : 'text'"
                   [required]="!!field.required"

@@ -4,6 +4,12 @@ import { timeout } from 'rxjs';
 import { InputSource } from '../../core/api/models';
 export type SourceType = InputSource['type'];
 export type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
+export interface LocalSourceConfig {
+  mode: 'folder' | 'playlist';
+  path: string;
+  order: 'sequential' | 'random';
+  recursive: boolean;
+}
 export interface SourceDraft {
   name: string;
   type: SourceType;

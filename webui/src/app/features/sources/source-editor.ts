@@ -2,7 +2,15 @@ import { Component, HostListener, OnInit, inject, signal } from '@angular/core';
 import { FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ActivatedRoute, CanDeactivateFn, Router, RouterLink } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
-import { SourceApi, SourceDraft, SourceType, SourceTest, Profile, Json } from './source-api';
+import {
+  SourceApi,
+  SourceDraft,
+  SourceType,
+  SourceTest,
+  Profile,
+  Json,
+  LocalSourceConfig,
+} from './source-api';
 import { fields } from './source-fields';
 import { TestResult } from './test-result';
 import { errorMessage } from '../../core/api/headend-api';
@@ -22,7 +30,7 @@ export class SourceEditor implements OnInit {
   readonly id = this.route.snapshot.paramMap.has('id')
     ? Number(this.route.snapshot.paramMap.get('id'))
     : undefined;
-  readonly types: SourceType[] = ['HTTP', 'UDP', 'RTP', 'ALSA'];
+  readonly types: SourceType[] = ['HTTP', 'UDP', 'RTP', 'ALSA', 'LOCAL'];
   readonly fields = fields;
   readonly profiles = signal<Profile[]>([]);
   readonly profileError = signal('');
@@ -46,7 +54,7 @@ export class SourceEditor implements OnInit {
     audio_profile_path: new FormControl<string | null>(null),
     gst_options: new FormControl('', { nonNullable: true }),
   });
-  config = new FormGroup<Record<string, FormControl<string>>>({});
+  config = new FormGroup<Record<string, FormControl<string | boolean>>>({});
   constructor() {
     this.rebuild('HTTP');
   }
@@ -78,13 +86,30 @@ export class SourceEditor implements OnInit {
     }
   }
   rebuild(type: SourceType, values: Record<string, unknown> = {}) {
-    const controls: Record<string, FormControl<string>> = {};
+    const controls: Record<string, FormControl<string | boolean>> = {};
     for (const f of fields[type])
-      controls[f.key] = new FormControl(values[f.key] == null ? '' : String(values[f.key]), {
-        nonNullable: true,
-        validators: f.required ? [Validators.required, Validators.pattern(/\S/)] : [],
-      });
+      controls[f.key] = new FormControl<string | boolean>(
+        f.checkbox ? values[f.key] === true : String(values[f.key] ?? f.defaultValue ?? ''),
+        {
+          nonNullable: true,
+          validators: f.required ? [Validators.required, Validators.pattern(/\S/)] : [],
+        },
+      );
     this.config = new FormGroup(controls);
+  }
+  visibleFields() {
+    return fields[this.form.controls.type.value].filter(
+      (f) => f.key !== 'recursive' || this.config.controls['mode']?.value === 'folder',
+    );
+  }
+  changeConfig(key: string) {
+    if (
+      this.form.controls.type.value === 'LOCAL' &&
+      key === 'mode' &&
+      this.config.controls['mode'].value === 'playlist'
+    )
+      this.config.controls['recursive'].setValue(false);
+    this.result.set(null);
   }
   changeType() {
     this.rebuild(this.form.controls.type.value);
@@ -142,6 +167,10 @@ export class SourceEditor implements OnInit {
     }
     const config: Record<string, Json> = {};
     for (const f of fields[v.type]) {
+      if (f.checkbox) {
+        config[f.key] = this.config.controls[f.key].value === true;
+        continue;
+      }
       const raw = String(this.config.controls[f.key].value ?? '');
       if (!raw.trim()) continue;
       if (f.numeric) {
@@ -156,6 +185,28 @@ export class SourceEditor implements OnInit {
         }
         config[f.key] = n;
       } else config[f.key] = raw;
+    }
+    if (v.type === 'LOCAL') {
+      const { mode, path, order } = config;
+      if (
+        (mode !== 'folder' && mode !== 'playlist') ||
+        (order !== 'sequential' && order !== 'random')
+      ) {
+        this.error.set('Select a Local media mode and playback order.');
+        return null;
+      }
+      // The appliance host is Linux; never normalize or resolve the saved path.
+      if (typeof path !== 'string' || !path.startsWith('/') || path.includes('\0')) {
+        this.error.set('Enter an absolute path on the FMHeadend host.');
+        return null;
+      }
+      const local: LocalSourceConfig = {
+        mode,
+        path,
+        order,
+        recursive: mode === 'folder' && config['recursive'] === true,
+      };
+      Object.assign(config, local);
     }
     if (v.type === 'HTTP') {
       try {
