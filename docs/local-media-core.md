@@ -2,7 +2,8 @@
 
 Implementation: `daemon/sources/local_media.py`, within the existing sources package.
 Design: [local media and podcast source design](fmheadend_local_media_podcast_design.md).
-No source type, API, schema, database or playback integration is registered yet.
+The existing source model/API now persists `LOCAL` configuration. Playback integration
+is not implemented; no resolver runs during create/update/read.
 
 ## Internal contract
 
@@ -70,3 +71,47 @@ The queue is single-owner state; there are no worker threads, callbacks or locks
 Future integration owns shared-source playback, rescan timing, URI conversion,
 decoder failures, and continuity. Metadata, RDS, RSS/podcasts and frontend work are
 all deferred. No actual media playback or RF acceptance is claimed by these tests.
+
+
+## Persisted source configuration
+
+Use the existing `/api/v1/sources` CRUD endpoints and uppercase source-type convention:
+
+```json
+{
+  "name": "Night rotation",
+  "type": "LOCAL",
+  "config": {
+    "mode": "folder",
+    "path": "/mnt/nas/music",
+    "order": "random",
+    "recursive": true
+  }
+}
+```
+
+`mode` and `path` are required. Modes are `folder` / `playlist`; order is
+`sequential` (default) / `random`. `recursive` is a strict boolean, default false;
+playlist mode stores it unchanged but ignores it. Existing source-level gain,
+profile selection, IDs and shared modulator references are unchanged.
+
+`LocalConfig` is the normal Pydantic type-specific configuration validator. It
+reuses the core enums; `to_core()` is the explicit conversion to `LocalMediaConfig`
+on the eventual playback host. Conversion is not part of persistence. The API
+accepts absolute Linux target paths even when its tests run on Windows, plus native
+absolute host paths. Core path operations remain native to the playback host.
+The saved path string is never canonicalized, resolved, trimmed or converted to a
+URI. Missing/unreadable mounts and symlink targets are not checked. Empty/relative
+paths, NULs, URIs, unsupported enum values and unexpected fields are rejected.
+
+PATCH follows existing source semantics: `config` replaces the entire sub-object,
+so supply mode/path when editing it; missing optional fields take their defaults.
+Mode/type changes remain supported through the ordinary source update operation.
+The existing SQLite JSON source row holds configuration only; no table change,
+version bump or migration is required (schema stays 1).
+
+LOCAL is deliberately non-playable in this phase. Saved/unsaved source probes
+return the existing result shape with `ok=false` and an explicit not-implemented
+message. The source manager rejects pipeline construction before mock success or
+UDP fallthrough can occur. No new runtime status or resolver error is exposed by
+configuration CRUD. Frontend, actual playback and lifecycle integration are deferred.

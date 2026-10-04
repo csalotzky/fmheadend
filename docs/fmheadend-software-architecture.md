@@ -247,7 +247,7 @@ Az `InputSource` egy újrahasznosítható logikai audioforrás. Nem tartalmaz FM
 |---|---|---:|---|
 | `id` | integer | igen | SQLite primary key |
 | `name` | string | igen | Emberi név, pl. `KEXP` |
-| `type` | enum | igen | `HTTP`, `UDP`, `RTP`, `ALSA` |
+| `type` | enum | igen | `HTTP`, `UDP`, `RTP`, `ALSA`, `LOCAL` |
 | `config` | JSON object | igen | Type-specifikus config |
 | `processor_mode` / `input_gain_db` / `audio_profile_path` | mode / dB / relative path | yes | Source processing selection; see 6.2 |
 | `gst_options` | JSON object | igen | Haladó GStreamer property override-ok; default `{}` |
@@ -257,6 +257,17 @@ Csak egyetlen timestamp szükséges. Ez setup-and-forget rendszer, nem audit/CRM
 
 InputSource configuration has no independent enable switch. Pipelines are demand-driven:
 active DIGITAL modulators acquire/share a source; the last consumer releases it.
+
+### Local media configuration (configuration-only phase)
+
+`type: "LOCAL"` uses the existing source `config` JSON object with required
+`mode` (`folder` / `playlist`) and absolute host `path`, plus `order`
+(`sequential` default / `random`) and strict boolean `recursive` (default false).
+Playlist mode preserves but ignores `recursive`. No path availability check or
+resolver runs during save; the original filesystem path string is retained.
+The usual source CRUD, references, config replacement PATCH and SQLite schema 1
+apply without migrations or playback state. LOCAL playback/probing is explicitly
+unimplemented at this phase. See [the core/API contract](local-media-core.md).
 
 ### 6.1.1 `HTTP` config
 

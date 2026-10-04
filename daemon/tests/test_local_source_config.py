@@ -1,0 +1,154 @@
+"""Local configuration/API persistence only; no resolver or media playback."""
+import json
+from unittest.mock import Mock
+
+import pytest
+from fastapi.testclient import TestClient
+
+from fmheadendd.app import create_app
+from fmheadendd.config import Settings
+from fmheadendd.database import Database, SCHEMA_VERSION
+from fmheadendd.errors import DependencyUnavailable
+from fmheadendd.models.configuration import InputSourceConfig, LocalConfig
+from fmheadendd.sources.local_media import LocalMediaMode, PlaybackOrder, FolderResolver, M3uResolver
+from fmheadendd.sources.manager import SourceManager
+
+P = '/api/v1/sources'
+
+
+def body(**values):
+    return dict(name='Local media', type='LOCAL', config=dict(mode='folder', path='/mnt/offline/music') | values)
+
+
+@pytest.fixture
+def api(tmp_path, monkeypatch):
+    # Any accidental save-time resolution or player construction fails the test.
+    monkeypatch.setattr(FolderResolver, 'resolve', Mock(side_effect=AssertionError('folder scan')))
+    monkeypatch.setattr(M3uResolver, 'resolve', Mock(side_effect=AssertionError('playlist read')))
+    monkeypatch.setattr(LocalConfig, 'to_core', Mock(side_effect=AssertionError('premature conversion')))
+    factory = Mock(side_effect=AssertionError('pipeline construction'))
+    factory.mocked = True
+    factory.__name__ = "NoPlaybackFactory"
+    with TestClient(create_app(Settings(tmp_path / 'local.db'), pipeline_factory=factory)) as client:
+        yield client
+    factory.assert_not_called()
+
+
+@pytest.mark.parametrize('mode,path', [('folder', '/mnt/nas/offline'),
+    ('folder', '/media/unplugged/music'), ('playlist', '/srv/missing/night.m3u')])
+@pytest.mark.parametrize('order', ['sequential', 'random'])
+@pytest.mark.parametrize('recursive', [False, True])
+def test_create_read_list_delete_local(api, mode, path, order, recursive):
+    config = dict(mode=mode, path=path, order=order, recursive=recursive)
+    response = api.post(P, json=body(**config))
+    assert response.status_code == 201, response.text
+    saved = response.json()
+    assert saved['type'] == 'LOCAL' and saved['config'] == config
+    assert api.get(P+f"/{saved['id']}").json() == saved
+    assert api.get(P).json() == [saved]
+    assert not api.app.state.services.sources.pipelines
+    assert api.delete(P+f"/{saved['id']}").status_code == 204
+    assert api.get(P).json() == []
+
+
+def test_defaults_path_spelling_and_idle_update(api):
+    path = '/srv/music-link//album/../playlist.m3u'
+    saved = api.post(P, json=body(mode='playlist', path=path)).json()
+    assert saved['config'] == dict(mode='playlist', path=path, order='sequential', recursive=False)
+    sid = saved['id']
+    for config in [dict(mode='folder', path='/media/new', order='random', recursive=True),
+                   dict(mode='playlist', path='/srv/next.m3u8', recursive=True),
+                   dict(mode='folder', path='/mnt/final', order='sequential', recursive=False)]:
+        result = api.patch(P+f'/{sid}', json={'config': config})
+        assert result.status_code == 200, result.text
+        assert result.json()['saved'] and result.json()['applied']
+        expected = dict(order='sequential', recursive=False) | config
+        assert api.get(P+f'/{sid}').json()['config'] == expected
+    # Existing config replacement semantics: a config patch is not a deep merge.
+    assert api.patch(P+f'/{sid}', json={'config': {'order': 'random'}}).status_code == 422
+    assert api.get(P+f'/{sid}').json()['config'] == expected
+
+
+@pytest.mark.parametrize('config', [
+    {}, {'mode': 'folder'}, {'path': '/mnt/music'},
+    {'mode': 'other', 'path': '/mnt/music'},
+    {'mode': 'folder', 'path': ''}, {'mode': 'folder', 'path': 'relative/music'},
+    {'mode': 'folder', 'path': 'file:///mnt/music'},
+    {'mode': 'folder', 'path': 'https://example.org/music'},
+    {'mode': 'folder', 'path': '/mnt/invalid\x00path'},
+    {'mode': 'folder', 'path': 123},
+    {'mode': 'folder', 'path': '/mnt/music', 'order': 'shuffle'},
+    {'mode': 'folder', 'path': '/mnt/music', 'recursive': 'false'},
+    {'mode': 'folder', 'path': '/mnt/music', 'recursive': 1},
+    {'mode': 'folder', 'path': '/mnt/music', 'queue': []},
+    {'mode': 'folder', 'path': '/mnt/music', 'current_track': 'song'},
+])
+def test_invalid_creation_and_update_are_rejected(api, config):
+    saved = api.post(P, json=body()).json()
+    assert api.post(P, json=dict(body(), config=config)).status_code == 422
+    assert api.patch(P+f"/{saved['id']}", json={'config': config}).status_code == 422
+    assert api.get(P+f"/{saved['id']}").json() == saved
+
+
+@pytest.mark.parametrize('mode', ['folder', 'playlist'])
+def test_restart_and_database_reload_preserve_config_only(tmp_path, mode):
+    path = tmp_path / 'restart.db'
+    config = dict(mode=mode, path='/mnt/offline/symlink-name', order='random', recursive=True)
+    with TestClient(create_app(Settings(path))) as api:
+        saved = api.post(P, json=body(**config)).json()
+    db = Database(path)
+    try:
+        assert SCHEMA_VERSION == db.connection.execute('PRAGMA user_version').fetchone()[0] == 1
+        assert db.get('sources', saved['id']).model_dump(mode='json') == saved
+        raw = json.loads(db.connection.execute('SELECT data FROM sources WHERE id=?', (saved['id'],)).fetchone()[0])
+        assert raw['config'] == config
+        assert set(raw) == set(saved) - {'id'}
+    finally:
+        db.close()
+    with TestClient(create_app(Settings(path))) as api:
+        assert api.get(P).json() == [saved]
+        assert not api.app.state.services.sources.pipelines
+
+
+def test_existing_types_mix_and_type_changes_use_normal_api(api):
+    http = dict(name='HTTP', type='HTTP', config={'uri': 'https://example.org/live.m3u8'})
+    old = api.post(P, json=http).json()
+    local = api.post(P, json=body()).json()
+    assert [r['type'] for r in api.get(P).json()] == ['HTTP', 'LOCAL']
+    sid = old['id']
+    result = api.patch(P+f'/{sid}', json={'type': 'LOCAL', 'config': body()['config']})
+    assert result.status_code == 200 and result.json()['type'] == 'LOCAL'
+    result = api.patch(P+f'/{sid}', json={'type': 'HTTP', 'config': http['config']})
+    assert result.status_code == 200 and result.json()['type'] == 'HTTP'
+    # Shared source references remain ordinary foreign keys, with deletion protection.
+    for tx in (0, 2):
+        assert api.patch(f'/api/v1/modulators/{tx}', json={'input_source_id': local['id']}).status_code == 200
+    assert api.delete(P+f"/{local['id']}").status_code == 409
+
+
+def test_core_conversion_reuses_enums_without_filesystem_access(tmp_path):
+    path = str(tmp_path / 'unmounted' / 'symlink')
+    config = LocalConfig(mode='playlist', path=path, recursive=True, order='random')
+    core = config.to_core()
+    assert core.mode is LocalMediaMode.PLAYLIST
+    assert core.order is PlaybackOrder.RANDOM
+    assert str(core.path) == path and core.recursive is True
+    source = InputSourceConfig.model_validate(body(path=path))
+    assert source.config['path'] == path
+
+
+def test_local_probe_explicitly_unimplemented(api):
+    result = api.post(P+'/test', json=body())
+    assert result.status_code == 200 and result.json()['ok'] is False
+    assert 'not implemented' in result.json()['message']
+    saved = api.post(P, json=body()).json()
+    result = api.post(P+f"/{saved['id']}/test")
+    assert result.status_code == 200 and result.json()['ok'] is False
+
+
+def test_local_cannot_fall_through_to_network_pipeline():
+    factory = Mock(side_effect=AssertionError('must not instantiate'))
+    manager = SourceManager(None, pipeline_factory=factory)
+    with pytest.raises(DependencyUnavailable, match='Local media playback is not implemented'):
+        manager._new_pipeline(InputSourceConfig.model_validate(body()))
+    factory.assert_not_called()

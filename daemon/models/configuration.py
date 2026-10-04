@@ -1,9 +1,12 @@
 from datetime import datetime, timezone
 from enum import StrEnum
+from pathlib import Path, PurePosixPath
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, create_model, field_validator, model_validator
+
+from ..sources.local_media import LocalMediaConfig, LocalMediaMode, PlaybackOrder
 
 
 def utcnow() -> datetime:
@@ -26,6 +29,7 @@ class SourceType(StrEnum):
     UDP = "UDP"
     RTP = "RTP"
     ALSA = "ALSA"
+    LOCAL = "LOCAL"
 
 
 class HttpConfig(Model):
@@ -68,9 +72,30 @@ class AlsaConfig(Model):
     channels: int = Field(default=2, ge=1, le=8, strict=True)
 
 
+class LocalConfig(Model):
+    """Persisted local settings; filesystem availability is never save-time validation."""
+    mode: LocalMediaMode
+    path: str = Field(min_length=1, strict=True)
+    order: PlaybackOrder = PlaybackOrder.SEQUENTIAL
+    recursive: bool = Field(default=False, strict=True)
+
+    @field_validator("path")
+    @classmethod
+    def absolute_path(cls, value):
+        # Accept the Linux target's absolute paths during Windows development,
+        # as well as absolute paths native to the current host. Never resolve.
+        if "\x00" in value or not (PurePosixPath(value).is_absolute() or Path(value).is_absolute()):
+            raise ValueError("path must be an absolute host filesystem path, not a URI")
+        return value
+
+    def to_core(self) -> LocalMediaConfig:
+        """Convert on the playback host; not called during validation/persistence."""
+        return LocalMediaConfig(self.mode, Path(self.path), self.recursive, self.order)
+
+
 SOURCE_CONFIGS = {
     SourceType.HTTP: HttpConfig, SourceType.UDP: UdpConfig,
-    SourceType.RTP: RtpConfig, SourceType.ALSA: AlsaConfig,
+    SourceType.RTP: RtpConfig, SourceType.ALSA: AlsaConfig, SourceType.LOCAL: LocalConfig,
 }
 
 
