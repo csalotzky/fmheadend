@@ -19,6 +19,8 @@ const network: Field[] = [
   { key: 'multicast_group', label: 'Multicast group (optional)' },
 ];
 export const fields: Record<SourceType, Field[]> = {
+  // Podcast configuration is a feed list, edited by podcast-form.ts.
+  PODCAST: [],
   LOCAL: [
     {
       key: 'mode',

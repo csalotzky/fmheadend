@@ -330,3 +330,43 @@ summary {
   font-size: 12px;
   overflow-wrap: anywhere;
 }
+
+.podcast-config {
+  display: grid;
+  gap: 8px;
+}
+.podcast-label {
+  font-weight: 600;
+}
+.feed-list {
+  display: grid;
+  gap: 10px;
+}
+.feed-card {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--border, #ccc);
+  border-radius: 6px;
+}
+.feed-limits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+}
+.feed-limits label {
+  flex: 0 1 11rem;
+}
+.feed-remove {
+  margin-left: auto;
+}
+.feed-add {
+  justify-self: start;
+}
+.field-error {
+  color: var(--error, #b00020);
+}
+.podcast-settings {
+  margin-top: 4px;
+}

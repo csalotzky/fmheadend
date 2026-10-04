@@ -9,6 +9,11 @@ import { SourceApi, SourceRuntime, SourceTest } from './source-api';
 import { TestResult } from './test-result';
 export function endpoint(source: InputSource): string {
   if (source.type === 'LOCAL') return String(source.config['path'] ?? '\u2014');
+  if (source.type === 'PODCAST') {
+    const feeds = source.config['feeds'];
+    const count = Array.isArray(feeds) ? feeds.length : 0;
+    return `${count} podcast feed${count === 1 ? '' : 's'}`;
+  }
   if (source.type === 'ALSA') return String(source.config['device'] ?? '\u2014');
   if (source.type === 'HTTP') {
     try {

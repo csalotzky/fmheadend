@@ -265,6 +265,7 @@ describe('Sources management', () => {
       'RTP',
       'ALSA',
       'LOCAL',
+      'PODCAST',
     ]);
   });
   it('accepts actual numeric input events', () => {

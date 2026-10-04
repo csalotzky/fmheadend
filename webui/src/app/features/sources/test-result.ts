@@ -1,37 +1,82 @@
-import { Component, input } from '@angular/core';
+﻿import { Component, input } from '@angular/core';
 import { SourceTest } from './source-api';
+
+const podcastErrors: Record<string, string> = {
+  PODCAST_FETCH_TIMEOUT: 'Timed out',
+  PODCAST_FETCH_FAILED: 'Fetch failed',
+  PODCAST_FEED_INVALID: 'Not a usable RSS/Atom feed',
+  PODCAST_FEED_TOO_LARGE: 'Feed too large',
+  PODCAST_ENCODING_ERROR: 'Unsupported encoding',
+};
+
 @Component({
   selector: 'app-source-test-result',
   template: ` @if (result(); as r) {
-    <div role="status" [class.error]="!r.ok">
-      <strong
-        >{{ r.ok ? 'Test successful' : 'Test failed' }}{{ r.mocked ? ' (mock probe)' : '' }}</strong
+    @if (r.podcast; as p) {
+      <div
+        role="status"
+        [class.error]="podcastLevel(r) === 'error'"
+        [class.warning]="podcastLevel(r) === 'warning'"
       >
-      @if (r.ok && r.station_name) {
-        <p>
-          <strong>Station: {{ r.station_name }}</strong>
-        </p>
-      }
-      <p>{{ r.message }}</p>
-      @if (r.codec) {
-        <span>{{ r.codec }} </span>
-      }
-      @if (r.sample_rate) {
-        <span>{{ r.sample_rate }} Hz </span>
-      }
-      @if (r.channels) {
-        <span>{{ r.channels }} channels </span>
-      }
-      @if (r.ok && bitrate(r.input_bitrate_bps); as rate) {
-        <p>Bitrate: ~{{ rate }} kb/s</p>
-      }
-      @if (r.output_caps) {
-        <p>{{ r.output_caps }}</p>
-      }
-      @if (r.stream_title) {
-        <p>{{ r.stream_title }}</p>
-      }
-    </div>
+        <strong>{{ podcastTitle(r) }}</strong>
+        <dl class="podcast-summary">
+          <dt>Feeds</dt>
+          <dd>{{ p.feeds_succeeded }} / {{ p.feeds_attempted }}</dd>
+          <dt>Episodes</dt>
+          <dd>{{ p.discovered_episodes }} discovered</dd>
+          <dt>Eligible</dt>
+          <dd>{{ p.eligible_episodes }}</dd>
+        </dl>
+        <ul class="podcast-feeds">
+          @for (feed of p.feeds; track $index) {
+            <li>
+              <span class="feed-name" [attr.title]="feedLabel($index)">{{
+                feedLabel($index)
+              }}</span>
+              <span>{{
+                feed.error
+                  ? errorText(feed.error)
+                  : 'OK — ' + feed.discovered_episodes + ' episodes'
+              }}</span>
+            </li>
+          }
+        </ul>
+        @if (r.ok) {
+          <p>{{ r.message }}</p>
+        }
+      </div>
+    } @else {
+      <div role="status" [class.error]="!r.ok">
+        <strong
+          >{{ r.ok ? 'Test successful' : 'Test failed'
+          }}{{ r.mocked ? ' (mock probe)' : '' }}</strong
+        >
+        @if (r.ok && r.station_name) {
+          <p>
+            <strong>Station: {{ r.station_name }}</strong>
+          </p>
+        }
+        <p>{{ r.message }}</p>
+        @if (r.codec) {
+          <span>{{ r.codec }} </span>
+        }
+        @if (r.sample_rate) {
+          <span>{{ r.sample_rate }} Hz </span>
+        }
+        @if (r.channels) {
+          <span>{{ r.channels }} channels </span>
+        }
+        @if (r.ok && bitrate(r.input_bitrate_bps); as rate) {
+          <p>Bitrate: ~{{ rate }} kb/s</p>
+        }
+        @if (r.output_caps) {
+          <p>{{ r.output_caps }}</p>
+        }
+        @if (r.stream_title) {
+          <p>{{ r.stream_title }}</p>
+        }
+      </div>
+    }
   }`,
   styles: `
     :host {
@@ -41,13 +86,57 @@ import { SourceTest } from './source-api';
     p {
       margin: 6px 0;
     }
+    .podcast-summary {
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      gap: 2px 16px;
+      margin: 6px 0;
+    }
+    dd {
+      margin: 0;
+    }
+    .podcast-feeds {
+      list-style: none;
+      margin: 6px 0;
+      padding: 0;
+    }
+    .podcast-feeds li {
+      display: flex;
+      gap: 12px;
+      justify-content: space-between;
+    }
+    .feed-name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
   `,
 })
 export class TestResult {
   readonly result = input<SourceTest | null>(null);
+  readonly feeds = input<string[]>([]);
   bitrate(value: number | null | undefined): number | null {
     return value != null && Number.isFinite(value) && value > 0
       ? Math.max(1, Math.round(value / 1000))
       : null;
+  }
+  feedLabel(index: number): string {
+    return this.feeds()[index] ?? `Feed ${index + 1}`;
+  }
+  errorText(code: string): string {
+    return podcastErrors[code] ?? code;
+  }
+  podcastLevel(r: SourceTest): 'ok' | 'warning' | 'error' {
+    const p = r.podcast;
+    if (!p || !r.ok || p.feeds_succeeded === 0) return 'error';
+    return p.feeds_succeeded < p.feeds_attempted ? 'warning' : 'ok';
+  }
+  podcastTitle(r: SourceTest): string {
+    const p = r.podcast!;
+    const failed = p.feeds_attempted - p.feeds_succeeded;
+    if (p.feeds_succeeded === 0) return 'Feed test failed';
+    if (failed > 0) return `${failed} of ${p.feeds_attempted} feeds failed`;
+    return r.ok ? 'Feed test successful' : 'Feed test found no eligible episodes';
   }
 }

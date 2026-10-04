@@ -22,6 +22,17 @@ import {
   FilesystemLocation,
 } from './source-api';
 import { fields } from './source-fields';
+import {
+  PODCAST_MAX_FEEDS,
+  PodcastForm,
+  ScheduleMode,
+  buildPodcastForm,
+  controlError,
+  feedsError,
+  newFeedGroup,
+  podcastConfig,
+  scheduleDescriptions,
+} from './podcast-form';
 import { TestResult } from './test-result';
 import { errorMessage } from '../../core/api/headend-api';
 import { DashboardState } from '../dashboard/dashboard-state';
@@ -41,8 +52,13 @@ export class SourceEditor implements OnInit {
   readonly id = this.route.snapshot.paramMap.has('id')
     ? Number(this.route.snapshot.paramMap.get('id'))
     : undefined;
-  readonly types: SourceType[] = ['HTTP', 'UDP', 'RTP', 'ALSA', 'LOCAL'];
+  readonly types: SourceType[] = ['HTTP', 'UDP', 'RTP', 'ALSA', 'LOCAL', 'PODCAST'];
   readonly fields = fields;
+  readonly maxFeeds = PODCAST_MAX_FEEDS;
+  readonly scheduleDescriptions = scheduleDescriptions;
+  readonly controlError = controlError;
+  readonly feedsError = feedsError;
+  readonly testedFeeds = signal<string[]>([]);
   readonly profiles = signal<Profile[]>([]);
   readonly profileError = signal('');
   readonly loading = signal(false);
@@ -72,6 +88,23 @@ export class SourceEditor implements OnInit {
     gst_options: new FormControl('', { nonNullable: true }),
   });
   config = new FormGroup<Record<string, FormControl<string | boolean>>>({});
+  podcast: PodcastForm = buildPodcastForm();
+  get feeds() {
+    return this.podcast.controls.feeds;
+  }
+  scheduleMode(): ScheduleMode {
+    return this.podcast.controls.schedule_mode.value;
+  }
+  addFeed() {
+    if (this.feeds.length >= PODCAST_MAX_FEEDS) return;
+    this.feeds.push(newFeedGroup());
+    this.feeds.markAsDirty();
+  }
+  removeFeed(index: number) {
+    if (this.feeds.length <= 1) return;
+    this.feeds.removeAt(index);
+    this.feeds.markAsDirty();
+  }
   constructor() {
     this.rebuild('HTTP');
   }
@@ -113,6 +146,8 @@ export class SourceEditor implements OnInit {
         },
       );
     this.config = new FormGroup(controls);
+    this.podcast = buildPodcastForm(type === 'PODCAST' ? values : {});
+    this.testedFeeds.set([]);
   }
   visibleFields() {
     return fields[this.form.controls.type.value].filter(
@@ -244,7 +279,7 @@ export class SourceEditor implements OnInit {
     this.closeBrowser();
   }
   dirty() {
-    return this.form.dirty || this.config.dirty;
+    return this.form.dirty || this.config.dirty || this.podcast.dirty;
   }
   canLeave() {
     return !this.saving() && (!this.dirty() || window.confirm('Discard unsaved Source changes?'));
@@ -258,6 +293,7 @@ export class SourceEditor implements OnInit {
   draft(forTest = false): SourceDraft | null {
     this.form.markAllAsTouched();
     this.config.markAllAsTouched();
+    this.podcast.markAllAsTouched();
     this.error.set('');
     const blankHttpName =
       forTest && this.form.controls.type.value === 'HTTP' && !this.form.controls.name.value.trim();
@@ -269,7 +305,8 @@ export class SourceEditor implements OnInit {
             ([key, control]) => key === 'name' || control.valid,
           )
         )) ||
-      this.config.invalid
+      this.config.invalid ||
+      (this.form.controls.type.value === 'PODCAST' && this.podcast.invalid)
     ) {
       this.error.set('Complete the required fields.');
       return null;
@@ -326,6 +363,7 @@ export class SourceEditor implements OnInit {
       };
       Object.assign(config, local);
     }
+    if (v.type === 'PODCAST') Object.assign(config, podcastConfig(this.podcast));
     if (v.type === 'HTTP') {
       try {
         const url = new URL(String(config['uri']));
@@ -382,6 +420,7 @@ export class SourceEditor implements OnInit {
       const result = await firstValueFrom(this.api.save(body, this.id));
       this.form.markAsPristine();
       this.config.markAsPristine();
+      this.podcast.markAsPristine();
       await this.shared.refreshAfterMutation();
       this.saving.set(false);
       if (result.applied === false) {
@@ -401,6 +440,9 @@ export class SourceEditor implements OnInit {
     if (!body) return;
     this.testing.set(true);
     this.result.set(null);
+    this.testedFeeds.set(
+      body.type === 'PODCAST' ? (body.config['feeds'] as { url: string }[]).map((f) => f.url) : [],
+    );
     try {
       const result = await firstValueFrom(this.api.test(body));
       this.result.set(result);

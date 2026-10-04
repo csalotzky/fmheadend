@@ -31,7 +31,20 @@ export interface SourceSaveResult extends InputSource {
   applied?: boolean;
   apply_error?: string | null;
 }
+export interface PodcastFeedProbe {
+  feed_id: string;
+  error: string | null;
+  discovered_episodes: number;
+}
+export interface PodcastProbe {
+  feeds_attempted: number;
+  feeds_succeeded: number;
+  discovered_episodes: number;
+  eligible_episodes: number;
+  feeds: PodcastFeedProbe[];
+}
 export interface SourceTest {
+  podcast?: PodcastProbe | null;
   input_bitrate_bps?: number | null;
   station_name?: string | null;
   ok: boolean;

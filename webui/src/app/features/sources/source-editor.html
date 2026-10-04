@@ -114,6 +114,188 @@
             }
           }
         </div>
+        @if (form.controls.type.value === 'PODCAST') {
+          <div class="podcast-config" [formGroup]="podcast">
+            <div id="podcast-feeds-label" class="podcast-label">
+              Feeds <span aria-hidden="true">*</span>
+            </div>
+            <p id="podcast-feeds-help" class="muted">
+              Episode age eligibility is set per feed with Max age. Feeds do not need to be
+              reachable to save.
+            </p>
+            <div
+              class="feed-list"
+              role="group"
+              aria-labelledby="podcast-feeds-label"
+              aria-describedby="podcast-feeds-help"
+              formArrayName="feeds"
+            >
+              @for (feed of feeds.controls; track feed; let i = $index) {
+                <div
+                  class="feed-card"
+                  [formGroupName]="i"
+                  role="group"
+                  [attr.aria-label]="'Feed ' + (i + 1)"
+                >
+                  <label class="feed-url"
+                    >Feed URL
+                    <input
+                      type="text"
+                      formControlName="url"
+                      inputmode="url"
+                      placeholder="https://example.org/feed.xml"
+                      [attr.aria-label]="'Feed ' + (i + 1) + ' URL'"
+                      [attr.aria-invalid]="controlError(feed.controls.url, 'url') ? 'true' : null"
+                      [attr.aria-describedby]="
+                        controlError(feed.controls.url, 'url') ? 'feed-' + i + '-url-error' : null
+                      "
+                    />
+                  </label>
+                  @if (controlError(feed.controls.url, 'url'); as message) {
+                    <small class="field-error" [id]="'feed-' + i + '-url-error'"
+                      >Error: {{ message }}</small
+                    >
+                  }
+                  <div class="feed-limits">
+                    <label
+                      >Max age (days)
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        formControlName="max_age_days"
+                        placeholder="Unlimited"
+                        [attr.aria-label]="'Feed ' + (i + 1) + ' maximum age in days'"
+                        [attr.aria-invalid]="
+                          controlError(feed.controls.max_age_days, 'limit') ? 'true' : null
+                        "
+                        [attr.aria-describedby]="
+                          controlError(feed.controls.max_age_days, 'limit')
+                            ? 'feed-' + i + '-age-error'
+                            : null
+                        "
+                      />
+                    </label>
+                    <label
+                      >Max episodes
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        formControlName="max_episodes"
+                        placeholder="Unlimited"
+                        [attr.aria-label]="'Feed ' + (i + 1) + ' maximum episodes'"
+                        [attr.aria-invalid]="
+                          controlError(feed.controls.max_episodes, 'limit') ? 'true' : null
+                        "
+                        [attr.aria-describedby]="
+                          controlError(feed.controls.max_episodes, 'limit')
+                            ? 'feed-' + i + '-episodes-error'
+                            : null
+                        "
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      class="feed-remove"
+                      (click)="removeFeed(i)"
+                      [disabled]="feeds.length <= 1"
+                      [attr.aria-label]="'Remove feed ' + (i + 1)"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                  @if (controlError(feed.controls.max_age_days, 'limit'); as message) {
+                    <small class="field-error" [id]="'feed-' + i + '-age-error'"
+                      >Error: {{ message }}</small
+                    >
+                  }
+                  @if (controlError(feed.controls.max_episodes, 'limit'); as message) {
+                    <small class="field-error" [id]="'feed-' + i + '-episodes-error'"
+                      >Error: {{ message }}</small
+                    >
+                  }
+                </div>
+              }
+            </div>
+            @if (feedsError(feeds); as message) {
+              <small class="field-error" role="alert">Error: {{ message }}</small>
+            }
+            <button
+              type="button"
+              class="feed-add"
+              (click)="addFeed()"
+              [disabled]="feeds.length >= maxFeeds"
+            >
+              + Add feed
+            </button>
+            <div class="fields podcast-settings">
+              <label
+                >Schedule mode<select
+                  formControlName="schedule_mode"
+                  aria-describedby="podcast-mode-help"
+                >
+                  <option value="RANDOM">Random</option>
+                  <option value="SMART">Smart</option>
+                </select>
+                <small id="podcast-mode-help">{{
+                  scheduleDescriptions[scheduleMode()]
+                }}</small></label
+              >
+              <label
+                >Feed refresh interval (minutes)<input
+                  type="number"
+                  min="1"
+                  step="1"
+                  formControlName="refresh_interval_minutes"
+                  [attr.aria-invalid]="
+                    controlError(podcast.controls.refresh_interval_minutes, 'refresh')
+                      ? 'true'
+                      : null
+                  "
+                  [attr.aria-describedby]="
+                    controlError(podcast.controls.refresh_interval_minutes, 'refresh')
+                      ? 'podcast-refresh-error'
+                      : null
+                  "
+                />
+                @if (
+                  controlError(podcast.controls.refresh_interval_minutes, 'refresh');
+                  as message
+                ) {
+                  <small class="field-error" id="podcast-refresh-error">Error: {{ message }}</small>
+                }
+              </label>
+              <label
+                >Replay cooldown (hours)<input
+                  type="number"
+                  min="0"
+                  step="1"
+                  formControlName="replay_cooldown_hours"
+                  [attr.aria-invalid]="
+                    controlError(podcast.controls.replay_cooldown_hours, 'cooldown') ? 'true' : null
+                  "
+                  [attr.aria-describedby]="
+                    'podcast-cooldown-help' +
+                    (controlError(podcast.controls.replay_cooldown_hours, 'cooldown')
+                      ? ' podcast-cooldown-error'
+                      : '')
+                  "
+                />
+                <small id="podcast-cooldown-help">{{
+                  scheduleMode() === 'SMART'
+                    ? 'Avoids replaying an episode too soon.'
+                    : 'Used by Smart scheduling only; the value is kept.'
+                }}</small>
+                @if (controlError(podcast.controls.replay_cooldown_hours, 'cooldown'); as message) {
+                  <small class="field-error" id="podcast-cooldown-error"
+                    >Error: {{ message }}</small
+                  >
+                }
+              </label>
+            </div>
+          </div>
+        }
       </section>
       <section class="source-editor-panel" aria-labelledby="audio-processing-heading">
         <h2 id="audio-processing-heading">Audio processing</h2>
@@ -181,11 +363,17 @@
       >
       @if (form.controls.type.value !== 'HTTP') {
         <button type="button" (click)="test()" [disabled]="testing() || saving()">
-          {{ testing() ? 'Testing...' : 'Test unsaved configuration' }}
+          {{
+            testing()
+              ? 'Testing...'
+              : form.controls.type.value === 'PODCAST'
+                ? 'Test feeds'
+                : 'Test unsaved configuration'
+          }}
         </button>
       }
     </div>
-    <app-source-test-result [result]="result()" />
+    <app-source-test-result [result]="result()" [feeds]="testedFeeds()" />
   </form>
   @if (form.controls.type.value === 'LOCAL') {
     <dialog
