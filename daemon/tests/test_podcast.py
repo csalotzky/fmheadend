@@ -197,7 +197,9 @@ def test_smart_unplayed_newer_diversity_and_stable_ties():
     c = replace(c, published_at=NOW-timedelta(days=10))
     s = PodcastScheduler()
     assert s.choose_next([c, b, a], {}, NOW) == a
-    assert s.choose_next([a, b, c], {}, NOW) == b  # similarly fresh, other feed
+    assert s.choose_next([a, b, c], {}, NOW) == a  # exact freshness before diversity
+    b = replace(b, published_at=a.published_at)
+    assert s.choose_next([a, b, c], {}, NOW) == b  # equal freshness, other feed
     history = {a.key: EpisodeHistory(1, NOW-timedelta(days=2))}
     assert PodcastScheduler().choose_next([a, c], history, NOW) == c
     assert PodcastScheduler().choose_next([b, a], {}, NOW) == a
@@ -317,13 +319,76 @@ def test_snapshot_is_not_partially_published_during_refresh():
     assert all(f.episodes[0].episode_id != old.feeds[0].episodes[0].episode_id for f in catalog.snapshot().feeds)
 
 
-def test_smart_fresh_programming_can_beat_unplayed_archives_and_undated_work():
+@pytest.mark.parametrize('age_days', [60, 365])
+@pytest.mark.parametrize('other_feed', [False, True])
+def test_smart_old_unplayed_beats_recent_played_without_age_limit(age_days, other_feed):
     a, b = episodes(2)
-    b = replace(b, published_at=NOW-timedelta(days=365))
+    b = replace(b, published_at=NOW-timedelta(days=age_days),
+                feed_id=feed_identity(OTHER) if other_feed else a.feed_id,
+                feed_url=OTHER if other_feed else URL)
+    feeds = [dict(url=URL, max_age_days=None)]
+    if other_feed:
+        feeds.append(dict(url=OTHER, max_age_days=None))
+    catalog_feeds = []
+    for feed in feeds:
+        fid = feed_identity(feed['url'])
+        catalog_feeds.append(PodcastFeed(fid, feed['url'], 'Show', tuple(
+            e for e in (a,b) if e.feed_id == fid)))
+    catalog = CatalogSnapshot(tuple(catalog_feeds))
+    eligible = eligible_episodes(catalog, PodcastConfig(feeds=feeds), NOW)
+    assert set(eligible) == {a, b}
     h = {a.key: EpisodeHistory(1, NOW-timedelta(days=2))}
-    assert PodcastScheduler().choose_next([a, b], h, NOW) == a
-    undated = [replace(e, published_at=None) for e in (a,b)]
-    assert PodcastScheduler().choose_next(undated, h, NOW) == undated[1]
+    assert PodcastScheduler().choose_next(eligible, h, NOW) == b
+
+
+def test_smart_undated_unplayed_beats_dated_played():
+    a, b = episodes(2)
+    b = replace(b, published_at=None)
+    h = {a.key: EpisodeHistory(1, NOW-timedelta(days=2))}
+    assert PodcastScheduler().choose_next([a, b], h, NOW) == b
+
+
+def test_smart_mixed_unplayed_dates_rank_without_excluding_undated():
+    a, b = episodes(2)
+    b = replace(b, published_at=None)
+    s = PodcastScheduler()
+    assert s.choose_next([b, a], {}, NOW) == a
+    # Once the dated item has played (and is outside cooldown), the undated
+    # item wins. No feed or eligibility changes are needed to expose it.
+    h = {a.key: EpisodeHistory(1, NOW-timedelta(days=2))}
+    assert s.choose_next([a, b], h, NOW) == b
+
+
+@pytest.mark.parametrize('dated', [False, True])
+def test_smart_equivalent_inputs_use_identity_tie_break(dated):
+    es = [replace(e, published_at=NOW if dated else None) for e in episodes()]
+    expected = min(es, key=lambda e: e.key)
+    assert PodcastScheduler().choose_next(es, {}, NOW) == expected
+    assert PodcastScheduler().choose_next(reversed(es), {}, NOW) == expected
+
+
+@pytest.mark.parametrize('all_inside', [False, True])
+def test_smart_cooldown_precedes_global_unplayed_preference(all_inside):
+    played, unplayed = episodes(2)
+    unplayed = replace(unplayed, published_at=None)
+    # Deliberately exercise count/time independently: last_played_at controls
+    # cooldown, while play_count controls the subsequent unplayed preference.
+    history = {
+        played.key: EpisodeHistory(1, NOW-timedelta(hours=1 if all_inside else 48)),
+        unplayed.key: EpisodeHistory(0, NOW-timedelta(hours=2)),
+    }
+    assert PodcastScheduler().choose_next([played, unplayed], history, NOW) == (
+        unplayed if all_inside else played)
+
+
+def test_smart_played_diversity_then_freshness_ties():
+    a, b = episodes(2)
+    a = replace(a, published_at=NOW)
+    b = replace(b, feed_id=feed_identity(OTHER), published_at=NOW-timedelta(days=60))
+    history = {e.key: EpisodeHistory(2, NOW-timedelta(days=2)) for e in (a,b)}
+    s = PodcastScheduler()
+    assert s.choose_next([a, b], history, NOW) == a  # freshness breaks equal history
+    assert s.choose_next([a, b], history, NOW) == b  # diversity precedes freshness
 
 
 def test_random_fixed_seed_is_reproducible_and_new_smart_item_visible():

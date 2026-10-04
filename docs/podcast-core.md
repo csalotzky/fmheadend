@@ -106,16 +106,19 @@ makes tests deterministic. No bag state is persisted.
 
 1. Prefer candidates outside cooldown (last play at least the configured duration
    ago, including the exact boundary). If none exist, use all eligible candidates.
-2. When publication dates exist, consider the 30-day publication window ending at
-   the newest candidate. This soft freshness preference prevents years-old unplayed
-   archives from always defeating current programming. If all dates are unknown,
-   use the whole pool. Nothing is removed from catalog/history by this preference.
-3. Within that cohort prefer unplayed episodes. Rank unplayed episodes by newest
-   UTC publication day, different feed from the preceding selection, exact newest
-   timestamp, then stable key. Day grouping permits useful diversity among similarly
-   fresh material without strict round-robin.
-4. Rank played episodes by lower play count, older last-play time, different previous
-   feed, newest publication timestamp, stable key.
+2. If any candidate in that cooldown-filtered pool is unplayed (`play_count=0`),
+   choose only among all its unplayed episodes, across all feeds. Rank by newest
+   known publication timestamp, different feed from the preceding selection, then
+   stable identity. Known dates rank ahead of unknown dates; lacking a date never
+   excludes an episode, and an undated unplayed episode beats any played candidate
+   remaining after cooldown.
+3. If all candidates have played, rank by lower play count, older last-play time,
+   different previous feed, newest publication timestamp, stable key.
+
+`max_age_days` controls age eligibility; SMART introduces no hidden age cutoff.
+Freshness is only a ranking preference. Undated-only pools remain deterministic
+through diversity and stable identity, without invented dates. Cooldown runs before
+the global unplayed preference and relaxes only when every candidate is inside it.
 
 Only the preceding selection is remembered. This policy is deterministic, not a
 statistical score; new unplayed episodes can affect the next choice immediately.
@@ -159,7 +162,7 @@ the existing common source path, RadioText, frontend/episode browsing, Next/Skip
 audio caching and crossfade are all deferred. No current LOCAL, HTTP metadata or
 RDS semantics change.
 
-## Verification
+## Initial core verification
 
 Fixture-based Podcast and schema tests: 88 passed on Windows and in an isolated
 Raspberry Pi Python 3.13.5 directory. Full non-native backend suite: 940 passed,
