@@ -8,183 +8,201 @@
   <p class="error" role="alert">{{ error() }}</p>
 }
 @if (!loading() && !loadFailed()) {
-  <form [formGroup]="form" (ngSubmit)="save()">
+  <form class="source-editor-form" [formGroup]="form" (ngSubmit)="save()">
     <fieldset [disabled]="saving() || testing()">
-      <div class="fields">
-        <label>Name<input formControlName="name" required maxlength="200" /></label>
-        <label
-          >Source type<select formControlName="type" (change)="changeType()">
-            @for (type of types; track type) {
-              <option [value]="type">{{ type === 'LOCAL' ? 'Local media' : type }}</option>
-            }
-          </select></label
-        >
-      </div>
-      <div class="fields" [formGroup]="config">
-        @for (field of visibleFields(); track field.key) {
-          @if (form.controls.type.value === 'LOCAL' && field.key === 'path') {
-            <section class="local-path-panel" aria-labelledby="source-path-label">
-              <div id="source-path-label" class="local-path-label">
-                {{ field.label }} <span aria-hidden="true">*</span>
-              </div>
-              <div class="local-path-actions">
-                <output
-                  id="source-path-selected"
-                  class="selected-local-path"
-                  [attr.title]="config.controls['path'].value || null"
-                >
-                  {{ config.controls['path'].value || 'No path selected' }}
-                </output>
-                <button
-                  type="button"
-                  class="path-browse"
-                  (click)="openBrowser()"
-                  [disabled]="saving() || testing()"
-                >
-                  Browse...
-                </button>
-              </div>
-              @if (localMode() === 'folder') {
-                <label class="recursive-toggle">
-                  <input type="checkbox" id="source-recursive" [formControlName]="'recursive'" />
-                  Include subfolders
-                </label>
+      <section class="source-editor-panel" aria-labelledby="source-heading">
+        <h2 id="source-heading">Source</h2>
+        <div class="fields">
+          <label>Name<input formControlName="name" required maxlength="200" /></label>
+          <label
+            >Source type<select formControlName="type" (change)="changeType()">
+              @for (type of types; track type) {
+                <option [value]="type">{{ type === 'LOCAL' ? 'Local media' : type }}</option>
               }
-              <button
-                type="button"
-                class="manual-path-toggle"
-                [attr.aria-expanded]="manualPathEditing()"
-                aria-controls="manual-server-path"
-                (click)="toggleManualPathEditing()"
-              >
-                {{ manualPathEditing() ? 'Hide manual editing' : 'Edit manually' }}
-              </button>
-              @if (manualPathEditing()) {
-                <label class="manual-path-input"
-                  >Manual server path
-                  <input
-                    id="manual-server-path"
-                    [formControlName]="'path'"
-                    type="text"
-                    required
-                    [attr.aria-describedby]="field.help ? 'source-path-help' : null"
-                  />
-                </label>
-              }
-              @if (field.help) {
-                <small id="source-path-help">{{ field.help }}</small>
-              }
-            </section>
-          } @else if (field.key !== 'recursive') {
-            <div [class.stream-row]="form.controls.type.value === 'HTTP' && field.key === 'uri'">
-              <label
-                >{{ field.label }}
-                @if (field.required) {
-                  <span aria-hidden="true">*</span>
-                }
-                @if (field.checkbox) {
-                  <input
-                    type="checkbox"
-                    [id]="'source-' + field.key"
-                    [formControlName]="field.key"
-                  />
-                } @else if (field.options) {
-                  <select
-                    [id]="'source-' + field.key"
-                    [formControlName]="field.key"
-                    [required]="!!field.required"
-                    (change)="changeConfig(field.key)"
+            </select></label
+          >
+        </div>
+        <div class="fields" [formGroup]="config">
+          @for (field of visibleFields(); track field.key) {
+            @if (form.controls.type.value === 'LOCAL' && field.key === 'path') {
+              <section class="local-path-panel" aria-labelledby="source-path-label">
+                <div id="source-path-label" class="local-path-label">
+                  {{ field.label }} <span aria-hidden="true">*</span>
+                </div>
+                <div class="local-path-control-group">
+                  <button
+                    type="button"
+                    class="path-browse"
+                    (click)="openBrowser()"
+                    [disabled]="saving() || testing()"
                   >
-                    <option value="">Select...</option>
-                    @for (option of field.options; track option) {
-                      <option [value]="option">{{ field.optionLabels?.[option] ?? option }}</option>
-                    }
-                  </select>
-                } @else {
-                  <input
-                    [id]="'source-' + field.key"
-                    [formControlName]="field.key"
-                    [type]="field.numeric ? 'number' : 'text'"
-                    [required]="!!field.required"
-                    [attr.min]="field.min ?? null"
-                    [attr.max]="field.max ?? null"
-                    [attr.step]="field.numeric ? 1 : null"
-                  />
+                    Browse...
+                  </button>
+                  <output
+                    id="source-path-selected"
+                    class="selected-local-path"
+                    [attr.title]="config.controls['path'].value || null"
+                  >
+                    {{ config.controls['path'].value || 'No path selected' }}
+                  </output>
+                  @if (localMode() === 'folder') {
+                    <label class="recursive-toggle">
+                      <input
+                        type="checkbox"
+                        id="source-recursive"
+                        [formControlName]="'recursive'"
+                      />
+                      Include subfolders
+                    </label>
+                  }
+                  <button
+                    type="button"
+                    class="manual-path-toggle"
+                    [attr.aria-expanded]="manualPathEditing()"
+                    aria-controls="manual-server-path"
+                    (click)="toggleManualPathEditing()"
+                  >
+                    {{ manualPathEditing() ? 'Hide manual editing' : 'Edit manually' }}
+                  </button>
+                </div>
+                @if (manualPathEditing()) {
+                  <label class="manual-path-input"
+                    >Manual server path
+                    <input
+                      id="manual-server-path"
+                      [formControlName]="'path'"
+                      type="text"
+                      required
+                      [attr.aria-describedby]="field.help ? 'source-path-help' : null"
+                    />
+                  </label>
                 }
                 @if (field.help) {
-                  <small>{{ field.help }}</small>
+                  <small id="source-path-help">{{ field.help }}</small>
                 }
-              </label>
-              @if (form.controls.type.value === 'HTTP' && field.key === 'uri') {
-                <button type="button" (click)="test()" [disabled]="testing() || saving()">
-                  {{ testing() ? 'Testing...' : 'Test stream' }}
-                </button>
-              }
-            </div>
+              </section>
+            } @else if (field.key !== 'recursive') {
+              <div [class.stream-row]="form.controls.type.value === 'HTTP' && field.key === 'uri'">
+                <label
+                  >{{ field.label }}
+                  @if (field.required) {
+                    <span aria-hidden="true">*</span>
+                  }
+                  @if (field.checkbox) {
+                    <input
+                      type="checkbox"
+                      [id]="'source-' + field.key"
+                      [formControlName]="field.key"
+                    />
+                  } @else if (field.options) {
+                    <select
+                      [id]="'source-' + field.key"
+                      [formControlName]="field.key"
+                      [required]="!!field.required"
+                      (change)="changeConfig(field.key)"
+                    >
+                      <option value="">Select...</option>
+                      @for (option of field.options; track option) {
+                        <option [value]="option">
+                          {{ field.optionLabels?.[option] ?? option }}
+                        </option>
+                      }
+                    </select>
+                  } @else {
+                    <input
+                      [id]="'source-' + field.key"
+                      [formControlName]="field.key"
+                      [type]="field.numeric ? 'number' : 'text'"
+                      [required]="!!field.required"
+                      [attr.min]="field.min ?? null"
+                      [attr.max]="field.max ?? null"
+                      [attr.step]="field.numeric ? 1 : null"
+                    />
+                  }
+                  @if (field.help) {
+                    <small>{{ field.help }}</small>
+                  }
+                </label>
+                @if (form.controls.type.value === 'HTTP' && field.key === 'uri') {
+                  <button type="button" (click)="test()" [disabled]="testing() || saving()">
+                    {{ testing() ? 'Testing...' : 'Test stream' }}
+                  </button>
+                }
+              </div>
+            }
           }
+        </div>
+        <details>
+          <summary>Advanced source options</summary>
+          <label
+            >GStreamer element properties (JSON)<textarea
+              formControlName="gst_options"
+              rows="5"
+              spellcheck="false"
+            ></textarea>
+          </label>
+          <p class="muted">
+            Optional source, queue and resample property objects. Leave blank to use the defaults.
+          </p>
+        </details>
+      </section>
+      <section class="source-editor-panel" aria-labelledby="audio-processing-heading">
+        <h2 id="audio-processing-heading">Audio processing</h2>
+        <div class="fields">
+          <label
+            >Processor<select formControlName="processor_mode" (change)="changeProcessor()">
+              <option value="bypass">Bypass</option>
+              <option value="builtin">Built-in DSP</option>
+              <option value="stereotool" disabled>Stereo Tool (coming soon)</option>
+            </select></label
+          >
+          <label
+            >Source Gain (dB)<input
+              type="number"
+              step="any"
+              max="20"
+              formControlName="input_gain_db"
+          /></label>
+        </div>
+        @if (form.controls.processor_mode.value === 'builtin') {
+          <label
+            >Audio Profile<select formControlName="audio_profile_path">
+              <option [ngValue]="null">Select a profile</option>
+              @for (profile of profiles(); track profile.path) {
+                <option [ngValue]="profile.path">{{ profile.name }}</option>
+              }
+              @if (missingProfile()) {
+                <option [ngValue]="form.controls.audio_profile_path.value">
+                  Current profile (unavailable)
+                </option>
+              }
+            </select></label
+          >
         }
-      </div>
-      <div class="fields">
-        <label
-          >Processor<select formControlName="processor_mode" (change)="changeProcessor()">
-            <option value="bypass">Bypass</option>
-            <option value="builtin">Built-in DSP</option>
-            <option value="stereotool" disabled>Stereo Tool (coming soon)</option>
-          </select></label
-        >
-        <label
-          >Source Gain (dB)<input type="number" step="any" max="20" formControlName="input_gain_db"
-        /></label>
-      </div>
-      @if (form.controls.processor_mode.value === 'builtin') {
-        <label
-          >Audio Profile<select formControlName="audio_profile_path">
-            <option [ngValue]="null">Select a profile</option>
-            @for (profile of profiles(); track profile.path) {
-              <option [ngValue]="profile.path">{{ profile.name }}</option>
-            }
-            @if (missingProfile()) {
-              <option [ngValue]="form.controls.audio_profile_path.value">
-                Current profile (unavailable)
-              </option>
-            }
-          </select></label
-        >
-      }
-      @if (profileError()) {
-        <p class="warning">Audio profiles unavailable: {{ profileError() }}</p>
-      }
-      <details>
-        <summary>Advanced source options</summary>
-        <label
-          >GStreamer element properties (JSON)<textarea
-            formControlName="gst_options"
-            rows="5"
-            spellcheck="false"
-          ></textarea>
-        </label>
-        <p class="muted">
-          Optional source, queue and resample property objects. Leave blank to use the defaults.
-        </p>
-      </details>
+        @if (profileError()) {
+          <p class="warning">Audio profiles unavailable: {{ profileError() }}</p>
+        }
+      </section>
     </fieldset>
     <div class="editor-feedback" aria-live="polite">
       @if (error()) {
         <p class="error" role="alert">{{ error() }}</p>
       }
     </div>
-    <div class="editor-actions">
+    <div class="editor-actions source-editor-actions">
       <button type="submit" [disabled]="saving() || testing()">
         {{ saving() ? 'Saving...' : 'Save' }}
       </button>
       <button type="button" routerLink="/sources" [disabled]="saving() || testing()">Cancel</button>
+      <span class="muted source-action-info"
+        >Testing does not save changes or prove RF transmission.</span
+      >
       @if (form.controls.type.value !== 'HTTP') {
         <button type="button" (click)="test()" [disabled]="testing() || saving()">
           {{ testing() ? 'Testing...' : 'Test unsaved configuration' }}
         </button>
       }
     </div>
-    <p class="muted">Testing does not save changes or prove RF transmission.</p>
     <app-source-test-result [result]="result()" />
   </form>
   @if (form.controls.type.value === 'LOCAL') {

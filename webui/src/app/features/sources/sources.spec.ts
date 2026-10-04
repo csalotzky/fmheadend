@@ -125,6 +125,35 @@ describe('Sources management', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(false);
     expect(f.componentInstance.canLeave()).toBe(false);
   });
+  it('separates Source and Audio processing panels with actions below both', () => {
+    const f = editor(),
+      c = f.componentInstance;
+    c.form.controls.type.setValue('HTTP');
+    c.changeType();
+    f.detectChanges();
+    const panels = f.nativeElement.querySelectorAll('.source-editor-panel');
+    expect(panels).toHaveLength(2);
+    const source = panels[0] as HTMLElement;
+    const audio = panels[1] as HTMLElement;
+    expect(source.querySelector('h2')?.textContent).toContain('Source');
+    expect(audio.querySelector('h2')?.textContent).toContain('Audio processing');
+    expect(source.querySelector('[formControlName="name"]')).toBeTruthy();
+    expect(source.querySelector('[formControlName="type"]')).toBeTruthy();
+    expect(source.querySelector('.stream-row')).toBeTruthy();
+    expect(source.querySelector('details')?.textContent).toContain('Advanced source options');
+    expect(audio.querySelector('[formControlName="processor_mode"]')).toBeTruthy();
+    expect(audio.querySelector('[formControlName="input_gain_db"]')).toBeTruthy();
+    expect(audio.querySelector('.stream-row')).toBeNull();
+    c.form.controls.processor_mode.setValue('builtin');
+    f.detectChanges();
+    expect(audio.querySelector('[formControlName="audio_profile_path"]')).toBeTruthy();
+    const actions = f.nativeElement.querySelector('.source-editor-actions') as HTMLElement;
+    expect(source.contains(actions)).toBe(false);
+    expect(audio.contains(actions)).toBe(false);
+    expect(actions.textContent).toContain(
+      'Testing does not save changes or prove RF transmission.',
+    );
+  });
   it.each<SourceType>(['HTTP', 'UDP', 'RTP', 'ALSA', 'LOCAL'])('renders only %s fields', (type) => {
     const f = editor(),
       c = f.componentInstance;
@@ -170,7 +199,11 @@ describe('Sources management', () => {
     const button = row.querySelector('button')!;
     expect(button.textContent?.trim()).toBe('Test stream');
     expect(button.type).toBe('button');
-    expect(el.querySelector('.editor-actions')?.textContent).not.toContain('Test');
+    expect(
+      [...el.querySelectorAll('.editor-actions button')].some((action) =>
+        action.textContent?.includes('Test'),
+      ),
+    ).toBe(false);
     button.click();
     f.detectChanges();
     expect(button.disabled).toBe(true);

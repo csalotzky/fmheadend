@@ -56,6 +56,9 @@ describe('Local media source configuration', () => {
       (button: HTMLButtonElement) => button.textContent?.trim() === 'Browse...',
     ) as HTMLButtonElement;
     expect(browse.classList.contains('path-browse')).toBe(true);
+    const controls = f.nativeElement.querySelector('.local-path-control-group') as HTMLElement;
+    expect(controls.firstElementChild).toBe(browse);
+    expect(controls.querySelector('#source-path-selected')).toBeTruthy();
     let edit = [...f.nativeElement.querySelectorAll('button')].find(
       (button: HTMLButtonElement) => button.textContent?.trim() === 'Edit manually',
     ) as HTMLButtonElement;
@@ -89,6 +92,7 @@ describe('Local media source configuration', () => {
     c.config.controls['path'].setValue('/mnt/music-link//album/../ music');
     const checkbox: HTMLInputElement = f.nativeElement.querySelector('#source-recursive');
     expect(checkbox.closest('.local-path-panel')).not.toBeNull();
+    expect(checkbox.closest('.local-path-control-group')).not.toBeNull();
     expect(
       (f.nativeElement.querySelector('#source-order') as HTMLElement).closest('.local-path-panel'),
     ).toBeNull();
