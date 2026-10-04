@@ -104,7 +104,9 @@ describe('LOCAL media path picker', () => {
     (rows[0] as HTMLButtonElement).click();
     await browse(fixture, '/mnt', root);
     expect(fixture.nativeElement.textContent).toContain('nas');
-    (fixture.nativeElement.querySelector('.picker-row') as HTMLButtonElement).click();
+    const directory = fixture.nativeElement.querySelector('.picker-row') as HTMLButtonElement;
+    expect(directory.querySelector('svg.picker-entry-icon.folder')).toBeTruthy();
+    directory.click();
     await browse(fixture, '/mnt/nas', { ...music, path: '/mnt/nas' });
     const breadcrumb = [...fixture.nativeElement.querySelectorAll('.breadcrumb')].find(
       (element: HTMLButtonElement) => element.textContent?.trim() === 'mnt',
@@ -136,6 +138,7 @@ describe('LOCAL media path picker', () => {
     const playlist = [...fixture.nativeElement.querySelectorAll('.picker-row')].find(
       (element: HTMLButtonElement) => element.textContent?.includes('favorites.M3U8'),
     ) as HTMLButtonElement;
+    expect(playlist.querySelector('svg.picker-entry-icon.playlist')).toBeTruthy();
     playlist.click();
     fixture.detectChanges();
     expect(playlist.classList.contains('selected')).toBe(true);

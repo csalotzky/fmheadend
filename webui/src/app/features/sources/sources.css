@@ -192,11 +192,34 @@ summary {
   margin-bottom: 2px;
   text-align: left;
 }
-.picker-row span,
+.picker-entry-name,
 .picker-footer output {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.picker-entry {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+}
+.picker-entry-name {
+  min-width: 0;
+}
+.picker-entry-icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: var(--muted);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+.picker-entry-icon.folder {
+  fill: var(--warning);
+  stroke: none;
 }
 .picker-row small,
 .picker-path {

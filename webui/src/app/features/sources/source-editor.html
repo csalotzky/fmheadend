@@ -232,8 +232,18 @@
                 (click)="navigateEntry(entry.name)"
                 [disabled]="browserLoading()"
               >
-                <span>{{ entry.name }}</span
-                ><small>Directory</small>
+                <span class="picker-entry">
+                  <svg
+                    class="picker-entry-icon folder"
+                    aria-hidden="true"
+                    focusable="false"
+                    viewBox="0 0 24 24"
+                  >
+                    <path d="M3 6h6l2 2h10v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6Z" />
+                  </svg>
+                  <span class="picker-entry-name">{{ entry.name }}</span>
+                </span>
+                <small>Directory</small>
               </button>
             } @else {
               <button
@@ -244,8 +254,21 @@
                 (click)="selectPlaylist(browser()!.path + '/' + entry.name)"
                 [disabled]="browserLoading()"
               >
-                <span>{{ entry.name }}</span
-                ><small>Playlist</small>
+                <span class="picker-entry">
+                  <svg
+                    class="picker-entry-icon playlist"
+                    aria-hidden="true"
+                    focusable="false"
+                    viewBox="0 0 24 24"
+                  >
+                    <path d="M5 3h9l5 5v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" />
+                    <path
+                      d="M14 3v5h5M8 12h5M8 15h3M16 14v4.5a1.5 1.5 0 1 1-1-1.42V12l4-1v5.5a1.5 1.5 0 1 1-1-1.42V10.5"
+                    />
+                  </svg>
+                  <span class="picker-entry-name">{{ entry.name }}</span>
+                </span>
+                <small>Playlist</small>
               </button>
             }
           } @empty {
