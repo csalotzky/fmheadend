@@ -257,3 +257,63 @@ def test_builder_and_early_rebuild_have_no_filesystem_dependency():
         assert queue.next_item() == items[0]
         queue.rebuild(media('new'))
         assert consume(queue) == media('new')
+
+@pytest.mark.parametrize('bom', [False, True])
+def test_vlc_legacy_comments_do_not_require_utf8(tmp_path, bom):
+    playlist = tmp_path / 'vlc.m3u'
+    metadata = '#EXTINF:199,P\u00e9terfy Bori & Love Band - Sz\u00e1z f\u00e9ny\u00e9v'.encode('latin-1')
+    entry = b'ZENE/2025%2011%20November/P%C3%A9terfy%20Bori%20-%20Sz%C3%A1z%20f%C3%A9ny%C3%A9v.mp3'
+    data = b'#EXTM3U\r\n' + metadata + b'\r\n  #UNKNOWN:\xff\r\n' + entry + b'\r\n'
+    # A broken comment with a concatenated path remains entirely ignored.
+    data += metadata + b'broken/path.mp3\r\n' + entry + b'\r\n'
+    with pytest.raises(UnicodeDecodeError): data.decode('utf-8')
+    playlist.write_bytes((b'\xef\xbb\xbf' if bom else b'') + data)
+    expected = tmp_path / 'ZENE/2025 11 November/P\u00e9terfy Bori - Sz\u00e1z f\u00e9ny\u00e9v.mp3'
+    assert [i.locator for i in M3uResolver().resolve(playlist)] == [expected, expected]
+
+
+def test_vlc_m3u8_percent_encoded_paths_are_real_files(tmp_path):
+    playlist = tmp_path / 'vlc.m3u8'
+    path = 'ZENE/2026/2025 11 November/Detto - Random.mp3'
+    touch(tmp_path, path)
+    playlist.write_text('#EXTM3U\nZENE/2026/2025%2011%20November/Detto%20-%20Random.mp3\n', encoding='utf-8-sig')
+    resolved = M3uResolver().resolve(playlist)[0].locator
+    assert resolved == tmp_path / path
+    assert resolved.is_file()
+    assert '2025%2011%20November/Detto%20-%20Random.mp3' in resolved.as_uri()
+
+
+@pytest.mark.parametrize('entry,decoded', [
+    ('P%C3%A9terfy/J%C3%BAnius/Elef%C3%A1nt.mp3', 'P\u00e9terfy/J\u00fanius/Elef\u00e1nt.mp3'),
+    ('a+b%20%2520%23.mp3', 'a+b %20#.mp3'),
+])
+@pytest.mark.parametrize('absolute', [False, True])
+def test_local_percent_decoding_once_preserves_plus_and_absolute_paths(tmp_path, entry, decoded, absolute):
+    playlist = tmp_path / 'vlc.m3u8'
+    playlist.write_text(str(tmp_path / entry) if absolute else entry, encoding='utf-8')
+    assert M3uResolver().resolve(playlist)[0].locator == tmp_path / decoded
+
+
+@pytest.mark.parametrize('scheme', ['http', 'https'])
+def test_percent_encoded_remote_uri_is_unchanged(tmp_path, scheme):
+    uri = f'{scheme}://example.org/audio/My%20Programme.mp3?token=a%2Fb+c#part%201'
+    playlist = tmp_path / 'remote.m3u'
+    playlist.write_text(uri+'\n'+uri, encoding='utf-8')
+    assert [item.locator for item in M3uResolver().resolve(playlist)] == [uri, uri]
+
+
+@pytest.mark.parametrize('suffix,data', [('.m3u8', b'#EXTINF:\xff\nvalid.mp3'), ('.m3u', b'\xffbad.mp3')])
+def test_actual_entries_and_m3u8_still_require_utf8(tmp_path, suffix, data):
+    playlist = tmp_path / ('bad'+suffix)
+    playlist.write_bytes(data)
+    with pytest.raises(DomainError) as error:
+        M3uResolver().resolve(playlist)
+    assert error.value.error == 'PLAYLIST_UNREADABLE'
+
+@pytest.mark.parametrize('entry', ['bad%FF.mp3', 'bad%00.mp3'])
+def test_invalid_decoded_local_path_is_explicit(tmp_path, entry):
+    playlist = tmp_path / 'bad.m3u8'
+    playlist.write_text(entry, encoding='utf-8')
+    with pytest.raises(DomainError) as error:
+        M3uResolver().resolve(playlist)
+    assert error.value.error == 'INVALID_PLAYLIST_ENTRY'

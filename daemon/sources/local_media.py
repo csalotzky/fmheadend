@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Iterable
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from ..errors import DomainError
 
@@ -105,24 +105,28 @@ class M3uResolver:
         playlist = Path(path).absolute()
         items = []
         try:
-            # Both formats use strict UTF-8, accepting an optional BOM. No locale guesswork.
-            with playlist.open(encoding="utf-8-sig") as stream:
-                for line_number, line in enumerate(stream, 1):
-                    entry = line.strip()
-                    if not entry or entry.startswith("#"):
-                        continue
-                    try:
-                        local = Path(entry)
-                        if local.is_absolute():
-                            item = MediaItem(local)
-                        elif re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", entry):
-                            item = MediaItem(entry)  # Only HTTP(S); no file:// conversion.
-                        else:
-                            item = MediaItem(playlist.parent / local)
-                    except ValueError as exc:
-                        raise DomainError(422, "INVALID_PLAYLIST_ENTRY",
-                                          f"Invalid entry at {playlist}:{line_number}: {exc}") from exc
-                    items.append(item)
+            # Legacy VLC comments may contain non-UTF-8 metadata. Discard them
+            # as bytes; actual entries still require UTF-8 (no charset guessing).
+            data = playlist.read_bytes().removeprefix(b"\xef\xbb\xbf")
+            for line_number, raw in enumerate(data.splitlines(), 1):
+                if playlist.suffix.lower() == ".m3u" and raw.strip().startswith(b"#"):
+                    continue
+                entry = raw.decode("utf-8").strip()
+                if not entry or entry.startswith("#"):
+                    continue
+                try:
+                    # Classify before unquoting: remote URI escapes must survive.
+                    if not Path(entry).is_absolute() and re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", entry):
+                        item = MediaItem(entry)  # Only HTTP(S); no file:// conversion.
+                    else:
+                        local = Path(unquote(entry, encoding="utf-8", errors="strict"))
+                        if "\x00" in str(local):
+                            raise ValueError("Local playlist path contains NUL")
+                        item = MediaItem(local if local.is_absolute() else playlist.parent / local)
+                except ValueError as exc:
+                    raise DomainError(422, "INVALID_PLAYLIST_ENTRY",
+                                      f"Invalid entry at {playlist}:{line_number}: {exc}") from exc
+                items.append(item)
         except (OSError, UnicodeError) as exc:
             raise DomainError(503, "PLAYLIST_UNREADABLE", f"Cannot read {playlist}: {exc}") from exc
         # Preserve missing local paths, URLs, duplicates and author order. Opening

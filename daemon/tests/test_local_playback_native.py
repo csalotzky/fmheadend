@@ -219,3 +219,27 @@ def test_native_cycle_refresh_and_gain(tmp_path):
         assert all(950 <= value <= 1050 or 1950 <= value <= 2050 for value in seen)
         assert p.builds == 1
     finally: p.stop()
+
+@pytest.mark.parametrize('suffix', ['.m3u', '.m3u8'])
+def test_native_vlc_encoded_playlist(tmp_path, suffix):
+    from urllib.parse import quote
+    from fmheadendd.sources.local_media import M3uResolver
+    media = tmp_path / 'ZENE' / '2025 11 November' / 'P\u00e9terfy - Sz\u00e1z f\u00e9ny\u00e9v.wav'
+    media.parent.mkdir(parents=True)
+    tone(media, 16423, 1)
+    entry = quote(media.relative_to(tmp_path).as_posix())
+    playlist = tmp_path / ('vlc'+suffix)
+    comment = '#EXTINF:1,P\u00e9terfy Bori - Sz\u00e1z f\u00e9ny\u00e9v\n'
+    playlist.write_bytes(b'\xef\xbb\xbf#EXTM3U\n' + comment.encode('latin-1' if suffix == '.m3u' else 'utf-8') + entry.encode('ascii') + b'\n')
+    assert M3uResolver().resolve(playlist)[0].locator == media
+    p = TracedPipeline(config(playlist, 'playlist'), timeout_s=3)
+    p.output.attach(0)
+    try:
+        p.start()
+        assert p._ready.wait(3), p.snapshot()
+        assert p._pipeline.get_property('uri') == media.as_uri()
+        assert collect(p, lambda seen: bool(seen)) == [16423]
+        assert p.snapshot()['output_caps'] and not p.fatal_error
+    finally:
+        p.stop()
+    assert not p._thread.is_alive()

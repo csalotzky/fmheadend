@@ -17,7 +17,8 @@ construction does not check existence. The configured symlink spelling is preser
 No `file://` conversion occurs here. No metadata fields are needed yet.
 Local playlist entries are relative to the playlist's containing directory; they
 are not opened, deduplicated or extension-filtered. Local path spelling (including
-symlinks) and remote URL spelling are retained. Boundary equality uses these
+symlinks) is retained after one UTF-8 percent-decoding pass; remote URL spelling
+is retained unchanged. Boundary equality uses these
 locators, not inode identity, redirect resolution or media fingerprinting.
 
 Folder discovery ignores dot entries, never descends through directory symlinks,
@@ -34,9 +35,20 @@ Read-only target inspection on 2026-10-04 found GStreamer 1.26.2 with
 `qtdemux`, `aacparse`, and `avdec_aac`. This supports conservative candidate
 selection, not a promise that every matching file can be decoded.
 
-Both M3U and M3U8 are read as strict UTF-8 with optional BOM. Blank lines and
-comments/directives (after surrounding whitespace is stripped) are ignored.
-No legacy encoding detection or extended-playlist metadata handling is added.
+Both formats accept an optional UTF-8 BOM and ignore blank lines/directives.
+Legacy `.m3u` comment lines are discarded as bytes before UTF-8 decoding, so VLC
+`#EXTINF` text in a legacy encoding cannot invalidate usable entries. Actual entry
+lines still require UTF-8; no charset guessing is performed. `.m3u8` remains strict
+UTF-8, including its comments. A malformed concatenated line beginning with `#`
+is ignored as a whole; no metadata extraction or heuristic recovery is attempted.
+
+Local relative/absolute entries are percent-decoded once using UTF-8 before Path
+construction and relative resolution. `+` stays `+`; `%2520` becomes literal `%20`,
+not a space. To represent a literal percent escape in a filename, encode its `%`
+as `%25`. HTTP(S) entries are classified first and preserved verbatim, including
+encoded paths/query strings. Invalid UTF-8 in percent escapes or decoded NULs
+produce `INVALID_PLAYLIST_ENTRY`; missing/unreadable playlist files retain their existing
+`PLAYLIST_UNREADABLE` error. No save-time availability checks are added.
 Unsupported URI schemes or malformed HTTP(S) entries are rejected explicitly.
 Filesystem paths follow the host OS's path syntax, not foreign-platform drive rules.
 
