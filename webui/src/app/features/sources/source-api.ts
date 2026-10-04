@@ -33,6 +33,7 @@ export interface SourceSaveResult extends InputSource {
 }
 export interface PodcastFeedProbe {
   feed_id: string;
+  title?: string | null;
   error: string | null;
   discovered_episodes: number;
 }

@@ -24,9 +24,12 @@ import { feedErrorText } from './podcast-form';
           <ul class="podcast-feeds">
             @for (feed of p.feeds; track $index) {
               <li>
-                <span class="feed-name" [attr.title]="feedLabel($index)">{{
-                  feedLabel($index)
-                }}</span>
+                <span class="feed-name" [attr.title]="feedLabel($index)"
+                  >{{ feed.title || feedLabel($index) }}
+                  @if (feed.title && feeds()[$index]) {
+                    <small class="muted"> {{ feeds()[$index] }}</small>
+                  }
+                </span>
                 <span>{{
                   feed.error
                     ? errorText(feed.error)

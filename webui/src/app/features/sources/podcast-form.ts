@@ -2,6 +2,7 @@ import { AbstractControl, FormArray, FormControl, FormGroup, ValidatorFn } from 
 import { Json } from './source-api';
 
 export const PODCAST_MAX_FEEDS = 32;
+export const FEED_TITLE_UNAVAILABLE = 'Feed title unavailable';
 export const PODCAST_MAX_URL_LENGTH = 8192;
 export type ScheduleMode = 'RANDOM' | 'SMART';
 type Num = number | string | null;

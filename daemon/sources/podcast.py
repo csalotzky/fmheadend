@@ -149,6 +149,7 @@ class FeedRefreshResult:
     feed_id: str
     error: str | None
     discovered: int
+    title: str | None = None
 
 
 @dataclass(frozen=True)
@@ -194,7 +195,7 @@ class EpisodeCatalog:
                         for e in new.episodes))
                     feeds.append(new)
                     seen.extend(new.episodes)
-                    results.append(FeedRefreshResult(fid, None, len(new.episodes)))
+                    results.append(FeedRefreshResult(fid, None, len(new.episodes), new.title or None))
                 except DomainError as exc:
                     # Codes and hashes only: feed URLs/errors can contain tokens.
                     logger.warning("Podcast feed %s refresh failed: %s", fid, exc.error)

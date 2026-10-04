@@ -118,3 +118,35 @@ def test_probe_history_is_unchanged_and_playback_explicitly_unavailable(tmp_path
         manager.acquire(source.id, 0)
     assert not manager.pipelines
     db.close()
+
+
+ATOM = b"""<feed xmlns="http://www.w3.org/2005/Atom"><title>Atom Show</title><id>x</id>
+<entry><id>e1</id><title>E</title><link rel="enclosure" type="audio/mpeg" href="https://cdn.example.org/a.mp3"/></entry></feed>"""
+UNTITLED = b"""<rss version="2.0"><channel><item><guid>1</guid><title>E</title>
+<enclosure url="https://cdn.example.org/u.mp3" type="audio/mpeg"/></item></channel></rss>"""
+
+
+def test_probe_returns_feed_titles_without_extra_requests_or_persistence(api, monkeypatch):
+    urls = [URL, 'https://atom.example.org/feed', 'https://untitled.example.org/feed',
+            'https://broken.example.org/feed']
+    pages = {urls[0]: RSS, urls[1]: ATOM, urls[2]: UNTITLED}
+    calls = []
+    def fetch(self, url):
+        calls.append(url)
+        if url not in pages:
+            raise DomainError(503, 'PODCAST_FETCH_TIMEOUT', 'timeout')
+        return FeedResponse(pages[url], url)
+    monkeypatch.setattr(FeedFetcher, '__call__', fetch)
+    cfg = body(feeds=[dict(url=u) for u in urls])
+    sid = api.post(P, json=cfg).json()['id']
+    for result in (api.post(P+'/test', json=cfg), api.post(P+f'/{sid}/test')):
+        data = result.json()['podcast']
+        assert data['feeds_attempted'] == 4 and data['feeds_succeeded'] == 3
+        assert [(f['title'], f['error'], f['discovered_episodes']) for f in data['feeds']] == [
+            ('Test podcast', None, 1), ('Atom Show', None, 1), (None, None, 1),
+            (None, 'PODCAST_FETCH_TIMEOUT', 0)]
+        assert all(set(f) == {'feed_id', 'title', 'error', 'discovered_episodes'} for f in data['feeds'])
+    assert calls == urls * 2
+    assert all('title' not in feed for feed in api.get(P+f'/{sid}').json()['config']['feeds'])
+    assert api.get(P+f'/{sid}').json()['config']['feeds'][0] == {
+        'url': URL, 'max_age_days': None, 'max_episodes': None}

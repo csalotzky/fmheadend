@@ -256,6 +256,7 @@ class ErrorResponse(Model):
 
 class PodcastFeedProbe(Model):
     feed_id: str
+    title: str | None = None
     error: str | None = None
     discovered_episodes: int
 

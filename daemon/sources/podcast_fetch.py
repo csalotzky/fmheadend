@@ -78,7 +78,8 @@ def probe_podcast(config):
         feeds_succeeded=sum(r.error is None for r in snapshot.results),
         discovered_episodes=sum(len(f.episodes) for f in snapshot.feeds),
         eligible_episodes=len(eligible),
-        feeds=[PodcastFeedProbe(feed_id=r.feed_id, error=r.error, discovered_episodes=r.discovered)
+        feeds=[PodcastFeedProbe(feed_id=r.feed_id, title=r.title, error=r.error,
+                              discovered_episodes=r.discovered)
                for r in snapshot.results])
     return SourceTestResult(ok=bool(eligible), mocked=False, podcast=diagnostics,
         message=("Podcast catalog available; audio playback was not tested" if eligible

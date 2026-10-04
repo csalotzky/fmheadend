@@ -28,6 +28,7 @@ import {
   ScheduleMode,
   buildPodcastForm,
   controlError,
+  FEED_TITLE_UNAVAILABLE,
   feedErrorText,
   feedsError,
   newFeedGroup,
@@ -76,8 +77,16 @@ export class SourceEditor implements OnInit {
     const feed = at >= 0 ? probe?.feeds[at] : undefined;
     if (!feed) return null;
     return feed.error
-      ? { label: url, ok: false, status: `Error — ${feedErrorText(feed.error)}` }
-      : { label: url, ok: true, status: `OK — ${feed.discovered_episodes} episodes` };
+      ? {
+          label: feed.title || FEED_TITLE_UNAVAILABLE,
+          ok: false,
+          status: `Error — ${feedErrorText(feed.error)}`,
+        }
+      : {
+          label: feed.title || FEED_TITLE_UNAVAILABLE,
+          ok: true,
+          status: `OK — ${feed.discovered_episodes} episodes`,
+        };
   }
   readonly profiles = signal<Profile[]>([]);
   readonly profileError = signal('');
