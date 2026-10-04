@@ -150,3 +150,15 @@ export function feedsError(array: FormArray): string {
   if (array.errors['duplicate']) return 'Feed URLs must be unique within a source.';
   return `Add between 1 and ${PODCAST_MAX_FEEDS} feeds.`;
 }
+
+const feedErrors: Record<string, string> = {
+  PODCAST_FETCH_TIMEOUT: 'Timed out',
+  PODCAST_FETCH_FAILED: 'Fetch failed',
+  PODCAST_FEED_INVALID: 'Not a usable RSS/Atom feed',
+  PODCAST_FEED_TOO_LARGE: 'Feed too large',
+  PODCAST_ENCODING_ERROR: 'Unsupported encoding',
+};
+
+export function feedErrorText(code: string): string {
+  return feedErrors[code] ?? code;
+}

@@ -156,6 +156,14 @@
                       >Error: {{ message }}</small
                     >
                   }
+                  @if (feedResult(i); as probe) {
+                    <div class="feed-result" role="status">
+                      <span class="feed-result-name" [attr.title]="probe.label">{{
+                        probe.label
+                      }}</span>
+                      <span [class.error]="!probe.ok">{{ probe.status }}</span>
+                    </div>
+                  }
                   <div class="feed-limits">
                     <label
                       >Max age (days)
@@ -239,7 +247,11 @@
                 {{ testing() ? 'Testing...' : 'Test feeds' }}
               </button>
             </div>
-            <app-source-test-result [result]="result()" [feeds]="testedFeeds()" />
+            <app-source-test-result
+              [result]="result()"
+              [feeds]="testedFeeds()"
+              [showFeeds]="false"
+            />
             <div class="fields podcast-settings">
               <label
                 >Schedule mode<select

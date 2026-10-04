@@ -1,13 +1,6 @@
-﻿import { Component, input } from '@angular/core';
+import { Component, input } from '@angular/core';
 import { SourceTest } from './source-api';
-
-const podcastErrors: Record<string, string> = {
-  PODCAST_FETCH_TIMEOUT: 'Timed out',
-  PODCAST_FETCH_FAILED: 'Fetch failed',
-  PODCAST_FEED_INVALID: 'Not a usable RSS/Atom feed',
-  PODCAST_FEED_TOO_LARGE: 'Feed too large',
-  PODCAST_ENCODING_ERROR: 'Unsupported encoding',
-};
+import { feedErrorText } from './podcast-form';
 
 @Component({
   selector: 'app-source-test-result',
@@ -27,20 +20,22 @@ const podcastErrors: Record<string, string> = {
           <dt>Eligible</dt>
           <dd>{{ p.eligible_episodes }}</dd>
         </dl>
-        <ul class="podcast-feeds">
-          @for (feed of p.feeds; track $index) {
-            <li>
-              <span class="feed-name" [attr.title]="feedLabel($index)">{{
-                feedLabel($index)
-              }}</span>
-              <span>{{
-                feed.error
-                  ? errorText(feed.error)
-                  : 'OK — ' + feed.discovered_episodes + ' episodes'
-              }}</span>
-            </li>
-          }
-        </ul>
+        @if (showFeeds()) {
+          <ul class="podcast-feeds">
+            @for (feed of p.feeds; track $index) {
+              <li>
+                <span class="feed-name" [attr.title]="feedLabel($index)">{{
+                  feedLabel($index)
+                }}</span>
+                <span>{{
+                  feed.error
+                    ? errorText(feed.error)
+                    : 'OK — ' + feed.discovered_episodes + ' episodes'
+                }}</span>
+              </li>
+            }
+          </ul>
+        }
         @if (r.ok) {
           <p>{{ r.message }}</p>
         }
@@ -116,6 +111,7 @@ const podcastErrors: Record<string, string> = {
 export class TestResult {
   readonly result = input<SourceTest | null>(null);
   readonly feeds = input<string[]>([]);
+  readonly showFeeds = input(true);
   bitrate(value: number | null | undefined): number | null {
     return value != null && Number.isFinite(value) && value > 0
       ? Math.max(1, Math.round(value / 1000))
@@ -125,7 +121,7 @@ export class TestResult {
     return this.feeds()[index] ?? `Feed ${index + 1}`;
   }
   errorText(code: string): string {
-    return podcastErrors[code] ?? code;
+    return feedErrorText(code);
   }
   podcastLevel(r: SourceTest): 'ok' | 'warning' | 'error' {
     const p = r.podcast;

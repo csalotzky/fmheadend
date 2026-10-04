@@ -261,7 +261,9 @@ describe('Podcast source configuration', () => {
     expect(text).toContain('1 / 1');
     expect(text).toContain('47 discovered');
     expect(text).toContain('10');
-    expect(text).toContain('https://one.example/rss');
+    expect(text).not.toContain('https://one.example/rss');
+    const card = el(f).querySelector('.feed-card')!;
+    expect(card.querySelector('.feed-result')!.textContent).toContain('OK — 47 episodes');
     http.expectNone('/api/v1/sources');
   });
 
@@ -294,8 +296,15 @@ describe('Podcast source configuration', () => {
     expect(result.querySelector('.warning')).toBeTruthy();
     expect(result.querySelector('.error')).toBeNull();
     expect(result.textContent).toContain('1 of 2 feeds failed');
-    expect(result.textContent).toContain('OK — 180 episodes');
-    expect(result.textContent).toContain('Timed out');
+    expect(result.textContent).not.toContain('OK — 180');
+    expect(result.textContent).not.toContain('Timed out');
+    const cards = el(f).querySelectorAll('.feed-card');
+    expect(cards[0].querySelector('.feed-result')!.textContent).toContain('OK — 180 episodes');
+    expect(cards[0].querySelector('.feed-result .error')).toBeNull();
+    expect(cards[1].querySelector('.feed-result')!.textContent).toContain('bad.example');
+    expect(cards[1].querySelector('.feed-result .error')!.textContent).toContain(
+      'Error — Timed out',
+    );
     expect(result.textContent).toContain('180 discovered');
   });
 
@@ -321,7 +330,9 @@ describe('Podcast source configuration', () => {
     const result = el(f).querySelector('app-source-test-result')!;
     expect(result.querySelector('.error')).toBeTruthy();
     expect(result.textContent).toContain('Feed test failed');
-    expect(result.textContent).toContain('Not a usable RSS/Atom feed');
+    expect(el(f).querySelector('.feed-card .feed-result')!.textContent).toContain(
+      'Error — Not a usable RSS/Atom feed',
+    );
   });
 
   it('keeps the shared Audio processing panel and no playback controls', async () => {
@@ -402,5 +413,50 @@ describe('Podcast source configuration', () => {
     expect(f.componentInstance.form.controls.type.value).toBe('PODCAST');
     const body = await save(f, 'PATCH', '/api/v1/sources/1');
     expect(body.type).toBe('PODCAST');
+  });
+
+  it('shows no per-feed rows before testing and hides them when the feed URL changes', async () => {
+    const f = await editor();
+    type(f, input(f, 'Feed 1 URL'), 'https://one.example/rss');
+    button(f, '+ Add feed').click();
+    f.detectChanges();
+    type(f, input(f, 'Feed 2 URL'), 'https://two.example/rss');
+    expect(el(f).querySelectorAll('.feed-result')).toHaveLength(0);
+    const done = f.componentInstance.test();
+    await Promise.resolve();
+    http.expectOne('/api/v1/sources/test').flush({
+      ok: true,
+      mocked: false,
+      message: 'ok',
+      podcast: {
+        feeds_attempted: 2,
+        feeds_succeeded: 2,
+        discovered_episodes: 8,
+        eligible_episodes: 3,
+        feeds: [
+          { feed_id: 'a', error: null, discovered_episodes: 5 },
+          { feed_id: 'b', error: null, discovered_episodes: 3 },
+        ],
+      },
+    });
+    await done;
+    f.detectChanges();
+    const cards = el(f).querySelectorAll('.feed-card');
+    expect(cards[0].querySelector('.feed-result')!.textContent).toContain('OK — 5 episodes');
+    expect(cards[1].querySelector('.feed-result')!.textContent).toContain('OK — 3 episodes');
+    expect(cards[0].querySelector('.feed-url')!.nextElementSibling?.className).toContain(
+      'feed-result',
+    );
+    const summary = el(f).querySelector('app-source-test-result')!.textContent!;
+    expect(summary).toContain('2 / 2');
+    expect(summary).toContain('8 discovered');
+    type(f, input(f, 'Feed 1 URL'), 'https://changed.example/rss');
+    expect(el(f).querySelectorAll('.feed-result')).toHaveLength(1);
+    expect(
+      el(f).querySelectorAll('.feed-card')[1].querySelector('.feed-result')!.textContent,
+    ).toContain('OK — 3 episodes');
+    (el(f).querySelectorAll('.feed-remove')[0] as HTMLButtonElement).click();
+    f.detectChanges();
+    expect(el(f).querySelector('.feed-result')!.textContent).toContain('OK — 3 episodes');
   });
 });

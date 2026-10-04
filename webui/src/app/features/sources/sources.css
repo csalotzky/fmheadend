@@ -377,3 +377,16 @@ summary {
   gap: 10px;
   justify-content: space-between;
 }
+
+.feed-result {
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-width: 0;
+}
+.feed-result-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

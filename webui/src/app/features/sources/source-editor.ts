@@ -28,6 +28,7 @@ import {
   ScheduleMode,
   buildPodcastForm,
   controlError,
+  feedErrorText,
   feedsError,
   newFeedGroup,
   podcastConfig,
@@ -67,6 +68,17 @@ export class SourceEditor implements OnInit {
   readonly controlError = controlError;
   readonly feedsError = feedsError;
   readonly testedFeeds = signal<string[]>([]);
+  // Matches by tested URL (unique per source) so edits, adds and removes never show stale diagnostics.
+  feedResult(index: number): { label: string; ok: boolean; status: string } | null {
+    const probe = this.result()?.podcast;
+    const url = String(this.feeds.at(index)?.controls.url.value ?? '').trim();
+    const at = this.testedFeeds().indexOf(url);
+    const feed = at >= 0 ? probe?.feeds[at] : undefined;
+    if (!feed) return null;
+    return feed.error
+      ? { label: url, ok: false, status: `Error — ${feedErrorText(feed.error)}` }
+      : { label: url, ok: true, status: `OK — ${feed.discovered_episodes} episodes` };
+  }
   readonly profiles = signal<Profile[]>([]);
   readonly profileError = signal('');
   readonly loading = signal(false);
