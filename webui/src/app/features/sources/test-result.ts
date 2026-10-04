@@ -1,6 +1,6 @@
 import { Component, input } from '@angular/core';
 import { SourceTest } from './source-api';
-import { feedErrorText } from './podcast-form';
+import { feedErrorText, feedStatus } from './podcast-form';
 
 @Component({
   selector: 'app-source-test-result',
@@ -30,11 +30,7 @@ import { feedErrorText } from './podcast-form';
                     <small class="muted"> {{ feeds()[$index] }}</small>
                   }
                 </span>
-                <span>{{
-                  feed.error
-                    ? errorText(feed.error)
-                    : 'OK — ' + feed.discovered_episodes + ' episodes'
-                }}</span>
+                <span>{{ feed.error ? errorText(feed.error) : status(feed) }}</span>
               </li>
             }
           </ul>
@@ -122,6 +118,9 @@ export class TestResult {
   }
   feedLabel(index: number): string {
     return this.feeds()[index] ?? `Feed ${index + 1}`;
+  }
+  status(feed: { discovered_episodes: number; eligible_episodes?: number | null }): string {
+    return feedStatus(feed);
   }
   errorText(code: string): string {
     return feedErrorText(code);

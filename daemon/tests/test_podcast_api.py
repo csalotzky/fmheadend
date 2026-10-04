@@ -145,8 +145,40 @@ def test_probe_returns_feed_titles_without_extra_requests_or_persistence(api, mo
         assert [(f['title'], f['error'], f['discovered_episodes']) for f in data['feeds']] == [
             ('Test podcast', None, 1), ('Atom Show', None, 1), (None, None, 1),
             (None, 'PODCAST_FETCH_TIMEOUT', 0)]
-        assert all(set(f) == {'feed_id', 'title', 'error', 'discovered_episodes'} for f in data['feeds'])
+        assert all(set(f) == {'feed_id', 'title', 'error', 'discovered_episodes', 'eligible_episodes'} for f in data['feeds'])
     assert calls == urls * 2
     assert all('title' not in feed for feed in api.get(P+f'/{sid}').json()['config']['feeds'])
     assert api.get(P+f'/{sid}').json()['config']['feeds'][0] == {
         'url': URL, 'max_age_days': None, 'max_episodes': None}
+
+def dated_rss(days):
+    from datetime import datetime, timedelta, timezone
+    from email.utils import format_datetime
+    now = datetime.now(timezone.utc)
+    items = ''.join(f'<item><guid>{n}</guid><title>E{n}</title><pubDate>{format_datetime(now - timedelta(days=d, hours=1))}</pubDate>'
+                    f'<enclosure url="https://cdn.example.org/{n}.mp3" type="audio/mpeg"/></item>'
+                    for n, d in enumerate(days))
+    return f'<rss version="2.0"><channel><title>Dated</title>{items}</channel></rss>'.encode()
+
+
+def test_probe_reports_per_feed_eligibility_using_feed_limits(api, monkeypatch):
+    # Ages in days: 1, 3, 10, 40 -> four discovered episodes per feed.
+    cases = [dict(), dict(max_age_days=5), dict(max_episodes=3), dict(max_age_days=5, max_episodes=1),
+             dict(max_age_days=0)]
+    urls = [f'https://f{i}.example.org/feed' for i in range(len(cases))] + ['https://down.example.org/feed']
+    def fetch(self, url):
+        if 'down' in url:
+            raise DomainError(503, 'PODCAST_FETCH_TIMEOUT', 'timeout')
+        return FeedResponse(dated_rss([1, 3, 10, 40]), url)
+    monkeypatch.setattr(FeedFetcher, '__call__', fetch)
+    feeds = [dict(url=u, **c) for u, c in zip(urls, cases)] + [dict(url=urls[-1])]
+    cfg = body(feeds=feeds)
+    sid = api.post(P, json=cfg).json()['id']
+    for result in (api.post(P+'/test', json=cfg), api.post(P+f'/{sid}/test')):
+        probe = result.json()['podcast']
+        assert [(f['discovered_episodes'], f['eligible_episodes']) for f in probe['feeds']] == [
+            (4, 4), (4, 2), (4, 3), (4, 1), (4, 0), (0, None)]
+        assert probe['eligible_episodes'] == 10 == sum(f['eligible_episodes'] or 0 for f in probe['feeds'])
+        assert probe['discovered_episodes'] == 20
+        assert probe['feeds'][-1]['error'] == 'PODCAST_FETCH_TIMEOUT'
+    assert all('eligible' not in str(feed) for feed in api.get(P+f'/{sid}').json()['config']['feeds'])

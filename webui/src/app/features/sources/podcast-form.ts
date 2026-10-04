@@ -163,3 +163,11 @@ const feedErrors: Record<string, string> = {
 export function feedErrorText(code: string): string {
   return feedErrors[code] ?? code;
 }
+
+export function feedStatus(feed: {
+  discovered_episodes: number;
+  eligible_episodes?: number | null;
+}): string {
+  const eligible = feed.eligible_episodes == null ? '' : ` / ${feed.eligible_episodes} eligible`;
+  return `OK — ${feed.discovered_episodes} discovered${eligible}`;
+}

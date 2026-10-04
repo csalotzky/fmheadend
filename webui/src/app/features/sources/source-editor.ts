@@ -29,6 +29,7 @@ import {
   buildPodcastForm,
   controlError,
   FEED_TITLE_UNAVAILABLE,
+  feedStatus,
   feedErrorText,
   feedsError,
   newFeedGroup,
@@ -85,7 +86,7 @@ export class SourceEditor implements OnInit {
       : {
           label: feed.title || FEED_TITLE_UNAVAILABLE,
           ok: true,
-          status: `OK — ${feed.discovered_episodes} episodes`,
+          status: feedStatus(feed),
         };
   }
   readonly profiles = signal<Profile[]>([]);

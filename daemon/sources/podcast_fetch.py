@@ -1,6 +1,7 @@
 """Bounded feed-only HTTP transport. No audio downloads or implicit retries."""
 import time
 import zlib
+from collections import Counter
 from dataclasses import dataclass
 from urllib.parse import urljoin
 
@@ -73,13 +74,16 @@ def probe_podcast(config):
     now = datetime.now(timezone.utc)
     snapshot = EpisodeCatalog().refresh(config, FeedFetcher(), now)
     eligible = eligible_episodes(snapshot, config, now)
+    # Per-feed counts are a grouping of the core's eligibility result, not a second filter.
+    per_feed = Counter(e.feed_id for e in eligible)
     diagnostics = PodcastProbe(
         feeds_attempted=len(snapshot.results),
         feeds_succeeded=sum(r.error is None for r in snapshot.results),
         discovered_episodes=sum(len(f.episodes) for f in snapshot.feeds),
         eligible_episodes=len(eligible),
         feeds=[PodcastFeedProbe(feed_id=r.feed_id, title=r.title, error=r.error,
-                              discovered_episodes=r.discovered)
+                              discovered_episodes=r.discovered,
+                              eligible_episodes=None if r.error else per_feed[r.feed_id])
                for r in snapshot.results])
     return SourceTestResult(ok=bool(eligible), mocked=False, podcast=diagnostics,
         message=("Podcast catalog available; audio playback was not tested" if eligible

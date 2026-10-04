@@ -259,6 +259,7 @@ class PodcastFeedProbe(Model):
     title: str | None = None
     error: str | None = None
     discovered_episodes: int
+    eligible_episodes: int | None = None
 
 
 class PodcastProbe(Model):

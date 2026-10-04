@@ -251,7 +251,15 @@ describe('Podcast source configuration', () => {
         feeds_succeeded: 1,
         discovered_episodes: 47,
         eligible_episodes: 10,
-        feeds: [{ feed_id: 'abc', title: 'Telex Podcast', error: null, discovered_episodes: 47 }],
+        feeds: [
+          {
+            feed_id: 'abc',
+            title: 'Telex Podcast',
+            error: null,
+            discovered_episodes: 47,
+            eligible_episodes: 10,
+          },
+        ],
       },
     });
     await done;
@@ -263,7 +271,9 @@ describe('Podcast source configuration', () => {
     expect(text).toContain('10');
     expect(text).not.toContain('https://one.example/rss');
     const card = el(f).querySelector('.feed-card')!;
-    expect(card.querySelector('.feed-result')!.textContent).toContain('OK — 47 episodes');
+    expect(card.querySelector('.feed-result')!.textContent).toContain(
+      'OK — 47 discovered / 10 eligible',
+    );
     expect(card.querySelector('.feed-result')!.textContent).toContain('Telex Podcast');
     expect(card.querySelector('.feed-result')!.textContent).not.toContain('https://');
     http.expectNone('/api/v1/sources');
@@ -287,8 +297,19 @@ describe('Podcast source configuration', () => {
         discovered_episodes: 180,
         eligible_episodes: 12,
         feeds: [
-          { feed_id: 'a', title: 'Good Show', error: null, discovered_episodes: 180 },
-          { feed_id: 'b', error: 'PODCAST_FETCH_TIMEOUT', discovered_episodes: 0 },
+          {
+            feed_id: 'a',
+            title: 'Good Show',
+            error: null,
+            discovered_episodes: 180,
+            eligible_episodes: 12,
+          },
+          {
+            feed_id: 'b',
+            error: 'PODCAST_FETCH_TIMEOUT',
+            discovered_episodes: 0,
+            eligible_episodes: null,
+          },
         ],
       },
     });
@@ -301,11 +322,14 @@ describe('Podcast source configuration', () => {
     expect(result.textContent).not.toContain('OK — 180');
     expect(result.textContent).not.toContain('Timed out');
     const cards = el(f).querySelectorAll('.feed-card');
-    expect(cards[0].querySelector('.feed-result')!.textContent).toContain('OK — 180 episodes');
+    expect(cards[0].querySelector('.feed-result')!.textContent).toContain(
+      'OK — 180 discovered / 12 eligible',
+    );
     expect(cards[0].querySelector('.feed-result .error')).toBeNull();
     expect(cards[1].querySelector('.feed-result')!.textContent).toContain('Feed title unavailable');
     expect(cards[1].querySelector('.feed-result')!.textContent).not.toContain('bad.example');
     expect(cards[0].querySelector('.feed-result')!.textContent).toContain('Good Show');
+    expect(cards[1].querySelector('.feed-result')!.textContent).not.toContain('eligible');
     expect(cards[1].querySelector('.feed-result .error')!.textContent).toContain(
       'Error — Timed out',
     );
@@ -399,7 +423,7 @@ describe('Podcast source configuration', () => {
         feeds_succeeded: 1,
         discovered_episodes: 2,
         eligible_episodes: 2,
-        feeds: [{ feed_id: 'a', error: null, discovered_episodes: 2 }],
+        feeds: [{ feed_id: 'a', error: null, discovered_episodes: 2, eligible_episodes: 2 }],
       },
     });
     await done;
@@ -438,17 +462,27 @@ describe('Podcast source configuration', () => {
         discovered_episodes: 8,
         eligible_episodes: 3,
         feeds: [
-          { feed_id: 'a', title: 'Show A', error: null, discovered_episodes: 5 },
-          { feed_id: 'b', title: null, error: null, discovered_episodes: 3 },
+          {
+            feed_id: 'a',
+            title: 'Show A',
+            error: null,
+            discovered_episodes: 5,
+            eligible_episodes: 0,
+          },
+          { feed_id: 'b', title: null, error: null, discovered_episodes: 3, eligible_episodes: 3 },
         ],
       },
     });
     await done;
     f.detectChanges();
     const cards = el(f).querySelectorAll('.feed-card');
-    expect(cards[0].querySelector('.feed-result')!.textContent).toContain('OK — 5 episodes');
+    expect(cards[0].querySelector('.feed-result')!.textContent).toContain(
+      'OK — 5 discovered / 0 eligible',
+    );
     expect(cards[0].querySelector('.feed-result')!.textContent).toContain('Show A');
-    expect(cards[1].querySelector('.feed-result')!.textContent).toContain('OK — 3 episodes');
+    expect(cards[1].querySelector('.feed-result')!.textContent).toContain(
+      'OK — 3 discovered / 3 eligible',
+    );
     expect(cards[1].querySelector('.feed-result')!.textContent).toContain('Feed title unavailable');
     expect(cards[0].querySelector('.feed-url')!.nextElementSibling?.className).toContain(
       'feed-result',
@@ -460,9 +494,11 @@ describe('Podcast source configuration', () => {
     expect(el(f).querySelectorAll('.feed-result')).toHaveLength(1);
     expect(
       el(f).querySelectorAll('.feed-card')[1].querySelector('.feed-result')!.textContent,
-    ).toContain('OK — 3 episodes');
+    ).toContain('OK — 3 discovered / 3 eligible');
     (el(f).querySelectorAll('.feed-remove')[0] as HTMLButtonElement).click();
     f.detectChanges();
-    expect(el(f).querySelector('.feed-result')!.textContent).toContain('OK — 3 episodes');
+    expect(el(f).querySelector('.feed-result')!.textContent).toContain(
+      'OK — 3 discovered / 3 eligible',
+    );
   });
 });

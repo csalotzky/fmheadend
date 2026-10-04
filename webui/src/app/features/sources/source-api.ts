@@ -36,6 +36,7 @@ export interface PodcastFeedProbe {
   title?: string | null;
   error: string | null;
   discovered_episodes: number;
+  eligible_episodes?: number | null;
 }
 export interface PodcastProbe {
   feeds_attempted: number;
