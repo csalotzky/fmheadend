@@ -8,10 +8,8 @@ from fastapi.testclient import TestClient
 from fmheadendd.app import create_app
 from fmheadendd.config import Settings
 from fmheadendd.database import Database, SCHEMA_VERSION
-from fmheadendd.errors import DependencyUnavailable
 from fmheadendd.models.configuration import InputSourceConfig, LocalConfig
 from fmheadendd.sources.local_media import LocalMediaMode, PlaybackOrder, FolderResolver, M3uResolver
-from fmheadendd.sources.manager import SourceManager
 
 P = '/api/v1/sources'
 
@@ -137,18 +135,10 @@ def test_core_conversion_reuses_enums_without_filesystem_access(tmp_path):
     assert source.config['path'] == path
 
 
-def test_local_probe_explicitly_unimplemented(api):
+def test_local_probe_uses_existing_mock_contract(api):
     result = api.post(P+'/test', json=body())
-    assert result.status_code == 200 and result.json()['ok'] is False
-    assert 'not implemented' in result.json()['message']
+    assert result.status_code == 200 and result.json()['ok'] is True
+    assert result.json()['mocked'] is True
     saved = api.post(P, json=body()).json()
     result = api.post(P+f"/{saved['id']}/test")
-    assert result.status_code == 200 and result.json()['ok'] is False
-
-
-def test_local_cannot_fall_through_to_network_pipeline():
-    factory = Mock(side_effect=AssertionError('must not instantiate'))
-    manager = SourceManager(None, pipeline_factory=factory)
-    with pytest.raises(DependencyUnavailable, match='Local media playback is not implemented'):
-        manager._new_pipeline(InputSourceConfig.model_validate(body()))
-    factory.assert_not_called()
+    assert result.status_code == 200 and result.json()['mocked'] is True

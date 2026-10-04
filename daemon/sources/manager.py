@@ -1,7 +1,7 @@
 import logging
 import time
 from ..errors import DependencyUnavailable, DomainError
-from ..models.configuration import InputSourceConfig, SourceTestResult, SourceType
+from ..models.configuration import InputSourceConfig, SourceTestResult
 from ..models.runtime_status import InputSourceStatus, SourceState
 from .pipeline import MockPipeline, probe
 from .output import DEFAULT_STAGING_BUFFER_MS, DEFAULT_CONSUMER_BUFFER_MS, DEFAULT_STAGING_MAX_AGE_MS, pcm_capacity_bytes
@@ -67,8 +67,6 @@ class SourceManager:
         return error
 
     def _new_pipeline(self, source, **kwargs):
-        if source.type == SourceType.LOCAL:
-            raise DependencyUnavailable("Local media playback is not implemented")
         if source.processor_mode == 'stereotool':
             raise DependencyUnavailable('Stereo Tool processing is not implemented')
         try:
@@ -221,9 +219,6 @@ class SourceManager:
             pipeline.output.detach(modulator_id)
 
     def test(self, source: InputSourceConfig):
-        if source.type == SourceType.LOCAL:
-            return SourceTestResult(ok=False, mocked=getattr(self.pipeline_factory, "mocked", True),
-                                    message="Local media playback is not implemented")
         if source.processor_mode == 'stereotool':
             return SourceTestResult(ok=False, mocked=getattr(self.pipeline_factory, 'mocked', True),
                                     message='Stereo Tool processing is not implemented')

@@ -266,8 +266,9 @@ active DIGITAL modulators acquire/share a source; the last consumer releases it.
 Playlist mode preserves but ignores `recursive`. No path availability check or
 resolver runs during save; the original filesystem path string is retained.
 The usual source CRUD, references, config replacement PATCH and SQLite schema 1
-apply without migrations or playback state. LOCAL playback/probing is explicitly
-unimplemented at this phase. See [the core/API contract](local-media-core.md).
+apply without migrations or persisted playback state. LOCAL uses one shared
+GstPipeline/playbin3 player, the existing PCM fanout, and transient resolver/queue
+state. See [the core/API/runtime contract](local-media-core.md).
 
 ### 6.1.1 `HTTP` config
 

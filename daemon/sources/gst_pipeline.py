@@ -7,7 +7,8 @@ import threading
 import time
 
 from ..errors import DependencyUnavailable
-from ..models.configuration import SourceType, SourceTestResult
+from ..models.configuration import SourceType, SourceTestResult, LocalConfig
+from .local_playback import LocalPlayback, LocalPlaybackError
 from .output import (PCM_CAPS, PcmQueue, PcmOutput, pcm_capacity_bytes,
                      DEFAULT_STAGING_BUFFER_MS, DEFAULT_CONSUMER_BUFFER_MS, DEFAULT_STAGING_MAX_AGE_MS)
 from .dsp import PROCESSING_CAPS
@@ -113,6 +114,8 @@ class GstPipeline:
             raise DependencyUnavailable('Built-in DSP requires its validated profile')
         if source.processor_mode == 'bypass' and profile is not None:
             raise DependencyUnavailable('Bypass must not load a processing profile')
+        self._local = None
+        self._uri_change_lock = threading.Lock()
         self.source = source
         self.profile = profile
         self.output = output or PcmOutput(pcm_consumer_buffer_ms)
@@ -188,7 +191,7 @@ class GstPipeline:
             raise DependencyUnavailable(f"Missing GStreamer element: {factory}")
         for name, value in properties.items():
             element.set_property(name.replace("_", "-"), value)
-        self._pipeline.add(element)
+        getattr(self, "_element_parent", self._pipeline).add(element)
         return element
 
     def _link(self, *elements):
@@ -238,7 +241,20 @@ class GstPipeline:
 
     def _build(self):
         Gst = self.Gst
-        self._pipeline = Gst.Pipeline.new(None)
+        if self.source.type == SourceType.LOCAL:
+            self._local = LocalPlayback(LocalConfig.model_validate(self.source.config).to_core(), self._audio_ready)
+            uri = self._local.initial()
+            self._pipeline = Gst.ElementFactory.make('playbin3', None)
+            if self._pipeline is None:
+                raise PipelineConfigurationError('Missing GStreamer element: playbin3')
+            self._pipeline.set_property('flags', 2)  # Audio only; no video/text/soft volume.
+            self._pipeline.set_property('uri', uri)
+            self._pipeline.connect('about-to-finish', self._local_handoff)
+            self._pipeline.connect('source-setup', self._source_setup)
+            self._element_parent = Gst.Bin.new(None)
+        else:
+            self._pipeline = Gst.Pipeline.new(None)
+            self._element_parent = self._pipeline
         self._convert = self._make("audioconvert")
         resample = self._make("audioresample")
         self._overrides(resample, "resample")
@@ -258,7 +274,12 @@ class GstPipeline:
             self._link(self._convert, resample, volume, capsfilter, queue, sink)
         self.sink = sink
         config = self.source.config
-        if self.source.type == SourceType.HTTP:
+        if self.source.type == SourceType.LOCAL:
+            ghost = Gst.GhostPad.new('sink', self._convert.get_static_pad('sink'))
+            self._element_parent.add_pad(ghost)
+            self._pipeline.set_property('audio-sink', self._element_parent)
+            sink.get_static_pad('sink').add_probe(Gst.PadProbeType.EVENT_DOWNSTREAM, self._local_event)
+        elif self.source.type == SourceType.HTTP:
             decode = self._make("uridecodebin", uri=config["uri"], caps=Gst.Caps.from_string("audio/x-raw"),
                                 buffer_duration=config.get("buffer_ms", 3000) * 1000000)
             decode.connect("source-setup", self._source_setup)
@@ -286,6 +307,38 @@ class GstPipeline:
                 decode.connect("pad-added", self._decoded_pad)
                 self._link(src, jitter, depay, decode)
         self._bus = self._pipeline.get_bus()
+
+    def _local_handoff(self, player):
+        # State teardown must not race URI replacement. Never wait here: NULL
+        # can be waiting for this very streaming thread to return.
+        if self._stop.is_set() or not self._uri_change_lock.acquire(blocking=False):
+            return
+        try:
+            self._local.handoff(player)
+        except Exception:
+            self._callback_error = 'LOCAL URI handoff failed'
+            self._audio_ready.set()
+        finally:
+            self._uri_change_lock.release()
+
+    def _local_event(self, pad, info):
+        if info.get_event().type == self.Gst.EventType.STREAM_START:
+            self._local.stream_start()
+        return self.Gst.PadProbeReturn.OK
+
+    def _local_resume(self, *, failed):
+        # Exceptional recovery only. Keep the same native elements, DSP chain,
+        # PcmOutput and consumers; normal handoff never changes pipeline state.
+        with self._uri_change_lock:
+            self._pipeline.set_state(self.Gst.State.NULL)
+            self._bus.set_flushing(True)
+            self._bus.set_flushing(False)
+            uri = self._local.resume(failed=failed)
+            # Already decoded tail PCM still belongs to this shared output.
+            # Let the ordinary drain/age policy handle it across EOS recovery.
+            self._last_sample = 0
+            self._pipeline.set_property('uri', uri)
+            self._pipeline.set_state(self.Gst.State.PLAYING)
 
     def _sample(self, sink):
         Gst = self.Gst
@@ -316,6 +369,8 @@ class GstPipeline:
             self._caps = self._validated_output_text
             # Publish metadata before waking the source worker/readiness path.
             self.staging.put(data)
+            if self._local is not None:
+                self._local.pcm()
         elif size:
             self._callback_error = "PCM buffer exceeds the bounded output block size or is not frame-aligned"
             return Gst.FlowReturn.ERROR
@@ -382,6 +437,8 @@ class GstPipeline:
                      codec=None, bitrate_bps=None, input_sample_rate=None, input_channels=None, output_caps=None)
         try:
             self._build()
+        except LocalPlaybackError:
+            raise
         except Exception as exc:
             raise PipelineConfigurationError(str(exc)) from exc
         state_change = self._pipeline.set_state(Gst.State.PLAYING)
@@ -394,7 +451,9 @@ class GstPipeline:
             failure = self._bus_failure(message) if message else DependencyUnavailable("GStreamer refused PLAYING state")
             if not isinstance(failure, PipelineConfigurationError):
                 self._prepared.set()
-            raise failure
+            if self._local is None:
+                raise failure
+            self._local_resume(failed=True)
         self._prepared.set()
         started = time.monotonic()
         running_since = None
@@ -411,18 +470,32 @@ class GstPipeline:
                     bus_idle = True
                     break
                 if message.type == Gst.MessageType.ERROR:
+                    if self._local is not None:
+                        log.warning('LOCAL item failed; skipping (GStreamer error)')
+                        self._local_resume(failed=True)
+                        started = time.monotonic()
+                        break
                     raise self._bus_failure(message)
                 if message.type == Gst.MessageType.EOS:
+                    if self._local is not None:
+                        self._local_resume(failed=False)
+                        started = time.monotonic()
+                        break
                     raise DependencyUnavailable("Source reached end of stream")
                 if message.type == Gst.MessageType.ELEMENT:
                     self._station_headers(message)
-                if message.type == Gst.MessageType.TAG:
+                if message.type == Gst.MessageType.TAG and self._local is None:
                     self._tags(message.parse_tag())
                 if message.type == Gst.MessageType.BUFFERING:
                     self._update(state="BUFFERING" if message.parse_buffering() < 100 else "CONNECTING")
             if self._callback_error:
                 raise PipelineConfigurationError(self._callback_error)
             if time.monotonic() - (self._last_sample or started) > self.timeout_s:
+                if self._local is not None:
+                    log.warning('LOCAL item stalled; skipping')
+                    self._local_resume(failed=True)
+                    started = time.monotonic()
+                    continue
                 raise DependencyUnavailable("Timed out waiting for audio (source stalled)")
             for _ in range(16):
                 data = self.staging.pop()
@@ -446,6 +519,8 @@ class GstPipeline:
             else:
                 # Bounded work per pass; check stop/bus again before more PCM.
                 continue
+            if self._local is not None:
+                self._local.service(self._pipeline)
             if running_since is not None and bus_idle:
                 self._ready.set()
             if not bus_idle:
@@ -468,14 +543,18 @@ class GstPipeline:
                 try:
                     self._attempt()
                 except Exception as exc:
-                    if isinstance(exc, PipelineConfigurationError) or not isinstance(exc, DependencyUnavailable):
+                    if isinstance(exc, (PipelineConfigurationError, LocalPlaybackError)) or not isinstance(exc, DependencyUnavailable):
                         self.fatal_error = str(exc)
                     self._update(state="ERROR", last_error=str(exc))
                     log.warning("source %s: %s", getattr(self.source, "id", "probe"), exc)
                 finally:
                     if self._pipeline is not None:
-                        self._pipeline.set_state(self.Gst.State.NULL)
+                        with self._uri_change_lock:
+                            self._pipeline.set_state(self.Gst.State.NULL)
                         self._pipeline = None
+                    if self._local is not None:
+                        self._local.close()
+                        self._local = None
                     self.staging.clear()
                     self.output.clear()
                 if self._stop.is_set() or not self.reconnect or self.fatal_error:
