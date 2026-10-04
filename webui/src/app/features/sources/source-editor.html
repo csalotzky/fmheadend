@@ -22,55 +22,106 @@
       </div>
       <div class="fields" [formGroup]="config">
         @for (field of visibleFields(); track field.key) {
-          <div
-            [class.stream-row]="form.controls.type.value === 'HTTP' && field.key === 'uri'"
-            [class.local-path-row]="form.controls.type.value === 'LOCAL' && field.key === 'path'"
-          >
-            <label
-              >{{ field.label }}
-              @if (field.required) {
-                <span aria-hidden="true">*</span>
-              }
-              @if (field.checkbox) {
-                <input type="checkbox" [id]="'source-' + field.key" [formControlName]="field.key" />
-              } @else if (field.options) {
-                <select
-                  [id]="'source-' + field.key"
-                  [formControlName]="field.key"
-                  [required]="!!field.required"
-                  (change)="changeConfig(field.key)"
+          @if (form.controls.type.value === 'LOCAL' && field.key === 'path') {
+            <section class="local-path-panel" aria-labelledby="source-path-label">
+              <div id="source-path-label" class="local-path-label">
+                {{ field.label }} <span aria-hidden="true">*</span>
+              </div>
+              <div class="local-path-actions">
+                <output
+                  id="source-path-selected"
+                  class="selected-local-path"
+                  [attr.title]="config.controls['path'].value || null"
                 >
-                  <option value="">Select...</option>
-                  @for (option of field.options; track option) {
-                    <option [value]="option">{{ field.optionLabels?.[option] ?? option }}</option>
-                  }
-                </select>
-              } @else {
-                <input
-                  [id]="'source-' + field.key"
-                  [formControlName]="field.key"
-                  [type]="field.numeric ? 'number' : 'text'"
-                  [required]="!!field.required"
-                  [attr.min]="field.min ?? null"
-                  [attr.max]="field.max ?? null"
-                  [attr.step]="field.numeric ? 1 : null"
-                />
+                  {{ config.controls['path'].value || 'No path selected' }}
+                </output>
+                <button
+                  type="button"
+                  class="path-browse"
+                  (click)="openBrowser()"
+                  [disabled]="saving() || testing()"
+                >
+                  Browse...
+                </button>
+              </div>
+              @if (localMode() === 'folder') {
+                <label class="recursive-toggle">
+                  <input type="checkbox" id="source-recursive" [formControlName]="'recursive'" />
+                  Include subfolders
+                </label>
+              }
+              <button
+                type="button"
+                class="manual-path-toggle"
+                [attr.aria-expanded]="manualPathEditing()"
+                aria-controls="manual-server-path"
+                (click)="toggleManualPathEditing()"
+              >
+                {{ manualPathEditing() ? 'Hide manual editing' : 'Edit manually' }}
+              </button>
+              @if (manualPathEditing()) {
+                <label class="manual-path-input"
+                  >Manual server path
+                  <input
+                    id="manual-server-path"
+                    [formControlName]="'path'"
+                    type="text"
+                    required
+                    [attr.aria-describedby]="field.help ? 'source-path-help' : null"
+                  />
+                </label>
               }
               @if (field.help) {
-                <small>{{ field.help }}</small>
+                <small id="source-path-help">{{ field.help }}</small>
               }
-            </label>
-            @if (form.controls.type.value === 'HTTP' && field.key === 'uri') {
-              <button type="button" (click)="test()" [disabled]="testing() || saving()">
-                {{ testing() ? 'Testing...' : 'Test stream' }}
-              </button>
-            }
-            @if (form.controls.type.value === 'LOCAL' && field.key === 'path') {
-              <button type="button" (click)="openBrowser()" [disabled]="saving() || testing()">
-                Browse...
-              </button>
-            }
-          </div>
+            </section>
+          } @else if (field.key !== 'recursive') {
+            <div [class.stream-row]="form.controls.type.value === 'HTTP' && field.key === 'uri'">
+              <label
+                >{{ field.label }}
+                @if (field.required) {
+                  <span aria-hidden="true">*</span>
+                }
+                @if (field.checkbox) {
+                  <input
+                    type="checkbox"
+                    [id]="'source-' + field.key"
+                    [formControlName]="field.key"
+                  />
+                } @else if (field.options) {
+                  <select
+                    [id]="'source-' + field.key"
+                    [formControlName]="field.key"
+                    [required]="!!field.required"
+                    (change)="changeConfig(field.key)"
+                  >
+                    <option value="">Select...</option>
+                    @for (option of field.options; track option) {
+                      <option [value]="option">{{ field.optionLabels?.[option] ?? option }}</option>
+                    }
+                  </select>
+                } @else {
+                  <input
+                    [id]="'source-' + field.key"
+                    [formControlName]="field.key"
+                    [type]="field.numeric ? 'number' : 'text'"
+                    [required]="!!field.required"
+                    [attr.min]="field.min ?? null"
+                    [attr.max]="field.max ?? null"
+                    [attr.step]="field.numeric ? 1 : null"
+                  />
+                }
+                @if (field.help) {
+                  <small>{{ field.help }}</small>
+                }
+              </label>
+              @if (form.controls.type.value === 'HTTP' && field.key === 'uri') {
+                <button type="button" (click)="test()" [disabled]="testing() || saving()">
+                  {{ testing() ? 'Testing...' : 'Test stream' }}
+                </button>
+              }
+            </div>
+          }
         }
       </div>
       <div class="fields">

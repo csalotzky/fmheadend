@@ -45,7 +45,39 @@ describe('Local media source configuration', () => {
     }
     return f;
   }
-  it('defaults to folder/sequential with an empty path and changes mode without losing the path', () => {
+  it('prioritizes Browse while retaining collapsible manual absolute-path editing', () => {
+    const f = editor(),
+      c = f.componentInstance;
+    expect(f.nativeElement.querySelector('#source-path-selected')?.textContent).toContain(
+      'No path selected',
+    );
+    expect(f.nativeElement.querySelector('#manual-server-path')).toBeNull();
+    const browse = [...f.nativeElement.querySelectorAll('button')].find(
+      (button: HTMLButtonElement) => button.textContent?.trim() === 'Browse...',
+    ) as HTMLButtonElement;
+    expect(browse.classList.contains('path-browse')).toBe(true);
+    let edit = [...f.nativeElement.querySelectorAll('button')].find(
+      (button: HTMLButtonElement) => button.textContent?.trim() === 'Edit manually',
+    ) as HTMLButtonElement;
+    edit.click();
+    f.detectChanges();
+    const manual = f.nativeElement.querySelector('#manual-server-path') as HTMLInputElement;
+    expect(manual.value).toBe('');
+    manual.value = '/custom/media';
+    manual.dispatchEvent(new Event('input'));
+    expect(c.config.controls['path'].value).toBe('/custom/media');
+    f.detectChanges();
+    expect(f.nativeElement.querySelector('#source-path-selected')?.getAttribute('title')).toBe(
+      '/custom/media',
+    );
+    edit = [...f.nativeElement.querySelectorAll('button')].find(
+      (button: HTMLButtonElement) => button.textContent?.trim() === 'Hide manual editing',
+    ) as HTMLButtonElement;
+    edit.click();
+    f.detectChanges();
+    expect(f.nativeElement.querySelector('#manual-server-path')).toBeNull();
+  });
+  it('keeps Recursive with Folder path controls and hides it for Playlist mode', () => {
     const f = editor(),
       c = f.componentInstance;
     expect(c.config.getRawValue()).toEqual({
@@ -54,9 +86,12 @@ describe('Local media source configuration', () => {
       order: 'sequential',
       recursive: false,
     });
-    expect(f.nativeElement.textContent).toContain('Absolute path on the FMHeadend host');
     c.config.controls['path'].setValue('/mnt/music-link//album/../ music');
     const checkbox: HTMLInputElement = f.nativeElement.querySelector('#source-recursive');
+    expect(checkbox.closest('.local-path-panel')).not.toBeNull();
+    expect(
+      (f.nativeElement.querySelector('#source-order') as HTMLElement).closest('.local-path-panel'),
+    ).toBeNull();
     checkbox.click();
     expect(c.config.controls['recursive'].value).toBe(true);
     const mode: HTMLSelectElement = f.nativeElement.querySelector('#source-mode');
@@ -76,6 +111,15 @@ describe('Local media source configuration', () => {
     expect(f.nativeElement.querySelector('#source-recursive').checked).toBe(false);
     expect(c.config.controls['path'].value).toBe('/mnt/music-link//album/../ music');
     expect(c.dirty()).toBe(true);
+  });
+  it('renders long selected paths with their complete accessible title', () => {
+    const f = editor();
+    const path = '/mnt/nas/ZENE/2026/2026 10 October/Some Very Long Directory Name/Favorites';
+    f.componentInstance.config.controls['path'].setValue(path);
+    f.detectChanges();
+    const selected = f.nativeElement.querySelector('#source-path-selected') as HTMLOutputElement;
+    expect(selected.textContent).toContain(path);
+    expect(selected.title).toBe(path);
   });
   const configs: LocalSourceConfig[] = [
     { mode: 'folder', path: '/mnt/music', order: 'sequential', recursive: false },

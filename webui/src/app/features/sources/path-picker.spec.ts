@@ -82,23 +82,33 @@ describe('LOCAL media path picker', () => {
     fixture.detectChanges();
   }
 
-  it('opens from the editable Server path row and renders locations', async () => {
+  it('opens from the browser-led Server path row and renders locations', async () => {
     const fixture = editor();
-    const input = fixture.nativeElement.querySelector('#source-path') as HTMLInputElement;
-    expect(input).toBeTruthy();
+    [...fixture.nativeElement.querySelectorAll('button')]
+      .find((element: HTMLButtonElement) => element.textContent?.trim() === 'Edit manually')!
+      .click();
+    fixture.detectChanges();
+    const input = fixture.nativeElement.querySelector('#manual-server-path') as HTMLInputElement;
     input.value = '/mnt/manual';
     input.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
     await open(fixture);
     expect(fixture.nativeElement.querySelector('dialog')?.textContent).toContain(
       'Select media folder',
     );
     expect(fixture.nativeElement.textContent).toContain('Mounted storage');
     expect(fixture.nativeElement.textContent).toContain('Removable media');
-    expect(input.value).toBe('/mnt/manual');
+    expect(
+      (fixture.nativeElement.querySelector('#manual-server-path') as HTMLInputElement).value,
+    ).toBe('/mnt/manual');
   });
 
   it('navigates locations, breadcrumbs, refreshes, and selects the current folder', async () => {
     const fixture = editor();
+    [...fixture.nativeElement.querySelectorAll('button')]
+      .find((element: HTMLButtonElement) => element.textContent?.trim() === 'Edit manually')!
+      .click();
+    fixture.detectChanges();
     await open(fixture);
     const rows = fixture.nativeElement.querySelectorAll('.picker-row');
     (rows[0] as HTMLButtonElement).click();
@@ -123,6 +133,9 @@ describe('LOCAL media path picker', () => {
       .find((element: HTMLButtonElement) => element.textContent?.trim() === 'Select folder')!
       .click();
     expect(fixture.componentInstance.config.controls['path'].value).toBe('/mnt');
+    expect(
+      (fixture.nativeElement.querySelector('#manual-server-path') as HTMLInputElement).value,
+    ).toBe('/mnt');
     expect(fixture.componentInstance.dirty()).toBe(true);
   });
 

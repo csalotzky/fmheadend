@@ -57,6 +57,7 @@ export class SourceEditor implements OnInit {
   readonly browserLocations = signal<FilesystemLocation[]>([]);
   readonly browser = signal<FilesystemBrowse | null>(null);
   readonly selectedPlaylist = signal<string | null>(null);
+  readonly manualPathEditing = signal(false);
   readonly form = new FormGroup({
     name: new FormControl('', {
       nonNullable: true,
@@ -134,6 +135,7 @@ export class SourceEditor implements OnInit {
     this.form.controls.gst_options.setValue('');
     this.result.set(null);
     this.closeBrowser();
+    this.manualPathEditing.set(false);
   }
   changeProcessor() {
     this.form.controls.audio_profile_path.setValue(null);
@@ -151,6 +153,9 @@ export class SourceEditor implements OnInit {
   }
   confirmLabel() {
     return this.localMode() === 'playlist' ? 'Select playlist' : 'Select folder';
+  }
+  toggleManualPathEditing() {
+    this.manualPathEditing.update((editing) => !editing);
   }
   async openBrowser() {
     if (this.browserLoading()) return;
