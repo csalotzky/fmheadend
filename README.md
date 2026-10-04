@@ -51,6 +51,12 @@ All REST routes use `/api/v1`. `python -m fmheadendd.app` accepts the same flags
 The default database is `/var/lib/fmheadend/fmheadend.db`; use a writable path
 for local development. Run one daemon process/worker per headend.
 
+The LOCAL source path picker exposes only `/mnt`, `/media`, and `/srv` by default.
+Add an extra absolute host path at startup with repeatable
+`--media-browser-root`, for example `--media-browser-root /home/tzky --media-browser-root /home/tzky/Music`.
+This is a read-only convenience browser: it neither mounts storage nor changes
+the existing persisted LOCAL path semantics.
+
 The distribution maps `fmheadendd` directly to `daemon/` without an extra nested
 source directory. `muxd/` contains the C++ daemon; `systemd/` contains M6A service units; `webui/` contains the V1 Dashboard, Sources, Modulators, Audio Profiles and read-only System UI.
 

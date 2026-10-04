@@ -13,6 +13,7 @@ class Settings:
     pcm_staging_buffer_ms: int = DEFAULT_STAGING_BUFFER_MS
     pcm_consumer_buffer_ms: int = DEFAULT_CONSUMER_BUFFER_MS
     pcm_staging_max_age_ms: int = DEFAULT_STAGING_MAX_AGE_MS
+    media_browser_roots: tuple[str | Path, ...] = ()
 
     def __post_init__(self):
         pcm_capacity_bytes(self.pcm_staging_buffer_ms)
@@ -20,3 +21,9 @@ class Settings:
         pcm_capacity_bytes(self.pcm_staging_max_age_ms)
         if type(self.region) is not int or self.region not in PLANS:
             raise ValueError("Unknown region: choose 0, 1, 2 or 3")
+        if any(str(root).replace("\\", "/") == "/" for root in self.media_browser_roots):
+            raise ValueError("Media browser root must not be the filesystem root")
+        if any(not Path(root).is_absolute() for root in self.media_browser_roots):
+            raise ValueError("Media browser roots must be absolute paths")
+        if any(Path(root) == Path(Path(root).anchor) for root in self.media_browser_roots):
+            raise ValueError("Media browser root must not be the filesystem root")

@@ -48,6 +48,21 @@ export interface Profile {
   kind: 'default' | 'custom';
   name: string;
 }
+export interface FilesystemLocation {
+  name: string;
+  path: string;
+  available: boolean;
+}
+export interface FilesystemEntry {
+  name: string;
+  type: 'directory' | 'file';
+}
+export interface FilesystemBrowse {
+  path: string;
+  root: string;
+  can_go_up: boolean;
+  entries: FilesystemEntry[];
+}
 @Injectable({ providedIn: 'root' })
 export class SourceApi {
   private http = inject(HttpClient);
@@ -56,6 +71,16 @@ export class SourceApi {
   }
   profiles() {
     return this.http.get<Profile[]>('/api/v1/audio-profiles/files').pipe(timeout(15000));
+  }
+  filesystemLocations() {
+    return this.http
+      .get<{ locations: FilesystemLocation[] }>('/api/v1/filesystem/locations')
+      .pipe(timeout(15000));
+  }
+  browseFilesystem(path: string, mode: LocalSourceConfig['mode']) {
+    return this.http
+      .get<FilesystemBrowse>('/api/v1/filesystem/browse', { params: { path, mode } })
+      .pipe(timeout(15000));
   }
   save(body: SourceDraft, id?: number) {
     return (

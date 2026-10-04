@@ -9,7 +9,7 @@ from ..models.runtime_status import HeadendStatus, InputSourceStatus, ModulatorS
 from ..models.audio_profile_file import AudioProfileFile, CloneProfileFile, ProfileFileResult, ProfileFileSummary, ProfileSaveResult
 
 router = APIRouter(prefix="/api/v1", responses={
-    code: {"model": ErrorResponse} for code in (400, 404, 409, 422, 500, 503)
+    code: {"model": ErrorResponse} for code in (400, 403, 404, 409, 422, 500, 503)
 })
 
 
@@ -18,6 +18,18 @@ def published_view(request, response, name):
     response.headers['Cache-Control'] = 'no-store'
     response.headers['X-Observation-Age-Seconds'] = f'{status.publication_age(name):.3f}'
     return status.published_view(name)
+
+
+@router.get("/filesystem/locations", tags=["filesystem"])
+@control_route
+def filesystem_locations(request: Request):
+    return request.app.state.services.filesystem.locations()
+
+
+@router.get("/filesystem/browse", tags=["filesystem"])
+@control_route
+def filesystem_browse(path: str, mode: str, request: Request):
+    return request.app.state.services.filesystem.browse(path, mode)
 
 
 @router.get('/system/logs', response_model=list[dict], tags=['system'])

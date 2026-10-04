@@ -1,4 +1,12 @@
-import { Component, HostListener, OnInit, inject, signal } from '@angular/core';
+import {
+  Component,
+  ElementRef,
+  HostListener,
+  OnInit,
+  ViewChild,
+  inject,
+  signal,
+} from '@angular/core';
 import { FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ActivatedRoute, CanDeactivateFn, Router, RouterLink } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
@@ -10,6 +18,8 @@ import {
   Profile,
   Json,
   LocalSourceConfig,
+  FilesystemBrowse,
+  FilesystemLocation,
 } from './source-api';
 import { fields } from './source-fields';
 import { TestResult } from './test-result';
@@ -23,6 +33,7 @@ import { DashboardState } from '../dashboard/dashboard-state';
   styleUrl: './sources.css',
 })
 export class SourceEditor implements OnInit {
+  @ViewChild('pathPicker') pathPicker?: ElementRef<HTMLDialogElement>;
   private api = inject(SourceApi);
   private route = inject(ActivatedRoute);
   private router = inject(Router);
@@ -40,6 +51,12 @@ export class SourceEditor implements OnInit {
   readonly testing = signal(false);
   readonly error = signal('');
   readonly result = signal<SourceTest | null>(null);
+  readonly browserOpen = signal(false);
+  readonly browserLoading = signal(false);
+  readonly browserError = signal('');
+  readonly browserLocations = signal<FilesystemLocation[]>([]);
+  readonly browser = signal<FilesystemBrowse | null>(null);
+  readonly selectedPlaylist = signal<string | null>(null);
   readonly form = new FormGroup({
     name: new FormControl('', {
       nonNullable: true,
@@ -116,6 +133,7 @@ export class SourceEditor implements OnInit {
     this.config.markAsDirty();
     this.form.controls.gst_options.setValue('');
     this.result.set(null);
+    this.closeBrowser();
   }
   changeProcessor() {
     this.form.controls.audio_profile_path.setValue(null);
@@ -124,6 +142,106 @@ export class SourceEditor implements OnInit {
   missingProfile() {
     const id = this.form.controls.audio_profile_path.value;
     return id !== null && !this.profiles().some((profile) => profile.path === id);
+  }
+  localMode(): LocalSourceConfig['mode'] {
+    return this.config.controls['mode']?.value === 'playlist' ? 'playlist' : 'folder';
+  }
+  pickerTitle() {
+    return this.localMode() === 'playlist' ? 'Select playlist' : 'Select media folder';
+  }
+  confirmLabel() {
+    return this.localMode() === 'playlist' ? 'Select playlist' : 'Select folder';
+  }
+  async openBrowser() {
+    if (this.browserLoading()) return;
+    this.browserOpen.set(true);
+    this.browserError.set('');
+    this.browser.set(null);
+    this.selectedPlaylist.set(null);
+    const dialog = this.pathPicker?.nativeElement;
+    if (dialog?.showModal) dialog.showModal();
+    else dialog?.setAttribute('open', '');
+    await this.loadLocations();
+  }
+  closeBrowser() {
+    this.browserOpen.set(false);
+    const dialog = this.pathPicker?.nativeElement;
+    if (dialog?.open && dialog.close) dialog.close();
+    else dialog?.removeAttribute('open');
+  }
+  async loadLocations() {
+    if (this.browserLoading()) return;
+    this.browserLoading.set(true);
+    this.browserError.set('');
+    try {
+      this.browserLocations.set((await firstValueFrom(this.api.filesystemLocations())).locations);
+      this.browser.set(null);
+      this.selectedPlaylist.set(null);
+    } catch (e) {
+      this.browserError.set(errorMessage(e));
+    } finally {
+      this.browserLoading.set(false);
+    }
+  }
+  async browsePath(path: string) {
+    if (this.browserLoading()) return;
+    this.browserLoading.set(true);
+    this.browserError.set('');
+    this.selectedPlaylist.set(null);
+    try {
+      this.browser.set(await firstValueFrom(this.api.browseFilesystem(path, this.localMode())));
+    } catch (e) {
+      this.browser.set(null);
+      this.browserError.set(errorMessage(e));
+    } finally {
+      this.browserLoading.set(false);
+    }
+  }
+  refreshBrowser() {
+    const current = this.browser();
+    return current ? this.browsePath(current.path) : this.loadLocations();
+  }
+  navigateEntry(name: string) {
+    const current = this.browser();
+    if (current) void this.browsePath(`${current.path.replace(/\/$/, '')}/${name}`);
+  }
+  goUp() {
+    const current = this.browser();
+    if (!current) return;
+    if (!current.can_go_up) {
+      void this.loadLocations();
+      return;
+    }
+    const parent = current.path.slice(0, current.path.lastIndexOf('/')) || '/';
+    void this.browsePath(parent);
+  }
+  breadcrumbs() {
+    const current = this.browser();
+    if (!current) return [];
+    const rootParts = current.root.split('/').filter(Boolean);
+    const pathParts = current.path.split('/').filter(Boolean);
+    const breadcrumbs = [
+      {
+        name: rootParts.at(-1) ?? current.root,
+        path: current.root,
+        enabled: current.path !== current.root,
+      },
+    ];
+    for (const name of pathParts.slice(rootParts.length)) {
+      const path = `${breadcrumbs.at(-1)!.path}/${name}`;
+      breadcrumbs.push({ name, path, enabled: path !== current.path });
+    }
+    return breadcrumbs;
+  }
+  selectPlaylist(path: string) {
+    this.selectedPlaylist.set(path);
+  }
+  selectBrowserValue() {
+    const value = this.localMode() === 'playlist' ? this.selectedPlaylist() : this.browser()?.path;
+    if (!value) return;
+    this.config.controls['path'].setValue(value);
+    this.config.controls['path'].markAsDirty();
+    this.closeBrowser();
   }
   dirty() {
     return this.form.dirty || this.config.dirty;

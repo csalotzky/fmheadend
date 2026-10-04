@@ -21,6 +21,7 @@ from .database import Database, SCHEMA_VERSION
 from .regions import PLANS
 from .webui import mount_webui
 from .errors import DomainError
+from .filesystem import FilesystemBrowser
 from .modulators.manager import ModulatorManager
 from .mux.client import MockMuxClient
 from .mux.unix_client import UnixMuxClient
@@ -70,12 +71,13 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
             config = ConfigurationService(database, sources, modulators)
             status = StatusService(modulators, sources, rp_client, mux_client, clock, recovery,
                                    config=config, profile_files=profile_files, radiotext=rt)
+            filesystem = FilesystemBrowser(settings.media_browser_roots)
             status.info.update(frequency_plan=PLANS[settings.region].as_dict(),
                                database_schema_version=SCHEMA_VERSION,
                                media_backend="MOCK" if getattr(pipeline_factory, "mocked", True) else "GStreamer")
             status.publish()
             return SimpleNamespace(
-                profile_files=profile_files,
+                profile_files=profile_files, filesystem=filesystem,
                 database=database, rp=rp_client, mux=mux_client, config=config, sources=sources, modulators=modulators, rt=rt, rds=rds, status=status, recovery=recovery,
                 info=status.info,
             )
@@ -227,6 +229,8 @@ def argument_parser():
                         help="Per-consumer PCM capacity and maximum age in ms (default 300)")
     parser.add_argument("--region", type=int, choices=sorted(PLANS), default=1, help="Frequency selection plan: 0 Expert, 1 Europe (default), 2 US, 3 Japan")
     parser.add_argument("--webui-dir", help="Production Angular browser assets directory (optional)")
+    parser.add_argument("--media-browser-root", action="append", default=[],
+                        help="Additional absolute root available to the LOCAL source path browser; repeatable")
     parser.add_argument("--audio-profiles-default-dir", default="/usr/share/fmheadend/audio-profiles/default")
     parser.add_argument("--audio-profiles-custom-dir", default="/var/lib/fmheadend/audio-profiles/custom")
     return parser
@@ -239,7 +243,8 @@ def main():
                         args.audio_profiles_default_dir, args.audio_profiles_custom_dir,
                         pcm_staging_buffer_ms=args.pcm_staging_buffer_ms,
                         pcm_staging_max_age_ms=args.pcm_staging_max_age_ms,
-                        pcm_consumer_buffer_ms=args.pcm_consumer_buffer_ms)
+                        pcm_consumer_buffer_ms=args.pcm_consumer_buffer_ms,
+                        media_browser_roots=tuple(args.media_browser_root))
     database = Database(args.database)
     try:
         config = database.get_system()

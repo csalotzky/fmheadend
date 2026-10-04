@@ -113,6 +113,129 @@ summary {
 .stream-row > button {
   flex: 0 0 auto;
 }
+.local-path-row {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+.local-path-row > label {
+  flex: 1 1 300px;
+  min-width: 0;
+}
+.media-path-picker {
+  width: min(680px, calc(100vw - 32px));
+  max-height: min(650px, calc(100vh - 32px));
+  padding: 0;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.media-path-picker::backdrop {
+  background: rgb(0 0 0 / 65%);
+}
+.picker-header,
+.picker-toolbar,
+.picker-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+}
+.picker-header {
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+}
+.picker-header h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 500;
+}
+.picker-close {
+  padding: 2px 8px;
+  font-size: 20px;
+  line-height: 1;
+}
+.picker-toolbar {
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+}
+.picker-toolbar nav {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.breadcrumb {
+  overflow: hidden;
+  max-width: 150px;
+  padding: 3px 0;
+  text-overflow: ellipsis;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+}
+.picker-list {
+  min-height: 220px;
+  max-height: 360px;
+  overflow: auto;
+  padding: var(--space-2);
+}
+.picker-row {
+  display: grid;
+  width: 100%;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  margin-bottom: 2px;
+  text-align: left;
+}
+.picker-row span,
+.picker-footer output {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.picker-row small,
+.picker-path {
+  color: var(--muted);
+}
+.picker-row.selected {
+  border-color: var(--warning);
+  background: #3b3630;
+}
+.picker-message {
+  margin: var(--space-4);
+}
+.picker-footer {
+  justify-content: space-between;
+  border-top: 1px solid var(--border);
+}
+.picker-footer output {
+  min-width: 0;
+  color: var(--muted);
+  font: 12px var(--mono);
+}
+.picker-footer > div {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--space-2);
+}
+@media (max-width: 620px) {
+  .local-path-row {
+    display: block;
+  }
+  .local-path-row > button {
+    margin-top: 8px;
+  }
+  .picker-toolbar,
+  .picker-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
 
 .audio-profile {
   margin: 6px 0 0;
