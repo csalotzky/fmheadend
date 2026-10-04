@@ -41,6 +41,8 @@ class TracedPipeline(GstPipeline):
     def __init__(self, *args, **kwargs):
         self.handoffs = self.fallbacks = self.builds = 0
         self.callback_times = []
+        self.metadata_records = []
+        self.handoff_metadata = []
         self.disable_handoff = False
         super().__init__(*args, **kwargs)
     def _build(self):
@@ -49,13 +51,20 @@ class TracedPipeline(GstPipeline):
     def _local_handoff(self, player):
         if not self.disable_handoff:
             self.handoffs += 1
+            before = self.snapshot()['stream_title']
             super()._local_handoff(player)
+            self.handoff_metadata.append((before, self.snapshot()['stream_title']))
     def _local_resume(self, **kwargs):
         self.fallbacks += 1
         super()._local_resume(**kwargs)
     def _sample(self, sink):
         result = super()._sample(sink)
         self.callback_times.append(time.monotonic())
+        info = self.snapshot()
+        record = (self._local.rendering.uri if self._local and self._local.rendering else None,
+                  info['title'], info['artist'], info['stream_title'])
+        if not self.metadata_records or self.metadata_records[-1] != record:
+            self.metadata_records.append(record)
         return result
 
 
@@ -104,7 +113,7 @@ def test_native_cycles_handoff_and_stable_output(tmp_path, mode, order):
         # for every observed transition (native handoff actually carried PCM).
         assert p.fallbacks < len(seen) - 1
         assert p._pipeline is native and p.sink is sink and p.output is output
-        assert p.snapshot()['output_caps'] and p.snapshot()['title'] is None
+        assert p.snapshot()['output_caps'] and p.snapshot()['title'] is not None
     finally:
         p.stop()
     assert not p._thread.is_alive() and p._local is None
@@ -130,6 +139,7 @@ def test_native_bad_items_and_exhaustion(tmp_path):
     try:
         p.start(); collect(p, lambda s: 2000 in s)
         assert not p.fatal_error
+        assert p.snapshot()['title'] == 'b'
     finally: p.stop()
     playlist.write_text('missing.wav\na.wav\n')
     p = TracedPipeline(config(playlist,'playlist'), timeout_s=2)
@@ -158,6 +168,7 @@ def test_native_shared_consumers_restart_and_active_probe(tmp_path):
         manager.acquire(source.id,1)
         assert manager.pipelines[source.id] is p
         assert manager.test(source).ok and manager.pipelines[source.id] is p
+        assert manager.status(source.id).stream_title == manager.test(source).stream_title == 'a'
         p.output.clear()
         end=time.monotonic()+2
         left=right=None
@@ -170,10 +181,13 @@ def test_native_shared_consumers_restart_and_active_probe(tmp_path):
         assert manager.pipelines[source.id] is p and p._thread.is_alive()
         manager.release(source.id,1)
         assert not p._thread.is_alive() and p._local is None
+        assert manager.status(source.id).stream_title is None
+        assert p.snapshot()['stream_title'] is None
         tone(tmp_path/'0.wav',3000,1)
         manager.acquire(source.id,0); new=manager.pipelines[source.id]
         assert new is not p
         assert collect(new,lambda s:bool(s))[0]==3000
+        assert new.snapshot()['stream_title'] == '0'
     finally: manager.close();db.close()
 
 
@@ -191,6 +205,7 @@ def test_native_mixed_http_playlist_and_probe(tmp_path):
         manager=SourceManager(None,pipeline_factory=TracedPipeline)
         assert manager.test(config(playlist,'playlist')).ok
         assert not manager.pipelines
+        assert {r[3] for r in p.metadata_records} == {'a', 'b'}
     finally:
         p.stop();server.shutdown();server.server_close();thread.join()
 
@@ -243,3 +258,47 @@ def test_native_vlc_encoded_playlist(tmp_path, suffix):
     finally:
         p.stop()
     assert not p._thread.is_alive()
+
+
+@pytest.mark.parametrize('fallback', [False, True])
+def test_native_tagged_to_untagged_metadata(tmp_path, gst, fallback):
+    if not all(gst.ElementFactory.find(name) for name in ('taginject','flacenc')):
+        pytest.skip('Synthetic tagged FLAC requires taginject and flacenc')
+    tagged = tmp_path/'a.flac'
+    generator = gst.parse_launch('audiotestsrc num-buffers=100 samplesperbuffer=480 ! audio/x-raw,rate=48000,channels=2 ! taginject tags="title=ActualTitle,artist=ActualArtist" ! flacenc ! filesink name=out')
+    generator.get_by_name('out').set_property('location',str(tagged))
+    try:
+        generator.set_state(gst.State.PLAYING)
+        message=generator.get_bus().timed_pop_filtered(5*gst.SECOND,gst.MessageType.ERROR|gst.MessageType.EOS)
+        assert message and message.type==gst.MessageType.EOS
+    finally: generator.set_state(gst.State.NULL)
+    untagged=tmp_path/'b Song \u00e9.wav';tone(untagged,2000,1)
+    p=TracedPipeline(config(tmp_path),timeout_s=3);p.disable_handoff=fallback
+    p.output.attach(0)
+    try:
+        p.start()
+        end=time.monotonic()+6
+        injected=False
+        while time.monotonic()<end:
+            p.output.read(0)
+            records=p.metadata_records
+            if not injected and any(r[0]==untagged.as_uri() for r in records):
+                # A late, unassociated bus message must not contaminate B.
+                tags=gst.TagList.new_empty();tags.add_value(gst.TagMergeMode.REPLACE,'title','StaleA')
+                p._bus.post(gst.Message.new_tag(p.sink,tags));injected=True
+            if len(records)>=3: break
+            time.sleep(.005)
+        print('metadata transitions',p.metadata_records,'handoffs',p.handoff_metadata)
+        assert [r[0] for r in p.metadata_records[:3]]==[tagged.as_uri(),untagged.as_uri(),tagged.as_uri()]
+        for uri,title,artist,text in p.metadata_records:
+            assert (title,artist,text)==(('ActualTitle','ActualArtist','ActualArtist - ActualTitle') if uri==tagged.as_uri() else ('b Song \u00e9',None,'b Song \u00e9'))
+        # PCM publishes concurrently, so a before/after pair is not an atomic
+        # assertion. The unit test isolates handoff; here observe at least one
+        # native next-URI handoff that retained A's metadata throughout.
+        if not fallback:
+            assert ('ActualArtist - ActualTitle','ActualArtist - ActualTitle') in p.handoff_metadata
+        else: assert p.fallbacks>=2
+        assert p.probe_result().stream_title==p.snapshot()['stream_title']
+        assert p.snapshot()['output_caps']
+    finally: p.stop()
+    assert p.snapshot()['title'] is None and p.snapshot()['artist'] is None and p.snapshot()['stream_title'] is None

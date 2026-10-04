@@ -81,8 +81,9 @@ first position when possible. One-item/all-identical bags cannot avoid that repe
 The RNG can be injected for deterministic tests. No caller list is mutated.
 The queue is single-owner state; there are no worker threads, callbacks or locks.
 
-Runtime ownership is described below. Metadata, RDS, RSS/podcasts and frontend
-work remain deferred; native synthetic-media tests do not constitute RF acceptance.
+Runtime ownership is described below. LOCAL and HTTP share transient source
+metadata and the existing RadioText route. RSS/podcasts and frontend Now Playing
+remain deferred; native synthetic-media tests do not constitute RF acceptance.
 
 
 ## Persisted source configuration
@@ -185,3 +186,39 @@ four 0.5-second files in about 0.55 seconds despite a synchronous sink. Native
 playbin3 segment management correctly paced the same content (about 2.33 seconds
 including startup). This is why LOCAL wraps the existing audio chain as a playbin3
 sink rather than assigning successive URIs to the existing HTTP uridecodebin.
+
+
+## Transient source metadata
+
+HTTP/ICY bus tags and LOCAL serialized appsink TAG events use the same tag parser
+and `Artist - Title` formatter in `GstPipeline`. Both publish the existing
+`title`, `artist`, `stream_title`, codec and bitrate fields. SourceManager,
+InputSourceStatus, status publication and RadioTextService require no new fields
+or alternate routing. ICY station identity (`icy-name` / `station_name`) remains
+separate and unchanged.
+
+LOCAL's appsink STREAM_START associates the rendering item with its queued URI.
+A bounded pending metadata dictionary clears the old artist/title and initializes
+title from the decoded filesystem filename stem. Remote entries use the decoded
+URL path stem only, never credentials, query or fragment; playback URIs are not
+changed. Serialized TAG events merge usable title/artist values for that stream.
+The dictionary is published atomically to the generic source snapshot at the next
+valid PCM callback. No filesystem or network work occurs in metadata callbacks.
+This keeps preroll and about-to-finish preparation from announcing the next item
+early. Late/unassociated bus TAG messages are ignored for LOCAL: only serialized
+events at the rendering sink can change its pending metadata.
+
+Tagged title takes precedence over filename fallback. Artist is never inferred
+from filenames; missing artist remains null. Empty title tags retain the fallback.
+A new stream resets item metadata, preventing the previous artist from leaking
+into an untagged item. EOS/error recovery clears old metadata while playback is
+unavailable; normal handoff retains it until the next stream produces PCM. Final
+stop discards it, and restart constructs it afresh. Probes reuse the same snapshot
+without waiting longer solely for tags. `#EXTINF` remains ignored.
+
+The existing RadioText selector continues to choose runtime override, then shared
+source `stream_title` when the modulator enables metadata-to-RT, then persistent
+fallback. Each TX applies this unchanged selection independently. No metadata is
+stored in configuration/SQLite and no RDS encoding, scheduling or transport changes
+are involved. The published text is source-selected metadata, not receiver-confirmed
+on-air content; existing PCM/RDS buffering may delay physical presentation.

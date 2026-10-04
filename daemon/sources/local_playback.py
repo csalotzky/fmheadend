@@ -106,6 +106,7 @@ class LocalPlayback:
         # success with the rendered item, never just the most recently set URI.
         with self.lock:
             self.rendering = self.submitted.popleft() if self.submitted else None
+            return self.rendering.uri if self.rendering else None
 
     def pcm(self):
         with self.lock:

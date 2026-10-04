@@ -43,6 +43,10 @@ sufficient. No Python requirement has been lowered or silently bypassed.
   request ICY metadata through `souphttpsrc`. TAG messages expose title, artist,
   codec and bitrate where supplied. Source runtime metadata feeds the existing
   RadioText selection path; there is no RDS encoding or scheduling.
+- LOCAL: `playbin3` feeds the same PCM chain and source metadata fields. Serialized
+  sink stream/tag events associate tags with the rendered item; filename stem is
+  the title fallback. Metadata is published on decoded PCM, not next-URI preparation.
+  See [LOCAL runtime and metadata](local-media-core.md#transient-source-metadata).
 - UDP: explicit raw PCM format, input sample rate and channel count are required.
   Host is the receive address; multicast_group, when set, selects the multicast
   group to join. The PCM producer must send whole input frames in each datagram.

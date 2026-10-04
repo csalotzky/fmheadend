@@ -3,6 +3,8 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 import logging
 import math
+from pathlib import Path
+from urllib.parse import unquote, urlsplit
 import threading
 import time
 
@@ -88,7 +90,8 @@ class GstPipeline:
     """One supervised native pipeline per source; worker owns all slow operations.
 
     appsink copies a bounded PCM block into staging and returns. Bus handling,
-    metadata, fan-out and reconnect run on the worker, never in the callback.
+    fan-out and reconnect run on the worker. LOCAL serialized sink tags publish
+    item metadata with rendered PCM; callbacks never resolve files or perform IO.
     """
     mocked = False
 
@@ -115,6 +118,8 @@ class GstPipeline:
         if source.processor_mode == 'bypass' and profile is not None:
             raise DependencyUnavailable('Bypass must not load a processing profile')
         self._local = None
+        self._pending_metadata = None
+        self._metadata_dirty = False
         self._uri_change_lock = threading.Lock()
         self.source = source
         self.profile = profile
@@ -322,8 +327,22 @@ class GstPipeline:
             self._uri_change_lock.release()
 
     def _local_event(self, pad, info):
-        if info.get_event().type == self.Gst.EventType.STREAM_START:
-            self._local.stream_start()
+        event = info.get_event()
+        # These serialized sink events cannot overtake PCM from an earlier item.
+        # Bus TAG messages can be queued/prefetched, so LOCAL does not use them.
+        if event.type == self.Gst.EventType.STREAM_START:
+            uri = self._local.stream_start()
+            title = Path(unquote(urlsplit(uri).path)).stem if uri else ''
+            title = ''.join(c for c in title if c.isprintable())[:1024] or None
+            self._pending_metadata = dict(title=title, artist=None, stream_title=title,
+                                          codec=None, bitrate_bps=None)
+            self._metadata_dirty = True
+        elif event.type == self.Gst.EventType.TAG and self._pending_metadata is not None:
+            values = self._tag_values(event.parse_tag())
+            # An empty tag is not a usable replacement for the filename fallback.
+            values = {k: v for k, v in values.items() if k not in ('title', 'artist') or v.strip()}
+            self._pending_metadata.update(self._formatted_metadata(values, self._pending_metadata))
+            self._metadata_dirty = True
         return self.Gst.PadProbeReturn.OK
 
     def _local_resume(self, *, failed):
@@ -333,6 +352,7 @@ class GstPipeline:
             self._pipeline.set_state(self.Gst.State.NULL)
             self._bus.set_flushing(True)
             self._bus.set_flushing(False)
+            self._clear_local_metadata()
             uri = self._local.resume(failed=failed)
             # Already decoded tail PCM still belongs to this shared output.
             # Let the ordinary drain/age policy handle it across EOS recovery.
@@ -368,9 +388,10 @@ class GstPipeline:
             self._last_sample = time.monotonic()
             self._caps = self._validated_output_text
             # Publish metadata before waking the source worker/readiness path.
-            self.staging.put(data)
             if self._local is not None:
                 self._local.pcm()
+                self._publish_local_metadata()
+            self.staging.put(data)
         elif size:
             self._callback_error = "PCM buffer exceeds the bounded output block size or is not frame-aligned"
             return Gst.FlowReturn.ERROR
@@ -400,7 +421,21 @@ class GstPipeline:
                                 self._station_name = name or None
                         break
 
-    def _tags(self, tags):
+    def _clear_local_metadata(self):
+        # Worker only, after native NULL has quiesced the sink callbacks.
+        self._pending_metadata = None
+        self._metadata_dirty = False
+        self._update(title=None, artist=None, stream_title=None, codec=None, bitrate_bps=None)
+
+    def _publish_local_metadata(self):
+        # Sink streaming thread only: publish at the first actual PCM, not when
+        # STREAM_START/preroll or about-to-finish prepares the next item.
+        if self._metadata_dirty and self._pending_metadata is not None:
+            self._update(**self._pending_metadata)
+            self._metadata_dirty = False
+
+    @staticmethod
+    def _tag_values(tags):
         values = {}
         for tag, key in (("audio-codec", "codec"), ("title", "title"), ("artist", "artist")):
             ok, value = tags.get_string(tag)
@@ -411,12 +446,19 @@ class GstPipeline:
             if ok:
                 values["bitrate_bps"] = value
                 break
-        old = self.snapshot()
+        return values
+
+    @staticmethod
+    def _formatted_metadata(values, old):
+        values = dict(values)
         if "title" in values or "artist" in values:
             title = values.get("title", old["title"]) or ""
             artist = values.get("artist", old["artist"]) or ""
             values["stream_title"] = f"{artist} - {title}" if artist and title else title or artist or None
-        self._update(**values)
+        return values
+
+    def _tags(self, tags):
+        self._update(**self._formatted_metadata(self._tag_values(tags), self.snapshot()))
 
     def _bus_failure(self, message):
         error, debug = message.parse_error()
@@ -555,6 +597,7 @@ class GstPipeline:
                     if self._local is not None:
                         self._local.close()
                         self._local = None
+                        self._clear_local_metadata()
                     self.staging.clear()
                     self.output.clear()
                 if self._stop.is_set() or not self.reconnect or self.fatal_error:
