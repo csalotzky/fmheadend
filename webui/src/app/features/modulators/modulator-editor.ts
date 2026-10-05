@@ -19,11 +19,9 @@ import { sortSources } from '../../core/api/source-order';
 import { errorMessage } from '../../core/api/headend-api';
 import { DashboardState } from '../dashboard/dashboard-state';
 import { ModulatorApi, ModulatorDraft } from './modulator-api';
-import { hex, rdsText, decimal, rfOutputOptions, analogGainOptions } from './values';
+import { decimal, rfOutputOptions, analogGainOptions } from './values';
 const text = (value = '') => new FormControl(value, { nonNullable: true });
 const flag = (value = false) => new FormControl(value, { nonNullable: true });
-const psEntry = (value = '', duration = '5') =>
-  new FormGroup({ text: text(value), duration_s: text(duration) });
 @Component({
   host: { class: 'page-content editor-wide' },
   selector: 'app-modulator-editor',
@@ -180,21 +178,6 @@ export class ModulatorEditor implements OnInit {
   removeAf(i: number) {
     this.rds.removeAf(i);
     this.form.markAsDirty();
-  }
-  fillFromSource() {
-    const name = this.selectedSource()?.name.trim();
-    if (this.form.controls.audio_mode.value !== 'DIGITAL' || !name) return;
-    if (
-      this.ps.length > 1 &&
-      !window.confirm('Replace all PS entries with one entry from the selected source?')
-    )
-      return;
-    this.form.controls.pi.setValue(hex(0xff00 + this.id, 4));
-    this.ps.clear();
-    this.ps.push(psEntry(rdsText(name, 8)));
-    this.form.controls.rds_rt.setValue(rdsText(name, 64));
-    this.form.markAsDirty();
-    this.message.set('PI, PS and fallback RadioText filled. Save to apply.');
   }
   draft(): ModulatorDraft {
     const v = this.form.getRawValue();

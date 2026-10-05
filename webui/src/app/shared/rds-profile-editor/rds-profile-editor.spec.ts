@@ -70,7 +70,7 @@ describe('Owned RDS editors', () => {
     });
     return { data, api, shared };
   }
-  it('starts without Source RDS and uses the same content editor without Fill from source', async () => {
+  it('starts without Source RDS and uses the shared content editor in a separate RDS section', async () => {
     setup();
     const f = TestBed.createComponent(SourceEditor);
     f.detectChanges();
@@ -83,34 +83,98 @@ describe('Owned RDS editors', () => {
     f.changeDetectorRef.markForCheck();
     f.detectChanges();
     expect(f.nativeElement.querySelector('app-rds-profile-editor')).not.toBeNull();
-    expect(f.nativeElement.textContent).not.toContain('Fill from source');
+    expect(f.nativeElement.textContent).toContain('Fill from source');
+    expect(f.nativeElement.querySelector('.editor-actions app-rds-profile-editor')).toBeNull();
+    expect(
+      f.nativeElement.querySelector('[aria-labelledby=source-rds-heading] app-rds-profile-editor'),
+    ).not.toBeNull();
     c.form.controls.name.setValue('Station');
     c.config.controls['uri'].setValue('https://example.org/live');
     expect(c.draft()?.rds_profile).toEqual(profile);
     expect(c.draft()).not.toHaveProperty('rds_enabled');
   });
-  it('does not confirm untouched enable/disable but preserves touched draft on cancellation', async () => {
-    setup();
+  it('fills only the unsaved Source PS/RT draft, preserving identity and policy', async () => {
+    const { api } = setup(profile, true);
     const f = TestBed.createComponent(SourceEditor);
     f.detectChanges();
     await f.whenStable();
     const c = f.componentInstance;
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
-    c.configureRds.setValue(true);
-    c.toggleRds();
-    c.configureRds.setValue(false);
-    c.toggleRds();
-    expect(confirm).not.toHaveBeenCalled();
-    c.configureRds.setValue(true);
-    c.rds.load(profile);
-    c.rds.form.markAsTouched();
-    c.configureRds.setValue(false);
-    c.toggleRds();
-    expect(confirm).toHaveBeenCalledOnce();
-    expect(c.configureRds.value).toBe(true);
     expect(c.rds.draft()).toEqual(profile);
+    c.form.controls.name.setValue('Caf\u00e9 R\u00e1di\u00f3 Budapest');
+    c.fillFromSource();
+    expect(c.rds.draft()).toEqual({
+      ...profile,
+      rds_ps: [{ text: 'Caf\u00e9 R\u00e1d', duration_s: 5 }],
+      rds_rt: 'Caf\u00e9 R\u00e1di\u00f3 Budapest',
+    });
+    expect(c.rds.form.dirty).toBe(true);
+    expect(api.save).not.toHaveBeenCalled();
+    const filled = c.rds.draft();
+    c.form.controls.name.setValue('Later name');
+    expect(c.rds.draft()).toEqual(filled);
+    c.rds.addPs();
+    const carousel = c.rds.form.getRawValue();
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    c.fillFromSource();
+    expect(c.rds.form.getRawValue()).toEqual(carousel);
+    confirm.mockReturnValue(true);
+    c.fillFromSource();
+    expect(c.rds.ps.length).toBe(1);
+    expect(c.rds.draft().rds_metadata_to_rt).toBe(true);
+    expect(api.save).not.toHaveBeenCalled();
   });
-  it('confirms persisted removal and retains the draft on follower rejection', async () => {
+  it('keeps identification, PS, AF and RT in distinct shared groups and actions below RDS', async () => {
+    setup(profile, true);
+    const f = TestBed.createComponent(SourceEditor);
+    f.detectChanges();
+    await f.whenStable();
+    f.detectChanges();
+    const root: HTMLElement = f.nativeElement;
+    expect(root.querySelectorAll('app-rds-profile-editor .profile-group').length).toBe(3);
+    expect(root.querySelector('.ps-group .list-entry input')).not.toBeNull();
+    expect(root.querySelector('.rt-group textarea')).not.toBeNull();
+    const panel = root.querySelector('[aria-labelledby=source-rds-heading]')!;
+    const actions = root.querySelector('.editor-actions')!;
+    expect(panel.compareDocumentPosition(actions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(panel.textContent).not.toContain('Testing does not save');
+    expect(actions.querySelector('button[type=submit]')?.textContent).toContain('Save');
+  });
+  it.each([false, true])(
+    'disables RDS as a draft without confirmation (persisted=%s)',
+    async (persisted) => {
+      const { api } = setup(persisted ? profile : null, persisted);
+      const f = TestBed.createComponent(SourceEditor);
+      f.detectChanges();
+      await f.whenStable();
+      f.detectChanges();
+      const c = f.componentInstance;
+      const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+      const checkbox: HTMLInputElement = f.nativeElement.querySelector('.source-rds-toggle input');
+      const toggle = async (enabled: boolean) => {
+        checkbox.checked = enabled;
+        checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+        await f.whenStable();
+      };
+      await toggle(true);
+      c.rds.load(profile);
+      c.rds.form.controls.rds_rt.setValue('Unsaved draft');
+      c.rds.form.markAsDirty();
+      c.rds.form.markAsTouched();
+      await toggle(false);
+      expect(c.configureRds.value).toBe(false);
+      expect(f.nativeElement.querySelector('app-rds-profile-editor')).toBeNull();
+      expect(confirm).not.toHaveBeenCalled();
+      expect(api.save).not.toHaveBeenCalled();
+      await toggle(true);
+      expect(f.nativeElement.querySelector('app-rds-profile-editor')).not.toBeNull();
+      expect(c.rds.draft()).toEqual({ ...profile, rds_rt: 'Unsaved draft' });
+      c.configureRds.setValue(false);
+      c.toggleRds();
+      f.destroy();
+      expect(api.save).not.toHaveBeenCalled();
+    },
+  );
+  it('removes only on Save and retains the draft on follower rejection', async () => {
     const { api } = setup(profile, true);
     const f = TestBed.createComponent(SourceEditor);
     f.detectChanges();
@@ -119,7 +183,8 @@ describe('Owned RDS editors', () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
     c.configureRds.setValue(false);
     c.toggleRds();
-    expect(confirm).toHaveBeenCalledOnce();
+    expect(confirm).not.toHaveBeenCalled();
+    expect(api.save).not.toHaveBeenCalled();
     api.save.mockImplementation(() =>
       throwError(
         () =>
@@ -141,6 +206,9 @@ describe('Owned RDS editors', () => {
     await f.whenStable();
     const c = f.componentInstance;
     const before = c.rds.draft();
+    expect(before).toEqual(profile);
+    expect(c.draft()).not.toHaveProperty('rds_pi');
+    expect(f.nativeElement.textContent).not.toContain('Fill from source');
     c.changeSource();
     expect(c.form.controls.rds_follow_source.value).toBe(true);
     f.changeDetectorRef.markForCheck();

@@ -17,21 +17,27 @@ metadata-to-RT policy. Validation/defaults are defined once in `RdsProfileConfig
   owned rows or leave orphans. Startup validates ownership/references without repair.
 
 Fresh databases create eight override rows: PI **FFF0..FFF7**, one PS item
-**"TX 0".."TX 7"**, duration **5 seconds**, and all other existing defaults.
+**"TX 0".."TX 7"**, duration **5 seconds**, empty fallback RT and **RT disabled**. Other defaults are unchanged.
 Follow is false initially. Generic profile defaults remain neutral (PI zero and
 `FM TX`); they never derive identity from a Source ID. The single physical seed
-in Database initialization replaces the old `FM TX <id>` seed. Manual Modulator
-**Fill from source** remains separate and still uses **FF00 + TX ID**.
+in Database initialization replaces the old `FM TX <id>` seed. Source-editor
+**Fill from source** fills only PS and fallback RT from the Source name in the
+unsaved draft. It never generates or changes PI.
 
 ## API ownership and effective reads
 
 Existing Source create/PATCH accepts nullable `rds_profile` with the content fields.
+For PATCH, omitted means unchanged, null removes the owned profile, and an object
+creates/updates it. Validation/persistence failure commits neither part of a mixed save.
 Reads return the nested content and its read-only `rds_profile_id`. Modulator
 PATCH/Save-and-Resume accepts `rds_override_profile` and `rds_follow_source`.
 Reads return override content, its read-only ID, and the existing flat RDS fields
 as **effective content**, resolved by `Database.effective_rds_profile`. Flat legacy
 Modulator writes still edit the override; they never write a Source profile.
-The new editor sends nested override data so inherited read fields are not edited.
+The Angular editor loads `rds_override_profile` and sends nested override data.
+Legacy flat compatibility is asymmetric: reads can be inherited effective content,
+but writes target Custom. Clients must not blindly echo effective flat fields into
+a Custom update.
 
 No standalone profile CRUD, names, library, or sharing API exists. Switching to
 Follow retains the override exactly; switching back exposes it again. Adding a
@@ -72,12 +78,17 @@ or PCM locks. Dashboard markup/styles are unchanged and use the effective fields
 
 Source's **Configure RDS for this source** is UI-only nullable ownership, not
 physical RDS enable. Save creates the row; merely toggling creates no DB record.
-Removing a persisted, dirty or touched draft requires confirmation. Cancellation
-or follower rejection preserves the draft. A pristine enable/disable needs none.
+Unchecking hides the editor without confirmation and changes only the draft.
+Re-enabling before Save restores its values. Only Save requests removal; leaving
+without Save does not change persistence. Follower rejection preserves the draft.
 
 The shared Angular content editor preserves PI/ECC/PTY/TP, PS carousel controls,
-AF and RT layout, validation and styling. Modulator-only hardware enable and Fill
-from source stay outside it. Selecting a DIGITAL Source with RDS chooses Follow
+AF and RT validation. Source RDS is a bordered section alongside Source and Audio
+processing, above the page-level Save/Cancel actions. Its Fill from source action
+changes only the unsaved PS/RT draft; replacing a carousel requires confirmation.
+Modulator retains physical enable and Follow/Custom selection, with no fill action.
+Identification, PS, AF and RT have separate groups in the shared editor.
+Selecting a DIGITAL Source with RDS chooses Follow
 in the draft; one without RDS chooses Custom. ANALOG selects Custom. Follow
 shows ownership guidance rather than editing Source content from the TX form.
 
@@ -87,3 +98,18 @@ No migration or version bump is provided. An older incompatible schema-1 databas
 is rejected untouched under the existing preproduction policy; it must be recreated
 explicitly outside normal operation. Tests use isolated databases. No operator
 database is rewritten by this feature or its tests.
+
+## Apply failure observability
+
+A handled audio rebuild failure after a mixed save leaves the entire desired
+configuration persisted and returns `applied=false` with `apply_error`. Changed
+RDS content is still offered to followers after that result; there is no rollback
+of saved RDS or audio settings. Unexpected uncaught exceptions are not this contract.
+
+All followers are fenced before refill runs. A target response error is handled
+per TX; a transport failure can suspend further work until existing recovery runs.
+Already completed target operations are not rolled back. Per-TX runtime RDS errors
+remain authoritative; Source Save does not aggregate follower acknowledgements.
+The current tests cover multi-follower success and refill error handling separately;
+there is no dedicated mixed-audio-failure-plus-RDS or multi-follower partial-failure
+integration test. This editor change does not introduce a new apply-failure policy.

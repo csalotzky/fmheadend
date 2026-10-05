@@ -575,9 +575,15 @@ def test_rt_options_persist_through_api_and_default_existing_records(tmp_path):
     path=tmp_path/'rt-options.db'
     with TestClient(create_app(Settings(path))) as api:
         row=api.get('/api/v1/modulators/0').json()
-        assert row['rds_rt_enabled'] is True and row['rds_rt_termination']=='CR'
-        assert api.patch('/api/v1/modulators/0',json={'rds_rt_enabled':False,'rds_rt_termination':'PAD'}).status_code==200
+        assert row['rds_rt_enabled'] is False and row['rds_rt']=='' and row['rds_rt_termination']=='CR'
+        assert api.patch('/api/v1/modulators/0',json={'rds_rt_enabled':True,'rds_rt_termination':'PAD'}).status_code==200
         assert api.patch('/api/v1/modulators/0',json={'rds_rt_termination':'bad'}).status_code==422
+    db=Database(path)
+    assert db.get('modulators',0).rds_rt_enabled
+    assert db.get('modulators',0).rds_rt_termination=='PAD'
+    db.close()
+    with TestClient(create_app(Settings(path))) as api:
+        assert api.patch('/api/v1/modulators/0', json={'rds_rt_enabled':False}).status_code==200
     db=Database(path)
     assert not db.get('modulators',0).rds_rt_enabled
     assert db.get('modulators',0).rds_rt_termination=='PAD'

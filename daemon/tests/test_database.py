@@ -35,6 +35,8 @@ def test_fresh_schema_and_model_defaults(tmp_path):
             assert actual.rds_pi == 0xFFF0 + tx
             assert actual.rds_ps == [PsEntry(text=f'TX {tx}')]
             assert actual.rds_override_profile.rds_pi == actual.rds_pi
+            assert actual.rds_override_profile.rds_rt == ""
+            assert actual.rds_override_profile.rds_rt_enabled is False
             assert actual.rds_follow_source is False
             raw = json.loads(db.connection.execute('SELECT data FROM modulators WHERE id=?', (tx,)).fetchone()[0])
             assert 'rds_pi' not in raw and 'rds_ps' not in raw and 'rds_override_profile' not in raw

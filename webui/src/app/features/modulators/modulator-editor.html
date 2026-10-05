@@ -163,21 +163,6 @@
               <option [ngValue]="true" [disabled]="!canFollowSource()">Follow source</option>
             </select></label
           >
-          @if (
-            form.controls.audio_mode.value === 'DIGITAL' && !form.controls.rds_follow_source.value
-          ) {
-            <div class="actions">
-              <button
-                type="button"
-                (click)="fillFromSource()"
-                [disabled]="!selectedSource()?.name?.trim()"
-              >
-                Fill from source</button
-              ><span class="muted"
-                >Fill PI, PS and fallback RadioText. Changes remain unsaved.</span
-              >
-            </div>
-          }
           @if (!form.controls.rds_follow_source.value) {
             <app-rds-profile-editor [model]="rds" />
           } @else {

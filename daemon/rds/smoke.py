@@ -29,7 +29,7 @@ def run() -> dict:
             manager.update(0, ModulatorPatch(audio_mode="ANALOG", frequency_khz=98100,
                 rf_attenuation_db=6.0, rds_enabled=True, rds_pi=0x1234, rds_ecc=0xe0,
                 rds_pty=10, rds_tp=True, rds_ps=[{'text':'RADIO FM','duration_s':5}],
-                rds_af_khz=[101100], rds_rt='Persistent fallback'))
+                rds_af_khz=[101100], rds_rt='Persistent fallback', rds_rt_enabled=True))
             manager.start(0)
             rt.set(0, RtOverride(text='Temporary programme', ttl_s=2))
             selected = rt.effective(0).model_dump()

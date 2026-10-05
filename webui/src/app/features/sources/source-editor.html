@@ -367,6 +367,35 @@
           </p>
         </details>
       </section>
+      <section class="source-editor-panel" aria-labelledby="source-rds-heading">
+        <h2 id="source-rds-heading">RDS</h2>
+        <label class="source-rds-toggle"
+          ><input
+            type="checkbox"
+            [formControl]="configureRds"
+            (change)="toggleRds()"
+            [attr.disabled]="saving() || testing() ? '' : null"
+          />Configure RDS for this source</label
+        >
+        @if (configureRds.value) {
+          <fieldset class="source-rds-content" [disabled]="saving() || testing()">
+            <div class="source-rds-fill">
+              <button
+                type="button"
+                (click)="fillFromSource()"
+                [disabled]="!form.controls.name.value.trim()"
+              >
+                Fill from source
+              </button>
+              <small
+                >Fill PS and fallback RadioText from the source name. PI stays unchanged. Save to
+                apply.</small
+              >
+            </div>
+            <app-rds-profile-editor [model]="rds" />
+          </fieldset>
+        }
+      </section>
     </fieldset>
     <div class="editor-feedback" aria-live="polite">
       @if (error()) {
@@ -374,20 +403,6 @@
       }
     </div>
     <div class="editor-actions source-editor-actions">
-      <section class="panel">
-        <h2>RDS</h2>
-        <label class="check"
-          ><input
-            type="checkbox"
-            [formControl]="configureRds"
-            (change)="toggleRds()"
-            [attr.disabled]="saving() ? '' : null"
-          />Configure RDS for this source</label
-        >
-        @if (configureRds.value) {
-          <fieldset [disabled]="saving()"><app-rds-profile-editor [model]="rds" /></fieldset>
-        }
-      </section>
       <button type="submit" [disabled]="saving() || testing()">
         {{ saving() ? 'Saving...' : 'Save' }}
       </button>
