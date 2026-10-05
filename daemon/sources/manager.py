@@ -67,8 +67,6 @@ class SourceManager:
         return error
 
     def _new_pipeline(self, source, **kwargs):
-        if source.type == 'PODCAST':
-            raise DependencyUnavailable('PODCAST_PLAYBACK_NOT_IMPLEMENTED: podcast playback is not implemented')
         if source.processor_mode == 'stereotool':
             raise DependencyUnavailable('Stereo Tool processing is not implemented')
         try:
@@ -77,6 +75,8 @@ class SourceManager:
             raise DependencyUnavailable(f'{exc.error}: {exc.message}') from exc
         if getattr(self.pipeline_factory, "mocked", True):
             return self.pipeline_factory(source)
+        if source.type == 'PODCAST':
+            kwargs['podcast_database_path'] = self.database.connection.execute('PRAGMA database_list').fetchone()[2]
         return self.pipeline_factory(source, profile=profile,
             pcm_staging_buffer_ms=self.pcm_staging_buffer_ms,
             pcm_staging_max_age_ms=self.pcm_staging_max_age_ms,
