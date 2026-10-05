@@ -4,6 +4,7 @@ import {
   HostListener,
   OnInit,
   ViewChild,
+  computed,
   inject,
   signal,
 } from '@angular/core';
@@ -90,6 +91,19 @@ export class SourceEditor implements OnInit {
         };
   }
   readonly profiles = signal<Profile[]>([]);
+  // Default profiles first, then custom; each group sorted by name. Labels are display-only.
+  readonly profileOptions = computed(() => {
+    const byName = (a: Profile, b: Profile) =>
+      a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }) ||
+      a.name.localeCompare(b.name, 'en') ||
+      a.path.localeCompare(b.path, 'en');
+    return (['default', 'custom'] as const).flatMap((kind) =>
+      this.profiles()
+        .filter((profile) => profile.kind === kind)
+        .sort(byName)
+        .map((profile) => ({ path: profile.path, label: `[${kind}] ${profile.name}` })),
+    );
+  });
   readonly profileError = signal('');
   readonly loading = signal(false);
   readonly loadFailed = signal(false);

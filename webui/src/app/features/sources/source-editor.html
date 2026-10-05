@@ -339,8 +339,8 @@
           <label
             >Audio Profile<select formControlName="audio_profile_path">
               <option [ngValue]="null">Select a profile</option>
-              @for (profile of profiles(); track profile.path) {
-                <option [ngValue]="profile.path">{{ profile.name }}</option>
+              @for (profile of profileOptions(); track profile.path) {
+                <option [ngValue]="profile.path">{{ profile.label }}</option>
               }
               @if (missingProfile()) {
                 <option [ngValue]="form.controls.audio_profile_path.value">
