@@ -250,6 +250,7 @@ Az `InputSource` egy újrahasznosítható logikai audioforrás. Nem tartalmaz FM
 | `type` | enum | igen | `HTTP`, `UDP`, `RTP`, `ALSA`, `LOCAL`, `PODCAST` |
 | `config` | JSON object | igen | Type-specifikus config |
 | `processor_mode` / `input_gain_db` / `audio_profile_path` | mode / dB / relative path | yes | Source processing selection; see 6.2 |
+| `rds_profile_id` | nullable FK | Optional owned default RdsProfile; no physical enable |
 | `gst_options` | JSON object | igen | Haladó GStreamer property override-ok; default `{}` |
 | `timestamp` | datetime | igen | Utolsó mentés/módosítás időpontja |
 
@@ -362,7 +363,9 @@ then rebuilds that Source's existing audio pipeline only if runtime fields chang
 (or a previous apply failed). Consumer/fanout ownership remains intact. Name-only
 edits to healthy audio do not restart it; idle Sources stay idle. A response with
 `saved:true, applied:false, apply_error` preserves the saved desired configuration
-and reports runtime failure. No TX/QN/RDS operation or STOP ALL hold release occurs.
+and reports runtime failure. No RF/QN operation or STOP ALL hold release occurs.
+Source RDS content changes additionally hot-apply the existing target-local RDS
+boundary to followers; RDS-only saves never rebuild audio.
 See [Source save contract](dsp-editor-controls.md#source-save-api-and-lifecycle).
 
 Momentary PCM availability is not a prerequisite for Source Save, TX ON/OFF or
@@ -428,7 +431,21 @@ A `Modulator` a nyolc fizikai QN egyikét reprezentálja. Az `id` **fizikai azon
 | `analog_gain_db` | number | Default 0.0 dB; signed tenths, final hardware representability checked by RP |
 | `digital_trim_db` | 0 / 1 | Default 0; manual QN digital trim in dB |
 | `soft_clipping` | boolean | Default false; independent QN soft clipping enable |
-| `rds_enabled` | bool | RDS enable |
+| `rds_enabled` | bool | Physical QN RDS enable, Modulator-owned |
+| `rds_follow_source` | bool | Follow Source content or Custom override; default false |
+| `rds_override_profile_id` | nullable FK | Owned override RdsProfile (always seeded) |
+| `timestamp` | datetime | Last modification |
+
+### RdsProfile content (owned child)
+
+The following fields are persisted in RdsProfile, not Modulator. Modulator API
+reads project their effective values using the single backend resolver. Source
+has nullable `rds_profile_id`; Follow requires DIGITAL plus a Source with a profile.
+See [ownership, API and hot-apply contract](source-rds-profiles.md).
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | integer | Owned profile primary key |
 | `rds_pi` | string/uint16 | PI |
 | `rds_ecc` | nullable uint8 | Extended Country Code; missing means unconfigured/null |
 | `rds_af_khz` | integer list | Fixed ordered AF Method A frequencies; 87600..107900 kHz, 100 kHz raster, max 25 |
@@ -439,7 +456,6 @@ A `Modulator` a nyolc fizikai QN egyikét reprezentálja. Az `id` **fizikai azon
 | `rds_rt_enabled` | bool | Transmit 2A independently of text/metadata contents; default true |
 | `rds_rt_termination` | CR / PAD | CR-terminated short RT (default) or all 16 space-padded segments |
 | `rds_metadata_to_rt` | bool | GStreamer metadata használható-e RT-nek |
-| `timestamp` | datetime | Utolsó módosítás |
 
 `Modulator.audio_mode` is persistent: `DIGITAL` (default) or `ANALOG`.
 ANALOG selects this physical transmitter's dedicated analog jack, not a reusable
@@ -448,14 +464,17 @@ InputSource. There is no routing matrix. ANALOG always clears `input_source_id`
 assignment and requires a configured digital source before start. Frequency validation
 is unchanged. AudioProfile belongs only to digital InputSources. Analog mode creates
 no GStreamer pipeline or PCM producer; the mux slot remains silence. RDS remains
-Modulator-owned and independent of audio mode. RP audio_mode wire values remain 0/1.
+physically Modulator-enabled; ANALOG uses its Custom override content. RP audio_mode wire values remain 0/1.
 
-Configuration PATCH remains persistence-only for confirmed OFF channels with no
+Hardware/source configuration PATCH remains persistence-only for confirmed OFF channels with no
 source ownership or pending reconciliation, after startup synchronization. ON,
 STARTING, ERROR/uncertain or source-owned channels cannot be patched. Persistent
 desired ON alone is not evidence of active RF: STOP ALL holds preserve that flag
 while confirmed stopped channels can be edited without RF commands or releasing
 the hold. PATCH cannot change desired enabled state (409 LIFECYCLE_REQUIRED).
+
+RDS profile content/selection-only PATCH and Save-and-Resume are hot: the existing
+target-local acknowledged CLEAR boundary is reused without RF/audio restart.
 
 The editor uses explicit POST `/api/v1/modulators/{id}/save-and-resume`. One existing
 control-executor task validates, conditionally stops the running target, saves,
@@ -467,7 +486,11 @@ All. Stopped/STOP ALL saves only persist. Partial outcomes are explicit; see M6A
 
 Modulators have no separate name field; physical ID 0..7 is their identity.
 
-Fresh database seeding assigns one static PS entry FM TX <id> to each physical Modulator (IDs 0..7), with the model-default 5-second duration. The generic model uses neutral FM TX text; only the seed knows the physical ID. Reopening preserves stored PS configuration and timestamps without normalization.
+Fresh database seeding creates one owned override RdsProfile per TX: PI FFF0..FFF7
+and static PS "TX 0".."TX 7", using the model-default 5-second duration. Every other
+profile default is unchanged. The generic model retains neutral FM TX text; only
+this seed derives physical identity. Manual Fill from source remains a separate
+unsaved UI action (PI FF00 + TX ID). Reopening does not normalize stored values.
 
 ### 6.3.1 PS és dinamikus PS
 

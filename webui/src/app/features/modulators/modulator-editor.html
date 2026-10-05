@@ -50,8 +50,8 @@
     }
   </aside>
   <p class="muted">
-    Saving a running TX stops only that TX, saves, then resumes it. A stopped TX stays stopped,
-    including after STOP ALL.
+    RDS-only changes keep RF and audio running. Hardware changes stop only this TX, save, then
+    resume it. A stopped TX stays stopped, including after STOP ALL.
   </p>
   <form [formGroup]="form" (ngSubmit)="save()">
     <fieldset [disabled]="saving()">
@@ -107,7 +107,7 @@
           >
           @if (form.controls.audio_mode.value === 'DIGITAL') {
             <label
-              >Source<select formControlName="input_source_id">
+              >Source<select formControlName="input_source_id" (change)="changeSource()">
                 <option [ngValue]="null">Not assigned</option>
                 @if (form.controls.input_source_id.value !== null && !selectedSource()) {
                   <option [ngValue]="form.controls.input_source_id.value">
@@ -157,7 +157,15 @@
           ><input type="checkbox" formControlName="rds_enabled" />RDS enabled</label
         >
         <fieldset [disabled]="!form.controls.rds_enabled.value">
-          @if (form.controls.audio_mode.value === 'DIGITAL') {
+          <label
+            >RDS configuration source<select formControlName="rds_follow_source">
+              <option [ngValue]="false">Custom</option>
+              <option [ngValue]="true" [disabled]="!canFollowSource()">Follow source</option>
+            </select></label
+          >
+          @if (
+            form.controls.audio_mode.value === 'DIGITAL' && !form.controls.rds_follow_source.value
+          ) {
             <div class="actions">
               <button
                 type="button"
@@ -170,147 +178,19 @@
               >
             </div>
           }
-          <div class="fields">
-            <label
-              >PI (hex)<input class="rds-text" formControlName="pi" spellcheck="false"
-            /></label>
-            <label
-              >ECC (hex, optional)<input
-                class="rds-text"
-                formControlName="ecc"
-                spellcheck="false"
-                placeholder="Not configured"
-            /></label>
-            <label
-              >Programme type<select formControlName="rds_pty">
-                @if (form.controls.rds_pty.value === null) {
-                  <option [ngValue]="null" disabled>
-                    Existing diagnostic value — choose a programme type to change
-                  </option>
-                }
-                @for (label of labels; track $index) {
-                  <option [ngValue]="$index">{{ $index }} · {{ label }}</option>
-                }
-              </select></label
-            >
-            <label class="check"
-              ><input type="checkbox" formControlName="rds_tp" />Traffic programme (TP)</label
-            >
-          </div>
-          <h3>Programme Service (PS)</h3>
-          <p class="muted">Up to 8 characters per entry.</p>
-          <div formArrayName="rds_ps">
-            @for (entry of ps.controls; track entry; let i = $index) {
-              <div class="list-entry" [formGroupName]="i">
-                <div class="ps-fields" [class.single-ps]="ps.length === 1">
-                  <label
-                    >PS {{ i + 1
-                    }}<input class="rds-text" maxlength="8" formControlName="text" /><small
-                      >{{ textLength(entry.controls.text.value) }} / 8</small
-                    ></label
-                  >
-                  @if (ps.length > 1) {
-                    <label
-                      >Duration (s)<input formControlName="duration_s" inputmode="decimal"
-                    /></label>
-                  }
-                </div>
-                <div class="actions">
-                  <button
-                    type="button"
-                    (click)="movePs(i, -1)"
-                    [disabled]="i === 0"
-                    [attr.aria-label]="'Move PS ' + (i + 1) + ' up'"
-                  >
-                    Up
-                  </button>
-                  <button
-                    type="button"
-                    (click)="movePs(i, 1)"
-                    [disabled]="i === ps.length - 1"
-                    [attr.aria-label]="'Move PS ' + (i + 1) + ' down'"
-                  >
-                    Down
-                  </button>
-                  <button
-                    type="button"
-                    (click)="removePs(i)"
-                    [disabled]="ps.length === 1"
-                    [attr.aria-label]="'Remove PS ' + (i + 1)"
-                  >
-                    Remove
-                  </button>
-                </div>
-              </div>
-            }
-          </div>
-          <button type="button" (click)="addPs()">Add PS</button>
-          <h3>Alternative frequencies (AF)</h3>
-          <p class="muted">
-            Fixed Method A list, up to 25 frequencies. 87.6–107.9 MHz in 0.1 MHz steps. Empty means
-            no alternatives.
-          </p>
-          <div formArrayName="af">
-            @for (entry of af.controls; track entry; let i = $index) {
-              <div class="af-entry">
-                <label
-                  >AF {{ i + 1
-                  }}<select [formControlName]="i">
-                    <option value="" disabled>Select frequency...</option>
-                    @for (option of alternatives; track option.value) {
-                      <option [value]="mhz(option.value)">{{ option.label }}</option>
-                    }
-                  </select></label
-                ><button
-                  type="button"
-                  (click)="removeAf(i)"
-                  [attr.aria-label]="'Remove AF ' + (i + 1)"
-                >
-                  Remove
-                </button>
-              </div>
-            }
-          </div>
-          <button type="button" (click)="addAf()" [disabled]="af.length >= 25">
-            Add frequency
-          </button>
-          <h3>Radio Text (RT)</h3>
-          <label class="check"
-            ><input type="checkbox" formControlName="rds_rt_enabled" />Radio Text (RT)
-            enabled</label
-          >
-          @if (form.controls.rds_rt_enabled.value) {
-            <label class="rt"
-              >Default Radio Text<textarea
-                class="rds-text"
-                formControlName="rds_rt"
-                rows="2"
-              ></textarea
-              ><small>{{ textLength(form.controls.rds_rt.value) }} / 64</small
-              ><small
-                >Up to 64 characters. Temporary override takes priority, then selected source
-                metadata, then this fallback.</small
-              ></label
-            >
-            <label
-              >RT termination<select formControlName="rds_rt_termination">
-                <option value="CR">CR</option>
-                <option value="PAD">PAD</option>
-              </select></label
-            >
-            <label class="check"
-              ><input type="checkbox" formControlName="rds_metadata_to_rt" />Use source metadata for
-              RadioText</label
-            >
+          @if (!form.controls.rds_follow_source.value) {
+            <app-rds-profile-editor [model]="rds" />
+          } @else {
+            <p class="muted">
+              RDS content follows {{ selectedSource()?.name }}. Edit it in Sources.
+            </p>
           }
         </fieldset>
       </section>
     </fieldset>
     <div class="editor-feedback" aria-live="polite">
       @if (saving()) {
-        <p role="status">
-          Saving; a running TX will stop and resume. Waiting for the final result…
-        </p>
+        <p role="status">Saving configuration. Hardware changes may stop and resume the TX…</p>
       }
       @if (error()) {
         <p class="error" role="alert">{{ error() }}</p>

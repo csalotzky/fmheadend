@@ -100,7 +100,7 @@ def test_restart_and_database_reload_preserve_config_only(tmp_path, mode):
         assert db.get('sources', saved['id']).model_dump(mode='json') == saved
         raw = json.loads(db.connection.execute('SELECT data FROM sources WHERE id=?', (saved['id'],)).fetchone()[0])
         assert raw['config'] == config
-        assert set(raw) == set(saved) - {'id'}
+        assert set(raw) == set(saved) - {'id', 'rds_profile', 'rds_profile_id'}
     finally:
         db.close()
     with TestClient(create_app(Settings(path))) as api:

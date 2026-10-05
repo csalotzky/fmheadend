@@ -119,7 +119,10 @@ class SourceManager:
         runtime_fields = ('type', 'config', 'processor_mode', 'input_gain_db',
                           'audio_profile_path', 'gst_options')
         changed = any(getattr(previous, key) != getattr(saved, key) for key in runtime_fields)
-        needs_apply = changed or saved.id in self.restart_errors
+        rds_only = (previous.rds_profile != saved.rds_profile and
+                    previous.model_dump(exclude={'rds_profile', 'rds_profile_id', 'timestamp'}) ==
+                    saved.model_dump(exclude={'rds_profile', 'rds_profile_id', 'timestamp'}))
+        needs_apply = not rds_only and (changed or saved.id in self.restart_errors)
         error = self._restart_audio(saved) if needs_apply and saved.id in self.pipelines else None
         return SourceSaveResult(**saved.model_dump(), applied=not error, apply_error=error)
 

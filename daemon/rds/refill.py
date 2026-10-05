@@ -47,6 +47,14 @@ class RdsRefill:
         row = self.modulators.statuses[channel]
         row.rds_state, row.rds_last_error = "DISABLED", None
 
+    def profile_changed(self, channel):
+        """Request the existing target-local content boundary, without RF commands."""
+        state = self.channels[channel]
+        state.signature = None
+        if state.active:
+            self.fence(channel)
+        self.next_poll = 0
+
     def fence(self, channel):
         state = self.channels[channel]
         state.pending = None

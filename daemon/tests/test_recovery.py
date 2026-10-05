@@ -16,7 +16,7 @@ P='/api/v1'
 def seed(path):
     db=Database(path)
     old=db.get('modulators',0)
-    db.save('modulators',ModulatorConfig.model_validate(old.model_dump(exclude={'id','timestamp'}) | {
+    db.save('modulators',ModulatorConfig.model_validate(old.model_dump(exclude={'id','timestamp','rds_override_profile_id'}) | {
         'gain_mode':'MANUAL','analog_gain_db':6.0,'digital_trim_db':1,'soft_clipping':True,
         'audio_mode':'ANALOG','frequency_khz':98100,'enabled':True,'rds_enabled':True,'rds_ecc':224}),0)
     db.close()
@@ -269,7 +269,7 @@ def test_global_stop_survives_restart_and_start_keeps_resume_selection(tmp_path,
     db = Database(path)
     config = db.get('modulators', 0)
     db.save('modulators', ModulatorConfig.model_validate(
-        config.model_dump(exclude={'id', 'timestamp'})), 2)
+        config.model_dump(exclude={'id', 'timestamp', 'rds_override_profile_id'})), 2)
     db.close()
     with TestClient(create_app(Settings(path))) as api:
         for _ in range(2):

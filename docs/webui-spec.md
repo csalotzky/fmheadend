@@ -605,3 +605,12 @@ Clipper is a separate card between LPF and Output Trim, default OFF. Selecting
 FM Headend Clipper shows Threshold (dBFS) and FM weighting (Off / 50 us / 75 us).
 Bypass is retained as hidden configuration, matching the custom limiter convention;
 selecting OFF removes the element. Runtime diagnostics are not editable controls.
+
+## Source-linked RDS content
+
+The Source and Custom Modulator forms share one RDS content editor. Source RDS
+is nullable owned content; physical RDS enable stays on Modulator. Follow source
+reads Source content without editing it; Custom preserves the owned override.
+The Dashboard appearance is unchanged and reads centrally resolved effective
+content. See [RDS profile contract](source-rds-profiles.md) for confirmation and
+hot-save behavior. Hardware-only saves retain their existing lifecycle.

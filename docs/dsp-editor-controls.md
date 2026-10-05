@@ -170,3 +170,7 @@ Documentation:
 The pre-existing edit to `webui/src/app/features/system/system-page.ts` was left
 untouched. No profile JSON, schema version, DSP adapter mapping, Pi data, firmware,
 RP protocol, RF/RDS lifecycle or persistent desired-state behavior was changed.
+
+Source RDS-only saves are an exception to audio retry/rebuild: they persist owned
+content and hot-apply RDS followers without touching audio. Mixed saves preserve
+the audio contract above. See [Source-linked RDS profiles](source-rds-profiles.md).

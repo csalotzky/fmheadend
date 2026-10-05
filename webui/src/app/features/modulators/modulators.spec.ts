@@ -7,7 +7,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { ModulatorEditor, modulatorDirtyGuard } from './modulator-editor';
 import { ModulatorsList } from './modulators-list';
-import { mhz, khz, parseHex, hex, ptyLabels, rdsText } from './values';
+import { mhz, khz, parseHex, hex, ptyLabels, rdsText, afOptions, textLength } from './values';
 import { DashboardState, compose } from '../dashboard/dashboard-state';
 import { sample } from '../dashboard/test-fixtures';
 import { Modulator } from '../../core/api/models';
@@ -133,27 +133,27 @@ describe('Modulator configuration', () => {
     f.nativeElement.querySelector('[aria-label="Remove PS 2"]').click();
     f.detectChanges();
     expect(f.nativeElement.querySelector('[formControlName="duration_s"]')).toBeNull();
-    expect(c.draft().rds_ps[0].duration_s).toBe(17);
+    expect(c.draft().rds_override_profile!.rds_ps[0].duration_s).toBe(17);
     expect(f.nativeElement.textContent).toContain('7 / 8');
     const rt = f.nativeElement.querySelector('[formControlName="rds_rt"]') as HTMLTextAreaElement;
     rt.value = 'abc';
     rt.dispatchEvent(new Event('input'));
     f.detectChanges();
     expect(f.nativeElement.textContent).toContain('3 / 64');
-    expect(c.textLength('A\u{1f600}')).toBe(2);
+    expect(textLength('A\u{1f600}')).toBe(2);
     expect(f.nativeElement.querySelectorAll('.rds-text')).toHaveLength(4);
   });
   it('offers only Method A AF frequencies and preserves integer kHz on save', async () => {
     const f = await editor({ rds_af_khz: [87600, 107900] });
     const c = f.componentInstance;
-    expect(c.alternatives).toHaveLength(204);
-    expect(c.alternatives[0]).toEqual({ value: 87600, label: '87.6 MHz' });
-    expect(c.alternatives[203]).toEqual({ value: 107900, label: '107.9 MHz' });
-    c.alternatives.forEach((o, i) => expect(o.value).toBe(87600 + i * 100));
+    expect(afOptions).toHaveLength(204);
+    expect(afOptions[0]).toEqual({ value: 87600, label: '87.6 MHz' });
+    expect(afOptions[203]).toEqual({ value: 107900, label: '107.9 MHz' });
+    afOptions.forEach((o, i) => expect(o.value).toBe(87600 + i * 100));
     expect(f.nativeElement.querySelectorAll('.af-entry select')).toHaveLength(2);
-    expect(c.draft().rds_af_khz).toEqual([87600, 107900]);
+    expect(c.draft().rds_override_profile!.rds_af_khz).toEqual([87600, 107900]);
     c.af.at(0).setValue('98.1');
-    expect(c.draft().rds_af_khz).toEqual([98100, 107900]);
+    expect(c.draft().rds_override_profile!.rds_af_khz).toEqual([98100, 107900]);
   });
   it('uses the concise source, RF and digital gain wording', async () => {
     const f = await editor();
@@ -203,7 +203,7 @@ describe('Modulator configuration', () => {
     expect(c.draft().frequency_khz).toBe(76050);
     expect(f.nativeElement.textContent).toContain('outside this plan');
     expect(c.frequencies[0].label).toContain('stored, outside plan');
-    expect(c.alternatives[0].value).toBe(87600);
+    expect(afOptions[0].value).toBe(87600);
   });
   it('uses an API supplied 50 kHz plan', async () => {
     vi.spyOn(TestBed.inject(SystemApi), 'info').mockReturnValue(
@@ -221,7 +221,7 @@ describe('Modulator configuration', () => {
     const f = await editor();
     expect(f.componentInstance.frequencies).toHaveLength(641);
     expect(f.componentInstance.frequencies[1]).toEqual({ value: 76050, label: '76.05 MHz' });
-    expect(f.componentInstance.alternatives).toHaveLength(204);
+    expect(afOptions).toHaveLength(204);
   });
   it('requires explicit frequency selection and offers the integer European raster', async () => {
     const f = await editor({ frequency_khz: null }),
@@ -285,11 +285,13 @@ describe('Modulator configuration', () => {
       rf_attenuation_db: 6,
       stereo: false,
       preemphasis_us: 75,
-      rds_pi: 45271,
-      rds_ecc: 224,
-      rds_tp: true,
-      rds_rt: 'Fallback',
-      rds_metadata_to_rt: true,
+      rds_override_profile: {
+        rds_pi: 45271,
+        rds_ecc: 224,
+        rds_tp: true,
+        rds_rt: 'Fallback',
+        rds_metadata_to_rt: true,
+      },
     });
     expect(req.request.body.enabled).toBeUndefined();
     expect(req.request.body.name).toBeUndefined();
@@ -440,7 +442,7 @@ describe('Modulator configuration', () => {
     f.detectChanges();
     const pending = c.save();
     const req = http.expectOne('/api/v1/modulators/0/save-and-resume');
-    expect(req.request.body).toMatchObject({
+    expect(req.request.body.rds_override_profile).toMatchObject({
       rds_rt_enabled: false,
       rds_rt_termination: 'PAD',
       rds_rt: 'Keep text',
@@ -556,17 +558,17 @@ describe('Modulator configuration', () => {
     const f = await editor({ rds_pty: 31 }),
       c = f.componentInstance;
     expect(ptyLabels).toHaveLength(30);
-    expect(c.draft().rds_pty).toBe(31);
+    expect(c.draft().rds_override_profile!.rds_pty).toBe(31);
     const options = Array.from(
       f.nativeElement.querySelector('[formControlName="rds_pty"]').options,
     ) as HTMLOptionElement[];
     expect(options.filter((o) => !o.disabled)).toHaveLength(30);
     c.form.controls.rds_enabled.setValue(false);
     const body = c.draft();
-    expect(body.rds_ps).toEqual(sample().modulators[0].rds_ps);
-    expect(body.rds_pty).toBe(31);
+    expect(body.rds_override_profile!.rds_ps).toEqual(sample().modulators[0].rds_ps);
+    expect(body.rds_override_profile!.rds_pty).toBe(31);
     c.form.controls.rds_pty.setValue(10);
-    expect(c.draft().rds_pty).toBe(10);
+    expect(c.draft().rds_override_profile!.rds_pty).toBe(10);
   });
   it('edits PS entries, duration, order and static/carousel semantics', async () => {
     const f = await editor(),
@@ -574,7 +576,7 @@ describe('Modulator configuration', () => {
     c.addPs();
     c.ps.at(1).patchValue({ text: 'SECOND', duration_s: '7.5' });
     c.movePs(1, -1);
-    expect(c.draft().rds_ps[0]).toEqual({ text: 'SECOND', duration_s: 7.5 });
+    expect(c.draft().rds_override_profile!.rds_ps[0]).toEqual({ text: 'SECOND', duration_s: 7.5 });
     c.removePs(1);
     expect(c.ps.length).toBe(1);
     c.removePs(0);
@@ -614,14 +616,14 @@ describe('Modulator configuration', () => {
     confirm.mockReturnValue(true);
     c.fillFromSource();
     expect(c.ps.length).toBe(1);
-    expect(c.draft().rds_metadata_to_rt).toBe(true);
+    expect(c.draft().rds_override_profile!.rds_metadata_to_rt).toBe(true);
   });
   it('edits AF exactly and rejects duplicate/raster/size mistakes', async () => {
     const f = await editor(),
       c = f.componentInstance;
     c.addAf();
     c.af.at(0).setValue('100.7');
-    expect(c.draft().rds_af_khz).toEqual([100700]);
+    expect(c.draft().rds_override_profile!.rds_af_khz).toEqual([100700]);
     c.addAf();
     c.af.at(1).setValue('100.7');
     expect(() => c.draft()).toThrow('duplicate');
@@ -629,7 +631,7 @@ describe('Modulator configuration', () => {
     expect(() => c.draft()).toThrow('AF:');
     c.removeAf(1);
     c.removeAf(0);
-    expect(c.draft().rds_af_khz).toEqual([]);
+    expect(c.draft().rds_override_profile!.rds_af_khz).toEqual([]);
     for (let i = 0; i < 26; i++) c.addAf();
     expect(c.af.length).toBe(25);
   });
