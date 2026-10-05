@@ -1,7 +1,7 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { timeout } from 'rxjs';
-import { InputSource } from '../../core/api/models';
+import { InputSource, RdsProfile } from '../../core/api/models';
 export type SourceType = InputSource['type'];
 export type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
 export interface LocalSourceConfig {
@@ -11,6 +11,7 @@ export interface LocalSourceConfig {
   recursive: boolean;
 }
 export interface SourceDraft {
+  rds_profile?: RdsProfile | null;
   name: string;
   type: SourceType;
   config: Record<string, Json>;

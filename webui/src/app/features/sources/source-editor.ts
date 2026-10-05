@@ -1,3 +1,5 @@
+import { RdsProfileForm } from '../../shared/rds-profile-editor/rds-profile-form';
+import { RdsProfileEditor } from '../../shared/rds-profile-editor/rds-profile-editor';
 import {
   Component,
   ElementRef,
@@ -43,7 +45,7 @@ import { DashboardState } from '../dashboard/dashboard-state';
 @Component({
   host: { class: 'page-content editor-narrow' },
   selector: 'app-source-editor',
-  imports: [ReactiveFormsModule, RouterLink, TestResult],
+  imports: [ReactiveFormsModule, RouterLink, TestResult, RdsProfileEditor],
   templateUrl: './source-editor.html',
   styleUrl: './sources.css',
 })
@@ -117,6 +119,20 @@ export class SourceEditor implements OnInit {
   readonly browserLocations = signal<FilesystemLocation[]>([]);
   readonly browser = signal<FilesystemBrowse | null>(null);
   readonly selectedPlaylist = signal<string | null>(null);
+  readonly rds = new RdsProfileForm();
+  readonly configureRds = new FormControl(false, { nonNullable: true });
+  private persistedRds = false;
+  toggleRds() {
+    if (
+      !this.configureRds.value &&
+      (this.persistedRds || this.rds.form.dirty || this.rds.form.touched) &&
+      !window.confirm('Remove the source RDS profile?')
+    ) {
+      this.configureRds.setValue(true);
+      return;
+    }
+    this.configureRds.markAsDirty();
+  }
   readonly form = new FormGroup({
     name: new FormControl('', {
       nonNullable: true,
@@ -170,6 +186,9 @@ export class SourceEditor implements OnInit {
           ? JSON.stringify(source.gst_options, null, 2)
           : '',
       });
+      this.persistedRds = !!source.rds_profile;
+      this.configureRds.setValue(this.persistedRds);
+      if (source.rds_profile) this.rds.load(source.rds_profile);
       this.rebuild(source.type, source.config);
       this.form.markAsPristine();
     } catch (e) {
@@ -323,7 +342,13 @@ export class SourceEditor implements OnInit {
     this.closeBrowser();
   }
   dirty() {
-    return this.form.dirty || this.config.dirty || this.podcast.dirty;
+    return (
+      this.form.dirty ||
+      this.config.dirty ||
+      this.podcast.dirty ||
+      this.configureRds.dirty ||
+      this.rds.form.dirty
+    );
   }
   canLeave() {
     return !this.saving() && (!this.dirty() || window.confirm('Discard unsaved Source changes?'));
@@ -445,7 +470,15 @@ export class SourceEditor implements OnInit {
       );
       return null;
     }
+    let rdsProfile = null;
+    try {
+      rdsProfile = this.configureRds.value ? this.rds.draft() : null;
+    } catch (e) {
+      this.error.set(e instanceof Error ? e.message : 'Check RDS configuration.');
+      return null;
+    }
     return {
+      rds_profile: rdsProfile,
       name: blankHttpName ? 'HTTP stream probe' : v.name,
       type: v.type,
       processor_mode: v.processor_mode,
@@ -465,6 +498,9 @@ export class SourceEditor implements OnInit {
       this.form.markAsPristine();
       this.config.markAsPristine();
       this.podcast.markAsPristine();
+      this.configureRds.markAsPristine();
+      this.rds.form.markAsPristine();
+      this.persistedRds = !!result.rds_profile;
       await this.shared.refreshAfterMutation();
       this.saving.set(false);
       if (result.applied === false) {
@@ -473,6 +509,7 @@ export class SourceEditor implements OnInit {
         await this.router.navigate(['/sources']);
       }
     } catch (e) {
+      if (this.persistedRds && body.rds_profile === null) this.configureRds.setValue(true);
       this.error.set(errorMessage(e));
     } finally {
       this.saving.set(false);

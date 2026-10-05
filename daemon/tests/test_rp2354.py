@@ -523,7 +523,7 @@ def running_wire_backend(calls, tmp_path):
     db = Database(path)
     for i in range(8):
         old = db.get('modulators', i)
-        db.save('modulators', ModulatorConfig.model_validate(old.model_dump(exclude={'id', 'timestamp'}) | {
+        db.save('modulators', ModulatorConfig.model_validate(old.model_dump(exclude={'id', 'timestamp', 'rds_override_profile_id'}) | {
             'audio_mode': 'ANALOG', 'frequency_khz': 87500, 'rf_attenuation_db': 22.5,
             'enabled': True, 'rds_enabled': True}), i)
     db.close()

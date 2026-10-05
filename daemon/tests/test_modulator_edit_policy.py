@@ -24,10 +24,10 @@ def test_active_patch_is_atomic_and_stop_edit_start_is_explicit(tmp_path,mode):
         rp.set_tx_config=Mock(wraps=rp.set_tx_config)
         rp.set_tx_enabled=Mock(wraps=rp.set_tx_enabled)
         before=api.get(p).json()
-        for patch in ({'frequency_khz':99500},{'gain_mode':'MANUAL'},{'rds_rt':'New'},{'enabled':False}):
+        for patch in ({'frequency_khz':99500},{'gain_mode':'MANUAL'},{'enabled':False}):
             response=api.patch(p,json=patch)
             assert response.status_code==409
-            assert response.json()['error']=='MODULATOR_ACTIVE'
+            assert response.json()['error'] in ('MODULATOR_ACTIVE', 'LIFECYCLE_REQUIRED')
             assert api.get(p).json()==before
         rp.set_tx_config.assert_not_called();rp.set_tx_enabled.assert_not_called()
         assert rp.enabled[0]

@@ -1,3 +1,5 @@
+import { RdsProfileForm } from '../../shared/rds-profile-editor/rds-profile-form';
+import { RdsProfileEditor } from '../../shared/rds-profile-editor/rds-profile-editor';
 import { SystemApi, FrequencyPlan, planOptions, frequencyLabel } from '../../core/api/system-api';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import {
@@ -9,7 +11,7 @@ import {
   inject,
   signal,
 } from '@angular/core';
-import { FormArray, FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
+import { FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ActivatedRoute, CanDeactivateFn, Router } from '@angular/router';
 import { firstValueFrom, forkJoin } from 'rxjs';
 import { Modulator } from '../../core/api/models';
@@ -17,20 +19,7 @@ import { sortSources } from '../../core/api/source-order';
 import { errorMessage } from '../../core/api/headend-api';
 import { DashboardState } from '../dashboard/dashboard-state';
 import { ModulatorApi, ModulatorDraft } from './modulator-api';
-import {
-  mhz,
-  khz,
-  hex,
-  parseHex,
-  ptyLabels,
-  rdsText,
-  checkText,
-  decimal,
-  rfOutputOptions,
-  analogGainOptions,
-  afOptions,
-  textLength,
-} from './values';
+import { hex, rdsText, decimal, rfOutputOptions, analogGainOptions } from './values';
 const text = (value = '') => new FormControl(value, { nonNullable: true });
 const flag = (value = false) => new FormControl(value, { nonNullable: true });
 const psEntry = (value = '', duration = '5') =>
@@ -38,7 +27,7 @@ const psEntry = (value = '', duration = '5') =>
 @Component({
   host: { class: 'page-content editor-wide' },
   selector: 'app-modulator-editor',
-  imports: [ReactiveFormsModule],
+  imports: [ReactiveFormsModule, RdsProfileEditor],
   templateUrl: './modulator-editor.html',
   styleUrl: './modulators.css',
 })
@@ -54,7 +43,6 @@ export class ModulatorEditor implements OnInit {
   readonly saving = signal(false);
   readonly error = signal('');
   readonly message = signal('');
-  readonly labels = ptyLabels;
   private systemApi = inject(SystemApi);
   frequencies: { value: number; label: string }[] = [];
   plan: FrequencyPlan | null = null;
@@ -62,13 +50,12 @@ export class ModulatorEditor implements OnInit {
   outsidePlan = false;
   readonly rfLevels = rfOutputOptions;
   readonly analogGains = analogGainOptions;
-  readonly alternatives = afOptions;
-  readonly mhz = mhz;
-  readonly textLength = textLength;
-  private storedPty = 0;
   readonly sources = computed(() => sortSources(this.shared.data()?.sources ?? []));
   readonly channel = computed(() => this.shared.channels().find((c) => c.id === this.id));
+  readonly rds = new RdsProfileForm();
   readonly form = new FormGroup({
+    ...this.rds.form.controls,
+    rds_follow_source: flag(),
     frequency_khz: new FormControl<number | null>(null, Validators.required),
     rf_attenuation_db: new FormControl<number | null>(null, Validators.required),
     stereo: flag(true),
@@ -80,17 +67,10 @@ export class ModulatorEditor implements OnInit {
     digital_trim_db: new FormControl<0 | 1>(0, { nonNullable: true }),
     soft_clipping: flag(),
     rds_enabled: flag(),
-    pi: text(),
-    ecc: text(),
-    rds_pty: new FormControl<number | null>(0),
-    rds_tp: flag(),
-    rds_ps: new FormArray([psEntry()]),
-    af: new FormArray<FormControl<string>>([]),
-    rds_rt: text(),
-    rds_rt_enabled: flag(true),
-    rds_rt_termination: new FormControl<'CR' | 'PAD'>('CR', { nonNullable: true }),
-    rds_metadata_to_rt: flag(),
   });
+  constructor() {
+    this.rds.attach(this.form);
+  }
   get ps() {
     return this.form.controls.rds_ps;
   }
@@ -135,7 +115,6 @@ export class ModulatorEditor implements OnInit {
     }
   }
   load(m: Modulator) {
-    this.storedPty = m.rds_pty;
     this.storedFrequency = m.frequency_khz;
     this.frequencies = this.plan ? planOptions(this.plan) : [];
     this.outsidePlan =
@@ -148,24 +127,28 @@ export class ModulatorEditor implements OnInit {
     this.form.patchValue({
       ...m,
       rds_ps: [],
-      rds_pty: m.rds_pty <= 29 ? m.rds_pty : null,
       frequency_khz: m.frequency_khz,
       rf_attenuation_db: m.rf_attenuation_db,
       analog_gain_db: String(m.analog_gain_db),
-      pi: hex(m.rds_pi, 4),
-      ecc: hex(m.rds_ecc, 2),
     });
-    this.ps.clear();
-    m.rds_ps.forEach((p) => this.ps.push(psEntry(p.text, String(p.duration_s))));
-    this.af.clear();
-    m.rds_af_khz.forEach((f) => this.af.push(text(mhz(f))));
     this.syncGain();
+    this.rds.load(m.rds_override_profile ?? m);
     this.form.markAsPristine();
   }
   changeMode() {
-    if (this.form.controls.audio_mode.value === 'ANALOG')
+    if (this.form.controls.audio_mode.value === 'ANALOG') {
       this.form.controls.input_source_id.setValue(null);
+      this.form.controls.rds_follow_source.setValue(false);
+    }
     this.syncGain();
+  }
+  canFollowSource() {
+    return (
+      this.form.controls.audio_mode.value === 'DIGITAL' && !!this.selectedSource()?.rds_profile
+    );
+  }
+  changeSource() {
+    this.form.controls.rds_follow_source.setValue(this.canFollowSource());
   }
   syncGain() {
     const manual = this.form.controls.gain_mode.value === 'MANUAL';
@@ -179,31 +162,23 @@ export class ModulatorEditor implements OnInit {
     return this.sources().find((s) => s.id === this.form.controls.input_source_id.value);
   }
   addPs() {
-    this.ps.push(psEntry());
+    this.rds.addPs();
     this.form.markAsDirty();
   }
   removePs(i: number) {
-    if (this.ps.length > 1) {
-      this.ps.removeAt(i);
-      this.form.markAsDirty();
-    }
+    this.rds.removePs(i);
+    this.form.markAsDirty();
   }
   movePs(i: number, delta: number) {
-    const to = i + delta;
-    if (to < 0 || to >= this.ps.length) return;
-    const entry = this.ps.at(i);
-    this.ps.removeAt(i);
-    this.ps.insert(to, entry);
+    this.rds.movePs(i, delta);
     this.form.markAsDirty();
   }
   addAf() {
-    if (this.af.length < 25) {
-      this.af.push(text());
-      this.form.markAsDirty();
-    }
+    this.rds.addAf();
+    this.form.markAsDirty();
   }
   removeAf(i: number) {
-    this.af.removeAt(i);
+    this.rds.removeAf(i);
     this.form.markAsDirty();
   }
   fillFromSource() {
@@ -229,20 +204,6 @@ export class ModulatorEditor implements OnInit {
       throw new Error('Select RF output.');
     if (v.audio_mode === 'DIGITAL' && v.input_source_id === null)
       throw new Error('Select a digital source, or choose Analog input.');
-    const af = v.af.map((value) => khz(value)!);
-    if (af.length > 25 || af.some((f) => f < 87600 || f > 107900 || f % 100 !== 0))
-      throw new Error('AF: use up to 25 frequencies from 87.6 to 107.9 MHz in 0.1 MHz steps.');
-    if (new Set(af).size !== af.length) throw new Error('Remove duplicate AF frequencies.');
-    const ps = v.rds_ps.map((p) => {
-      if (
-        !p.duration_s.trim() ||
-        !Number.isFinite(Number(p.duration_s)) ||
-        Number(p.duration_s) <= 0
-      )
-        throw new Error('PS duration must be greater than zero seconds.');
-      return { text: checkText(p.text, 8, true), duration_s: Number(p.duration_s) };
-    });
-    if (!ps.length) throw new Error('Add at least one PS entry.');
     return {
       frequency_khz: v.frequency_khz,
       rf_attenuation_db: v.rf_attenuation_db,
@@ -255,16 +216,8 @@ export class ModulatorEditor implements OnInit {
       digital_trim_db: v.digital_trim_db,
       soft_clipping: v.soft_clipping,
       rds_enabled: v.rds_enabled,
-      rds_pi: parseHex(v.pi, 4)!,
-      rds_ecc: parseHex(v.ecc, 2, true),
-      rds_pty: v.rds_pty ?? this.storedPty,
-      rds_tp: v.rds_tp,
-      rds_ps: ps,
-      rds_af_khz: af,
-      rds_rt: checkText(v.rds_rt, 64),
-      rds_rt_enabled: v.rds_rt_enabled,
-      rds_rt_termination: v.rds_rt_termination,
-      rds_metadata_to_rt: v.rds_metadata_to_rt,
+      rds_follow_source: v.rds_follow_source,
+      rds_override_profile: this.rds.draft(),
     };
   }
   async save() {
@@ -296,11 +249,13 @@ export class ModulatorEditor implements OnInit {
   }
   canLeave() {
     return (
-      !this.saving() && (!this.form.dirty || window.confirm('Discard unsaved Modulator changes?'))
+      !this.saving() &&
+      (!(this.form.dirty || this.rds.form.dirty) ||
+        window.confirm('Discard unsaved Modulator changes?'))
     );
   }
   @HostListener('window:beforeunload', ['$event']) beforeUnload(event: BeforeUnloadEvent) {
-    if (this.form.dirty || this.saving()) {
+    if (this.form.dirty || this.rds.form.dirty || this.saving()) {
       event.preventDefault();
       event.returnValue = '';
     }

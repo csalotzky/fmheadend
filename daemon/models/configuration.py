@@ -125,7 +125,42 @@ SOURCE_CONFIGS = {
 }
 
 
+def validate_rds_text(text: str) -> str:
+    # Encoding is a later milestone. Reject controls; retain Unicode text here.
+    if any(not char.isprintable() for char in text):
+        raise ValueError("RDS text must not contain control characters")
+    return text
+
+
+class PsEntry(Model):
+    text: str = Field(min_length=1, max_length=8)
+    duration_s: float = Field(default=5, gt=0)
+    _text = field_validator("text")(validate_rds_text)
+
+
+class RdsProfileConfig(Model):
+    rds_af_khz: list[Annotated[int, Field(strict=True, ge=87600, le=107900, multiple_of=100)]] = Field(default_factory=list, max_length=25)
+    rds_ecc: int | None = Field(default=None, ge=0, le=255, strict=True)
+    rds_pi: int = Field(default=0, ge=0, le=65535, strict=True)
+    rds_ps: list[PsEntry] = Field(default_factory=lambda: [PsEntry(text="FM TX")], min_length=1)
+    rds_pty: int = Field(default=0, ge=0, le=31, strict=True)
+    rds_tp: bool = False
+    rds_rt: str = Field(default="", max_length=64)
+    rds_rt_enabled: bool = Field(default=True, strict=True)
+    rds_rt_termination: Literal["CR", "PAD"] = "CR"
+    rds_metadata_to_rt: bool = False
+    _rt = field_validator("rds_rt")(validate_rds_text)
+
+
+class RdsProfile(RdsProfileConfig):
+    id: PositiveId
+
+
+RDS_FIELDS = frozenset(RdsProfileConfig.model_fields)
+
+
 class InputSourceConfig(Model):
+    rds_profile: RdsProfileConfig | None = None
     name: Name
     type: SourceType
     config: JsonObject
@@ -152,6 +187,7 @@ class InputSourceConfig(Model):
 
 
 class InputSource(InputSourceConfig):
+    rds_profile_id: PositiveId | None = None
     id: PositiveId
     timestamp: datetime
 
@@ -162,20 +198,9 @@ class SourceSaveResult(InputSource):
     apply_error: str | None = None
 
 
-def validate_rds_text(text: str) -> str:
-    # Encoding is a later milestone. Reject controls; retain Unicode text here.
-    if any(not char.isprintable() for char in text):
-        raise ValueError("RDS text must not contain control characters")
-    return text
-
-
-class PsEntry(Model):
-    text: str = Field(min_length=1, max_length=8)
-    duration_s: float = Field(default=5, gt=0)
-    _text = field_validator("text")(validate_rds_text)
-
-
-class ModulatorConfig(Model):
+class ModulatorConfig(RdsProfileConfig):
+    # Flat fields are effective read projections / legacy override writes only.
+    # The repository persists content exclusively in owned RdsProfile rows.
     gain_mode: Literal["AUTO", "MANUAL"] = "AUTO"
     analog_gain_db: float = Field(default=0.0, ge=-3276.8, le=3276.7, multiple_of=0.1, strict=True)
     digital_trim_db: int = Field(default=0, ge=0, le=1, strict=True)
@@ -188,26 +213,20 @@ class ModulatorConfig(Model):
     preemphasis_us: Literal[50, 75] = 50
     rf_attenuation_db: float | None = Field(default=None, ge=0, le=22.5, multiple_of=1.5, strict=True)
     rds_enabled: bool = False
-    rds_af_khz: list[Annotated[int, Field(strict=True, ge=87600, le=107900, multiple_of=100)]] = Field(default_factory=list, max_length=25)
-    rds_ecc: int | None = Field(default=None, ge=0, le=255, strict=True)
-    rds_pi: int = Field(default=0, ge=0, le=65535, strict=True)
-    rds_ps: list[PsEntry] = Field(default_factory=lambda: [PsEntry(text="FM TX")], min_length=1)
-    rds_pty: int = Field(default=0, ge=0, le=31, strict=True)
-    rds_tp: bool = False
-    rds_rt: str = Field(default="", max_length=64)
-    rds_rt_enabled: bool = Field(default=True, strict=True)
-    rds_rt_termination: Literal["CR", "PAD"] = "CR"
-    rds_metadata_to_rt: bool = False
-    _rt = field_validator("rds_rt")(validate_rds_text)
+    rds_follow_source: bool = False
+    rds_override_profile: RdsProfileConfig | None = None
 
     @model_validator(mode="after")
     def analog_has_no_source(self):
+        if self.rds_follow_source and (self.audio_mode != "DIGITAL" or self.input_source_id is None):
+            raise ValueError("Follow source requires DIGITAL and an assigned source")
         if self.audio_mode == "ANALOG":
             self.input_source_id = None
         return self
 
 
 class Modulator(ModulatorConfig):
+    rds_override_profile_id: PositiveId | None = None
     id: int = Field(ge=0, le=7, strict=True)
     timestamp: datetime
 

@@ -19,11 +19,14 @@ class ConfigurationService:
     def update(self, table, record_id, patch):
         current = self.get(table, record_id)
         model = {"sources": InputSourceConfig}[table]
-        config = model.model_validate(current.model_dump(exclude={"id", "timestamp"}) | patch.model_dump(exclude_unset=True))
+        config = model.model_validate(current.model_dump(exclude={"id", "timestamp", "rds_profile_id"}) | patch.model_dump(exclude_unset=True))
         if table == "sources":
             self.sources.validate_config(config)
         saved = self.database.save(table, config, record_id)
-        return self.sources.apply_saved_source(current, saved)
+        result = self.sources.apply_saved_source(current, saved)
+        if current.rds_profile != saved.rds_profile:
+            self.modulators.apply_rds_profiles(self.database.rds_followers(record_id))
+        return result
 
     def delete(self, table, record_id):
         self.database.delete(table, record_id)

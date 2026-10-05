@@ -1,6 +1,18 @@
 // Display contracts from daemon/models/configuration.py and runtime_status.py.
 export type TxState = 'OFF' | 'STARTING' | 'ON' | 'ERROR';
-export interface Modulator {
+export interface RdsProfile {
+  rds_pi: number;
+  rds_ecc: number | null;
+  rds_af_khz: number[];
+  rds_ps: { text: string; duration_s: number }[];
+  rds_pty: number;
+  rds_tp: boolean;
+  rds_rt: string;
+  rds_rt_enabled: boolean;
+  rds_rt_termination: 'CR' | 'PAD';
+  rds_metadata_to_rt: boolean;
+}
+export interface Modulator extends RdsProfile {
   gain_mode: 'AUTO' | 'MANUAL';
   analog_gain_db: number;
   digital_trim_db: 0 | 1;
@@ -14,19 +26,14 @@ export interface Modulator {
   preemphasis_us: 50 | 75;
   rf_attenuation_db: number | null;
   rds_enabled: boolean;
-  rds_pi: number;
-  rds_ecc: number | null;
-  rds_af_khz: number[];
-  rds_ps: { text: string; duration_s: number }[];
-  rds_pty: number;
-  rds_tp: boolean;
-  rds_rt: string;
-  rds_rt_enabled: boolean;
-  rds_rt_termination: 'CR' | 'PAD';
-  rds_metadata_to_rt: boolean;
+  rds_follow_source?: boolean;
+  rds_override_profile_id?: number | null;
+  rds_override_profile?: RdsProfile;
   timestamp: string;
 }
 export interface InputSource {
+  rds_profile_id?: number | null;
+  rds_profile?: RdsProfile | null;
   id: number;
   name: string;
   type: 'HTTP' | 'UDP' | 'RTP' | 'ALSA' | 'LOCAL' | 'PODCAST';

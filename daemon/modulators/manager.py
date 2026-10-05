@@ -4,7 +4,7 @@ import sqlite3
 from ..diagnostics import error_scope
 from ..regions import HARDWARE_MIN_KHZ, HARDWARE_MAX_KHZ, HARDWARE_STEP_KHZ
 from ..errors import DependencyUnavailable, DomainError
-from ..models.configuration import ModulatorConfig
+from ..models.configuration import ModulatorConfig, RDS_FIELDS
 from ..models.runtime_status import ModulatorStatus, TxState
 from ..rp2354.client import TxConfig
 from ..rp2354.protocol import Command, Outcome, RpResponseError, IncompatibleProtocol, execution_outcome
@@ -43,8 +43,9 @@ class ModulatorManager:
 
     def _edited_config(self, modulator_id, patch):
         old = self.get(modulator_id)
-        config = ModulatorConfig.model_validate(old.model_dump(exclude={"id", "timestamp"}) | patch.model_dump(exclude_unset=True))
+        config = ModulatorConfig.model_validate(old.model_dump(exclude={"id", "timestamp", "rds_override_profile_id"}) | patch.model_dump(exclude_unset=True))
         self.validate(config)
+        self.database.effective_rds_profile(config.model_dump(), config.rds_override_profile)
         if config.enabled != old.enabled:
             raise DomainError(409, "LIFECYCLE_REQUIRED", "Use the explicit Start or Stop operation to change TX state")
         return config
@@ -57,10 +58,29 @@ class ModulatorManager:
         if modulator_id in self.active_sources or self.statuses[modulator_id].tx_state != TxState.OFF:
             raise DomainError(409, 'MODULATOR_ACTIVE', 'Confirmed OFF and released source ownership are required before configuration changes')
 
+    def apply_rds_profiles(self, channels):
+        if self.rds:
+            for channel in channels:
+                self.rds.profile_changed(channel)
+            self.rds.tick()
+
+    def _rds_only(self, old, config, patch):
+        ignored = RDS_FIELDS | {'id', 'timestamp', 'rds_override_profile_id',
+                                'rds_override_profile', 'rds_follow_source'}
+        supplied = patch.model_dump(exclude_unset=True)
+        if any(k not in ignored and value != getattr(old, k) for k, value in supplied.items()):
+            return False
+        return old.model_dump(exclude=ignored) == config.model_dump(exclude=ignored)
+
     def update(self, modulator_id, patch):
         old = self.get(modulator_id)
-        self._require_configurable(modulator_id)
         config = self._edited_config(modulator_id, patch)
+        if self._rds_only(old, config, patch):
+            saved = self.database.save('modulators', config, modulator_id)
+            if old.model_dump(include=RDS_FIELDS) != saved.model_dump(include=RDS_FIELDS) or old.rds_follow_source != saved.rds_follow_source:
+                self.apply_rds_profiles([modulator_id])
+            return saved
+        self._require_configurable(modulator_id)
         saved = self.database.save("modulators", config, modulator_id)
         self.statuses[modulator_id].source_state = None if config.audio_mode == "ANALOG" else "IDLE"
         if config.audio_mode != old.audio_mode:
@@ -69,7 +89,11 @@ class ModulatorManager:
 
     def save_and_resume(self, modulator_id, patch):
         """One control-executor operation; temporary OFF never changes desired enabled."""
-        self._edited_config(modulator_id, patch)  # Reject invalid edits before RF action.
+        config = self._edited_config(modulator_id, patch)  # Validate before RF action.
+        if self._rds_only(self.get(modulator_id), config, patch):
+            saved = self.update(modulator_id, patch)
+            return dict(saved=True, stop_confirmed=False, restarted=False, failed_stage=None,
+                        message='RDS configuration saved; RF and audio unchanged.', configuration=saved)
         if self.recovery:
             self.recovery.require_ready()
             if modulator_id in self.recovery.pending:
@@ -110,7 +134,7 @@ class ModulatorManager:
 
     def start(self, modulator_id):
         current = self.get(modulator_id)
-        config = ModulatorConfig.model_validate(current.model_dump(exclude={"id", "timestamp"}) | {"enabled": True})
+        config = ModulatorConfig.model_validate(current.model_dump(exclude={"id", "timestamp", "rds_override_profile_id"}) | {"enabled": True})
         self.validate(config)
         if self.global_stopped:
             try:
@@ -222,7 +246,7 @@ class ModulatorManager:
 
     def stop(self, modulator_id):
         current = self.get(modulator_id)
-        config = ModulatorConfig.model_validate(current.model_dump(exclude={"id", "timestamp"}) | {"enabled": False})
+        config = ModulatorConfig.model_validate(current.model_dump(exclude={"id", "timestamp", "rds_override_profile_id"}) | {"enabled": False})
         self.database.save("modulators", config, modulator_id)
         return self._stop(modulator_id)
 

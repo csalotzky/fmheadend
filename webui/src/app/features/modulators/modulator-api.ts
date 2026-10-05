@@ -1,8 +1,11 @@
 import { inject, Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { timeout } from 'rxjs';
-import { Modulator } from '../../core/api/models';
-export type ModulatorDraft = Omit<Modulator, 'id' | 'timestamp' | 'enabled'>;
+import { Modulator, RdsProfile } from '../../core/api/models';
+export type ModulatorDraft = Omit<
+  Modulator,
+  'id' | 'timestamp' | 'enabled' | keyof RdsProfile | 'rds_override_profile_id'
+>;
 export interface ModulatorSaveResult {
   saved: boolean;
   stop_confirmed: boolean;

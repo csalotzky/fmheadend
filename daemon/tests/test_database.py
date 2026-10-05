@@ -25,19 +25,20 @@ def test_fresh_schema_and_model_defaults(tmp_path):
         assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 1
         tables = {row[0] for row in db.connection.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
-        assert tables == set(TABLES) | {"sqlite_sequence", "podcast_history"}
+        assert tables == set(TABLES) | {"sqlite_sequence", "podcast_history", "rds_profiles"}
         assert db.connection.execute('SELECT * FROM podcast_history').fetchall() == []
         assert db.list("sources") == []
         assert db.get_system() == SystemConfig()
         assert [m.id for m in db.list("modulators")] == list(range(8))
         for tx in range(8):
-            expected = ModulatorConfig(rds_ps=[PsEntry(text=f"FM TX {tx}")])
-            actual = db.get("modulators", tx)
-            assert actual.model_dump(exclude={"id", "timestamp"}) == expected.model_dump()
-            raw = json.loads(db.connection.execute(
-                "SELECT data FROM modulators WHERE id=?", (tx,)).fetchone()[0])
-            assert raw.pop("timestamp")
-            assert raw == expected.model_dump(mode="json")
+            actual = db.get('modulators', tx)
+            assert actual.rds_pi == 0xFFF0 + tx
+            assert actual.rds_ps == [PsEntry(text=f'TX {tx}')]
+            assert actual.rds_override_profile.rds_pi == actual.rds_pi
+            assert actual.rds_follow_source is False
+            raw = json.loads(db.connection.execute('SELECT data FROM modulators WHERE id=?', (tx,)).fetchone()[0])
+            assert 'rds_pi' not in raw and 'rds_ps' not in raw and 'rds_override_profile' not in raw
+        assert db.connection.execute('SELECT count(*) FROM rds_profiles').fetchone()[0] == 8
         assert db.connection.execute("PRAGMA foreign_key_check").fetchall() == []
         assert db.connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     finally:

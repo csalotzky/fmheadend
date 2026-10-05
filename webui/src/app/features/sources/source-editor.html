@@ -374,6 +374,20 @@
       }
     </div>
     <div class="editor-actions source-editor-actions">
+      <section class="panel">
+        <h2>RDS</h2>
+        <label class="check"
+          ><input
+            type="checkbox"
+            [formControl]="configureRds"
+            (change)="toggleRds()"
+            [attr.disabled]="saving() ? '' : null"
+          />Configure RDS for this source</label
+        >
+        @if (configureRds.value) {
+          <fieldset [disabled]="saving()"><app-rds-profile-editor [model]="rds" /></fieldset>
+        }
+      </section>
       <button type="submit" [disabled]="saving() || testing()">
         {{ saving() ? 'Saving...' : 'Save' }}
       </button>
