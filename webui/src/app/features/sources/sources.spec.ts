@@ -98,6 +98,42 @@ describe('Sources management', () => {
     expect(f.nativeElement.querySelector('[formControlName="audio_profile_path"]')).toBeNull();
     expect(f.nativeElement.querySelector('[formControlName="input_gain_db"]').disabled).toBe(false);
   });
+  it('groups Audio Profile options default first then custom, sorted, with display-only labels', async () => {
+    const f = editor(),
+      c = f.componentInstance;
+    await f.whenStable();
+    fill(c);
+    c.profiles.set([
+      { name: 'Teszt 1', path: 'custom/teszt_1.json', kind: 'custom' },
+      { name: 'moderate 3 dBr', path: 'default/m3.json', kind: 'default' },
+      { name: 'Basic', path: 'default/basic.json', kind: 'default' },
+      { name: 'Teszt', path: 'custom/teszt.json', kind: 'custom' },
+      { name: 'Aardvark', path: 'custom/aardvark.json', kind: 'custom' },
+      { name: 'Zeta', path: 'default/zeta.json', kind: 'default' },
+    ]);
+    c.form.controls.processor_mode.setValue('builtin');
+    c.changeProcessor();
+    f.detectChanges();
+    const select: HTMLSelectElement = f.nativeElement.querySelector(
+      '[formControlName="audio_profile_path"]',
+    );
+    expect([...select.options].map((o) => o.textContent?.trim())).toEqual([
+      'Select a profile',
+      '[default] Basic',
+      '[default] moderate 3 dBr',
+      '[default] Zeta',
+      '[custom] Aardvark',
+      '[custom] Teszt',
+      '[custom] Teszt 1',
+    ]);
+    expect(c.form.controls.audio_profile_path.value).toBeNull();
+    select.selectedIndex = 3;
+    select.dispatchEvent(new Event('change'));
+    expect(c.form.controls.audio_profile_path.value).toBe('default/zeta.json');
+    expect(c.draft()).toMatchObject({ audio_profile_path: 'default/zeta.json' });
+    expect(c.profiles().map((p) => p.name)).toContain('Zeta');
+    expect(c.profiles().every((p) => !p.name.startsWith('['))).toBe(true);
+  });
   it('rejects missing Built-in profile and unavailable Stereo Tool without I/O', async () => {
     const f = editor(),
       c = f.componentInstance;
