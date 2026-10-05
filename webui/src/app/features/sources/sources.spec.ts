@@ -161,16 +161,21 @@ describe('Sources management', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(false);
     expect(f.componentInstance.canLeave()).toBe(false);
   });
-  it('separates Source and Audio processing panels with actions below both', () => {
+  it('separates Source, Audio processing and RDS panels with actions below all', () => {
     const f = editor(),
       c = f.componentInstance;
     c.form.controls.type.setValue('HTTP');
     c.changeType();
     f.detectChanges();
     const panels = f.nativeElement.querySelectorAll('.source-editor-panel');
-    expect(panels).toHaveLength(2);
+    expect(panels).toHaveLength(3);
     const source = panels[0] as HTMLElement;
     const audio = panels[1] as HTMLElement;
+    const rds = panels[2] as HTMLElement;
+    expect(source.parentElement).toBe(audio.parentElement);
+    expect(audio.parentElement).toBe(rds.parentElement);
+    expect(audio.nextElementSibling).toBe(rds);
+    expect(rds.querySelector('h2')?.textContent).toBe('RDS');
     expect(source.querySelector('h2')?.textContent).toContain('Source');
     expect(audio.querySelector('h2')?.textContent).toContain('Audio processing');
     expect(source.querySelector('[formControlName="name"]')).toBeTruthy();
@@ -187,6 +192,7 @@ describe('Sources management', () => {
     const actions = f.nativeElement.querySelector('.source-editor-actions') as HTMLElement;
     expect(source.contains(actions)).toBe(false);
     expect(audio.contains(actions)).toBe(false);
+    expect(rds.contains(actions)).toBe(false);
     expect(actions.textContent).toContain(
       'Testing does not save changes or prove RF transmission.',
     );

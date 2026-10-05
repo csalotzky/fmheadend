@@ -349,10 +349,12 @@ metadata selection and CR/PAD setting; the UI implements no encoding/scheduling.
 
 Runtime RadioText override and metadata-derived RadioText may be displayed where useful, but the persistent fallback RT should remain clearly distinguishable from runtime content.
 
-Manual Fill from source sets PI to FF00 + physical TX ID, replaces PS with one
-static entry, and sets fallback RT. It preserves NFC-normalized Unicode (encoding occurs only in Linux),
-with 8/64-character limits, and confirms before replacing a carousel. Nothing follows
-source changes automatically; values remain unsaved until Save. There is no Station entity.
+Source Edit provides Fill from source inside its bordered RDS section. It fills
+one PS entry and fallback RT from the Source name, preserves PI and policy, and
+requires normal Save. Replacing a PS carousel requires confirmation. Modulator
+Edit has no fill action: it selects Follow/Custom and edits only Custom content.
+Both editors use the shared identification/PS/AF/RT groups. Source Save/Cancel
+remain in one page-level action area below RDS.
 
 Save/Cancel use a common bottom action area with adjacent progress/success/error
 feedback and dirty navigation protection. The editor sends one explicit backend

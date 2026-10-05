@@ -7,7 +7,7 @@ import { ptyLabels, afOptions, mhz, textLength } from '../../features/modulators
   selector: 'app-rds-profile-editor',
   imports: [ReactiveFormsModule],
   templateUrl: './rds-profile-editor.html',
-  styleUrl: '../../features/modulators/modulators.css',
+  styleUrls: ['../../features/modulators/modulators.css', './rds-profile-editor.css'],
 })
 export class RdsProfileEditor {
   @Input({ required: true }) model!: RdsProfileForm;

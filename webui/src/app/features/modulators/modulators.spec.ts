@@ -584,39 +584,10 @@ describe('Modulator configuration', () => {
     c.ps.at(0).controls.text.setValue('TOO LONG TEXT');
     expect(() => c.draft()).toThrow('8 printable');
   });
-  it.each([0, 1, 2, 3, 4, 5, 6, 7])('fills PI FF0%s, one PS and RT manually', async (id) => {
-    routeStub.snapshot.paramMap = convertToParamMap({ id: String(id) });
-    const f = TestBed.createComponent(ModulatorEditor);
-    f.detectChanges();
-    http
-      .expectOne(`/api/v1/modulators/${id}`)
-      .flush({ ...sample().modulators[id], input_source_id: 1 });
-    await f.whenStable();
-    const c = f.componentInstance;
-    const data = sample();
-    data.sources[0].name = 'Caf\u00e9 R\u00e1di\u00f3 Budapest';
-    shared.data.set(data);
-    c.fillFromSource();
-    expect(c.form.controls.pi.value).toBe(`FF0${id}`);
-    expect(c.ps.getRawValue()).toEqual([{ text: 'Caf\u00e9 R\u00e1d', duration_s: '5' }]);
-    expect(c.form.controls.rds_rt.value).toBe(data.sources[0].name);
-    const before = c.form.getRawValue();
-    shared.data.set({ ...data, sources: [{ ...data.sources[0], name: 'Changed' }] });
-    expect(c.form.getRawValue()).toEqual(before);
-    expect(c.form.dirty).toBe(true);
-  });
-  it('confirms replacing a carousel and does not change metadata policy', async () => {
-    const f = await editor(),
-      c = f.componentInstance;
-    c.addPs();
-    c.form.controls.rds_metadata_to_rt.setValue(true);
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
-    c.fillFromSource();
-    expect(c.ps.length).toBe(2);
-    confirm.mockReturnValue(true);
-    c.fillFromSource();
-    expect(c.ps.length).toBe(1);
-    expect(c.draft().rds_override_profile!.rds_metadata_to_rt).toBe(true);
+  it('has no Modulator Fill from source action', async () => {
+    const f = await editor();
+    expect(f.nativeElement.textContent).not.toContain('Fill from source');
+    expect(f.nativeElement.textContent).not.toContain('Fill PI');
   });
   it('edits AF exactly and rejects duplicate/raster/size mistakes', async () => {
     const f = await editor(),

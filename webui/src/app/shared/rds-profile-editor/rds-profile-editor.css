@@ -1,0 +1,38 @@
+:host {
+  display: block;
+  margin-top: 18px;
+  min-width: 0;
+}
+.profile-group {
+  border-top: 1px solid var(--border);
+  margin-top: 24px;
+  padding-top: 20px;
+}
+.profile-group h3 {
+  margin: 0 0 8px;
+}
+.profile-group > .muted {
+  margin: 0 0 16px;
+  line-height: 1.5;
+}
+.list-entry {
+  padding: 12px;
+  border-left: 2px solid var(--border);
+  background: var(--background);
+}
+.rt-group > label {
+  margin: 16px 0 0;
+}
+.rt-group > .check {
+  margin-bottom: 12px;
+}
+.rt-group textarea {
+  resize: vertical;
+  min-height: 80px;
+}
+label {
+  min-width: 0;
+}
+.identification .check {
+  align-self: center;
+}

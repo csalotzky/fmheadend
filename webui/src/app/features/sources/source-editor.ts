@@ -1,3 +1,4 @@
+import { rdsText } from '../modulators/values';
 import { RdsProfileForm } from '../../shared/rds-profile-editor/rds-profile-form';
 import { RdsProfileEditor } from '../../shared/rds-profile-editor/rds-profile-editor';
 import {
@@ -122,15 +123,21 @@ export class SourceEditor implements OnInit {
   readonly rds = new RdsProfileForm();
   readonly configureRds = new FormControl(false, { nonNullable: true });
   private persistedRds = false;
-  toggleRds() {
+  fillFromSource() {
+    const name = this.form.controls.name.value.trim();
+    if (!this.configureRds.value || !name || this.saving() || this.testing()) return;
     if (
-      !this.configureRds.value &&
-      (this.persistedRds || this.rds.form.dirty || this.rds.form.touched) &&
-      !window.confirm('Remove the source RDS profile?')
-    ) {
-      this.configureRds.setValue(true);
+      this.rds.ps.length > 1 &&
+      !window.confirm('Replace all PS entries with one entry from the source name?')
+    )
       return;
-    }
+    this.rds.ps.clear();
+    this.rds.addPs();
+    this.rds.ps.at(0).controls.text.setValue(rdsText(name, 8));
+    this.rds.form.controls.rds_rt.setValue(rdsText(name, 64));
+    this.rds.form.markAsDirty();
+  }
+  toggleRds() {
     this.configureRds.markAsDirty();
   }
   readonly form = new FormGroup({

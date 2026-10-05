@@ -487,10 +487,12 @@ All. Stopped/STOP ALL saves only persist. Partial outcomes are explicit; see M6A
 Modulators have no separate name field; physical ID 0..7 is their identity.
 
 Fresh database seeding creates one owned override RdsProfile per TX: PI FFF0..FFF7
-and static PS "TX 0".."TX 7", using the model-default 5-second duration. Every other
+and static PS "TX 0".."TX 7", using the model-default 5-second duration. Fresh TX
+overrides have empty fallback RT and RT disabled. Every other
 profile default is unchanged. The generic model retains neutral FM TX text; only
-this seed derives physical identity. Manual Fill from source remains a separate
-unsaved UI action (PI FF00 + TX ID). Reopening does not normalize stored values.
+this seed derives physical identity. Source-editor Fill from source changes only
+unsaved PS/fallback RT from the source name; it does not generate PI. Reopening
+does not normalize stored values.
 
 ### 6.3.1 PS és dinamikus PS
 

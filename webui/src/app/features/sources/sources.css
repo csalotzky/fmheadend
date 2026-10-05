@@ -410,3 +410,26 @@ summary {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.source-rds-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.source-rds-toggle input {
+  margin: 0;
+}
+.source-rds-content {
+  margin: 20px 0 0;
+}
+.source-rds-fill {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.source-rds-fill small {
+  color: var(--muted);
+  flex: 1 1 240px;
+  line-height: 1.5;
+}

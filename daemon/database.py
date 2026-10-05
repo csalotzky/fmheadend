@@ -46,7 +46,7 @@ class Database:
                 for statement in SCHEMA_STATEMENTS:
                     self.connection.execute(statement)
                 for modulator_id in range(8):
-                    profile = RdsProfileConfig(rds_pi=0xFFF0 + modulator_id, rds_ps=[PsEntry(text=f"TX {modulator_id}")])
+                    profile = RdsProfileConfig(rds_pi=0xFFF0 + modulator_id, rds_ps=[PsEntry(text=f"TX {modulator_id}")], rds_rt="", rds_rt_enabled=False)
                     profile_id = self._write_profile(None, profile)
                     config = ModulatorConfig()
                     data = config.model_dump(mode="json", exclude=RDS_FIELDS | {"rds_override_profile"}) | {"timestamp": utcnow().isoformat()}
