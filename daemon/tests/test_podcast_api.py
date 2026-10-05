@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from fmheadendd.app import create_app
 from fmheadendd.config import Settings
 from fmheadendd.database import Database
-from fmheadendd.errors import DependencyUnavailable, DomainError
+from fmheadendd.errors import DomainError
 from fmheadendd.models.configuration import InputSourceConfig
 from fmheadendd.sources.manager import SourceManager
 from fmheadendd.sources.podcast_fetch import FeedFetcher, FeedResponse
@@ -107,15 +107,13 @@ def test_probe_counts_no_playback_no_history(api, monkeypatch, failure, saved):
     assert not api.app.state.services.sources.pipelines
 
 
-def test_probe_history_is_unchanged_and_playback_explicitly_unavailable(tmp_path, monkeypatch):
+def test_probe_history_is_unchanged_and_does_not_start_playback(tmp_path, monkeypatch):
     db = Database(tmp_path/'history.db')
     source = db.save('sources', InputSourceConfig.model_validate(body()))
     monkeypatch.setattr(FeedFetcher, '__call__', lambda self, url: FeedResponse(RSS, url))
     manager = SourceManager(db)
     assert manager.test(source).ok
     assert not db.connection.execute('SELECT * FROM podcast_history').fetchall()
-    with pytest.raises(DependencyUnavailable, match='PODCAST_PLAYBACK_NOT_IMPLEMENTED'):
-        manager.acquire(source.id, 0)
     assert not manager.pipelines
     db.close()
 

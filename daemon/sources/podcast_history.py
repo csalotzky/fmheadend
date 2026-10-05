@@ -13,10 +13,10 @@ class EpisodeHistory:
 
 
 class PodcastHistory:
-    """Use on the Database owner thread (the control executor in the daemon).
+    """Use on the Database owner thread. Runtime I/O owns a separate connection.
 
     Scheduling consumes a detached snapshot, never a shared SQLite connection.
-    Future playback calls mark_played once after its successful-play threshold;
+    Playback calls mark_played once after its successful-PCM threshold;
     selection, source tests and refresh do not count as playback.
     """
     def __init__(self, database, source_id: int):

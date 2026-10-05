@@ -795,7 +795,8 @@ Crossfade may be appropriate for music but undesirable for spoken-word podcast c
 
 The catalog/configuration/scheduler/history core is now implemented; see
 [Podcast core](podcast-core.md) for the exact API, selection policy, schema-1
-history and refresh limits. Playback, metadata publication and UI remain deferred.
+history and refresh limits. Shared playback, RSS identity metadata publication and
+the configuration UI are implemented; runtime details are documented there too.
 
 ## 18. Podcast Source Goal
 

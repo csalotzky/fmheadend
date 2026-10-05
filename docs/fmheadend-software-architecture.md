@@ -270,13 +270,16 @@ apply without migrations or persisted playback state. LOCAL uses one shared
 GstPipeline/playbin3 player, the existing PCM fanout, and transient resolver/queue
 state. See [the core/API/runtime contract](local-media-core.md).
 
-### Podcast configuration and core (playback deferred)
+### Podcast configuration, core and shared playback
 
 `PODCAST` uses the same source CRUD/config JSON with feed URLs and optional
 age/count limits, SMART/RANDOM scheduling, refresh minutes and cooldown hours.
 Saving does not fetch feeds. Source tests perform bounded RSS/Atom catalog probes,
 without decoding or history mutations. Durable rotation history is separate from
-the transient catalog/bag; see [Podcast core](podcast-core.md) for the exact contract.
+the transient catalog/bag. Active sources reuse LOCAL's shared playbin3/PCM path,
+with source-owned periodic RSS refresh and decoded-PCM history accounting. RSS
+identity feeds the existing generic metadata/RT path; see
+[Podcast core and runtime](podcast-core.md) for the exact contract.
 
 ### 6.1.1 `HTTP` config
 

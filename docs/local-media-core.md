@@ -130,8 +130,9 @@ another TX adds a consumer to the same `PcmOutput`; it does not create a player 
 queue. Detaching the last consumer stops the worker and discards all transient
 selection state. A true restart resolves again and creates a fresh shuffle/sequence.
 
-`local_playback.py` owns `PlaybackQueue`, a prepared next URI and bounded handoff
-bookkeeping. It delegates ordering/duplicates/boundary-repeat avoidance to the
+`local_playback.py` owns `PlaybackQueue` and LOCAL cycle policy. Shared prepared URI
+and bounded handoff bookkeeping now live in `sequenced_playback.py`, also used by
+Podcast. LOCAL delegates ordering/duplicates/boundary-repeat avoidance to the
 existing core. Filesystem paths become escaped `Path.as_uri()` values only here;
 HTTP(S) playlist entries go directly to GStreamer. Nothing downloads media itself.
 

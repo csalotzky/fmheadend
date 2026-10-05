@@ -1,8 +1,8 @@
-# Podcast source core (no playback yet)
+# Podcast source core and shared playback runtime
 
 `PODCAST` is a normal shared InputSource configuration, using the existing source
-CRUD and saved/unsaved test endpoints. It does not start a player. Attempting to
-acquire it for playback reports `PODCAST_PLAYBACK_NOT_IMPLEMENTED`.
+CRUD and saved/unsaved test endpoints. Active sources now play through the shared
+sequenced media runtime described below; feed tests remain catalog-only.
 
 ```json
 {
@@ -35,6 +35,8 @@ the whole config sub-object, as for existing source types.
 - `podcast_fetch.py`: bounded HTTP fetching and isolated source-test probe.
 - `podcast_history.py`: SQLite history repository on the Database owner thread.
 - `podcast_schedule.py`: single-owner transient RANDOM/SMART selection.
+- `podcast_runtime.py`: active source policy, periodic refresh and PCM history.
+- `sequenced_playback.py`: shared LOCAL/Podcast prepared/submitted/rendering tickets.
 
 `feedparser>=6.0.14,<7` is the maintained RSS/Atom parser; its
 [reference documentation](https://feedparser.readthedocs.io/en/latest/) describes
@@ -53,9 +55,9 @@ is supported with bounded decompression, other encodings rejected. The User-Agen
 identifies FMHeadend. Feed warnings/probe errors contain codes and feed hashes, not
 URLs, query tokens or exception bodies. TLS verification remains enabled.
 
-The caller invokes `catalog.refresh(config, FeedFetcher(), aware_now, history=...)`
-and checks `refresh_due` at its normal lifecycle boundary. No background worker,
-timer or automatic refresh loop exists in this task. Refresh serializes writers,
+The core exposes `catalog.refresh(config, FeedFetcher(), aware_now, history=...)`
+and `refresh_due`. The active runtime schedules refresh by monotonic time rather
+than wall-clock changes, as described below. Refresh serializes writers,
 builds a complete immutable snapshot outside the publication lock, then replaces it
 atomically. Scheduling can read the prior snapshot during network I/O. Successful
 feeds replace their prior content (including a legitimately empty feed); failed feeds
@@ -123,8 +125,8 @@ the global unplayed preference and relaxes only when every candidate is inside i
 Only the preceding selection is remembered. This policy is deterministic, not a
 statistical score; new unplayed episodes can affect the next choice immediately.
 Cooldown/freshness/diversity never make a nonempty eligible pool unselectable.
-Selection alone does not mark an episode played. A future player remains responsible
-for failures and successful-play accounting; repeatedly selecting without reporting
+Selection alone does not mark an episode played. The shared playback runtime handles
+failures and successful-PCM accounting; repeatedly selecting without reporting
 playback success is not a simulation of a completed broadcast rotation.
 
 ## Durable history and schema 1
@@ -137,10 +139,10 @@ Successful refresh observes all discovered episodes, including ineligible ones;
 failed refresh does not advance their last-seen timestamps.
 
 `PodcastHistory(database, source_id).mark_played(episode, aware_played_at)` increments
-the count and updates play time transactionally. The future runtime must call it
-once after approximately 60 seconds of successful audio; this task supplies no
-timer and never counts selection/probing as playback. Repository operations stay
-on the Database owner thread; schedulers receive plain detached history snapshots.
+the count and updates play time transactionally. Runtime invokes it once per
+occurrence after 60 seconds of actual decoded PCM, never on selection/probing.
+Repository operations stay on the owning SQLite thread; schedulers receive detached
+history snapshots. No history schema or migration change accompanies playback.
 
 DB and JSON versions remain **1**. No migration or compatibility path is added.
 As with earlier pre-release schema changes, old physical database structures fail
@@ -157,12 +159,115 @@ audio decoding. Tests do not persist history/catalog, start GStreamer, or touch 
 shared runtime. Normal `/status` still reads cheap published observations and does
 not fetch RSS or expose the episode catalog.
 
-Playback/shared player wiring, the 60-second threshold, metadata publication through
-the existing common source path, RadioText, frontend/episode browsing, Next/Skip,
-audio caching and crossfade are all deferred. No current LOCAL, HTTP metadata or
-RDS semantics change.
+Episode browsing, Next/Skip, audio caching, seeking/resume and crossfade remain
+deferred. Existing source configuration UI and RDS implementation are unchanged.
+
+## Active runtime and recovery
+
+SourceManager constructs one GstPipeline per shared source, exactly as for LOCAL.
+The existing playbin3/custom audio sink, normalization, staging, DSP and PcmOutput
+fanout are reused. `sequenced_playback.py` contains the extracted LOCAL URI handoff
+bookkeeping; LOCAL retains its resolver/cycle policy. Podcast supplies catalog and
+scheduler policy to that same player. Enclosure MediaItems retain their exact URI.
+
+Each active Podcast runtime has one I/O thread and one SQLite connection opened
+and closed on that thread against the persisted source database. It loads durable
+history, performs initial refresh, then refreshes at `refresh_interval_minutes`
+after the preceding attempt finishes, using monotonic timing. Streaming callbacks
+never fetch RSS or access SQLite. No TX owns an independent scheduler or counter.
+Source tests still perform the existing isolated catalog probe, even during playback.
+
+The I/O thread publishes an immutable catalog view and clears suppression only for
+feeds that refreshed successfully. The source worker computes eligibility and calls
+the unchanged scheduler under the short ticket lock, against one catalog/history/
+suppression view. The lock is never held during network or database I/O. History
+threshold changes update the detached scheduling view immediately and queue the
+durable write. A refresh does not interrupt the current native item.
+
+No catalog/eligible item, initial RSS failure, or playback exhaustion leaves the
+player idle in ERROR with empty programme metadata. The source and I/O worker stay
+owned while consumers remain. They do not retry failed playback continuously.
+Scheduled refresh wakes the source worker; a retryable candidate automatically
+restarts the same native player/output. A failed refresh retains known catalog data
+and failure suppression. A successful feed refresh permits its failed episodes to
+retry once in that refresh opportunity. There is no frontend-triggered timer.
+
+Prepared tickets are not current episodes. Native about-to-finish only submits the
+already-prepared URI. Serialized appsink STREAM_START associates the next ticket;
+first valid normalized PCM makes it active and publishes its metadata. Known old
+native source errors are ignored using a bounded source/occurrence association.
+Bus TAG messages are ignored for sequenced media; serialized sink events cannot
+overtake old PCM. Exceptional NULL recovery quiesces callbacks and flushes the bus.
+Unassociated decoder errors cannot safely identify a particular prefetched item:
+recovery conservatively suppresses all interrupted rendering/submitted occurrences.
+
+Refresh invalidates an unsubmitted ticket that is no longer eligible. SMART also
+reconsiders unsubmitted preparation after catalog/history changes; an already native-
+submitted ticket may complete. RANDOM retains its selected bag item while eligible;
+no alternate random chooser is added. EOS fallback resets the same player when no
+native handoff was ready. Normal handoff retains the downstream chain.
+
+## Metadata, successful PCM and failures
+
+RSS `feed_title` maps to generic `artist`, episode title to generic `title`, and the
+existing formatter produces `Podcast - Episode` (or just episode without a feed
+title). Publication occurs at actual PCM, never URI assignment/preroll. Embedded
+title/artist tags cannot replace RSS identity; codec/bitrate tags still apply.
+The ordinary InputSourceStatus and RadioText selector are reused unchanged, including
+override > enabled source metadata > persistent fallback. No Podcast status/RT API
+or new metadata event path exists. HTTP/ICY and LOCAL metadata behavior is unchanged.
+
+Each ticket represents one playback occurrence. Valid, nonempty, frame-aligned
+48 kHz stereo S16LE appsink blocks add their byte length before staging/fanout.
+`60 * PCM_BYTES_PER_SECOND` is exactly **11,520,000 bytes**, or **2,880,000 stereo
+frames**. This measures successful decoding, not RF output or consumer delivery;
+downstream queue drops do not subtract already decoded audio. Buffering/wall time
+without PCM contributes nothing. At threshold the lock sets a once-only ticket flag
+and enqueues one history update. Later blocks or multiple TX consumers cannot count
+it twice. A future occurrence uses a new ticket. A bounded 64-event history queue
+reports an explicit error if I/O cannot keep up; DB errors are not blindly replayed
+because the commit outcome could be uncertain.
+
+Sub-60-second occurrences are **never counted**, even on EOS/native handoff. The
+shared path does not prove known per-item duration plus clean completion closely
+enough to make that safe. No percentage or wall-clock approximation is used. Such
+short episodes remain unplayed in SMART history and may be chosen again by its
+unchanged policy. Failure after any PCM amount suppresses immediate reselection;
+failure before threshold creates no fake history, and failure after threshold never
+undoes a legitimate increment. Suppression is transient and separate from eligibility.
+
+Final-consumer stop first quiesces native playback, closes tickets and cancels refresh,
+then joins the I/O owner and flushes already-earned history events. An in-flight HTTP
+operation must finish/timeout; further feed requests are cancelled and late publication
+cannot revive closed state. Stop retains ownership and reports an error if cleanup
+exceeds its deadline, rather than starting a competing owner. OS DNS/network calls
+remain subject to the bounded-transport/platform limitation described above.
+Successful cleanup discards catalog, active/prepared occurrences, counters and failed
+keys, and closes the SQLite connection. Config edits use existing SourceManager
+restart semantics: fresh transient runtime, retained durable history.
 
 ## Initial core verification
+
+### Playback integration verification
+
+Windows: 107 focused Podcast tests passed (including 26 runtime cases); the full
+non-native backend suite passed 978 tests, with 4 skips and 54 native/mux tests
+deselected. Python compilation and diff whitespace checks passed.
+
+An isolated Raspberry Pi directory using GStreamer 1.26.2 passed 48 native tests
+(3 skipped), including LOCAL regressions and four new Podcast cases. Synthetic
+localhost RSS/enclosures exercised tagged FLAC and untagged WAV, extensionless
+URLs, native handoff, forced EOS fallback, shared consumers, stop/restart, refresh
+recovery and accelerated decoding of 61 seconds of real PCM. Partial-PCM failure
+was injected as a native bus error; it was not a physical network-disconnect test.
+
+A bounded public smoke test of `https://feeds.megaphone.fm/darknetdiaries` found
+180 entries and decoded 205,496 PCM bytes with RSS identity
+`Darknet Diaries - LOW - Now Available`; shutdown completed. No RF, deployed
+services or persistent user configuration were touched. This is software playback
+verification, not receiver/RF acceptance.
+
+### Earlier catalog-only verification
 
 Fixture-based Podcast and schema tests: 88 passed on Windows and in an isolated
 Raspberry Pi Python 3.13.5 directory. Full non-native backend suite: 940 passed,
