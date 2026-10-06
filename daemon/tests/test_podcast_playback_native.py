@@ -98,6 +98,8 @@ def test_native_http_transitions_rss_identity_and_shared_cleanup(tmp_path,gst,fa
         s=source(db,url)
         try:
             manager.acquire(s.id,0); p=manager.pipelines[s.id]
+            assert int(p._pipeline.get_property("flags")) == 0x102
+            assert p.sink.get_property("sync") and p.sink.get_property("max-lateness") == -1
             manager.acquire(s.id,1)
             assert manager.pipelines[s.id] is p
             wait_for(lambda:len(p.metadata_records)>=3)

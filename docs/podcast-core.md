@@ -164,6 +164,13 @@ deferred. Existing source configuration UI and RDS implementation are unchanged.
 
 ## Active runtime and recovery
 
+Podcast playbin3 enables non-live buffering. The existing control worker pauses
+the pipeline below 100% and resumes at 100%, keeping the clock from advancing
+through upstream starvation and then delivering late PCM in a catch-up burst.
+Repeated messages are idempotent; stop/idle/teardown prevent a buffering resume.
+EOS recovery resets the buffering pause state. LOCAL and live HTTP keep their
+existing behavior. PCM queues and appsink max-lateness are unchanged.
+
 SourceManager constructs one GstPipeline per shared source, exactly as for LOCAL.
 The existing playbin3/custom audio sink, normalization, staging, DSP and PcmOutput
 fanout are reused. `sequenced_playback.py` contains the extracted LOCAL URI handoff

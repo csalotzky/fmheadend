@@ -104,6 +104,7 @@ def test_native_cycles_handoff_and_stable_output(tmp_path, mode, order):
     p.output.attach(0)
     try:
         p.start(); native, sink, output = p._pipeline, p.sink, p.output
+        assert int(native.get_property("flags")) == 2
         seen = collect(p, lambda seen: len(seen) >= 4)
         if order == 'sequential': assert seen[:4] == [1000,2000,3000,1000]
         else: assert set(seen[:3]) == {1000,2000,3000}

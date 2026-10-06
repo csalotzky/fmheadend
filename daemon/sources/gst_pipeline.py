@@ -122,6 +122,7 @@ class GstPipeline:
         self._podcast_database_path = podcast_database_path
         self._podcast_runtime_factory = podcast_runtime_factory
         self._media_idle = False
+        self._buffering_paused = False
         self._pending_metadata = None
         self._metadata_dirty = False
         self._uri_change_lock = threading.Lock()
@@ -185,7 +186,12 @@ class GstPipeline:
             raise DependencyUnavailable(self.fatal_error)
 
     def stop(self):
-        self._stop.set()
+        if self.source.type == SourceType.PODCAST:
+            # Serialize stop intent with buffering-driven state changes.
+            with self._uri_change_lock:
+                self._stop.set()
+        else:
+            self._stop.set()
         self._audio_ready.set()
         if self._thread is not None:
             self._thread.join(timeout=self.timeout_s + (32 if self.source.type == SourceType.PODCAST else 2))
@@ -273,7 +279,9 @@ class GstPipeline:
             self._pipeline = Gst.ElementFactory.make('playbin3', None)
             if self._pipeline is None:
                 raise PipelineConfigurationError('Missing GStreamer element: playbin3')
-            self._pipeline.set_property('flags', 2)  # Audio only; no video/text/soft volume.
+            # Podcast enclosures are non-live: preserve clock pacing through rebuffering.
+            flags = 2 | (0x100 if self.source.type == SourceType.PODCAST else 0)
+            self._pipeline.set_property('flags', flags)  # Audio, optional buffering; no soft volume.
             if uri is not None:
                 self._pipeline.set_property('uri', uri)
             self._pipeline.connect('about-to-finish', self._local_handoff)
@@ -378,6 +386,7 @@ class GstPipeline:
         # PcmOutput and consumers; normal handoff never changes pipeline state.
         with self._uri_change_lock:
             self._pipeline.set_state(self.Gst.State.NULL)
+            self._buffering_paused = False
             self._bus.set_flushing(True)
             self._bus.set_flushing(False)
             self._clear_local_metadata()
@@ -391,6 +400,24 @@ class GstPipeline:
             else:
                 self._pipeline.set_property('uri', uri)
                 self._pipeline.set_state(self.Gst.State.PLAYING)
+
+    def _buffering(self, percent):
+        if self.source.type != SourceType.PODCAST:
+            self._update(state="BUFFERING" if percent < 100 else "CONNECTING")
+            return
+        # Control worker only, serialized with native URI/state changes. A buffering
+        # pause is not a stop: keep the same tickets, PCM owner and history counters.
+        with self._uri_change_lock:
+            if self._stop.is_set() or self._media_idle or self._pipeline is None:
+                return
+            paused = percent < 100
+            if paused == self._buffering_paused:
+                return
+            state = self.Gst.State.PAUSED if paused else self.Gst.State.PLAYING
+            if self._pipeline.set_state(state) == self.Gst.StateChangeReturn.FAILURE:
+                raise DependencyUnavailable("GStreamer refused Podcast buffering state")
+            self._buffering_paused = paused
+            self._update(state="BUFFERING" if paused else "CONNECTING")
 
     def _sample(self, sink):
         Gst = self.Gst
@@ -507,6 +534,7 @@ class GstPipeline:
         with self._lock:
             self._station_name = None
         self._last_sample = 0
+        self._buffering_paused = False
         self._update(state="CONNECTING", stream_title=None, artist=None, title=None,
                      codec=None, bitrate_bps=None, input_sample_rate=None, input_channels=None, output_caps=None)
         try:
@@ -574,7 +602,7 @@ class GstPipeline:
                 if message.type == Gst.MessageType.TAG and self._local is None:
                     self._tags(message.parse_tag())
                 if message.type == Gst.MessageType.BUFFERING:
-                    self._update(state="BUFFERING" if message.parse_buffering() < 100 else "CONNECTING")
+                    self._buffering(message.parse_buffering())
             if self._callback_error:
                 raise PipelineConfigurationError(self._callback_error)
             if time.monotonic() - (self._last_sample or started) > self.timeout_s:
@@ -602,7 +630,8 @@ class GstPipeline:
                 fields = dict(input_fields)
                 if self.snapshot()["codec"] is None:
                     fields["codec"] = self.source.config.get("codec") or ("PCM" if self.source.type in (SourceType.UDP, SourceType.ALSA) else "decoded audio")
-                self._update(state="RUNNING", output_caps=self._caps, last_error=None, **fields)
+                self._update(state="BUFFERING" if self._buffering_paused else "RUNNING",
+                             output_caps=self._caps, last_error=None, **fields)
             else:
                 # Bounded work per pass; check stop/bus again before more PCM.
                 continue
