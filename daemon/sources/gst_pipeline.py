@@ -151,6 +151,10 @@ class GstPipeline:
         self._telemetry_next_ns = 0
         self._dsp_elements = {}
         self._dsp_meters = {}
+        self._peak_elements = {}
+        self._peak_values = {}
+        self._peak_state = None
+        self._peak_seqnum = None
         self._snapshot = {"state": "IDLE", "codec": None, "input_sample_rate": None,
                           "input_channels": None, "bitrate_bps": None, "stream_title": None,
                           "artist": None, "title": None, "output_caps": None,
@@ -192,10 +196,60 @@ class GstPipeline:
             self._telemetry_cache = None
         for meter in self._dsp_meters.values():
             meter.enable(False)
+        self._set_peak_metering(False)
         self._telemetry_next_ns = 0
         if discard:
             self._dsp_meters.clear()
             self._dsp_elements.clear()
+            self._peak_elements.clear()
+
+    def _set_peak_metering(self, enabled, hz=50.0, revision=None):
+        """Worker only: level computes in native code; we consume its bus messages."""
+        state = (enabled, hz, revision)
+        if state == self._peak_state:
+            return
+        self._peak_state = state
+        self._peak_values.clear()
+        self._peak_seqnum = None
+        if enabled and self._peak_elements:
+            # Reject queued messages from before enable/rate change, even when
+            # a NULL recovery reuses the same native level elements.
+            self._peak_seqnum = self.Gst.util_seqnum_next()
+        for element in self._peak_elements.values():
+            try:
+                element.set_property('post-messages', False)
+                if enabled:
+                    element.set_property('interval', int(1_000_000_000 / hz))
+                    element.set_property('post-messages', True)
+            except Exception:
+                log.warning('Could not configure endpoint peak metering')
+
+    def _peak_message(self, message):
+        if not self._peak_elements:
+            return
+        endpoint = next((key for key, element in self._peak_elements.items() if message.src == element), None)
+        if endpoint is None or not self._peak_state or not self._peak_state[0]:
+            return
+        with self._lock:
+            enabled = self._telemetry_request[0]
+            revision = self._telemetry_revision
+        if not enabled or revision != self._peak_state[2] or self._peak_seqnum is None:
+            return
+        if self.Gst.util_seqnum_compare(message.get_seqnum(), self._peak_seqnum) <= 0:
+            return
+        try:
+            borrowed = message.get_structure()
+            with borrowed if hasattr(borrowed, '__enter__') else nullcontext(borrowed) as structure:
+                if structure is None or structure.get_name() != 'level':
+                    return
+                peaks = structure.get_value('peak')
+                if len(peaks) != 2:
+                    raise ValueError('Expected stereo level message')
+                values = {key: value if isinstance(value, (int, float)) and math.isfinite(value) else None
+                          for key, value in zip(('peak_l_dbfs', 'peak_r_dbfs'), peaks)}
+            self._peak_values[endpoint] = (time.monotonic_ns(), values)
+        except Exception:
+            self._peak_values.pop(endpoint, None)
 
     def _telemetry_tick(self):
         with self._lock:
@@ -204,7 +258,8 @@ class GstPipeline:
         enabled = enabled and not self._stop.is_set() and not self._media_idle and self._pipeline is not None
         for meter in self._dsp_meters.values():
             meter.enable(enabled)
-        if not enabled or not self._dsp_meters:
+        self._set_peak_metering(enabled, hz, revision)
+        if not enabled or not (self._dsp_meters or self._peak_elements):
             with self._lock:
                 self._telemetry_cache = None
             self._telemetry_next_ns = 0
@@ -215,6 +270,11 @@ class GstPipeline:
         stages = {stage: meter.collect() for stage, meter in self._dsp_meters.items()}
         end = time.monotonic_ns()
         sample = dict(sample_monotonic_ns=now, collect_duration_ns=end - now, stages=stages)
+        for endpoint in ('input', 'output'):
+            measured = self._peak_values.get(endpoint)
+            # Do not present an old peak as current while PCM is unavailable.
+            sample[endpoint] = (measured[1] if measured and now - measured[0] <= max(250_000_000, int(3e9 / hz))
+                                else None)
         # No catch-up passes. Native reads take place outside the cache lock.
         self._telemetry_next_ns = end + int(1_000_000_000 / hz)
         with self._lock:
@@ -374,13 +434,19 @@ class GstPipeline:
         sink = self._make("appsink", caps=Gst.Caps.from_string(PCM_CAPS), emit_signals=True,
                           sync=True, max_buffers=2, drop=True, wait_on_eos=False, enable_last_sample=False)
         sink.connect("new-sample", self._sample)
+        input_peak = self._make('level', post_messages=False, interval=20_000_000, audio_level_meta=False)
+        output_peak = self._make('level', post_messages=False, interval=20_000_000, audio_level_meta=False)
+        self._peak_elements = dict(input=input_peak, output=output_peak)
+        self._peak_state = None
         if self.profile:
             domain = self._make("capsfilter", caps=Gst.Caps.from_string(PROCESSING_CAPS))
             stages = dsp_stages(self._make, self.profile, on_stage=self._register_dsp)
             final_convert = self._make("audioconvert")
-            self._link(self._convert, resample, domain, volume, *stages, final_convert, capsfilter, queue, sink)
+            self._link(self._convert, resample, domain, input_peak, volume, *stages,
+                       final_convert, capsfilter, queue, output_peak, sink)
         else:
-            self._link(self._convert, resample, volume, capsfilter, queue, sink)
+            domain = self._make('capsfilter', caps=Gst.Caps.from_string(PCM_CAPS))
+            self._link(self._convert, resample, domain, input_peak, volume, capsfilter, queue, output_peak, sink)
         self.sink = sink
         config = self.source.config
         if self.source.type in (SourceType.LOCAL, SourceType.PODCAST):
@@ -674,6 +740,7 @@ class GstPipeline:
                         break
                     raise DependencyUnavailable("Source reached end of stream")
                 if message.type == Gst.MessageType.ELEMENT:
+                    self._peak_message(message)
                     self._station_headers(message)
                 if message.type == Gst.MessageType.TAG and self._local is None:
                     self._tags(message.parse_tag())
