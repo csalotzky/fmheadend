@@ -4,6 +4,8 @@ import json
 import os
 import socket
 import threading
+import time
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -14,7 +16,9 @@ from fmheadendd.audio_telemetry import AudioTelemetry
 from fmheadendd.config import Settings
 from fmheadendd.control import ControlExecutor
 from fmheadendd.models.audio_profile_file import AudioProfileFile
-from fmheadendd.models.configuration import InputSourceConfig
+from fmheadendd.models.configuration import InputSourceConfig, InputSource
+from fmheadendd.errors import DependencyUnavailable
+from fmheadendd.sources.pipeline import MockPipeline
 from fmheadendd.models.dsp import neutral_stages
 from fmheadendd.sources.dsp import dsp_stages
 from fmheadendd.sources.dsp_telemetry import AGC_ENABLE, METERS
@@ -250,3 +254,166 @@ def test_socket_stale_ownership_and_refuse_other_files(tmp_path):
             control.close()
         assert path.read_text() == 'unrelated'
     asyncio.run(run())
+
+
+def test_control_blockage_does_not_interrupt_connected_telemetry(tmp_path):
+    async def run():
+        control = ControlExecutor()
+        sources = Mock()
+        requests = []
+        def request(enabled, hz):
+            assert threading.current_thread().name.startswith('headend-control')
+            requests.append(enabled)
+        def snapshot():
+            assert not threading.current_thread().name.startswith('headend-control')
+            return []
+        sources.set_telemetry.side_effect = request
+        sources.telemetry_snapshot.side_effect = snapshot
+        server = AudioTelemetry(tmp_path / 'cadence.sock', 50, control, sources)
+        if os.name == 'posix':
+            await server.start()
+            reader, writer = await asyncio.open_unix_connection(server.path)
+        else:
+            # Same service/stream handling on Windows, where asyncio lacks AF_UNIX.
+            server.server = await asyncio.start_server(server._connected, '127.0.0.1', 0)
+            reader, writer = await asyncio.open_connection(*server.server.sockets[0].getsockname())
+        entered, release = threading.Event(), threading.Event()
+        times = []
+        blocked = None
+        try:
+            await asyncio.wait_for(reader.readline(), 2)  # Enable completed first.
+            def occupy():
+                times.append(time.monotonic_ns())
+                entered.set()
+                assert release.wait(2)
+                times.append(time.monotonic_ns())
+            blocked = asyncio.create_task(control.call(occupy))
+            assert await asyncio.to_thread(entered.wait, 2)
+            async def unblock():
+                await asyncio.sleep(.5)
+                release.set()
+            timer = asyncio.create_task(unblock())
+            stamps = []
+            while True:
+                record = json.loads(await asyncio.wait_for(reader.readline(), 2))
+                stamps.append(record['emit_monotonic_ns'])
+                if len(times) == 2 and stamps[-1] > times[1]:
+                    break
+            await timer
+            await blocked
+            during = [stamp for stamp in stamps if times[0] < stamp < times[1]]
+            assert len(during) >= 8, 'frames must be emitted WHILE control is blocked'
+            intervals = [(b-a)/1e9 for a, b in zip(stamps, stamps[1:])]
+            assert all(interval > 0 for interval in intervals)
+            assert max(intervals) < .25, 'continuous output, not a control-sized gap'
+            active = server.client
+            writer.close()
+            await writer.wait_closed()
+            await asyncio.wait_for(active, 2)
+            assert requests == [True, False]
+        finally:
+            release.set()
+            if blocked is not None:
+                await blocked
+            writer.close()
+            await server.close()
+            control.close()
+    asyncio.run(run())
+
+
+def test_emit_deadline_excludes_work_and_does_not_catch_up(monkeypatch):
+    from fmheadendd import audio_telemetry
+    now, stamps, sleeps = [0.0], [], []
+    class Finished(Exception):
+        pass
+    class Writer:
+        def write(self, data):
+            stamps.append(now[0])
+            if len(stamps) == 4:
+                raise Finished()
+        async def drain(self):
+            now[0] += .08 if len(stamps) == 3 else .006
+    async def wait_for(awaitable, timeout):
+        assert timeout == .25
+        return await awaitable
+    async def sleep(delay):
+        sleeps.append(delay)
+        now[0] += delay
+    monkeypatch.setattr(audio_telemetry, 'asyncio', SimpleNamespace(
+        get_running_loop=lambda: SimpleNamespace(time=lambda: now[0]), wait_for=wait_for, sleep=sleep))
+    sources, control = Mock(), Mock()
+    sources.telemetry_snapshot.return_value = []
+    service = AudioTelemetry('unused', 50, control, sources)
+    with pytest.raises(Finished):
+        asyncio.run(service._emit(Writer()))
+    assert stamps == pytest.approx([0, .02, .04, .14])
+    assert sleeps == pytest.approx([.014, .014, .02])
+    control.call.assert_not_called()
+
+
+def test_registry_snapshot_replacement_release_and_failed_stop():
+    source = InputSource(id=3, timestamp=datetime.now(timezone.utc), name='source',
+                         type='HTTP', config={'uri': 'http://localhost/test'})
+    database = Mock()
+    database.get.return_value = source
+    manager = None
+    reading, finish_read = threading.Event(), threading.Event()
+    def unlocked():
+        assert manager._registry_lock.acquire(blocking=False), 'lock spans pipeline/cache work'
+        manager._registry_lock.release()
+    class Pipeline(MockPipeline):
+        pause = False
+        fail_stop = False
+        def start(self):
+            unlocked()
+            super().start()
+        def stop(self):
+            unlocked()
+            if self.fail_stop:
+                raise DependencyUnavailable('stop failed')
+            super().stop()
+        def telemetry_snapshot(self):
+            unlocked()
+            if self.pause:
+                reading.set()
+                assert finish_read.wait(2)
+            return dict(telemetry_available=False, generation=1)
+    manager = SourceManager(database, pipeline_factory=Pipeline)
+    manager.acquire(3, 7)
+    manager.acquire(3, 2)
+    old = manager.pipelines[3]
+    old.pause = True
+    snapshots, errors = [], []
+    def read():
+        try:
+            snapshots.append(manager.telemetry_snapshot())
+        except Exception as exc:
+            errors.append(exc)
+    thread = threading.Thread(target=read)
+    thread.start()
+    try:
+        assert reading.wait(2)
+        assert manager._restart_audio(source) is None
+        replacement = manager.pipelines[3]
+        assert replacement is not old
+        assert manager.telemetry_snapshot()[0]['consumer_tx_ids'] == [2, 7]
+        manager.release(3, 2)
+        assert manager.telemetry_snapshot()[0]['consumer_tx_ids'] == [7]
+        replacement.fail_stop = True
+        with pytest.raises(DependencyUnavailable):
+            manager.release(3, 7)
+        assert manager.pipelines[3] is replacement
+        assert manager.telemetry_snapshot()[0]['consumer_tx_ids'] == [7]
+        replacement.fail_stop = False
+        manager.release(3, 7)
+        assert manager.telemetry_snapshot() == []
+    finally:
+        finish_read.set()
+        thread.join(2)
+    assert not thread.is_alive() and not errors
+    assert len(snapshots[0]) == 1
+    assert snapshots[0][0]['source_id'] == 3
+    assert snapshots[0][0]['consumer_tx_ids'] == [2, 7]
+    manager.acquire(3, 1)
+    manager.close()
+    assert manager.telemetry_snapshot() == []

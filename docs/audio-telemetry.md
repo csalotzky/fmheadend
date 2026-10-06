@@ -21,9 +21,14 @@ inode. Startup only removes a matching, same-user, non-listening stale socket;
 unrelated paths and active sockets are refused. Normal shutdown removes the socket.
 The small ownership marker remains to avoid lock-file replacement races.
 
-`SourceManager` copies current pipeline caches and sorted consumer TX IDs on
-`ControlExecutor`. Socket serialization and writes happen afterward on the asyncio
-loop, never under control/cache ownership. No full status collection is performed.
+`SourceManager` captures current wrapper references and sorted consumer TX IDs under
+a short registry lock, then reads each wrapper's Python cache after releasing it.
+The asyncio export path calls this directly, independently of `ControlExecutor`;
+only enable/disable requests use the control executor. Pipeline start/stop, cache
+copying, JSON serialization and socket writes never hold the registry lock.
+Emission uses monotonic deadlines, excluding processing time from the normal
+period and discarding missed deadlines without catch-up bursts. No full status
+collection is performed.
 Records are per Source, not per TX; consumer IDs describe attachment, not RF health.
 Source names come from pipeline construction and can lag a name-only edit until
 rebuild. Processor mode and profile path describe the actual constructed pipeline.

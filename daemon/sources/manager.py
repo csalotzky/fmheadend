@@ -1,5 +1,6 @@
 import logging
 import time
+from threading import Lock
 from ..errors import DependencyUnavailable, DomainError
 from ..models.configuration import InputSourceConfig, SourceTestResult
 from ..models.runtime_status import InputSourceStatus, SourceState
@@ -25,6 +26,9 @@ class SourceManager:
         self.profile_files = profile_files
         self.pipelines = {}
         self.consumers: dict[int, set[int]] = {}
+        # Writers remain control-owned. Telemetry readers capture references and
+        # consumer IDs here; never hold this across pipeline or cache operations.
+        self._registry_lock = Lock()
         self.statuses: dict[int, InputSourceStatus] = {}
         self.restart_errors: dict[int, str] = {}
         self.clock = clock
@@ -39,15 +43,18 @@ class SourceManager:
                 pipeline.request_telemetry(enabled, hz)
 
     def telemetry_snapshot(self):
-        """Control-owned registry copy; serialization and socket IO happen elsewhere."""
+        """Thread-safe registry copy, followed by wrapper-owned Python cache reads."""
+        with self._registry_lock:
+            registry = [(source_id, pipeline, sorted(self.consumers.get(source_id, ())))
+                        for source_id, pipeline in self.pipelines.items()]
         records = []
-        for source_id, pipeline in self.pipelines.items():
+        for source_id, pipeline, consumer_ids in registry:
             source = pipeline.source
             sample = (pipeline.telemetry_snapshot() if hasattr(pipeline, 'telemetry_snapshot')
                       else dict(telemetry_available=False, generation=0))
             records.append(dict(source_id=source_id, source_name=source.name,
                 processor_mode=source.processor_mode, audio_profile_path=source.audio_profile_path,
-                consumer_tx_ids=sorted(self.consumers.get(source_id, ())), **sample))
+                consumer_tx_ids=consumer_ids, **sample))
         return records
 
     def status(self, source_id, *, source=None):
@@ -158,7 +165,8 @@ class SourceManager:
             # Failed stop retains old ownership; never create a competing worker.
             old.stop()
             replacement = self._new_pipeline(source, output=getattr(old, 'output', None))
-            self.pipelines[source_id] = replacement
+            with self._registry_lock:
+                self.pipelines[source_id] = replacement
             replacement.start()
             self.restart_errors.pop(source_id, None)
             self.statuses[source_id] = InputSourceStatus(source_id=source_id,
@@ -180,7 +188,8 @@ class SourceManager:
             self.statuses[source_id] = InputSourceStatus(source_id=source_id, state=SourceState.ERROR,
                                                         last_error=f'{exc.error}: {exc}')
             raise DependencyUnavailable(f'{exc.error}: {exc}') from exc
-        consumers = self.consumers.setdefault(source_id, set())
+        with self._registry_lock:
+            consumers = self.consumers.setdefault(source_id, set())
         self._profile_observations.pop(source_id, None)
         if modulator_id in consumers:
             return
@@ -192,8 +201,9 @@ class SourceManager:
                 pipeline = self._new_pipeline(source)
                 # Track ownership before a potentially slow native start. If
                 # teardown fails, a future acquire must not create a duplicate.
-                self.pipelines[source_id] = pipeline
-                consumers.add(modulator_id)
+                with self._registry_lock:
+                    self.pipelines[source_id] = pipeline
+                    consumers.add(modulator_id)
                 if not getattr(pipeline, "mocked", True):
                     pipeline.output.attach(modulator_id)
                 pipeline.start()
@@ -202,7 +212,8 @@ class SourceManager:
                     if pipeline is not None:
                         self.release(source_id, modulator_id)
                     else:
-                        self.consumers.pop(source_id, None)
+                        with self._registry_lock:
+                            self.consumers.pop(source_id, None)
                 finally:
                     self.statuses[source_id] = InputSourceStatus(
                         source_id=source_id, state=SourceState.ERROR, last_error=str(exc))
@@ -223,7 +234,8 @@ class SourceManager:
                 raise DependencyUnavailable(error)
             if not getattr(pipeline, "mocked", True):
                 pipeline.output.attach(modulator_id)
-        consumers.add(modulator_id)
+        with self._registry_lock:
+            consumers.add(modulator_id)
 
     def release(self, source_id, modulator_id):
         consumers = self.consumers.get(source_id)
@@ -236,13 +248,15 @@ class SourceManager:
             # Retain ownership if native teardown fails; never replace a worker
             # that might still be alive with a second pipeline for this source.
             pipeline.stop()
-            self.pipelines.pop(source_id)
-            self.consumers.pop(source_id)
+            with self._registry_lock:
+                self.pipelines.pop(source_id)
+                self.consumers.pop(source_id)
             self.statuses[source_id] = InputSourceStatus(source_id=source_id)
             self.restart_errors.pop(source_id, None)
             logger.info("source %s stopped", source_id)
             self._profile_observations.pop(source_id, None)
-        consumers.discard(modulator_id)
+        with self._registry_lock:
+            consumers.discard(modulator_id)
         if not getattr(pipeline, "mocked", True):
             pipeline.output.detach(modulator_id)
 
@@ -284,6 +298,7 @@ class SourceManager:
                 pipeline.stop()
             except DependencyUnavailable:
                 logger.exception("source worker cleanup failed")
-        self.pipelines.clear()
-        self.consumers.clear()
+        with self._registry_lock:
+            self.pipelines.clear()
+            self.consumers.clear()
         self._profile_observations.clear()
