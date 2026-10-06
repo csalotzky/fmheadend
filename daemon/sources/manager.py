@@ -34,13 +34,39 @@ class SourceManager:
         self.clock = clock
         self._profile_observations = {}
         self._telemetry_request = (False, 50.0)
+        self._telemetry_lock = Lock()
+        self._telemetry_closed = False
 
     def set_telemetry(self, enabled, hz=50.0):
-        """Control executor only. Requests never read or change native properties."""
-        self._telemetry_request = (enabled, hz)
-        for pipeline in self.pipelines.values():
+        """Normal requests are control-owned; terminal disable may bypass control."""
+        with self._telemetry_lock:
+            self._telemetry_request = (enabled and not self._telemetry_closed, hz)
+            with self._registry_lock:
+                pipelines = list(self.pipelines.values())
+            for pipeline in pipelines:
+                if hasattr(pipeline, 'request_telemetry'):
+                    pipeline.request_telemetry(*self._telemetry_request)
+
+    def shutdown_telemetry(self):
+        """Terminal Python-flag update: no native calls or control-queue wait.
+
+        Serialize with in-flight enable requests; queued enables cannot resurrect
+        metering. The lock never spans pipeline construction/start/stop or IO.
+        """
+        with self._telemetry_lock:
+            self._telemetry_closed = True
+        self.set_telemetry(False)
+
+    def _publish_pipeline(self, source_id, pipeline, consumer_id=None):
+        # Recheck telemetry at publication in case shutdown occurred while the
+        # control worker was constructing this previously unregistered wrapper.
+        with self._telemetry_lock:
+            with self._registry_lock:
+                self.pipelines[source_id] = pipeline
+                if consumer_id is not None:
+                    self.consumers[source_id].add(consumer_id)
             if hasattr(pipeline, 'request_telemetry'):
-                pipeline.request_telemetry(enabled, hz)
+                pipeline.request_telemetry(*self._telemetry_request)
 
     def telemetry_snapshot(self):
         """Thread-safe registry copy, followed by wrapper-owned Python cache reads."""
@@ -108,8 +134,9 @@ class SourceManager:
             pcm_staging_buffer_ms=self.pcm_staging_buffer_ms,
             pcm_staging_max_age_ms=self.pcm_staging_max_age_ms,
             pcm_consumer_buffer_ms=self.pcm_consumer_buffer_ms, **kwargs)
-        if hasattr(pipeline, 'request_telemetry'):
-            pipeline.request_telemetry(*self._telemetry_request)
+        with self._telemetry_lock:
+            if hasattr(pipeline, 'request_telemetry'):
+                pipeline.request_telemetry(*self._telemetry_request)
         return pipeline
 
     def validate_config(self, source):
@@ -165,8 +192,7 @@ class SourceManager:
             # Failed stop retains old ownership; never create a competing worker.
             old.stop()
             replacement = self._new_pipeline(source, output=getattr(old, 'output', None))
-            with self._registry_lock:
-                self.pipelines[source_id] = replacement
+            self._publish_pipeline(source_id, replacement)
             replacement.start()
             self.restart_errors.pop(source_id, None)
             self.statuses[source_id] = InputSourceStatus(source_id=source_id,
@@ -201,9 +227,7 @@ class SourceManager:
                 pipeline = self._new_pipeline(source)
                 # Track ownership before a potentially slow native start. If
                 # teardown fails, a future acquire must not create a duplicate.
-                with self._registry_lock:
-                    self.pipelines[source_id] = pipeline
-                    consumers.add(modulator_id)
+                self._publish_pipeline(source_id, pipeline, modulator_id)
                 if not getattr(pipeline, "mocked", True):
                     pipeline.output.attach(modulator_id)
                 pipeline.start()

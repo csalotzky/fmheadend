@@ -20,11 +20,18 @@ The socket is mode 0600. A locked `.owner` sidecar records the application's soc
 inode. Startup only removes a matching, same-user, non-listening stale socket;
 unrelated paths and active sockets are refused. Normal shutdown removes the socket.
 The small ownership marker remains to avoid lock-file replacement races.
+Shutdown first stops accepting clients, aborts the active server-side transport
+and cancels its emit/read tasks, then waits for listener closure with a timeout.
+It never requires remote EOF. Terminal disable uses a short, synchronized Python
+request update in SourceManager rather than waiting/retrying on the control
+executor; queued enables and late wrapper publication cannot re-enable telemetry.
+Normal connection/disconnection requests still use the control executor. Repeated
+close is idempotent. No native GstElement operations occur in this cleanup path.
 
 `SourceManager` captures current wrapper references and sorted consumer TX IDs under
 a short registry lock, then reads each wrapper's Python cache after releasing it.
 The asyncio export path calls this directly, independently of `ControlExecutor`;
-only enable/disable requests use the control executor. Pipeline start/stop, cache
+only normal enable/disable requests use the control executor. Pipeline start/stop, cache
 copying, JSON serialization and socket writes never hold the registry lock.
 Emission uses monotonic deadlines, excluding processing time from the normal
 period and discarding missed deadlines without catch-up bursts. No full status
