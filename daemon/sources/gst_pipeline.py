@@ -1,5 +1,6 @@
 """GStreamer ingest. GI is loaded only when a digital source is opened."""
 from contextlib import nullcontext
+from copy import deepcopy
 from dataclasses import dataclass
 import logging
 import math
@@ -15,6 +16,7 @@ from .output import (PCM_CAPS, PcmQueue, PcmOutput, pcm_capacity_bytes,
                      DEFAULT_STAGING_BUFFER_MS, DEFAULT_CONSUMER_BUFFER_MS, DEFAULT_STAGING_MAX_AGE_MS)
 from .dsp import PROCESSING_CAPS
 from .dsp import dsp_stages
+from .dsp_telemetry import METERS, StageMeters
 
 log = logging.getLogger(__name__)
 
@@ -142,6 +144,13 @@ class GstPipeline:
         self._finished = threading.Event()
         self._thread = None
         self._lock = threading.Lock()
+        self._telemetry_request = (False, 50.0)
+        self._telemetry_revision = 0
+        self._telemetry_cache = None
+        self._telemetry_generation = 0
+        self._telemetry_next_ns = 0
+        self._dsp_elements = {}
+        self._dsp_meters = {}
         self._snapshot = {"state": "IDLE", "codec": None, "input_sample_rate": None,
                           "input_channels": None, "bitrate_bps": None, "stream_title": None,
                           "artist": None, "title": None, "output_caps": None,
@@ -154,6 +163,68 @@ class GstPipeline:
         self._input_caps = None
         self._validated_output_caps = None
         self._validated_output_text = None
+
+    def request_telemetry(self, enabled, hz=50.0):
+        """Control-thread request only; never touches native elements."""
+        with self._lock:
+            request = (bool(enabled), hz)
+            if request == self._telemetry_request:
+                return
+            self._telemetry_request = request
+            self._telemetry_revision += 1
+            self._telemetry_cache = None
+        self._audio_ready.set()
+
+    def telemetry_snapshot(self):
+        with self._lock:
+            return dict(telemetry_available=self._telemetry_cache is not None,
+                        generation=self._telemetry_generation,
+                        **deepcopy(self._telemetry_cache or {}))
+
+    def _register_dsp(self, stage, implementation, element, settings):
+        self._dsp_elements[stage] = element
+        if implementation in METERS:
+            self._dsp_meters[stage] = StageMeters(element, implementation, settings)
+
+    def _invalidate_telemetry(self, *, discard=False):
+        # Worker only. Invalidate BEFORE NULL; restore controls while elements exist.
+        with self._lock:
+            self._telemetry_cache = None
+        for meter in self._dsp_meters.values():
+            meter.enable(False)
+        self._telemetry_next_ns = 0
+        if discard:
+            self._dsp_meters.clear()
+            self._dsp_elements.clear()
+
+    def _telemetry_tick(self):
+        with self._lock:
+            enabled, hz = self._telemetry_request
+            revision = self._telemetry_revision
+        enabled = enabled and not self._stop.is_set() and not self._media_idle and self._pipeline is not None
+        for meter in self._dsp_meters.values():
+            meter.enable(enabled)
+        if not enabled or not self._dsp_meters:
+            with self._lock:
+                self._telemetry_cache = None
+            self._telemetry_next_ns = 0
+            return
+        now = time.monotonic_ns()
+        if now < self._telemetry_next_ns:
+            return
+        stages = {stage: meter.collect() for stage, meter in self._dsp_meters.items()}
+        end = time.monotonic_ns()
+        sample = dict(sample_monotonic_ns=now, collect_duration_ns=end - now, stages=stages)
+        # No catch-up passes. Native reads take place outside the cache lock.
+        self._telemetry_next_ns = end + int(1_000_000_000 / hz)
+        with self._lock:
+            if revision == self._telemetry_revision and not self._stop.is_set():
+                self._telemetry_cache = sample
+
+    def _telemetry_wait(self, maximum):
+        if self._telemetry_next_ns:
+            return min(maximum, max(0.0, (self._telemetry_next_ns - time.monotonic_ns()) / 1_000_000_000))
+        return maximum
 
     def snapshot(self):
         with self._lock:
@@ -263,6 +334,7 @@ class GstPipeline:
             self._callback_error = str(exc)
 
     def _build(self):
+        self._invalidate_telemetry(discard=True)
         Gst = self.Gst
         if self.source.type in (SourceType.LOCAL, SourceType.PODCAST):
             if self.source.type == SourceType.LOCAL:
@@ -290,6 +362,8 @@ class GstPipeline:
         else:
             self._pipeline = Gst.Pipeline.new(None)
             self._element_parent = self._pipeline
+        with self._lock:
+            self._telemetry_generation += 1
         self._convert = self._make("audioconvert")
         resample = self._make("audioresample")
         self._overrides(resample, "resample")
@@ -302,7 +376,7 @@ class GstPipeline:
         sink.connect("new-sample", self._sample)
         if self.profile:
             domain = self._make("capsfilter", caps=Gst.Caps.from_string(PROCESSING_CAPS))
-            stages = dsp_stages(self._make, self.profile)
+            stages = dsp_stages(self._make, self.profile, on_stage=self._register_dsp)
             final_convert = self._make("audioconvert")
             self._link(self._convert, resample, domain, volume, *stages, final_convert, capsfilter, queue, sink)
         else:
@@ -384,6 +458,7 @@ class GstPipeline:
     def _local_resume(self, *, failed):
         # Exceptional recovery only. Keep the same native elements, DSP chain,
         # PcmOutput and consumers; normal handoff never changes pipeline state.
+        self._invalidate_telemetry()
         with self._uri_change_lock:
             self._pipeline.set_state(self.Gst.State.NULL)
             self._buffering_paused = False
@@ -566,6 +641,7 @@ class GstPipeline:
             # lost between draining staging and waiting. GstBus never delays PCM.
             self._audio_ready.clear()
             if self._media_idle:
+                self._telemetry_tick()
                 self._local.service(self._pipeline)
                 with self._local.lock:
                     available = self._local.prepared is not None
@@ -634,7 +710,9 @@ class GstPipeline:
                              output_caps=self._caps, last_error=None, **fields)
             else:
                 # Bounded work per pass; check stop/bus again before more PCM.
+                self._telemetry_tick()
                 continue
+            self._telemetry_tick()
             if self._local is not None:
                 self._local.service(self._pipeline)
             if running_since is not None and bus_idle:
@@ -649,7 +727,7 @@ class GstPipeline:
             # between 21-43 ms decoded blocks; this ceiling only bounds bus
             # observation when no PCM arrives, never the audio/stall deadline.
             remaining = self.timeout_s - (time.monotonic() - (self._last_sample or started))
-            self._audio_ready.wait(min(0.05, max(0.0, remaining)))
+            self._audio_ready.wait(self._telemetry_wait(min(0.05, max(0.0, remaining))))
 
     def _run(self):
         self._backoff = RetryBackoff()
@@ -664,6 +742,7 @@ class GstPipeline:
                     self._update(state="ERROR", last_error=str(exc))
                     log.warning("source %s: %s", getattr(self.source, "id", "probe"), exc)
                 finally:
+                    self._invalidate_telemetry(discard=True)
                     if self._pipeline is not None:
                         with self._uri_change_lock:
                             self._pipeline.set_state(self.Gst.State.NULL)

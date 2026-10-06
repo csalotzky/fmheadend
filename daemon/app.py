@@ -14,7 +14,8 @@ from starlette.exceptions import HTTPException
 from . import __version__
 from .diagnostics import RecentLogs
 from .api.routes import router
-from .config import Settings
+from .config import Settings, audio_telemetry_hz
+from .audio_telemetry import AudioTelemetry
 from .audio_profile_files import AudioProfileFiles
 from .control import ControlExecutor
 from .database import Database, SCHEMA_VERSION
@@ -87,6 +88,8 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
             control.close()
             raise
         services = app.state.services
+        services.audio_telemetry = (AudioTelemetry(settings.audio_telemetry_socket,
+            settings.audio_telemetry_hz, control, services.sources) if settings.audio_telemetry_socket else None)
         next_snapshot = 0.0
 
         def publish_status(*, force=True):
@@ -135,8 +138,15 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
         logger.info("PCM buffers: staging_capacity_ms=%s staging_stale_age_ms=%s consumer_buffer_ms=%s",
                     settings.pcm_staging_buffer_ms, settings.pcm_staging_max_age_ms, settings.pcm_consumer_buffer_ms)
         try:
+            if services.audio_telemetry is not None:
+                await services.audio_telemetry.start()
             yield
         finally:
+            if services.audio_telemetry is not None:
+                try:
+                    await services.audio_telemetry.close()
+                except Exception:
+                    logger.exception('Audio telemetry shutdown failed')
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
@@ -233,6 +243,9 @@ def argument_parser():
                         help="Additional absolute root available to the LOCAL source path browser; repeatable")
     parser.add_argument("--audio-profiles-default-dir", default="/usr/share/fmheadend/audio-profiles/default")
     parser.add_argument("--audio-profiles-custom-dir", default="/var/lib/fmheadend/audio-profiles/custom")
+    parser.add_argument("--audio-telemetry-socket", help="Optional local DSP diagnostics Unix socket path")
+    parser.add_argument("--audio-telemetry-hz", type=audio_telemetry_hz, default=50.0,
+                        help="Diagnostic sampling rate, 10..100 Hz (default 50)")
     return parser
 
 
@@ -244,7 +257,9 @@ def main():
                         pcm_staging_buffer_ms=args.pcm_staging_buffer_ms,
                         pcm_staging_max_age_ms=args.pcm_staging_max_age_ms,
                         pcm_consumer_buffer_ms=args.pcm_consumer_buffer_ms,
-                        media_browser_roots=tuple(args.media_browser_root))
+                        media_browser_roots=tuple(args.media_browser_root),
+                        audio_telemetry_socket=args.audio_telemetry_socket,
+                        audio_telemetry_hz=args.audio_telemetry_hz)
     database = Database(args.database)
     try:
         config = database.get_system()

@@ -10,7 +10,7 @@ def linear(db):
     return 10 ** (db / 20)
 
 
-def dsp_stages(make, profile):
+def dsp_stages(make, profile, *, on_stage=None):
     create = make
     def make(factory, **properties):
         element = create(factory, **properties)
@@ -88,7 +88,10 @@ def dsp_stages(make, profile):
                     f'ht_{i}': band['hold_ms']})
         else:
             raise ValueError(f'No verified adapter for {name}')
-        result.append(make(factory, **props))
+        element = make(factory, **props)
+        result.append(element)
+        if on_stage is not None:
+            on_stage(stage, name, element, p)
     return result
 
 

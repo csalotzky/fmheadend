@@ -1,0 +1,74 @@
+# Local audio/DSP telemetry
+
+Optional Linux diagnostics, disabled unless a socket path is supplied:
+
+```sh
+fmheadendd --audio-telemetry-socket /run/fmheadend/audio-telemetry.sock --audio-telemetry-hz 50
+```
+
+The parent directory must already exist and be writable by the daemon. Rates must
+be finite and between 10 and 100 Hz; the default is 50. This is best-effort sampling,
+not a realtime guarantee. No browser API, client tool, output meter or DSP parameter
+editing is provided.
+
+## Ownership and transport
+
+One AF_UNIX SOCK_STREAM client receives one batched NDJSON record per service tick.
+Additional clients are closed. A blocked write times out after 250 ms; there is no
+application backlog of samples. Disconnects disable metering; clients can reconnect.
+The socket is mode 0600. A locked `.owner` sidecar records the application's socket
+inode. Startup only removes a matching, same-user, non-listening stale socket;
+unrelated paths and active sockets are refused. Normal shutdown removes the socket.
+The small ownership marker remains to avoid lock-file replacement races.
+
+`SourceManager` copies current pipeline caches and sorted consumer TX IDs on
+`ControlExecutor`. Socket serialization and writes happen afterward on the asyncio
+loop, never under control/cache ownership. No full status collection is performed.
+Records are per Source, not per TX; consumer IDs describe attachment, not RF health.
+Source names come from pipeline construction and can lag a name-only edit until
+rebuild. Processor mode and profile path describe the actual constructed pipeline.
+
+## Sampling and lifetime
+
+The existing `source-<id>` worker alone owns live stage references, meter-enable
+changes and property reads. `dsp_stages` reports its actual constructed elements;
+OFF stages are absent and validation-only elements are never registered.
+
+The worker checks a monotonic deadline after bounded bus/PCM work, including the
+full PCM-batch continuation path. Its normal wait is capped by that deadline.
+Delayed passes are not replayed. No sampling thread or streaming-callback work is
+added. With no client, no meter properties are read or enabled.
+
+Samples are ordinary Python data, published under the existing short snapshot
+lock after all native reads. Native rebuild increments `generation` within a
+wrapper. Cache/reference invalidation precedes native teardown; temporary NULL
+recovery invalidates the cache but retains the same elements. Wrapper replacement
+starts its own generation counter; consumers resolve the current wrapper each
+tick. Release/shutdown remove ownership. `sample_monotonic_ns` also distinguishes
+samples across wrapper replacement.
+
+Unavailable samples contain `telemetry_available: false` and `generation`, with no
+old `stages` data. Bypass or a profile with no selected metered stages is unavailable.
+Each available sample contains `sample_monotonic_ns`, `collect_duration_ns` and
+`stages`, keyed by the existing DSP stage names. Each stage has `implementation`,
+the actual `factory`, raw `values`, and optional compact `errors`. Non-finite or
+unreadable properties are null with an error; JSON never contains NaN/Infinity.
+
+Meter values are not converted to dB, percentages or LUFS. Custom plugin dB/dBFS
+values retain their native units; `clip-count` remains the cumulative uint64 integer.
+Static gain/trim/filter stages are not polled. Multiband includes exactly
+`len(crossovers_hz) + 1` bands, starting at band 0, independently of compressor bypass.
+
+Only Autogain's `e-g`, `e-in-s`, `e-in-l`, `e-out-s`, `e-out-l` are toggled; their
+prior values are restored on disconnect or teardown. No other visibility controls
+are changed, and no profile configuration is persisted by telemetry.
+
+## Validation limits
+
+Unit tests use fake native properties and clocks. Short synthetic Pi checks can
+establish property presence/readability and that meters update without additional
+visibility changes, but cannot prove plugin getter thread safety or sustained
+50/100 Hz performance. `collect_duration_ns` times property collection, excluding
+socket I/O and cache copying. Target measurements with up to eight active DSP
+Sources, especially on Pi Zero 2 W, remain necessary before claiming a performance
+budget. No RF validation is implied.
