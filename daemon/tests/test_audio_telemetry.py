@@ -417,3 +417,90 @@ def test_registry_snapshot_replacement_release_and_failed_stop():
     manager.acquire(3, 1)
     manager.close()
     assert manager.telemetry_snapshot() == []
+
+
+@pytest.mark.parametrize('race', ['connected', 'drain', 'eof', 'busy', 'blocked_control'])
+def test_close_owns_connected_client_and_is_bounded(tmp_path, race):
+    async def run():
+        control = ControlExecutor()
+        sources = SourceManager(Mock())
+        p = pipeline()
+        sources.pipelines[3] = p
+        sources.consumers[3] = {2, 7}
+        service = AudioTelemetry(tmp_path / 'shutdown.sock', 50, control, sources)
+        if os.name == 'posix':
+            await service.start()
+            reader, writer = await asyncio.open_unix_connection(service.path)
+        else:
+            service.server = await asyncio.start_server(service._connected, '127.0.0.1', 0)
+            reader, writer = await asyncio.open_connection(*service.server.sockets[0].getsockname())
+        blocked = None
+        release = threading.Event()
+        try:
+            await asyncio.wait_for(reader.readline(), 1)
+            assert p._telemetry_request[0]
+            active = service.client
+            if race == 'drain':
+                entered = asyncio.Event()
+                async def drain():
+                    entered.set()
+                    await asyncio.Future()
+                service._writer.drain = drain
+                await asyncio.wait_for(entered.wait(), 1)
+            if race == 'blocked_control':
+                entered = threading.Event()
+                def occupy():
+                    entered.set()
+                    assert release.wait(5)
+                blocked = asyncio.create_task(control.call(occupy))
+                assert await asyncio.to_thread(entered.wait, 1)
+            if race == 'busy':
+                control.pending = 32
+                writer.close()  # Natural EOF cleanup is already retrying disable.
+                await writer.wait_closed()
+                await asyncio.sleep(.06)
+            if race == 'eof':
+                writer.close()
+            # Connected/drain/blocked-control cases leave the REMOTE client open.
+            await asyncio.wait_for(asyncio.gather(service.close(), service.close()), 1)
+            assert active.done()
+            assert service.client is None and service._writer is None
+            assert not service.server.is_serving()
+            assert not p._telemetry_request[0]
+            assert not sources._telemetry_request[0]
+            assert not p.telemetry_snapshot()['telemetry_available']
+            if race not in ('eof', 'busy'):
+                try:
+                    await asyncio.wait_for(reader.read(), .5)
+                    assert reader.at_eof()
+                except ConnectionResetError:
+                    pass  # An abort may reset a connection with pending data.
+            if os.name == 'posix':
+                assert not service.path.exists()
+                assert service._owner.closed
+                with pytest.raises((FileNotFoundError, ConnectionRefusedError)):
+                    await asyncio.open_unix_connection(service.path)
+            await asyncio.wait_for(service.close(), .2)
+        finally:
+            release.set()
+            if blocked is not None:
+                await blocked
+            if race == 'busy':
+                control.pending = 0
+            writer.close()
+            await service.close()
+            control.close()
+    asyncio.run(run())
+
+
+def test_terminal_disable_fences_queued_enables_and_unpublished_wrapper():
+    manager = SourceManager(Mock(), pipeline_factory=GstPipeline)
+    manager.set_telemetry(True)
+    pending = manager._new_pipeline(pipeline().source)
+    assert pending._telemetry_request[0]
+    manager.shutdown_telemetry()
+    manager.set_telemetry(True)  # A formerly queued control request.
+    manager.consumers[3] = set()
+    manager._publish_pipeline(3, pending, 7)
+    assert not pending._telemetry_request[0]
+    assert not manager._telemetry_request[0]

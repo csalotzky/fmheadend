@@ -20,6 +20,9 @@ class AudioTelemetry:
         self.path = Path(path)
         self.hz, self.control, self.sources = hz, control, sources
         self.server = self.client = self._owner = self._identity = None
+        self._writer = None
+        self._closing = False
+        self._close_task = None
 
     async def start(self):
         # A persistent, locked ownership marker permits recovery only of our own
@@ -73,16 +76,17 @@ class AudioTelemetry:
             raise
 
     def _connected(self, reader, writer):
-        if self.client is not None:
-            writer.close()
+        if self._closing or self.client is not None:
+            writer.transport.abort()
             return
+        self._writer = writer
         self.client = asyncio.create_task(self._serve(reader, writer))
 
     async def _request(self, enabled):
         # Control calls are bounded/serialized; never queue a telemetry backlog.
-        while True:
+        while not self._closing:
             try:
-                await self.control.call(lambda: self.sources.set_telemetry(enabled, self.hz))
+                await self.control.call(lambda: self.sources.set_telemetry(enabled, self.hz) if not self._closing else None)
                 return
             except DomainError as exc:
                 if exc.error != 'CONTROL_BUSY':
@@ -120,25 +124,47 @@ class AudioTelemetry:
         except Exception:
             log.exception('Audio telemetry client ended')
         finally:
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-            writer.close()
-            with suppress(ConnectionError, OSError, asyncio.TimeoutError):
-                await asyncio.wait_for(writer.wait_closed(), timeout=0.25)
-            await self._request(False)
-            self.client = None
+            try:
+                for task in tasks:
+                    task.cancel()
+                writer.transport.abort() if self._closing else writer.close()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                with suppress(ConnectionError, OSError, asyncio.TimeoutError):
+                    await asyncio.wait_for(writer.wait_closed(), timeout=0.25)
+                if not self._closing:
+                    await self._request(False)
+            finally:
+                writer.transport.abort()
+                self._writer = None
+                self.client = None
 
     async def close(self):
+        if self._close_task is None:
+            self._closing = True
+            self._close_task = asyncio.create_task(self._close())
+        await asyncio.shield(self._close_task)
+
+    async def _close(self):
         try:
             if self.server is not None:
                 self.server.close()
-                await self.server.wait_closed()
+            # Only thread-safe request flags; no executor/CONTROL_BUSY retry on
+            # shutdown. Native enable restoration remains Source-worker owned.
+            self.sources.shutdown_telemetry()
+            if self._writer is not None:
+                self._writer.transport.abort()
             if self.client is not None:
                 task = self.client
                 task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await task
+                with suppress(asyncio.CancelledError, asyncio.TimeoutError):
+                    await asyncio.wait_for(task, timeout=0.5)
+                self.client = None
+                self._writer = None
+            # Python 3.13 waits for accepted transports as well as the listener.
+            # Close those FIRST; never wait here for remote EOF.
+            if self.server is not None:
+                with suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(self.server.wait_closed(), timeout=0.25)
         finally:
             try:
                 if self._identity is not None:
