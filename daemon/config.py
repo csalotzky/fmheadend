@@ -1,7 +1,16 @@
 from dataclasses import dataclass
 from pathlib import Path
+import math
 from .regions import PLANS
 from .sources.output import DEFAULT_STAGING_BUFFER_MS, DEFAULT_CONSUMER_BUFFER_MS, DEFAULT_STAGING_MAX_AGE_MS, pcm_capacity_bytes
+
+
+def audio_telemetry_hz(value):
+    value = float(value)
+    if not math.isfinite(value) or not 10 <= value <= 100:
+        raise ValueError('Audio telemetry rate must be finite and between 10 and 100 Hz')
+    return value
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -14,8 +23,11 @@ class Settings:
     pcm_consumer_buffer_ms: int = DEFAULT_CONSUMER_BUFFER_MS
     pcm_staging_max_age_ms: int = DEFAULT_STAGING_MAX_AGE_MS
     media_browser_roots: tuple[str | Path, ...] = ()
+    audio_telemetry_socket: str | Path | None = None
+    audio_telemetry_hz: float = 50.0
 
     def __post_init__(self):
+        audio_telemetry_hz(self.audio_telemetry_hz)
         pcm_capacity_bytes(self.pcm_staging_buffer_ms)
         pcm_capacity_bytes(self.pcm_consumer_buffer_ms)
         pcm_capacity_bytes(self.pcm_staging_max_age_ms)

@@ -29,6 +29,26 @@ class SourceManager:
         self.restart_errors: dict[int, str] = {}
         self.clock = clock
         self._profile_observations = {}
+        self._telemetry_request = (False, 50.0)
+
+    def set_telemetry(self, enabled, hz=50.0):
+        """Control executor only. Requests never read or change native properties."""
+        self._telemetry_request = (enabled, hz)
+        for pipeline in self.pipelines.values():
+            if hasattr(pipeline, 'request_telemetry'):
+                pipeline.request_telemetry(enabled, hz)
+
+    def telemetry_snapshot(self):
+        """Control-owned registry copy; serialization and socket IO happen elsewhere."""
+        records = []
+        for source_id, pipeline in self.pipelines.items():
+            source = pipeline.source
+            sample = (pipeline.telemetry_snapshot() if hasattr(pipeline, 'telemetry_snapshot')
+                      else dict(telemetry_available=False, generation=0))
+            records.append(dict(source_id=source_id, source_name=source.name,
+                processor_mode=source.processor_mode, audio_profile_path=source.audio_profile_path,
+                consumer_tx_ids=sorted(self.consumers.get(source_id, ())), **sample))
+        return records
 
     def status(self, source_id, *, source=None):
         source = source if source is not None else self.database.get("sources", source_id)
@@ -77,10 +97,13 @@ class SourceManager:
             return self.pipeline_factory(source)
         if source.type == 'PODCAST':
             kwargs['podcast_database_path'] = self.database.connection.execute('PRAGMA database_list').fetchone()[2]
-        return self.pipeline_factory(source, profile=profile,
+        pipeline = self.pipeline_factory(source, profile=profile,
             pcm_staging_buffer_ms=self.pcm_staging_buffer_ms,
             pcm_staging_max_age_ms=self.pcm_staging_max_age_ms,
             pcm_consumer_buffer_ms=self.pcm_consumer_buffer_ms, **kwargs)
+        if hasattr(pipeline, 'request_telemetry'):
+            pipeline.request_telemetry(*self._telemetry_request)
+        return pipeline
 
     def validate_config(self, source):
         if source.processor_mode == 'builtin':
