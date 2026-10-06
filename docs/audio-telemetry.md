@@ -8,7 +8,7 @@ fmheadendd --audio-telemetry-socket /run/fmheadend/audio-telemetry.sock --audio-
 
 The parent directory must already exist and be writable by the daemon. Rates must
 be finite and between 10 and 100 Hz; the default is 50. This is best-effort sampling,
-not a realtime guarantee. No browser API, client tool, output meter or DSP parameter
+not a realtime guarantee. No browser API, client tool or DSP parameter
 editing is provided.
 
 ## Ownership and transport
@@ -53,7 +53,7 @@ tick. Release/shutdown remove ownership. `sample_monotonic_ns` also distinguishe
 samples across wrapper replacement.
 
 Unavailable samples contain `telemetry_available: false` and `generation`, with no
-old `stages` data. Bypass or a profile with no selected metered stages is unavailable.
+old meter data. Bypass also provides the two endpoint peak meters, with empty `stages`.
 Each available sample contains `sample_monotonic_ns`, `collect_duration_ns` and
 `stages`, keyed by the existing DSP stage names. Each stage has `implementation`,
 the actual `factory`, raw `values`, and optional compact `errors`. Non-finite or
@@ -68,12 +68,45 @@ Only Autogain's `e-g`, `e-in-s`, `e-in-l`, `e-out-s`, `e-out-l` are toggled; the
 prior values are restored on disconnect or teardown. No other visibility controls
 are changed, and no profile configuration is persisted by telemetry.
 
+## Absolute input/output peaks
+
+Two pass-through GStreamer `level` elements measure short-interval stereo peak dBFS:
+
+- `input`: after decode, conversion/resampling and common stereo caps, immediately
+  before Source Gain. It excludes Source Gain, Profile Input Gain and all DSP stages.
+- `output`: after the full DSP chain including Output Trim, final S16LE conversion,
+  48 kHz stereo PCM caps and the queue, immediately before appsink. It measures the
+  final digital PCM produced by the Source, not RF or downstream hardware levels.
+
+These appear once per Source outside `stages`:
+
+```json
+{"input":{"peak_l_dbfs":-18.064,"peak_r_dbfs":-18.064},"output":{"peak_l_dbfs":-24.066,"peak_r_dbfs":-24.066}}
+```
+
+The interval follows the requested telemetry rate (20 ms at 50 Hz). The Source
+worker consumes `level` bus messages' `peak` arrays; no Python PCM calculation or
+socket-side native access is added. No RMS, decay or loudness values are exported.
+`post-messages` is disabled without a client; this suppresses bus traffic, but does
+not promise to eliminate the level element's internal native analysis cost.
+
+Before a measurement arrives, an endpoint is null. Non-finite channel values become
+null; finite native silence readings are preserved. Values expire after the larger
+of 250 ms or three requested intervals without a received measurement. Endpoint
+windows are independent and not guaranteed to represent the same PCM interval
+because DSP latency/queuing can separate them.
+
+Disable, NULL recovery and teardown clear both caches. Native element identity
+rejects messages from old generations; a GStreamer message sequence fence also
+rejects queued pre-enable messages when native elements are reused. Endpoint
+values join the existing worker-owned telemetry cache; transport is unchanged.
+
 ## Validation limits
 
 Unit tests use fake native properties and clocks. Short synthetic Pi checks can
 establish property presence/readability and that meters update without additional
 visibility changes, but cannot prove plugin getter thread safety or sustained
-50/100 Hz performance. `collect_duration_ns` times property collection, excluding
-socket I/O and cache copying. Target measurements with up to eight active DSP
+50/100 Hz performance. `collect_duration_ns` times DSP property collection, excluding
+socket I/O, cache copying and native `level` analysis/message handling. Target measurements with up to eight active DSP
 Sources, especially on Pi Zero 2 W, remain necessary before claiming a performance
 budget. No RF validation is implied.
