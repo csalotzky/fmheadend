@@ -90,18 +90,21 @@ class AudioTelemetry:
                 await asyncio.sleep(0.05)
 
     async def _emit(self, writer):
+        loop = asyncio.get_running_loop()
+        period = 1 / self.hz
+        next_deadline = loop.time()
         while True:
-            try:
-                sources = await self.control.call(self.sources.telemetry_snapshot)
-            except DomainError as exc:
-                if exc.error != 'CONTROL_BUSY':
-                    raise
-            else:
-                record = dict(schema=1, emit_monotonic_ns=time.monotonic_ns(), sources=sources)
-                writer.write((json.dumps(record, allow_nan=False, separators=(',', ':')) + '\n').encode())
-                # At most one outstanding record: disconnect a blocked client.
-                await asyncio.wait_for(writer.drain(), timeout=0.25)
-            await asyncio.sleep(1 / self.hz)
+            sources = self.sources.telemetry_snapshot()
+            record = dict(schema=1, emit_monotonic_ns=time.monotonic_ns(), sources=sources)
+            writer.write((json.dumps(record, allow_nan=False, separators=(',', ':')) + '\n').encode())
+            # At most one outstanding record: disconnect a blocked client.
+            await asyncio.wait_for(writer.drain(), timeout=0.25)
+            next_deadline += period
+            now = loop.time()
+            if next_deadline <= now:
+                # Missed deadlines are discarded, never replayed as a burst.
+                next_deadline = now + period
+            await asyncio.sleep(next_deadline - now)
 
     async def _serve(self, reader, writer):
         tasks = []
