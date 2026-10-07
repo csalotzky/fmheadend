@@ -300,15 +300,19 @@ def render_clipper(source: dict[str, Any]) -> list[str]:
 
     peak = finite(v.get("detector-peak-dbfs"))
     max_clip = finite(v.get("max-clipping-db"))
+    max_10s = finite(v.get("max-clipping-db-10s"))
     count = v.get("clip-count")
 
     max_text = f"{max_clip:.2f} dB" if max_clip is not None else "n/a"
+    max_10s_text = f"{max_10s:.2f} dB" if max_10s is not None else "n/a"
     count_text = str(count) if isinstance(count, int) and not isinstance(count, bool) else "n/a"
 
     return [
         section("FM CLIPPER"),
         f"detector  {fmt_db(peak, 'dBFS')} {level_bar(peak, LEVEL_MIN_DBFS, LEVEL_MAX_DBFS, AGC_BAR_WIDTH)}",
-        f"clips     {count_text:>7}   max clip {max_text}",
+        f"clips     {count_text:>7}",
+        f"max 10s   {max_10s_text}",
+        f"max ever  {max_text}",
     ]
 
 def select_source(record: dict[str, Any], tx: int | None, source_id: int | None):

@@ -1,5 +1,7 @@
 """Raw meter specifications and worker-only native access. No audio processing."""
 import math
+import time
+from collections import deque
 
 from ..models.dsp import IMPLEMENTATIONS
 
@@ -14,7 +16,7 @@ METERS = {
     'LSP_MULTIBAND': ('ilm-l', 'ilm-r', 'olm-l', 'olm-r'),
     'LSP_LIMITER': ('ilm-l', 'ilm-r', 'sclm-l', 'sclm-r', 'grlm-l', 'grlm-r', 'olm-l', 'olm-r'),
     'FM_HEADEND_LIMITER': ('detector-peak-dbfs', 'gain-reduction-db'),
-    'FM_HEADEND_CLIPPER': ('detector-peak-dbfs', 'clip-count', 'max-clipping-db'),
+    'FM_HEADEND_CLIPPER': ('detector-peak-dbfs', 'clip-count', 'max-clipping-db', 'buffer-max-clipping-db'),
 }
 AGC_ENABLE = ('e-g', 'e-in-s', 'e-in-l', 'e-out-s', 'e-out-l')
 
@@ -33,6 +35,7 @@ class StageMeters:
         self.original = {}
         self.errors = {}
         self.enabled = False
+        self._clipping_maxima = deque()
 
     def enable(self, enabled):
         if enabled == self.enabled:
@@ -64,6 +67,19 @@ class StageMeters:
             except Exception:
                 values[prop] = None
                 errors[prop] = 'unavailable'
+        if self.implementation == 'FM_HEADEND_CLIPPER':
+            now = time.monotonic_ns()
+            cutoff = now - 10_000_000_000
+            while self._clipping_maxima and self._clipping_maxima[0][0] < cutoff:
+                self._clipping_maxima.popleft()
+            clipping = values.get('buffer-max-clipping-db')
+            if clipping is not None:
+                # Monotonic maximum deque: newer equal/larger samples supersede
+                # older ones. Keep timestamps so peaks expire, rather than decay.
+                while self._clipping_maxima and self._clipping_maxima[-1][1] <= clipping:
+                    self._clipping_maxima.pop()
+                self._clipping_maxima.append((now, clipping))
+                values['max-clipping-db-10s'] = self._clipping_maxima[0][1]
         result = dict(implementation=self.implementation, factory=self.factory, values=values)
         if errors:
             result['errors'] = errors

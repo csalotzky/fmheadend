@@ -121,12 +121,12 @@ def test_worker_loop_raw_cache_deadline_and_disable(monkeypatch):
     worker.join(2)
     assert not worker.is_alive()
     assert waits == pytest.approx([.02, .02])
-    assert len(element.calls) == 6
+    assert len(element.calls) == 8
     assert all(c[2] == 'source-test' for c in element.calls)
     sample = snapshots[-1]
     assert sample['sample_monotonic_ns'] == now[0]
     assert sample['collect_duration_ns'] == 0  # Injected clock; no native cost claim.
-    assert sample['stages']['clipper']['values'] == dict(values, **{'max-clipping-db': None})
+    assert sample['stages']['clipper']['values'] == dict(values, **{'max-clipping-db': None, 'buffer-max-clipping-db': None})
     assert sample['stages']['multiband']['errors']['rl-0'] == 'unavailable'
     json.dumps(sample, allow_nan=False)
     sample['stages'].clear()
