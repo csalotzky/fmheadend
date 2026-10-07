@@ -53,6 +53,55 @@ profile store. Available does not certify every possible parameter combination o
 eight-programme load. Save/start instantiate selected factories, set parameters
 and verify native readback; negotiation/start failures remain Source errors.
 
+### Multiband Gate / Expander (schema 1)
+
+The single `gate` stage now offers `OFF`, `LSP_MULTIBAND_GATE` and
+`LSP_MULTIBAND_EXPANDER`; the wideband implementations are no longer supported.
+Factories are `lsp-plug-in-plugins-lv2-mb-gate-stereo` and
+`lsp-plug-in-plugins-lv2-mb-expander-stereo`, verified on the Pi's installed LV2
+adapter with GStreamer 1.26.2. This does not add or reorder DSP stages.
+
+Both settings objects use `mode: "classic"`, `crossovers_hz` (zero to seven strictly
+ascending frequencies within 10..20000 Hz), and exactly eight saved `bands`.
+Active band count is crossover count plus one; unused band settings survive edits.
+Defaults are crossovers `[120, 1000, 5000]`. The existing schema-driven editor uses
+the same crossover controls and band cards as the Multiband Compressor.
+
+Gate bands contain `bypass`, `threshold_dbfs`, `reduction_db`, `attack_ms`,
+`hold_ms`, `release_ms`, `makeup_db`, `zone_db`, and the existing hidden hysteresis
+controls. Expander bands contain `bypass`, `mode` (`downward`/`upward`),
+`threshold_dbfs`, `ratio`, `attack_ms`, `hold_ms`, `release_ms`, `knee_db`,
+`makeup_db`, and hidden `release_threshold`. Native range validation remains strict.
+
+Native `cbe-1..7` enables crossovers and `sf-1..7` sets their frequencies.
+`ge-N`/`ee-N` enables processing for an active, non-bypassed band; bypass does not
+mute the band. Gate uses `gt/gr/gz/gh/ht/hz/at/rt/th/mk-N`; Expander uses
+`em/al/er/kn/rrl/at/rt/ht/mk-N`. Profile dB amplitudes map to native linear gains.
+Stereo split is disabled, solo/mute disabled, and native detector defaults retained.
+
+Telemetry exports raw global `ilm-l/r`, `olm-l/r` and active-band
+`elm-Nl/r`, `rlm-Nl/r`. Expander also exposes native `rl-N`; Gate has no such meter.
+The monitor reuses the compressor's compact multiband rows. No visibility toggles
+are required by this adapter, and no socket-side native access is added.
+
+Old saved implementation identifiers are rejected even in an OFF stage. Use
+`daemon/tools/prepare_multiband_gate_profiles.py` with the updated application to
+prepare conversions: it backs up originals byte-for-byte and validates converted
+files with `AudioProfileFiles`, without changing installed files. It accepts OFF
+stages only and preserves matching old band controls in all eight new band slots.
+Deploy the prepared profiles together with the updated daemon, not beforehand.
+There is no runtime migration or profile-version bump.
+
+Native validation on 2026-10-07 used isolated synthetic stereo audio with 1, 4
+and 8 bands for each implementation, both band-bypassed and enabled (12 renders).
+Property readback, finite F32LE stereo PCM and active-band meter availability
+passed. Bypass RMS ratios were 1.000000..1.000011; the controlled low-level signal
+was attenuated with processing enabled. Meters updated with default visibility
+controls. Seven Pi presets were all OFF: originals were backed up, conversions
+validated with the application loader, and unrelated values compared equal.
+Installed presets remain unchanged pending coordinated daemon deployment.
+This is not a Pi Zero 2 W eight-source CPU-capacity or broadcast-quality claim.
+
 ### First-release defaults
 
 `default/basic.json` keeps its stable filename. It now contains the twelve-stage
@@ -114,8 +163,8 @@ Online older wrapper documentation showing `bypass` is not used as the mapping.
 |---|---|
 | Three profile gains / `volume` | `gain_db → volume = 10^(dB/20)`; max +20 dB, Output Trim max 0 dB |
 | HPF/LPF Chebyshev / `audiocheblimit` | `cutoff_hz→cutoff`, `poles→poles`, `ripple_db→ripple`, `type→type`; mode 1 HPF, 0 LPF. Even poles 2–32; cutoff strictly between 0 and 24 kHz. Type/ripple hidden but preserved |
-| Expander / `expander-stereo` | downward/upward→`em=0/1`; threshold→`al` linear, ratio→`er`, knee dB→`kn=10^(-dB/20)`, attack/release→`at/rt` ms; makeup→`mk` linear |
-| Gate / `gate-stereo` | threshold→`gt` linear; positive attenuation `reduction_db→gr=10^(-dB/20)`; attack/hold/release→`at/hold/rt` ms; hidden zone/hysteresis→`gz/gh/ht/hz` |
+| Multiband Expander / `mb-expander-stereo` | Classic crossover controls `cbe/sf-N`; downward/upward `em-N=0/1`; `ee-N` processing enable; `al/er/kn/at/rt/ht/mk/rrl-N` per-band controls. See multiband section above |
+| Multiband Gate / `mb-gate-stereo` | Classic crossover controls `cbe/sf-N`; `ge-N` processing enable; `gt/gr/gz/gh/ht/hz/at/rt/th/mk-N` per-band controls. See multiband section above |
 | AGC / `autogain-stereo` | target→`level` LUFS; max enable/gain→`max-on/max-amp` dB; silence→`silence`; long grow/fall→`tgrow-l/tfall-l` ms; short fall/grow→`tfall-s/tgrow-s` ms; short Grow enable→`qamp` (Off by default); K weighting `weight=5`, internal `scmode=0` |
 | Wideband / `compressor-stereo` | downward `cm=0`; threshold→`al` linear; ratio→`cr`; `at/rt` ms; knee→`kn` linear; makeup→`mk` linear. Hidden hold/release threshold/stereo split/dry/wet→`hold/rrl/ssplit/cdr/cwt/cdw` |
 | LSP EQ / `para-equalizer-x16-stereo` | IIR `mode=0`; Bell/Low Shelf/High Shelf/Notch→`ft-N=1/5/3/6`; frequency→`f-N`, gain→`g-N` linear, Q→`q-N`, RLC(BT) `fm-N=0`, slope `s-N=0`. All unused slots explicitly `ft-N=0`; never mute/solo to remove a filter |

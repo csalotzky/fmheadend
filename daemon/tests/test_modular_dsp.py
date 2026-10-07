@@ -61,14 +61,14 @@ def test_incomplete_and_unavailable_schema_rejected():
 
 
 
-@pytest.mark.parametrize('stage,impl', [('gate','LSP_GATE'),('gate','LSP_EXPANDER'),
+@pytest.mark.parametrize('stage,impl', [('gate','LSP_MULTIBAND_GATE'),('gate','LSP_MULTIBAND_EXPANDER'),
     ('agc','LSP_AGC'),('wideband','LSP_COMPRESSOR'),('limiter','LSP_LIMITER')])
 def test_lsp_selected_enabled_and_exact_units(stage,impl):
     doc=profile(); doc['stages'][stage]['selected']=impl
     el=next(e for e in build(doc) if e.factory==IMPLEMENTATIONS[impl][1])
     assert el.props['enabled'] is True
-    if impl=='LSP_GATE': assert el.props['gr']==pytest.approx(10**(-24/20))
-    if impl=='LSP_EXPANDER': assert el.props['em']==0
+    if impl=='LSP_MULTIBAND_GATE': assert el.props['gr_0']==pytest.approx(10**(-24/20))
+    if impl=='LSP_MULTIBAND_EXPANDER': assert el.props['em_0']==0
     if impl=='LSP_AGC':
         assert el.props['qamp'] is False and el.props['vgrow_l']==7 and el.props['tgrow_l']==500
     if impl=='LSP_COMPRESSOR': assert el.props['al']==pytest.approx(10**(-12/20))

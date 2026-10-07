@@ -42,6 +42,13 @@ rebuild. Processor mode and profile path describe the actual constructed pipelin
 
 ## Sampling and lifetime
 
+The existing `gate` stage now reports `LSP_MULTIBAND_GATE` or
+`LSP_MULTIBAND_EXPANDER`. Both expose global `ilm-l/r`, `olm-l/r` and
+`elm-Nl/r`, `rlm-Nl/r` only for the configured active bands (crossovers plus one).
+Expander additionally has `rl-N`; Gate does not. Values remain raw native meters.
+The console monitor uses the same compact band rows as Multiband Compressor;
+negative displayed reduction denotes gain in upward expansion mode.
+
 The existing `source-<id>` worker alone owns live stage references, meter-enable
 changes and property reads. `dsp_stages` reports its actual constructed elements;
 OFF stages are absent and validation-only elements are never registered.

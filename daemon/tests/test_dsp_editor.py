@@ -24,7 +24,8 @@ def test_field_specific_resolution_and_fixed_mode_hidden():
     assert fields('CHEBYSHEV')['poles']['enum'] == list(range(2, 33, 2))
     assert fields('CHEBYSHEV')['cutoff_hz']['slider']['scale'] == 'log'
     assert fields('LSP_COMPRESSOR')['ratio']['slider']['scale'] == 'log'
-    assert fields('LSP_GATE')['attack_ms']['slider']['offset'] == .1  # supports real zero
+    gate = editor_schema(IMPLEMENTATIONS['LSP_MULTIBAND_GATE'][0])['$defs']['MultibandGateBand']['properties']
+    assert gate['attack_ms']['slider']['offset'] == .1  # supports real zero
     assert fields('LSP_AGC')['long_grow_ms']['slider']['significant_digits'] == 3
     assert fields('VOLUME')['gain_db']['slider']['step'] == .1
     assert fields('TRIM')['gain_db']['slider']['max'] == 0

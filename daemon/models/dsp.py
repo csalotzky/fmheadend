@@ -38,17 +38,15 @@ class LspDynamics(Model):
     dry_wet_percent: float = Field(100, ge=0, le=100, json_schema_extra={'hidden': True})
 
 
-class LspExpander(LspDynamics):
-    mode: Literal['downward', 'upward'] = 'downward'
-
-
-class LspGate(Model):
+class MultibandGateBand(Model):
+    bypass: bool = Field(False, title='Gate Bypass', description='Disables gating for this band without muting it.')
     threshold_dbfs: float = Field(-24, ge=-60, le=0, title='Threshold (dBFS)')
     reduction_db: float = Field(24, ge=0, le=72, title='Reduction (dB attenuation)')
     attack_ms: float = Field(20, ge=0, le=2000, title='Attack (ms)')
     hold_ms: float = Field(0, ge=0, le=1000, title='Hold (ms)')
     release_ms: float = Field(100, ge=0, le=5000, title='Release (ms)')
-    zone_db: float = Field(6, ge=0, le=60, json_schema_extra={'hidden': True})
+    makeup_db: float = Field(0, ge=-60, le=60, title='Makeup gain (dB)')
+    zone_db: float = Field(6, ge=0, le=60, title='Zone (dB)')
     hysteresis: bool = Field(False, json_schema_extra={'hidden': True})
     hysteresis_threshold: float = Field(.25119, ge=.001, le=1, json_schema_extra={'hidden': True})
     hysteresis_zone: float = Field(.50118, ge=.001, le=1, json_schema_extra={'hidden': True})
@@ -151,12 +149,30 @@ class Multiband(Model):
 
 
 # Settings schemas are shared by validation, the editor description and adapters.
+class MultibandExpanderBand(MultibandBand):
+    bypass: bool = Field(False, title='Expander Bypass', description='Disables expansion for this band without muting it.')
+    mode: Literal['downward', 'upward'] = 'downward'
+    ratio: float = Field(4, ge=1, le=100, title='Ratio (N:1)')
+    hold_ms: float = Field(0, ge=0, le=1000, title='Hold (ms)')
+    release_threshold: float = Field(0, ge=0, le=63.09574, json_schema_extra={'hidden': True})
+
+
+class MultibandGate(Multiband):
+    bands: list[MultibandGateBand] = Field(default_factory=lambda: [MultibandGateBand() for _ in range(8)],
+        min_length=8, max_length=8, json_schema_extra={'active_count_from': 'crossovers_hz'})
+
+
+class MultibandExpander(Multiband):
+    bands: list[MultibandExpanderBand] = Field(default_factory=lambda: [MultibandExpanderBand() for _ in range(8)],
+        min_length=8, max_length=8, json_schema_extra={'active_count_from': 'crossovers_hz'})
+
+
 IMPLEMENTATIONS = {
     'VOLUME': (Gain, 'volume', 'Gain'),
     'TRIM': (Trim, 'volume', 'Output Trim'),
     'CHEBYSHEV': (Chebyshev, 'audiocheblimit', 'Chebyshev'),
-    'LSP_EXPANDER': (LspExpander, 'lsp-plug-in-plugins-lv2-expander-stereo', 'LSP Expander Stereo'),
-    'LSP_GATE': (LspGate, 'lsp-plug-in-plugins-lv2-gate-stereo', 'LSP Gate Stereo'),
+    'LSP_MULTIBAND_EXPANDER': (MultibandExpander, 'lsp-plug-in-plugins-lv2-mb-expander-stereo', 'LSP Multiband Expander x8 Stereo'),
+    'LSP_MULTIBAND_GATE': (MultibandGate, 'lsp-plug-in-plugins-lv2-mb-gate-stereo', 'LSP Multiband Gate x8 Stereo'),
     'LSP_AGC': (LspAutogain, 'lsp-plug-in-plugins-lv2-autogain-stereo', 'LSP Autogain Stereo'),
     'LSP_COMPRESSOR': (LspDynamics, 'lsp-plug-in-plugins-lv2-compressor-stereo', 'LSP Compressor Stereo'),
     'LSP_LIMITER': (LspLimiter, 'lsp-plug-in-plugins-lv2-limiter-stereo', 'LSP Limiter Stereo'),
@@ -168,7 +184,7 @@ IMPLEMENTATIONS = {
 STAGES = {
     'input_gain': ('Profile Input Gain', ['VOLUME']),
     'hpf': ('HPF', ['OFF', 'CHEBYSHEV']),
-    'gate': ('Gate / Expander', ['OFF', 'LSP_EXPANDER', 'LSP_GATE']),
+    'gate': ('Gate / Expander', ['OFF', 'LSP_MULTIBAND_EXPANDER', 'LSP_MULTIBAND_GATE']),
     'agc': ('AGC / Leveller', ['OFF', 'LSP_AGC']),
     'eq': ('EQ', ['OFF', 'LSP_EQ']),
     'wideband': ('Wideband Compressor', ['OFF', 'LSP_COMPRESSOR']),

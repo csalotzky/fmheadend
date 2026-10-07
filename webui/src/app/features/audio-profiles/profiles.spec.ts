@@ -6,6 +6,8 @@ import { ProfilesList } from './profiles-list';
 import { ProfileEditor } from './profile-editor';
 import { AudioProfile, ProfileResult, DspDescription } from './profile-api';
 import { routes } from '../../app.routes';
+import { By } from '@angular/platform-browser';
+import { DspFields } from './dsp-fields';
 const base = '/api/v1/audio-profiles/files';
 const description: DspDescription = {
   helpers: {
@@ -23,7 +25,11 @@ const description: DspDescription = {
   stages: [
     { key: 'input_gain', label: 'Profile Input Gain', choices: ['VOLUME'] },
     { key: 'hpf', label: 'HPF', choices: ['OFF', 'CHEBYSHEV'] },
-    { key: 'gate', label: 'Gate / Expander', choices: ['OFF', 'LSP_EXPANDER', 'LSP_GATE'] },
+    {
+      key: 'gate',
+      label: 'Gate / Expander',
+      choices: ['OFF', 'LSP_MULTIBAND_EXPANDER', 'LSP_MULTIBAND_GATE'],
+    },
     { key: 'agc', label: 'AGC / Leveller', choices: ['OFF', 'LSP_AGC'] },
     { key: 'eq', label: 'EQ', choices: ['OFF', 'LSP_EQ'] },
     { key: 'wideband', label: 'Wideband Compressor', choices: ['OFF', 'LSP_COMPRESSOR'] },
@@ -64,8 +70,8 @@ const description: DspDescription = {
         },
       },
     },
-    LSP_EXPANDER: {
-      label: 'LSP Expander Stereo',
+    LSP_MULTIBAND_EXPANDER: {
+      label: 'LSP Multiband Expander x8 Stereo',
       available: true,
       reason: null,
       defaults: { threshold_dbfs: -12, ratio: 4, attack_ms: 20 },
@@ -108,7 +114,7 @@ const description: DspDescription = {
 };
 // The generic field component has detailed AGC/EQ/multiband coverage separately.
 for (const [key, label] of Object.entries({
-  LSP_GATE: 'LSP Gate Stereo',
+  LSP_MULTIBAND_GATE: 'LSP Multiband Gate x8 Stereo',
   LSP_COMPRESSOR: 'LSP Compressor Stereo',
   LSP_MULTIBAND: 'LSP Multiband Compressor x8 Stereo',
   LSP_LIMITER: 'LSP Limiter Stereo',
@@ -121,6 +127,51 @@ for (const [key, label] of Object.entries({
     reason: null,
     defaults: {},
     schema: { properties: {} },
+  };
+}
+for (const implementation of ['LSP_MULTIBAND_GATE', 'LSP_MULTIBAND_EXPANDER']) {
+  const entry = description.implementations[implementation];
+  const band = {
+    bypass: {
+      type: 'boolean',
+      title: implementation.endsWith('GATE') ? 'Gate Bypass' : 'Expander Bypass',
+      default: false,
+    },
+    threshold_dbfs: {
+      type: 'number',
+      title: 'Threshold (dBFS)',
+      minimum: -60,
+      maximum: 0,
+      default: -24,
+    },
+    attack_ms: { type: 'number', title: 'Attack (ms)', minimum: 0, maximum: 2000, default: 20 },
+    ...(implementation.endsWith('GATE')
+      ? { reduction_db: { type: 'number', title: 'Reduction (dB attenuation)', default: 24 } }
+      : { ratio: { type: 'number', title: 'Ratio (N:1)', default: 4 } }),
+  };
+  entry.schema = {
+    properties: {
+      crossovers_hz: {
+        type: 'array',
+        title: 'Ascending crossovers (Hz)',
+        maxItems: 7,
+        items: { type: 'number', minimum: 10, maximum: 20000 },
+      },
+      bands: {
+        type: 'array',
+        minItems: 8,
+        maxItems: 8,
+        active_count_from: 'crossovers_hz',
+        items: { $ref: '#/$defs/Band' },
+      },
+    },
+    $defs: { Band: { properties: band } },
+  };
+  entry.defaults = {
+    crossovers_hz: [120, 1000, 5000],
+    bands: Array.from({ length: 8 }, () =>
+      Object.fromEntries(Object.entries(band).map(([key, value]) => [key, value.default])),
+    ),
   };
 }
 for (const stage of description.stages) {
@@ -226,22 +277,60 @@ describe('File Audio Profiles', () => {
     f.detectChanges();
     return f;
   }
+  for (const implementation of ['LSP_MULTIBAND_GATE', 'LSP_MULTIBAND_EXPANDER']) {
+    it(`edits, switches, saves and reloads ${implementation} with the shared crossover/band editor`, async () => {
+      const f = await editor(),
+        c = f.componentInstance;
+      c.select('gate', implementation);
+      f.detectChanges();
+      const gate = f.debugElement.queryAll(By.css('details.stage'))[2];
+      const fields = gate.query(By.directive(DspFields)).componentInstance as DspFields;
+      const settings = c.document!.stages['gate'].implementations[implementation];
+      expect(gate.nativeElement.querySelectorAll('details')).toHaveLength(4);
+      fields.add('crossovers_hz', fields.schema().properties!['crossovers_hz']);
+      f.detectChanges();
+      expect(gate.nativeElement.querySelectorAll('details')).toHaveLength(5);
+      fields.remove('crossovers_hz', 0);
+      fields.values()['bands'][0].threshold_dbfs = -39;
+      c.select(
+        'gate',
+        implementation.endsWith('GATE') ? 'LSP_MULTIBAND_EXPANDER' : 'LSP_MULTIBAND_GATE',
+      );
+      c.select('gate', implementation);
+      f.detectChanges();
+      expect(settings['bands']).toHaveLength(8);
+      expect(settings['bands'][0].threshold_dbfs).toBe(-39);
+      const saving = c.save();
+      const request = http.expectOne(base + '/' + profile.path);
+      const saved = { ...profile, profile: request.request.body };
+      expect(saved.profile.schema_version).toBe(1);
+      expect(saved.profile.stages.gate.implementations[implementation]).toEqual(settings);
+      request.flush({ ...saved, saved: true, applied: true, restart_errors: {} });
+      await saving;
+      f.destroy();
+      const reopened = await editor(true, saved);
+      expect(
+        reopened.componentInstance.document!.stages['gate'].implementations[implementation],
+      ).toEqual(settings);
+      expect(reopened.nativeElement.textContent).toContain('Add crossover / band');
+    });
+  }
   it('shows documentation only for the selected implementation and keeps fixed modes internal', async () => {
     const f = await editor(),
       c = f.componentInstance;
-    c.description!.implementations['LSP_GATE'].documentation_url =
-      'https://lsp-plug.in/?page=manuals&section=gate_stereo';
-    c.description!.implementations['LSP_EXPANDER'].documentation_url =
-      'https://lsp-plug.in/?page=manuals&section=expander_stereo';
-    c.select('gate', 'LSP_GATE');
+    c.description!.implementations['LSP_MULTIBAND_GATE'].documentation_url =
+      'https://lsp-plug.in/?page=manuals&section=mb_gate_stereo';
+    c.description!.implementations['LSP_MULTIBAND_EXPANDER'].documentation_url =
+      'https://lsp-plug.in/?page=manuals&section=mb_expander_stereo';
+    c.select('gate', 'LSP_MULTIBAND_GATE');
     f.detectChanges();
     const gate = f.nativeElement.querySelectorAll('details.stage')[2];
-    expect(gate.querySelector('a').href).toContain('section=gate_stereo');
+    expect(gate.querySelector('a').href).toContain('section=mb_gate_stereo');
     expect(gate.querySelector('a').rel).toBe('noopener noreferrer');
     expect(gate.querySelector('a').target).toBe('_blank');
-    c.select('gate', 'LSP_EXPANDER');
+    c.select('gate', 'LSP_MULTIBAND_EXPANDER');
     f.detectChanges();
-    expect(gate.querySelector('a').href).toContain('section=expander_stereo');
+    expect(gate.querySelector('a').href).toContain('section=mb_expander_stereo');
     c.select('gate', 'OFF');
     f.detectChanges();
     expect(gate.querySelector('a')).toBeNull();
@@ -435,7 +524,7 @@ describe('File Audio Profiles', () => {
   it('shows twelve sections, native units and unavailable selections honestly', async () => {
     const f = await editor(),
       c = f.componentInstance;
-    c.select('gate', 'LSP_EXPANDER');
+    c.select('gate', 'LSP_MULTIBAND_EXPANDER');
     f.detectChanges();
     await f.whenStable();
     f.detectChanges();
@@ -454,8 +543,8 @@ describe('File Audio Profiles', () => {
       new Set([
         'OFF',
         'CHEBYSHEV',
-        'LSP_EXPANDER',
-        'LSP_GATE',
+        'LSP_MULTIBAND_EXPANDER',
+        'LSP_MULTIBAND_GATE',
         'LSP_AGC',
         'LSP_EQ',
         'LSP_COMPRESSOR',
