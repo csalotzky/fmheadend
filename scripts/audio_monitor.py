@@ -14,6 +14,7 @@ import math
 import socket
 import sys
 import time
+from collections import deque
 from typing import Any
 
 DEFAULT_SOCKET = "/run/fmheadend/audio-telemetry.sock"
@@ -261,7 +262,37 @@ def multiband_rows(v: dict[str, Any], label: str) -> list[str]:
     return lines
 
 
-def render_limiter(source: dict[str, Any]) -> list[str]:
+class LimiterPeakHold:
+    """Monitor-only maximum of received samples; one instance per connection."""
+
+    def __init__(self):
+        self.identity = None
+        self.samples: deque[tuple[float, float]] = deque()
+
+    def update(self, source: dict[str, Any] | None, now: float) -> float | None:
+        identity = (source.get("source_id"), source.get("generation")) if source else None
+        if identity != self.identity:
+            self.samples.clear()
+            self.identity = identity
+        while self.samples and self.samples[0][0] < now - 1.0:
+            self.samples.popleft()
+        if not source or not source.get("telemetry_available"):
+            self.samples.clear()
+            return None
+        stage, values = stage_values(source, "limiter")
+        if stage is None or stage.get("implementation") != "FM_HEADEND_LIMITER":
+            self.samples.clear()
+            return None
+        reduction = finite(values.get("gain-reduction-db"))
+        if reduction is None:
+            return None
+        while self.samples and self.samples[-1][1] <= reduction:
+            self.samples.pop()
+        self.samples.append((now, reduction))
+        return self.samples[0][1]
+
+
+def render_limiter(source: dict[str, Any], max_1s: float | None = None) -> list[str]:
     stage, v = stage_values(source, "limiter")
     if stage is None:
         return []
@@ -275,6 +306,7 @@ def render_limiter(source: dict[str, Any]) -> list[str]:
             section("FM LIMITER"),
             f"detector  {fmt_db(peak, 'dBFS')} {level_bar(peak, LEVEL_MIN_DBFS, LEVEL_MAX_DBFS, AGC_BAR_WIDTH)}",
             f"reduction {fmt_db(gr, 'dB  ')} {level_bar(gr, 0.0, 24.0, AGC_BAR_WIDTH)}",
+            f"max 1s    {fmt_db(max_1s)}",
         ]
 
     if impl == "LSP_LIMITER":
@@ -337,7 +369,7 @@ def select_source(record: dict[str, Any], tx: int | None, source_id: int | None)
     return None, f"Multiple active Sources ({ids}); use --tx or --source"
 
 
-def render(source: dict[str, Any], sample_interval_ms: float | None) -> str:
+def render(source: dict[str, Any], sample_interval_ms: float | None, limiter_max_1s: float | None = None) -> str:
     sid = source.get("source_id", "?")
     name = source.get("source_name", "?")
     txs = source.get("consumer_tx_ids", [])
@@ -377,7 +409,7 @@ def render(source: dict[str, Any], sample_interval_ms: float | None) -> str:
 
     first = True
     for fn in renderers:
-        part = fn(source)
+        part = fn(source, limiter_max_1s) if fn is render_limiter else fn(source)
         if not part:
             continue
         if not first:
@@ -412,6 +444,7 @@ def run(args: argparse.Namespace) -> None:
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
                 sock.connect(args.socket)
+                limiter_hold = LimiterPeakHold()
 
                 with sock.makefile("r", encoding="utf-8") as stream:
                     for line in stream:
@@ -426,6 +459,9 @@ def run(args: argparse.Namespace) -> None:
 
                         source, error = select_source(record, args.tx, args.source)
                         now = time.monotonic()
+                        # Collect every received record, including ones skipped by
+                        # the terminal redraw throttle. Do not alter telemetry data.
+                        limiter_max_1s = limiter_hold.update(source, now)
 
                         if error is not None:
                             if now - last_redraw >= redraw_period:
@@ -442,7 +478,7 @@ def run(args: argparse.Namespace) -> None:
                                 last_sample_ns = sample_ns
 
                         if now - last_redraw >= redraw_period:
-                            draw(render(source, sample_interval_ms))
+                            draw(render(source, sample_interval_ms, limiter_max_1s))
                             last_redraw = now
 
             draw(render_message("Telemetry socket closed; reconnecting..."))
