@@ -169,15 +169,8 @@ def render_gate(source: dict[str, Any]) -> list[str]:
         return []
 
     impl = stage.get("implementation", "GATE/EXPANDER")
-    label = "GATE" if impl == "LSP_GATE" else "EXPANDER" if impl == "LSP_EXPANDER" else str(impl)
-
-    return [
-        section(label),
-        level_row("in", v.get("ilm-l"), v.get("ilm-r")),
-        level_row("out", v.get("olm-l"), v.get("olm-r")),
-        level_row("env", v.get("elm-l"), v.get("elm-r")),
-        reduction_row("red", v.get("rlm-l"), v.get("rlm-r"), 48.0),
-    ]
+    label = "MULTIBAND GATE" if impl == "LSP_MULTIBAND_GATE" else "MULTIBAND EXPANDER"
+    return multiband_rows(v, label)
 
 
 def render_agc(source: dict[str, Any]) -> list[str]:
@@ -233,9 +226,12 @@ def render_multiband(source: dict[str, Any]) -> list[str]:
     stage, v = stage_values(source, "multiband")
     if stage is None:
         return []
+    return multiband_rows(v, "MULTIBAND COMP")
 
+
+def multiband_rows(v: dict[str, Any], label: str) -> list[str]:
     lines = [
-        section("MULTIBAND COMP"),
+        section(label),
         level_row("in", v.get("ilm-l"), v.get("ilm-r")),
         level_row("out", v.get("olm-l"), v.get("olm-r")),
     ]

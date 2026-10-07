@@ -48,7 +48,7 @@ for stage, (_, choices) in STAGES.items():
 
 # True channel separation, also for linked stereo processors.
 left_only = x.copy(); left_only[1::2] = [0.] * (len(left_only)//2)
-for stage, impl in [('gate','LSP_GATE'), ('gate','LSP_EXPANDER'), ('agc','LSP_AGC'),
+for stage, impl in [('gate','LSP_MULTIBAND_GATE'), ('gate','LSP_MULTIBAND_EXPANDER'), ('agc','LSP_AGC'),
                     ('eq','LSP_EQ'), ('wideband','LSP_COMPRESSOR'), ('multiband','LSP_MULTIBAND'), ('limiter','LSP_LIMITER')]:
     y = run(isolated(stage, impl), left_only)
     assert max(abs(v) for v in y[1::2]) < 1e-7, impl

@@ -1,5 +1,12 @@
 # DSP editor controls and Source hot-save
 
+Current Gate/Expander superseding note (2026-10-07): the original wideband
+implementations audited below have been replaced by the x8 multiband versions.
+The editor consumes their generated schemas through the existing crossover and
+band-card controls. See [current mappings and preset preparation](modular-dsp-implementation.md#multiband-gate--expander-schema-1).
+Gate hold now maps to `th-N`, Expander hold to `ht-N`; their controls and meters
+are per active band. This does not change the compressor or its editor.
+
 ## Range audit (2026-09-25)
 
 Read-only inspection on `ssh fmheadend`: GStreamer **1.26.2**, LSP LV2

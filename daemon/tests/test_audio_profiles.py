@@ -61,7 +61,7 @@ def test_modular_editor_metadata_uses_existing_api_family(api):
     assert result.status_code==200
     data=result.json()
     assert data['template']['schema_version']==1 and len(data['stages'])==12
-    assert set(data['implementations']) == {'VOLUME','TRIM','CHEBYSHEV','LSP_EXPANDER','LSP_GATE','LSP_AGC','LSP_EQ','LSP_COMPRESSOR','LSP_MULTIBAND','LSP_LIMITER','FM_HEADEND_LIMITER','FM_HEADEND_CLIPPER'}
+    assert set(data['implementations']) == {'VOLUME','TRIM','CHEBYSHEV','LSP_MULTIBAND_EXPANDER','LSP_MULTIBAND_GATE','LSP_AGC','LSP_EQ','LSP_COMPRESSOR','LSP_MULTIBAND','LSP_LIMITER','FM_HEADEND_LIMITER','FM_HEADEND_CLIPPER'}
 
 
 @pytest.mark.parametrize('weighting', [0, 50, 75])

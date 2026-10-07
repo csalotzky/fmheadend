@@ -8,8 +8,8 @@ from ..models.dsp import IMPLEMENTATIONS
 
 DYNAMICS = tuple(f'{prefix}-{side}' for prefix in ('ilm', 'slm', 'elm', 'rlm', 'olm') for side in ('l', 'r'))
 METERS = {
-    'LSP_GATE': DYNAMICS,
-    'LSP_EXPANDER': DYNAMICS + ('rl',),
+    'LSP_MULTIBAND_GATE': ('ilm-l', 'ilm-r', 'olm-l', 'olm-r'),
+    'LSP_MULTIBAND_EXPANDER': ('ilm-l', 'ilm-r', 'olm-l', 'olm-r'),
     'LSP_COMPRESSOR': DYNAMICS + ('rl',),
     'LSP_AGC': ('g-g', 'g-in-s', 'g-in-l', 'g-out-s', 'g-out-l'),
     'LSP_EQ': ('iml', 'imr', 'sml', 'smr'),
@@ -29,9 +29,11 @@ class StageMeters:
         self.implementation = implementation
         self.factory = IMPLEMENTATIONS[implementation][1]
         self.properties = METERS[implementation]
-        if implementation == 'LSP_MULTIBAND':
+        if implementation in ('LSP_MULTIBAND', 'LSP_MULTIBAND_GATE', 'LSP_MULTIBAND_EXPANDER'):
             self.properties += tuple(prop for i in range(len(settings['crossovers_hz']) + 1)
                                      for prop in (f'elm-{i}l', f'elm-{i}r', f'rlm-{i}l', f'rlm-{i}r', f'rl-{i}'))
+            if implementation == 'LSP_MULTIBAND_GATE':
+                self.properties = tuple(prop for prop in self.properties if not prop.startswith('rl-'))
         self.original = {}
         self.errors = {}
         self.enabled = False

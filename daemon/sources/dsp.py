@@ -38,17 +38,35 @@ def dsp_stages(make, profile, *, on_stage=None):
         elif name == 'CHEBYSHEV':
             props = dict(mode=1 if stage == 'hpf' else 0, cutoff=p['cutoff_hz'], poles=p['poles'],
                          type=p['type'], ripple=p['ripple_db'])
-        elif name in ('LSP_COMPRESSOR', 'LSP_EXPANDER'):
+        elif name == 'LSP_COMPRESSOR':
             props = dict(enabled=True, al=linear(p['threshold_dbfs']), at=p['attack_ms'], rt=p['release_ms'],
                          kn=linear(-p['knee_db']), mk=linear(p['makeup_db']), hold=p['hold_ms'],
                          rrl=p['release_threshold'], ssplit=p['stereo_split'], cdr=p['dry_gain'],
                          cwt=p['wet_gain'], cdw=p['dry_wet_percent'])
-            if name == 'LSP_COMPRESSOR': props.update(cm=0, cr=p['ratio'])
-            else: props.update(em=0 if p['mode'] == 'downward' else 1, er=p['ratio'])
-        elif name == 'LSP_GATE':
-            props = dict(enabled=True, gt=linear(p['threshold_dbfs']), gr=linear(-p['reduction_db']),
-                         at=p['attack_ms'], rt=p['release_ms'], hold=p['hold_ms'], gz=linear(-p['zone_db']),
-                         gh=p['hysteresis'], ht=p['hysteresis_threshold'], hz=p['hysteresis_zone'])
+            props.update(cm=0, cr=p['ratio'])
+        elif name in ('LSP_MULTIBAND_GATE', 'LSP_MULTIBAND_EXPANDER'):
+            props = dict(enabled=True, mode=0, ssplit=False)
+            active = len(p['crossovers_hz']) + 1
+            for i in range(1, 8):
+                props[f'cbe_{i}'] = i < active
+                if i < active:
+                    props[f'sf_{i}'] = p['crossovers_hz'][i - 1]
+            for i, band in enumerate(p['bands']):
+                props.update({f'bs_{i}': False, f'bm_{i}': False,
+                    f'at_{i}': band['attack_ms'], f'rt_{i}': band['release_ms'],
+                    f'mk_{i}': linear(band['makeup_db'])})
+                if name == 'LSP_MULTIBAND_GATE':
+                    props.update({f'ge_{i}': i < active and not band['bypass'],
+                        f'gt_{i}': linear(band['threshold_dbfs']), f'gr_{i}': linear(-band['reduction_db']),
+                        f'th_{i}': band['hold_ms'], f'gz_{i}': linear(-band['zone_db']),
+                        f'gh_{i}': band['hysteresis'], f'ht_{i}': band['hysteresis_threshold'],
+                        f'hz_{i}': band['hysteresis_zone']})
+                else:
+                    props.update({f'ee_{i}': i < active and not band['bypass'],
+                        f'em_{i}': 0 if band['mode'] == 'downward' else 1,
+                        f'al_{i}': linear(band['threshold_dbfs']), f'er_{i}': band['ratio'],
+                        f'ht_{i}': band['hold_ms'], f'rrl_{i}': band['release_threshold'],
+                        f'kn_{i}': linear(-band['knee_db'])})
         elif name == 'LSP_AGC':
             props = dict(enabled=True, level=p['target_lufs'], max_on=p['maximum_gain_enabled'],
                          max_amp=p['maximum_gain_db'], silence=p['silence_lufs'], qamp=p['short_grow_enabled'],

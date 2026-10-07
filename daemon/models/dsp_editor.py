@@ -9,7 +9,7 @@ DOCUMENTATION = {
     'TRIM': 'https://gstreamer.freedesktop.org/documentation/volume/index.html',
     'CHEBYSHEV': 'https://gstreamer.freedesktop.org/documentation/audiofx/audiocheblimit.html',
     **{key: LSP_MANUAL + section for key, section in {
-        'LSP_EXPANDER': 'expander_stereo', 'LSP_GATE': 'gate_stereo',
+        'LSP_MULTIBAND_EXPANDER': 'mb_expander_stereo', 'LSP_MULTIBAND_GATE': 'mb_gate_stereo',
         'LSP_AGC': 'autogain_stereo', 'LSP_EQ': 'para_equalizer_x16_stereo',
         'LSP_COMPRESSOR': 'compressor_stereo', 'LSP_MULTIBAND': 'mb_compressor_stereo',
         'LSP_LIMITER': 'limiter_stereo',
