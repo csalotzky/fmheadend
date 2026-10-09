@@ -50,6 +50,10 @@ def load_gst():
     try:
         import gi
         gi.require_version("Gst", "1.0")
+        # Must precede plugin loading. LV2 setup occurs later on streaming
+        # threads, beyond the lifetime of any Python construction lock.
+        from .lv2_lifecycle import ensure_lv2_lifecycle
+        ensure_lv2_lifecycle()
         from gi.repository import Gst
         Gst.init(None)
         return Gst

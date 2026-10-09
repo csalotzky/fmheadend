@@ -326,9 +326,9 @@ def test_modular_native_chain_and_float_domain(gst,http_files):
             pad=element.get_static_pad('src')
             peer=pad.get_peer() if pad else None
             element=peer.get_parent_element() if peer else None
-        assert factories==['audioconvert','audioresample','capsfilter','volume','volume','audiocheblimit',
+        assert factories==['audioconvert','audioresample','capsfilter','level','volume','volume','audiocheblimit',
                            'volume','audiocheblimit','volume',
-                           'audioconvert','capsfilter','queue','appsink']
+                           'audioconvert','capsfilter','queue','level','appsink']
     finally:pipeline.stop()
 
 

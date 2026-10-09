@@ -9,11 +9,9 @@ import math
 import resource
 import time
 
-import gi
-gi.require_version('Gst', '1.0')
-from gi.repository import Gst
+from fmheadendd.sources.gst_pipeline import load_gst
 
-Gst.init(None)
+Gst = load_gst()
 RATE = 48000
 
 
