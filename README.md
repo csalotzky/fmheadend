@@ -16,11 +16,17 @@ dependency installation, integration tests and smoke tests.
 
 ## Run on Linux Mint / Raspberry Pi
 
-Python 3.11 or newer is required. On Mint 22.x, install the native runtime:
+Python 3.11 or newer is required.
+
+Linux installation also builds a small C library that serializes LV2 lifecycle
+operations across GStreamer threads. A C compiler is required; see
+[LV2 lifecycle safety and native-crash investigation](docs/lv2-lifecycle.md).
+
+On Mint 22.x, install the native runtime and build tools:
 
 ```sh
 sudo apt update
-sudo apt install python3-venv python3-gi python3-gst-1.0 \
+sudo apt install build-essential python3-venv python3-gi python3-gst-1.0 \
   gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 \
   gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
   gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav \

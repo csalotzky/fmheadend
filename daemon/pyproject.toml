@@ -19,6 +19,9 @@ fmheadendd = "fmheadendd.app:main"
 packages = ["fmheadendd", "fmheadendd.models", "fmheadendd.api", "fmheadendd.sources", "fmheadendd.modulators", "fmheadendd.rp2354", "fmheadendd.mux", "fmheadendd.rds", "fmheadendd.status"]
 package-dir = {fmheadendd = "."}
 
+[tool.setuptools.package-data]
+"fmheadendd.sources" = ["lv2_lifecycle.c"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["gstreamer: requires native GStreamer and PyGObject", "muxd: requires Linux and the built fmheadend-muxd daemon"]

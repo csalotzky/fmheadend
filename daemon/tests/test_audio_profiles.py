@@ -229,7 +229,7 @@ def test_actual_gst_builder_gains_and_json_stages(tmp_path, builtin):
     assert gains == pytest.approx([10 ** (-6/20)] + ([10 ** (-3/20), 1, 1] if builtin else []))
     if builtin:
         assert next(e for e in elements if e.factory == 'audiocheblimit').props['cutoff'] == 80
-        assert [e.factory for e in links[0]][3:6] == ['volume', 'volume', 'audiocheblimit']
+        assert [e.factory for e in links[0]][3:7] == ['level', 'volume', 'volume', 'audiocheblimit']
     else:
         assert not any(e.factory in ('audiocheblimit', 'lsp-plug-in-plugins-lv2-limiter-stereo') for e in elements)
     db.close()
