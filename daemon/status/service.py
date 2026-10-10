@@ -48,7 +48,9 @@ class StatusService:
         views = {}
         if self.config is not None:
             configs = self.config.list('sources')
-            source_statuses = {s.id: self.sources.status(s.id, source=s).model_copy(deep=True) for s in configs}
+            profile_errors = {}  # One generation only; no mutable profile models.
+            source_statuses = {s.id: self.sources.status(s.id, source=s,
+                profile_errors=profile_errors).model_copy(deep=True) for s in configs}
             views = dict(sources=configs, modulators=self.modulators.list(),
                          info=dict(self.info), source_statuses=source_statuses)
             now = self.clock()
