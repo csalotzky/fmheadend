@@ -16,6 +16,7 @@ class AudioProfileFile(Model):
     model_config = ConfigDict(extra='forbid', allow_inf_nan=False, strict=True)
     schema_version: Literal[1]
     name: Name
+    description: str
     stages: dict[str, Stage]
 
     @model_validator(mode='before')
@@ -51,6 +52,7 @@ class CloneProfileFile(Model):
 
 class ProfileFileSummary(Model):
     name: str
+    description: str
     path: str
     kind: Literal["default", "custom"]
 

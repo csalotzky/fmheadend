@@ -65,7 +65,7 @@ def test_live_registry_build_generation_and_teardown():
     p = pipeline()
     stages = neutral_stages()
     stages['limiter']['selected'] = 'FM_HEADEND_LIMITER'
-    p.profile = AudioProfileFile.model_validate(dict(schema_version=1, name='test', stages=stages))
+    p.profile = AudioProfileFile.model_validate(dict(schema_version=1, description="Test profile", name='test', stages=stages))
     # Exercise the REAL builder, with native construction/linking replaced only.
     p.Gst = SimpleNamespace(Pipeline=SimpleNamespace(new=lambda unused: Mock()),
                             Caps=SimpleNamespace(from_string=lambda value: value))

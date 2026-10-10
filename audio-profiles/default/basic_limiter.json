@@ -421,7 +421,7 @@
       }
     },
     "master_gain": {
-      "selected": "OFF",
+      "selected": "VOLUME",
       "implementations": {
         "VOLUME": {
           "gain_db": 0.0

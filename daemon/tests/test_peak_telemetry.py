@@ -22,7 +22,7 @@ def profile(trim=0):
         if 'OFF' in choices:
             stages[stage]['selected'] = 'OFF'
     stages['output_trim']['implementations']['TRIM']['gain_db'] = trim
-    return AudioProfileFile.model_validate(dict(name='Peak test', schema_version=1, stages=stages))
+    return AudioProfileFile.model_validate(dict(name='Peak test', schema_version=1, description="Test profile", stages=stages))
 
 
 def pipeline(builtin=False, gain=0, trim=0, **kwargs):

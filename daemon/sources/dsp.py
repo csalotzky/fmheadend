@@ -128,7 +128,7 @@ def editor_description():
         implementations[key] = dict(label=label, factory=factory, available=available,
             reason=None if available else f'GStreamer element unavailable on this daemon: {factory}',
             schema=editor_schema(model), defaults=model().model_dump(), documentation_url=DOCUMENTATION.get(key))
-    return dict(template=dict(schema_version=1, name='', stages=neutral_stages()),
+    return dict(template=dict(schema_version=1, name='', description='', stages=neutral_stages()),
                 stages=[dict(key=k, label=v[0], choices=v[1]) for k, v in STAGES.items()],
                 implementations=implementations,
                 helpers={

@@ -349,6 +349,9 @@
               }
             </select></label
           >
+          @if (selectedProfile(); as profile) {
+            <small class="muted">{{ profile.description }}</small>
+          }
         }
         @if (profileError()) {
           <p class="warning">Audio profiles unavailable: {{ profileError() }}</p>

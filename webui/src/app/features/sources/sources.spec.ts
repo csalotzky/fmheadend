@@ -71,8 +71,18 @@ describe('Sources management', () => {
     await f.whenStable();
     fill(c);
     c.profiles.set([
-      { name: 'Default', path: 'default/basic.json', kind: 'default' },
-      { name: 'Custom', path: 'custom/server_123.json', kind: 'custom' },
+      {
+        name: 'Default',
+        description: 'Profile details',
+        path: 'default/basic.json',
+        kind: 'default',
+      },
+      {
+        name: 'Custom',
+        description: 'Profile details',
+        path: 'custom/server_123.json',
+        kind: 'custom',
+      },
     ]);
     c.form.controls.processor_mode.setValue('builtin');
     c.changeProcessor();
@@ -104,12 +114,32 @@ describe('Sources management', () => {
     await f.whenStable();
     fill(c);
     c.profiles.set([
-      { name: 'Teszt 1', path: 'custom/teszt_1.json', kind: 'custom' },
-      { name: 'moderate 3 dBr', path: 'default/m3.json', kind: 'default' },
-      { name: 'Basic', path: 'default/basic.json', kind: 'default' },
-      { name: 'Teszt', path: 'custom/teszt.json', kind: 'custom' },
-      { name: 'Aardvark', path: 'custom/aardvark.json', kind: 'custom' },
-      { name: 'Zeta', path: 'default/zeta.json', kind: 'default' },
+      {
+        name: 'Teszt 1',
+        description: 'Profile details',
+        path: 'custom/teszt_1.json',
+        kind: 'custom',
+      },
+      {
+        name: 'moderate 3 dBr',
+        description: 'Profile details',
+        path: 'default/m3.json',
+        kind: 'default',
+      },
+      {
+        name: 'Basic',
+        description: 'Profile details',
+        path: 'default/basic.json',
+        kind: 'default',
+      },
+      { name: 'Teszt', description: 'Profile details', path: 'custom/teszt.json', kind: 'custom' },
+      {
+        name: 'Aardvark',
+        description: 'Profile details',
+        path: 'custom/aardvark.json',
+        kind: 'custom',
+      },
+      { name: 'Zeta', description: 'Profile details', path: 'default/zeta.json', kind: 'default' },
     ]);
     c.form.controls.processor_mode.setValue('builtin');
     c.changeProcessor();
@@ -130,6 +160,8 @@ describe('Sources management', () => {
     select.selectedIndex = 3;
     select.dispatchEvent(new Event('change'));
     expect(c.form.controls.audio_profile_path.value).toBe('default/zeta.json');
+    f.detectChanges();
+    expect(f.nativeElement.textContent).toContain('Profile details');
     expect(c.draft()).toMatchObject({ audio_profile_path: 'default/zeta.json' });
     expect(c.profiles().map((p) => p.name)).toContain('Zeta');
     expect(c.profiles().every((p) => !p.name.startsWith('['))).toBe(true);

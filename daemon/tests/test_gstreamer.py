@@ -20,7 +20,7 @@ def file_profile(name, gain_db=0):
     for key, (_, choices) in STAGES.items():
         if 'OFF' in choices: stages[key]['selected'] = 'OFF'
     stages['input_gain']['implementations']['VOLUME']['gain_db'] = gain_db
-    return AudioProfileFile.model_validate(dict(schema_version=1, name=name, stages=stages))
+    return AudioProfileFile.model_validate(dict(schema_version=1, description="Test profile", name=name, stages=stages))
 
 pytestmark = pytest.mark.gstreamer
 
@@ -237,7 +237,7 @@ def test_native_gain(gst, http_files, processor):
     profile = file_profile(name="gain", gain_db=-6.020599913)
     source = config("HTTP", {"uri": url + "/gain.wav"}).model_copy(update={
         'input_gain_db': -6.020599913, 'processor_mode': 'builtin' if processor else 'bypass',
-        'audio_profile_path': 'default/basic.json' if processor else None})
+        'audio_profile_path': 'default/light_normal.json' if processor else None})
     pipeline = GstPipeline(source, profile=profile if processor else None, reconnect=False)
     pipeline.output.attach(0)
     try:
@@ -305,7 +305,7 @@ def test_modular_native_chain_and_float_domain(gst,http_files):
     profile=file_profile(name='Filters', gain_db=-3)
     for stage in ('hpf', 'lpf'): profile.stages[stage].selected = 'CHEBYSHEV'
     source = config('HTTP',{'uri':url+'/basic.wav'}).model_copy(update={
-        'processor_mode': 'builtin', 'audio_profile_path': 'default/basic.json'})
+        'processor_mode': 'builtin', 'audio_profile_path': 'default/light_normal.json'})
     pipeline=GstPipeline(source,profile=profile,reconnect=False)
     pipeline.output.attach(0)
     try:
@@ -335,7 +335,7 @@ def test_modular_native_chain_and_float_domain(gst,http_files):
 def test_off_does_not_construct_processors(gst):
     from unittest.mock import patch
     pipeline=GstPipeline(config('UDP',{'port':54321,'format':'S16LE','sample_rate':48000,'channels':2}).model_copy(
-        update={'processor_mode': 'builtin', 'audio_profile_path': 'default/basic.json'}),
+        update={'processor_mode': 'builtin', 'audio_profile_path': 'default/light_normal.json'}),
                          profile=file_profile(name='None',gain_db=-3))
     pipeline.Gst=gst
     make=gst.ElementFactory.make
@@ -347,7 +347,7 @@ def test_off_does_not_construct_processors(gst):
 def test_missing_filter_plugin_fails_explicitly(gst):
     from unittest.mock import patch
     pipeline=GstPipeline(config('UDP',{'port':54321,'format':'S16LE','sample_rate':48000,'channels':2}).model_copy(
-        update={'processor_mode': 'builtin', 'audio_profile_path': 'default/basic.json'}),
+        update={'processor_mode': 'builtin', 'audio_profile_path': 'default/light_normal.json'}),
                          profile=file_profile(name='Filters'))
     pipeline.profile.stages['hpf'].selected = 'CHEBYSHEV'
     pipeline.Gst=gst

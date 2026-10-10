@@ -29,7 +29,7 @@ def isolated(stage, implementation, settings=None):
         if 'OFF' in choices: stages[key]['selected'] = 'OFF'
     stages[stage]['selected'] = implementation
     if settings: stages[stage]['implementations'][implementation].update(settings)
-    return AudioProfileFile.model_validate(dict(schema_version=1, name='Probe', stages=stages))
+    return AudioProfileFile.model_validate(dict(schema_version=1, description="Test profile", name='Probe', stages=stages))
 
 
 def run(profile, samples):

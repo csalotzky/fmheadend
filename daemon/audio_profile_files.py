@@ -69,7 +69,7 @@ class AudioProfileFiles:
             except (ValueError, UnicodeError, RecursionError) as exc:
                 raise DomainError(422, "INVALID_PROFILE", f"Invalid JSON in {logical}: {exc}") from exc
             profile = self.validate(data)
-            return ProfileFileResult(name=profile.name, path=logical, kind=logical.split('/')[0], profile=profile)
+            return ProfileFileResult(name=profile.name, description=profile.description, path=logical, kind=logical.split('/')[0], profile=profile)
 
     def list(self):
         result = []

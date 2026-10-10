@@ -1,5 +1,4 @@
 """File selection -> existing source ownership/pipeline/mux contract."""
-import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -15,13 +14,12 @@ from fmheadendd.models.configuration import InputSourceConfig
 from fmheadendd.sources.manager import SourceManager
 from fmheadendd.sources.output import PcmOutput
 from fmheadendd.sources.gst_pipeline import GstPipeline
+from fmheadendd.tests.test_audio_profile_files import document
 
 DEFAULT = Path(__file__).resolve().parents[2] / 'audio-profiles/default'
 BASE = '/api/v1/audio-profiles/files/'
 SOURCE = {'name': 'Feed', 'type': 'HTTP', 'config': {'uri': 'http://localhost/live'}}
 
-def document():
-    return json.loads((DEFAULT / 'basic.json').read_text())
 
 class FakePipeline:
     mocked = False
@@ -162,7 +160,7 @@ def test_plugin_preflight_precedes_save(api, monkeypatch):
     monkeypatch.setattr(FakePipeline, 'validate_profile', missing)
     response = api.put(BASE + path, json={**document(), 'name': 'Not saved'})
     assert response.status_code == 503 and response.json()['error'] == 'PROFILE_PLUGIN_UNAVAILABLE'
-    assert api.get(BASE + path).json()['name'] == 'Basic'
+    assert api.get(BASE + path).json()['name'] == 'Test filters'
 
 
 def test_missing_invalid_stereotool_fail_closed(api):

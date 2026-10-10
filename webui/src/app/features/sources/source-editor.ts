@@ -244,6 +244,11 @@ export class SourceEditor implements OnInit {
     this.form.controls.audio_profile_path.setValue(null);
     this.form.markAsDirty();
   }
+  selectedProfile() {
+    return this.profiles().find(
+      (profile) => profile.path === this.form.controls.audio_profile_path.value,
+    );
+  }
   missingProfile() {
     const id = this.form.controls.audio_profile_path.value;
     return id !== null && !this.profiles().some((profile) => profile.path === id);

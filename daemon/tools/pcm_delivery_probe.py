@@ -25,7 +25,7 @@ def main():
     args = parser.parse_args()
     Gst = load_gst()
     profile = (AudioProfileFile.model_validate_json(args.profile.read_text()) if args.profile else
-               AudioProfileFile(schema_version=1, name='Probe filters', stages=neutral_stages()))
+               AudioProfileFile(schema_version=1, description="Test profile", name='Probe filters', stages=neutral_stages()))
     class Quiet(SimpleHTTPRequestHandler):
         def log_message(self, *args): pass
     with tempfile.TemporaryDirectory(prefix='pcm-probe-') as directory:

@@ -374,11 +374,16 @@ Editor links use `/audio-profiles/edit?path=custom%2Fname.json`; the complete st
 identifier is a query value, never an encoded slash inside a route segment.
 Direct navigation/reload uses the normal SPA fallback in development and production.
 Create and Clone navigate using the actual backend-returned path.
-Defaults show Clone only; customs show Edit/Clone/Delete. Kind remains API data
+Defaults show View/Clone; customs show Edit/Clone/Delete. Kind remains API data
 for permissions but is not rendered as a label, icon or badge; the stable path
 uses the available width. Referenced custom files
 cannot be deleted. Display name and stable path are separate; Create/Clone use the
 actual backend-generated path. Renaming never changes Source references.
+
+The list displays descriptions below the primary profile name. The editor displays
+the required schema-1 description near Name; custom descriptions participate in
+dirty-state tracking and Save. Default profiles are viewable but read-only. Clone
+preserves the description.
 
 The editor exposes twelve collapsible DSP stages through structured schema-1 data.
 Separate Wideband and Multiband stages, Chebyshev/LSP choices, EQ Add/Remove, four-to-eight
@@ -393,7 +398,8 @@ saved configuration. No raw JSON editor or speculative DSP controls are added.
 
 The Source editor selects Bypass / Built-in DSP / disabled Stereo Tool (coming
 soon), with Source Gain always available. Built-in shows a profile dropdown with
-both default/custom names backed by stable paths. Bypass saves a null path. Source
+both default/custom names backed by stable paths, with the selected description
+displayed beside the control. Bypass saves a null path. Source
 Gain and Profile Input Gain are independent, sequential gain stages. Changing mode
 clears the old selection. Save is allowed while TXs consume a Source: one serialized
 PATCH persists and rebuilds only that Source's audio when runtime fields change.

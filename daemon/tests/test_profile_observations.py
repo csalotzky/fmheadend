@@ -13,7 +13,7 @@ from fmheadendd.audio_profile_files import AudioProfileFiles
 from fmheadendd.errors import DomainError
 from fmheadendd.sources.manager import SourceManager
 
-DEFAULT = Path(__file__).resolve().parents[2] / 'audio-profiles/default/basic.json'
+DEFAULT = Path(__file__).resolve().parents[2] / 'audio-profiles/default/light_normal.json'
 
 
 @pytest.fixture

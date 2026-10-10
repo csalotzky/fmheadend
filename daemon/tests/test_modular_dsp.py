@@ -6,7 +6,7 @@ from fmheadendd.sources.dsp import dsp_stages, editor_description
 
 
 def profile():
-    return dict(schema_version=1, name='Neutral', stages=neutral_stages())
+    return dict(schema_version=1, description="Test profile", name='Neutral', stages=neutral_stages())
 
 
 class Element:

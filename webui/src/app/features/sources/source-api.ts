@@ -60,6 +60,7 @@ export interface SourceTest {
   message: string;
 }
 export interface Profile {
+  description: string;
   path: string;
   kind: 'default' | 'custom';
   name: string;

@@ -53,13 +53,11 @@ ASCII alphanumeric/underscore/hyphen filename ending in `.json`. No arbitrary pa
 
 ## JSON schema 1
 
-The current twelve-stage modular structure is the first and only supported profile
-schema. See [Modular DSP implementation](modular-dsp-implementation.md) for exact
-fields, mappings and stage order. Historical two-stage documents, version 2,
-compatibility metadata and deleted implementation identifiers are rejected.
-There is no conversion on read or write. Save/Clone return version 1 at stable paths.
-The shipped `default/basic.json` is a filter-only modular starting point, not a
-preserved historical processing chain or the operator's tuned custom preset.
+Schema version remains `1`. Each document requires `name`, `description` (a
+non-optional string), and the complete twelve-stage `stages` object. Missing or
+non-string descriptions are invalid. Read, save and clone preserve the description.
+See [Modular DSP implementation](modular-dsp-implementation.md) for fields,
+mappings and stage order.
 
 ## REST
 
@@ -79,8 +77,8 @@ There are no default PUT/DELETE routes (405); storage also rejects direct defaul
 mutation with 403 `READ_ONLY_PROFILE`. Create/clone return 201; get/save return 200:
 
 ```text
-{name, path: "custom/my_profile_<timestamp>.json", kind: "custom",
- profile: {schema_version: 1, name, stages: { /* twelve stages */ }}}
+{name, description, path: "custom/my_profile_<timestamp>.json", kind: "custom",
+ profile: {schema_version: 1, name, description, stages: { /* twelve stages */ }}}
 ```
 
 The `profile` member is the full validated object, not JSON text. List returns an array of the same
