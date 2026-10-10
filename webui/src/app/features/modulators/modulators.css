@@ -114,33 +114,13 @@ small {
   flex-basis: 100%;
   margin: 0;
 }
-.summary {
-  display: grid;
-  grid-template-columns: 160px minmax(180px, 1fr) minmax(160px, 1fr) auto;
-  gap: 16px;
-  align-items: center;
-  font-size: 13px;
-}
-.summary h2 {
-  margin-bottom: 6px;
-}
-.summary p {
-  margin: 5px 0;
-}
-.summary-error {
-  grid-column: 1/-1;
-}
 @media (max-width: 850px) {
-  .summary {
-    grid-template-columns: 1fr 1fr;
-  }
   .ps-fields {
     grid-template-columns: 1fr 130px;
   }
 }
 @media (max-width: 600px) {
-  .fields,
-  .summary {
+  .fields {
     grid-template-columns: 1fr;
   }
   section {

@@ -389,6 +389,8 @@ describe('Sources management', () => {
     f.detectChanges();
     expect(c.form.pristine).toBe(true);
     expect(c.config.pristine).toBe(true);
+    expect(c.message()).toBe('');
+    expect(c.dirty()).toBe(false);
     expect(c.form.controls.name.value).toBe('FM4');
     expect(f.nativeElement.querySelector('.editor-feedback').textContent).toContain(
       'Source saved, but audio restart failed',
@@ -396,8 +398,9 @@ describe('Sources management', () => {
     expect(navigate).not.toHaveBeenCalled();
     expect(shared.refreshAfterMutation).toHaveBeenCalledOnce();
   });
-  it('creates HTTP source only after successful save', async () => {
-    const c = editor().componentInstance;
+  it('stays after creation and updates the returned ID on the next save', async () => {
+    const f = editor(),
+      c = f.componentInstance;
     fill(c);
     const nav = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
     const p = c.save();
@@ -407,10 +410,35 @@ describe('Sources management', () => {
     expect(nav).not.toHaveBeenCalled();
     req.flush(sample().sources[0]);
     await p;
-    expect(nav).toHaveBeenCalledWith(['/sources']);
+    expect(nav).not.toHaveBeenCalled();
+    expect(c.id).toBe(1);
+    expect(c.dirty()).toBe(false);
+    expect(c.canLeave()).toBe(true);
+    f.detectChanges();
+    expect(f.nativeElement.querySelector('.editor-feedback').textContent).toContain(
+      'Source saved.',
+    );
+    c.form.controls.name.setValue('Renamed');
+    c.form.markAsDirty();
+    const again = c.save();
+    const update = http.expectOne('/api/v1/sources/1');
+    expect(update.request.method).toBe('PATCH');
+    update.flush({ ...sample().sources[0], ...update.request.body, saved: true, applied: true });
+    await again;
+    expect(c.form.controls.name.value).toBe('Renamed');
+    expect(c.dirty()).toBe(false);
+    expect(nav).not.toHaveBeenCalled();
+    c.form.controls.name.setValue('');
+    c.form.markAsDirty();
+    await c.save();
+    expect(c.message()).toBe('');
+    expect(c.error()).not.toBe('');
+    expect(c.dirty()).toBe(true);
+    http.expectNone('/api/v1/sources/1');
     expect(shared.refreshAfterMutation).toHaveBeenCalled();
   });
   it('preserves form on save failure and prevents duplicate saves', async () => {
+    const nav = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
     const f = editor(),
       c = f.componentInstance;
     fill(c);
@@ -424,6 +452,9 @@ describe('Sources management', () => {
     expect(c.form.controls.name.value).toBe('FM4');
     expect(c.dirty()).toBe(true);
     expect(c.error()).toBe('Source active');
+    expect(c.message()).toBe('');
+    expect(c.id).toBeUndefined();
+    expect(nav).not.toHaveBeenCalled();
     f.detectChanges();
     expect(f.nativeElement.querySelector('.editor-feedback').textContent).toContain(
       'Source active',
@@ -504,7 +535,7 @@ describe('Sources management', () => {
     f.detectChanges();
     const rows = [...f.nativeElement.querySelectorAll('.source-row')] as HTMLElement[];
     expect(rows.map((row) => row.dataset['sourceType'])).toEqual([...types]);
-    expect(rows.map((row) => row.className).every((name) => name === 'source-row')).toBe(true);
+    expect(rows.every((row) => row.classList.contains('list-card'))).toBe(true);
     for (const type of types) expect(f.nativeElement.textContent).toContain(type);
   });
   it('shows unavailable runtime on failed status request', () => {

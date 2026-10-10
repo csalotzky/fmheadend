@@ -181,6 +181,53 @@ describe('Modulator configuration', () => {
     f.detectChanges();
     expect(f.nativeElement.textContent).toContain('UNKNOWN');
   });
+  it.each(['ON', 'OFF', 'ERROR', 'UNKNOWN', 'STARTING', null])(
+    'uses reported %s for the strip and label regardless of desired state',
+    (reported) => {
+      const data = sample();
+      data.modulators[0].enabled = reported !== 'ON';
+      data.status.modulators[0].tx_state = reported === 'ON' ? 'OFF' : 'ON';
+      data.status.modulators[0].hardware_tx_state = reported;
+      shared.channels.set(compose(data));
+      const f = TestBed.createComponent(ModulatorsList);
+      f.detectChanges();
+      const row = f.nativeElement.querySelector('section');
+      expect(row.dataset.reportedState).toBe(reported ?? 'UNKNOWN');
+      const color =
+        reported === 'ON'
+          ? 'success'
+          : reported === 'OFF'
+            ? 'inactive'
+            : reported === 'ERROR'
+              ? 'error'
+              : 'warning';
+      expect(getComputedStyle(row).getPropertyValue('--list-strip-color').trim()).toBe(
+        `var(--${color})`,
+      );
+      expect(row.querySelector('.list-status').textContent).toContain(reported ?? 'UNKNOWN');
+      expect(row.querySelector('.list-description .list-primary').textContent).toBe('Studio feed');
+      expect(row.querySelector('.list-actions a').getAttribute('href')).toBe('/modulators/0');
+      shared.stale.set(true);
+      f.detectChanges();
+      expect(row.dataset.reportedState).toBe('UNKNOWN');
+      expect(getComputedStyle(row).getPropertyValue('--list-strip-color').trim()).toBe(
+        'var(--warning)',
+      );
+    },
+  );
+  it('does not present stale RP ON as confirmed and handles unassigned sources', () => {
+    const data = sample();
+    data.status.system.rp_observation_stale = true;
+    data.modulators[0].input_source_id = null;
+    shared.channels.set(compose(data));
+    const f = TestBed.createComponent(ModulatorsList);
+    f.detectChanges();
+    const row = f.nativeElement.querySelector('section');
+    expect(row.dataset.reportedState).toBe('UNKNOWN');
+    expect(row.querySelector('.list-description .list-primary').textContent).toBe(
+      'No source assigned',
+    );
+  });
   it('loads all three sections in order without editable identity or desired state', async () => {
     const f = await editor();
     expect(

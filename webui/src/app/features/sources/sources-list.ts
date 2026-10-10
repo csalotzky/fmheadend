@@ -30,7 +30,7 @@ export function endpoint(source: InputSource): string {
   selector: 'app-sources-list',
   imports: [RouterLink, TestResult],
   templateUrl: './sources-list.html',
-  styleUrl: './sources.css',
+  styleUrls: ['./sources.css', '../../shared/list-layout.css'],
 })
 export class SourcesList {
   readonly shared = inject(DashboardState);

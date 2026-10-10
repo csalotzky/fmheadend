@@ -14,11 +14,15 @@
   <p>No Sources configured. Add a source to make an input available to the transmitters.</p>
 }
 @for (source of sources(); track source.id) {
-  <section class="source-row" [attr.data-source-type]="source.type" [attr.aria-label]="source.name">
-    <div class="source-summary">
+  <section
+    class="source-row list-card"
+    [attr.data-source-type]="source.type"
+    [attr.aria-label]="source.name"
+  >
+    <div class="source-summary list-grid list-grid--sources">
       <div>
         <a [routerLink]="['/sources', source.id]"
-          ><strong>{{ source.name }}</strong></a
+          ><strong class="list-primary">{{ source.name }}</strong></a
         ><span class="muted"> {{ source.type }}</span>
         <p class="endpoint" [title]="endpoint(source)">{{ endpoint(source) }}</p>
         <p class="audio-profile">
@@ -31,7 +35,7 @@
         }}</span>
         <p class="muted">{{ references(source.id) }} TX references</p>
       </div>
-      <div class="actions">
+      <div class="actions list-actions">
         <a class="button-link" [routerLink]="['/sources', source.id]">Edit</a
         ><button (click)="test(source.id)" [disabled]="pending().has(source.id)">
           {{ pending().has(source.id) ? pendingLabel()[source.id] : 'Test' }}</button
