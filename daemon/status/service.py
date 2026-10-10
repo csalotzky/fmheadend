@@ -64,8 +64,11 @@ class StatusService:
             views['profiles_observed_at'] = self._profile_list_at
         snapshot = self.snapshot(source_statuses).model_copy(deep=True)
         if self.radiotext is not None:
+            modulator_configs = {config.id: config for config in views.get('modulators', ())}
             for row in snapshot.modulators:
-                row.rds_rt_effective = self.radiotext.effective(row.id).text
+                row.rds_rt_effective = self.radiotext.effective(
+                    row.id, config=modulator_configs.get(row.id),
+                    source_statuses=source_statuses).text
         self._published = (self.clock(), max_age_s, snapshot, views)
         self._publication_failed = False
 

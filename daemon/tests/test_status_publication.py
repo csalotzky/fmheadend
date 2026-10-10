@@ -2,7 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import threading
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -199,3 +199,57 @@ def test_published_rt_uses_existing_selector_and_preserves_snapshot(tmp_path):
         assert selected_text() == 'Artist - Track'
         assert api.patch(P+'/modulators/0', json={'rds_metadata_to_rt': False}).status_code == 200
         assert selected_text() == 'Fallback'
+
+
+def test_publication_reuses_inventory_and_observations_for_radiotext(tmp_path):
+    app = configured(tmp_path, lambda: 0.0)
+    with TestClient(app) as api:
+        sid = start(api)
+        assert api.patch(f'{P}/sources/{sid}', json={'rds_profile': {
+            'rds_rt': 'Source fallback', 'rds_metadata_to_rt': True}}).status_code == 200
+        services = app.state.services
+
+        def check_publications():
+            # Two running TXes and one off TX share the same source and metadata.
+            for tx in (0, 1, 2):
+                config = services.database.get('modulators', tx)
+                services.database.save('modulators', config.model_copy(update={
+                    'input_source_id': sid, 'rds_follow_source': True}), tx)
+            pipeline = services.sources.pipelines[sid]
+            observed = {'state': 'RUNNING', 'stream_title': 'First track'}
+            pcm = {'staging': {'accepted_bytes': 100}, 'consumers': {
+                0: {'accepted_bytes': 100}, 1: {'accepted_bytes': 100}}}
+            with patch.object(pipeline, 'snapshot', side_effect=lambda: dict(observed)), \
+                    patch.object(pipeline, 'pcm_snapshot', create=True, side_effect=lambda: pcm):
+                previous = None
+                for title, accepted in [('First track', 100), ('Next track', 200)]:
+                    observed['stream_title'] = title
+                    pcm['staging']['accepted_bytes'] = accepted
+                    with patch.object(services.database, 'get', wraps=services.database.get) as get, \
+                            patch.object(services.database, 'effective_rds_profile', wraps=services.database.effective_rds_profile) as resolve, \
+                            patch.object(services.sources, 'status', wraps=services.sources.status) as status, \
+                            patch.object(services.rt, 'effective', wraps=services.rt.effective) as effective:
+                        services.status.publish()
+                        # Only inventory reads remain: one TX lookup/resolution per TX.
+                        assert [c.args for c in get.call_args_list if c.args[0] == 'modulators'] == [
+                            ('modulators', tx) for tx in range(8)]
+                        assert resolve.call_count == 8
+                        # The source inventory plus three Follow-source resolutions.
+                        assert [c.args for c in get.call_args_list if c.args[0] == 'sources'] == [('sources', sid)] * 4
+                        status.assert_called_once()
+                        assert status.call_args.args == (sid,) and 'source' in status.call_args.kwargs
+                        assert effective.call_count == 8
+                    generation = services.status.published_snapshot()
+                    source = services.status.published_source(sid)
+                    assert source.stream_title == title and source.pcm.staging.accepted_bytes == accepted
+                    assert [r.rds_rt_effective for r in generation.modulators[:3]] == [title] * 3
+                    assert generation.modulators[2].tx_state == 'OFF'
+                    assert generation.modulators[0].pcm_staging.accepted_bytes == accepted
+                    if previous is not None:
+                        old_generation, old_source = previous
+                        assert old_generation.modulators[0].rds_rt_effective == old_source.stream_title == 'First track'
+                        assert old_generation.modulators[0].pcm_staging.accepted_bytes == old_source.pcm.staging.accepted_bytes == 100
+                    previous = generation, source
+
+        # Scope spies to one owner-thread job, excluding unrelated maintenance.
+        app.state.control.executor.submit(check_publications).result(timeout=10)
