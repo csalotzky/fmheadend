@@ -401,6 +401,9 @@
       </section>
     </fieldset>
     <div class="editor-feedback" aria-live="polite">
+      @if (message()) {
+        <p role="status">{{ message() }}</p>
+      }
       @if (error()) {
         <p class="error" role="alert">{{ error() }}</p>
       }

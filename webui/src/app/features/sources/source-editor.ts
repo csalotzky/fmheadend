@@ -12,7 +12,7 @@ import {
   signal,
 } from '@angular/core';
 import { FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
-import { ActivatedRoute, CanDeactivateFn, Router, RouterLink } from '@angular/router';
+import { ActivatedRoute, CanDeactivateFn, RouterLink } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import {
   SourceApi,
@@ -54,9 +54,8 @@ export class SourceEditor implements OnInit {
   @ViewChild('pathPicker') pathPicker?: ElementRef<HTMLDialogElement>;
   private api = inject(SourceApi);
   private route = inject(ActivatedRoute);
-  private router = inject(Router);
   private shared = inject(DashboardState);
-  readonly id = this.route.snapshot.paramMap.has('id')
+  id = this.route.snapshot.paramMap.has('id')
     ? Number(this.route.snapshot.paramMap.get('id'))
     : undefined;
   readonly types: SourceType[] = ['HTTP', 'UDP', 'RTP', 'ALSA', 'LOCAL', 'PODCAST'];
@@ -113,6 +112,7 @@ export class SourceEditor implements OnInit {
   readonly saving = signal(false);
   readonly testing = signal(false);
   readonly error = signal('');
+  readonly message = signal('');
   readonly result = signal<SourceTest | null>(null);
   readonly browserOpen = signal(false);
   readonly browserLoading = signal(false);
@@ -502,11 +502,13 @@ export class SourceEditor implements OnInit {
   }
   async save() {
     if (this.saving() || this.testing() || this.loadFailed()) return;
+    this.message.set('');
     const body = this.draft();
     if (!body) return;
     this.saving.set(true);
     try {
       const result = await firstValueFrom(this.api.save(body, this.id));
+      this.id = result.id;
       this.form.markAsPristine();
       this.config.markAsPristine();
       this.podcast.markAsPristine();
@@ -518,7 +520,7 @@ export class SourceEditor implements OnInit {
       if (result.applied === false) {
         this.error.set('Source saved, but audio restart failed: ' + result.apply_error);
       } else {
-        await this.router.navigate(['/sources']);
+        this.message.set('Source saved.');
       }
     } catch (e) {
       if (this.persistedRds && body.rds_profile === null) this.configureRds.setValue(true);

@@ -6,38 +6,6 @@ a {
   padding: 9px 12px;
   text-decoration: none;
 }
-.source-row {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-left: 5px solid var(--source-type-color, var(--border));
-  padding: 16px;
-  margin-bottom: 8px;
-}
-/* Type colors avoid the green, amber and red used for runtime state. */
-.source-row[data-source-type='HTTP'] {
-  --source-type-color: #6f9fd8;
-}
-.source-row[data-source-type='UDP'] {
-  --source-type-color: #8f84d9;
-}
-.source-row[data-source-type='RTP'] {
-  --source-type-color: #cf7fae;
-}
-.source-row[data-source-type='ALSA'] {
-  --source-type-color: #5bb7c7;
-}
-.source-row[data-source-type='LOCAL'] {
-  --source-type-color: #a89a86;
-}
-.source-row[data-source-type='PODCAST'] {
-  --source-type-color: #c98a6b;
-}
-.source-summary {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 170px auto;
-  gap: 20px;
-  align-items: center;
-}
 .endpoint {
   white-space: nowrap;
   overflow: hidden;
@@ -116,17 +84,8 @@ summary {
   cursor: pointer;
   margin-bottom: 12px;
 }
-@media (max-width: 900px) {
-  .source-summary {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-  .source-summary .actions {
-    grid-column: 1/-1;
-  }
-}
 @media (max-width: 620px) {
-  .fields,
-  .source-summary {
+  .fields {
     grid-template-columns: 1fr;
   }
   form {

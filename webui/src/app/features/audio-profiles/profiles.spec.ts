@@ -398,6 +398,27 @@ describe('File Audio Profiles', () => {
     expect(rows[1].querySelector('a').textContent).toContain('Edit');
     expect(rows[1].textContent).toContain('Delete');
   });
+  it('uses four shared columns and type strips while preserving usage and permissions', async () => {
+    const f = await list(undefined, true);
+    const rows = [...f.nativeElement.querySelectorAll('.list-card')] as HTMLElement[];
+    expect(rows.map((row) => row.dataset['profileKind'])).toEqual(['default', 'custom']);
+    for (const [i, item] of [factory, profile].entries()) {
+      const row = rows[i];
+      expect(getComputedStyle(row).getPropertyValue('--list-strip-color').trim()).toBe(
+        i === 0 ? '#6f9fd8' : '#8f84d9',
+      );
+      expect(row.classList.contains('list-grid--four')).toBe(true);
+      expect(row.querySelector('.list-identity .list-primary')?.textContent).toBe(item.name);
+      expect(row.querySelector('.list-identity .list-secondary')?.textContent).toBe(item.path);
+      expect(row.querySelector('.list-description')?.textContent).toBe(item.description);
+      expect(row.querySelector('.list-status')?.textContent).toContain(`Used by ${i} sources`);
+      expect(row.querySelector('.list-actions')).not.toBeNull();
+    }
+    const deletion = [...rows[1].querySelectorAll('button')].find(
+      (button) => button.textContent?.trim() === 'Delete',
+    )!;
+    expect(deletion.disabled).toBe(true);
+  });
   it.each([factory, profile])('clones to the backend-returned path', async (item) => {
     const f = await list();
     vi.spyOn(window, 'prompt').mockReturnValue('New name');

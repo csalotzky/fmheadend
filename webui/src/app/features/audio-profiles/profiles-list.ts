@@ -10,23 +10,7 @@ import { AudioProfile, ProfileApi } from './profile-api';
   host: { class: 'page-content' },
   selector: 'app-profiles-list',
   imports: [RouterLink],
-  styleUrl: '../sources/sources.css',
-  styles: `
-    .profile-summary {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.5rem 2rem;
-      align-items: baseline;
-    }
-    .profile-summary small {
-      flex-basis: 100%;
-      color: var(--muted);
-    }
-    .profile-summary span {
-      overflow-wrap: anywhere;
-      color: var(--muted);
-    }
-  `,
+  styleUrl: '../../shared/list-layout.css',
   template: `
     <div class="page-header">
       <h1>Audio Profiles</h1>
@@ -41,17 +25,20 @@ import { AudioProfile, ProfileApi } from './profile-api';
       <p>No audio profiles. Add a Built-in DSP profile.</p>
     }
     @for (profile of profiles(); track profile.path) {
-      <section class="source-row">
-        <div class="profile-summary">
-          <strong>{{ profile.name }}</strong
-          ><span>{{ profile.path }}</span>
-          <small>{{ profile.description }}</small>
+      <section
+        class="source-row list-card list-grid list-grid--four"
+        [attr.data-profile-kind]="profile.kind"
+      >
+        <div class="list-identity">
+          <strong class="list-primary">{{ profile.name }}</strong>
+          <p class="list-secondary">{{ profile.path }}</p>
         </div>
-        <div class="actions">
-          <span>Used by {{ usedBy(profile.path) }} sources</span>
+        <p class="list-description">{{ profile.description }}</p>
+        <div class="list-status muted">Used by {{ usedBy(profile.path) }} sources</div>
+        <div class="actions list-actions">
           @if (profile.kind === 'default') {
             <a
-              class="action-link"
+              class="button-link"
               routerLink="/audio-profiles/edit"
               [queryParams]="{ path: profile.path }"
               >View</a
@@ -59,7 +46,7 @@ import { AudioProfile, ProfileApi } from './profile-api';
           }
           @if (profile.kind === 'custom') {
             <a
-              class="action-link"
+              class="button-link"
               routerLink="/audio-profiles/edit"
               [queryParams]="{ path: profile.path }"
               >Edit</a
