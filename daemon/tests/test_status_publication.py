@@ -253,3 +253,30 @@ def test_publication_reuses_inventory_and_observations_for_radiotext(tmp_path):
 
         # Scope spies to one owner-thread job, excluding unrelated maintenance.
         app.state.control.executor.submit(check_publications).result(timeout=10)
+
+
+def test_publication_loads_shared_dsp_profile_once_per_due_generation(tmp_path):
+    now = [0.0]
+    app = configured(tmp_path, lambda: now[0])
+    with TestClient(app) as api:
+        for tx in range(4):
+            sid = api.post(P+'/sources', json={'name': f'Feed {tx}', 'type': 'HTTP',
+                'config': {'uri': 'http://localhost/live'}, 'processor_mode': 'builtin',
+                'audio_profile_path': 'default/basic.json'}).json()['id']
+            assert api.patch(f'{P}/modulators/{tx}', json={
+                'input_source_id': sid, 'frequency_khz': 98100}).status_code == 200
+            assert api.post(f'{P}/modulators/{tx}/start').status_code == 200
+        services = app.state.services
+
+        def check():
+            with patch.object(services.profile_files, 'get', wraps=services.profile_files.get) as get, \
+                    patch.object(services.profile_files, 'validate', wraps=services.profile_files.validate) as validate:
+                for generation in (1, 2):
+                    now[0] = float(generation)
+                    services.status.publish()
+                    assert get.call_count == validate.call_count == generation
+                    assert all(row.source_state == 'RUNNING'
+                               for row in services.status.published_snapshot().modulators[:4])
+                assert all(c.args == ('default/basic.json',) for c in get.call_args_list)
+
+        app.state.control.executor.submit(check).result(timeout=10)

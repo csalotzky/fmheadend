@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import shutil
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 import pytest
@@ -12,6 +13,9 @@ from fmheadendd.audio_profile_files import AudioProfileFiles
 from fmheadendd.config import Settings
 from fmheadendd.errors import DomainError
 from fmheadendd.models.dsp import neutral_stages
+from fmheadendd.models.audio_profile_file import AudioProfileFile, ProfileFileResult
+from fmheadendd.models.dsp import IMPLEMENTATIONS, STAGES
+from pydantic import TypeAdapter, ValidationError
 
 DEFAULT = Path(__file__).resolve().parents[2] / 'audio-profiles/default/basic.json'
 
@@ -253,3 +257,64 @@ def test_bundled_profiles_current_structure_and_clipper_off():
         assert list(parsed.stages) == list(STAGES)
         assert parsed.stages['clipper'].selected == 'OFF'
         assert parsed.model_dump() == data
+
+
+def test_loader_preserves_result_normalization_and_validation_contract(store):
+    # Include every saved implementation, including disabled stages, and let
+    # validation fill defaults and restore deliberately reversed stage order.
+    data = dict(schema_version=1, name='Defaults', stages={
+        key: dict(selected=choices[0], implementations={name: {} for name in choices if name != 'OFF'})
+        for key, (_, choices) in reversed(list(STAGES.items()))})
+    path = store.roots['default'] / 'all.json'
+    path.write_text(json.dumps(data), encoding='utf-8')
+    expected = ProfileFileResult(name=data['name'], path='default/all.json', kind='default',
+                                profile=store.validate(copy.deepcopy(data)))
+    once = store.validate(copy.deepcopy(data))
+    # The second pass is not redundant for default-filled settings: default
+    # integers in float fields become floats on revalidation. Do not bypass it
+    # without preserving this existing normalization/serialization contract.
+    assert type(once.stages['input_gain'].implementations['VOLUME']['gain_db']) is int
+    assert type(expected.profile.stages['input_gain'].implementations['VOLUME']['gain_db']) is float
+    eq = IMPLEMENTATIONS['LSP_EQ'][0]
+    with patch.object(eq, 'model_validate', wraps=eq.model_validate) as validate_eq:
+        actual = store.get('default/all.json')
+        assert validate_eq.call_count == 2
+    assert type(actual) is ProfileFileResult
+    assert actual.model_fields_set == expected.model_fields_set
+    assert actual.model_dump() == expected.model_dump()
+    assert actual.model_dump_json() == expected.model_dump_json()
+    assert list(actual.profile.stages) == list(STAGES)
+    assert TypeAdapter(ProfileFileResult).validate_python(actual).model_dump() == expected.model_dump()
+    assert [x.model_dump() for x in store.list()] == [
+        actual.model_dump(exclude={'profile'}),
+        store.get('default/basic.json').model_dump(exclude={'profile'})]
+    # No caller or subsequent load shares the loaded document's mutable settings.
+    actual.profile.stages['input_gain'].implementations['VOLUME']['gain_db'] = 12
+    assert store.get('default/all.json').profile.stages['input_gain'].implementations['VOLUME']['gain_db'] == 0
+
+
+@pytest.mark.parametrize('change', [
+    {'schema_version': True}, {'name': ''}, {'unknown': 1}, {'stages': {}},
+    {'stages': {**document()['stages'], 'input_gain': {
+        'selected': 'VOLUME', 'implementations': {'VOLUME': {'gain_db': 21}}}}},
+])
+def test_loader_keeps_exact_validation_errors_and_external_models_stay_strict(store, change):
+    data = {**document(), **change}
+    (store.roots['default'] / 'bad.json').write_text(json.dumps(data), encoding='utf-8')
+    with pytest.raises(DomainError) as direct:
+        store.validate(copy.deepcopy(data))
+    with pytest.raises(DomainError) as loaded:
+        store.get('default/bad.json')
+    assert (loaded.value.status, loaded.value.error, str(loaded.value)) == (
+        direct.value.status, direct.value.error, str(direct.value))
+    with pytest.raises(ValidationError):
+        ProfileFileResult(name='Bad', path='default/bad.json', kind='default', profile=data)
+
+
+def test_external_mutated_or_constructed_profile_is_not_trusted_by_result_model(store):
+    profile = store.validate(document())
+    profile.stages['input_gain'].implementations['VOLUME']['gain_db'] = 21
+    unvalidated = AudioProfileFile.model_construct(schema_version=1, name='Invalid', stages={})
+    for supplied in (profile, unvalidated):
+        with pytest.raises(ValidationError):
+            ProfileFileResult(name='Invalid', path='custom/bad.json', kind='custom', profile=supplied)

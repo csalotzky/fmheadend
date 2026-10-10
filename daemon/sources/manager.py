@@ -83,12 +83,12 @@ class SourceManager:
                 consumer_tx_ids=consumer_ids, **sample))
         return records
 
-    def status(self, source_id, *, source=None):
+    def status(self, source_id, *, source=None, profile_errors=None):
         source = source if source is not None else self.database.get("sources", source_id)
         status = self.statuses.setdefault(source_id, InputSourceStatus(source_id=source_id))
         pipeline = self.pipelines.get(source_id)
         if pipeline is not None:
-            error = self._observed_profile_error(source)
+            error = self._observed_profile_error(source, profile_errors=profile_errors)
             if error:
                 return InputSourceStatus(source_id=source_id, state=SourceState.ERROR, last_error=error)
         if source_id in self.restart_errors:
@@ -99,23 +99,33 @@ class SourceManager:
             self.statuses[source_id] = status
         return status
 
-    def _observed_profile_error(self, source):
+    def _observed_profile_error(self, source, *, profile_errors=None):
         """Bound read-only validation work, including repeated metadata lookups.
 
         Only control-thread observations use this one-second cache. Starting,
         joining, testing and saving audio still validate synchronously. Runtime
         metadata and PCM counters are never taken from this validation cache.
+
+        A publication may pass its own dictionary to share fresh validation
+        outcomes by selection. It contains only immutable error strings/None,
+        never profile models, and is not retained here. Existing per-source TTL
+        hits must not seed it: another source may already need a fresh file read.
         """
         key = (source.processor_mode, source.audio_profile_path)
         now = self.clock()
         previous = self._profile_observations.get(source.id)
         if previous is not None and previous[0] == key and 0 <= now - previous[1] < 1.0:
             return previous[2]
-        error = None
-        try:
-            self.validate_config(source)
-        except DomainError as exc:
-            error = f'{exc.error}: {exc}'
+        if profile_errors is not None and key in profile_errors:
+            error = profile_errors[key]
+        else:
+            error = None
+            try:
+                self.validate_config(source)
+            except DomainError as exc:
+                error = f'{exc.error}: {exc}'
+            if profile_errors is not None:
+                profile_errors[key] = error
         self._profile_observations[source.id] = (key, self.clock(), error)
         return error
 
