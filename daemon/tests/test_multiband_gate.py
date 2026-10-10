@@ -21,7 +21,7 @@ def load_script(path):
 @pytest.mark.parametrize('impl,enable', [('LSP_MULTIBAND_GATE', 'ge'), ('LSP_MULTIBAND_EXPANDER', 'ee')])
 @pytest.mark.parametrize('count', [1, 4, 8])
 def test_band_wiring_telemetry_roundtrip(impl, enable, count):
-    document = dict(schema_version=1, name='test', stages=neutral_stages())
+    document = dict(schema_version=1, description="Test profile", name='test', stages=neutral_stages())
     stage = document['stages']['gate']
     stage['selected'] = impl
     settings = stage['implementations'][impl]
@@ -75,7 +75,7 @@ def test_invalid_multiband_settings(impl, key, value):
 
 def test_prepared_v1_conversion_preserves_other_stages_and_refuses_enabled():
     prepare = load_script(Path(__file__).resolve().parents[1] / 'tools/prepare_multiband_gate_profiles.py')
-    document = dict(schema_version=1, name='test', stages=neutral_stages())
+    document = dict(schema_version=1, description="Test profile", name='test', stages=neutral_stages())
     document['stages']['gate'] = dict(selected='OFF', implementations={'LSP_GATE': {'threshold_dbfs': -40.}})
     original = json.loads(json.dumps(document))
     converted = prepare.convert(document)

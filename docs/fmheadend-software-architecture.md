@@ -388,7 +388,8 @@ null path and still applies Source Gain. Built-in loads/validates its selected J
 Source decode -> Source Gain -> fixed twelve-stage Built-in DSP ->
 fixed PCM output. Stereo Tool is explicitly unavailable, with no silent fallback.
 
-JSON schema-1 profiles use the current twelve-stage order with no compatibility exceptions. Selected implementation
+JSON schema-1 profiles require `name` and a non-optional string `description` alongside
+the complete `stages` object. The schema version remains 1. Profiles use the current twelve-stage order with no compatibility exceptions. Selected implementation
 and saved settings are independent. Native/LSP adapters and measured limitations are
 recorded in [Modular DSP implementation](modular-dsp-implementation.md); the canonical
 design is [Audio processing](fmheadend-audio-processing.md).

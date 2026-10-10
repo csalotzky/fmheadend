@@ -2,7 +2,6 @@ import copy
 from datetime import datetime, timezone
 import json
 from pathlib import Path
-import shutil
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -17,30 +16,100 @@ from fmheadendd.models.audio_profile_file import AudioProfileFile, ProfileFileRe
 from fmheadendd.models.dsp import IMPLEMENTATIONS, STAGES
 from pydantic import TypeAdapter, ValidationError
 
-DEFAULT = Path(__file__).resolve().parents[2] / 'audio-profiles/default/basic.json'
+DEFAULT = Path(__file__).resolve().parents[2] / 'audio-profiles/default/basic_filtering.json'
 
 
 @pytest.fixture
 def store(tmp_path):
     defaults = tmp_path / 'default'
     defaults.mkdir()
-    shutil.copy(DEFAULT, defaults / 'basic.json')
+    (defaults / 'test_filters.json').write_text(json.dumps(document()), encoding='utf-8')
     return AudioProfileFiles(defaults, tmp_path / 'custom',
                              clock=lambda: datetime(2026, 9, 24, 21, 35, 15, tzinfo=timezone.utc))
 
 
 def document():
-    return json.loads(DEFAULT.read_text(encoding='utf-8'))
+    stages = neutral_stages()
+    for key, (_, choices) in STAGES.items():
+        if 'OFF' in choices and key not in ('hpf', 'lpf'):
+            stages[key]['selected'] = 'OFF'
+    stages['lpf']['implementations']['CHEBYSHEV'] = dict(cutoff_hz=16000., poles=14, ripple_db=0., type=1)
+    return dict(schema_version=1, name='Test filters', description='Filter test profile', stages=stages)
+
+
+@pytest.mark.parametrize('value', ['', 'Gentle compression / Normal loudness', 'Árvíztűrő'])
+def test_description_validation_and_serialization(value):
+    data = {**document(), 'description': value}
+    parsed = AudioProfileFile.model_validate(data)
+    assert parsed.schema_version == 1
+    assert parsed.description == value
+    assert json.loads(parsed.model_dump_json())['description'] == value
+    assert AudioProfileFile.model_validate_json(parsed.model_dump_json()) == parsed
+
+
+@pytest.mark.parametrize('value', [None, 1, 1.5, True, [], {}])
+def test_description_rejects_non_strings(store, value):
+    with pytest.raises(DomainError) as error:
+        store.create({**document(), 'description': value})
+    assert error.value.error == 'INVALID_PROFILE'
+
+
+def test_description_required_in_documents_and_catalogue(store):
+    data = document()
+    del data['description']
+    with pytest.raises(ValidationError) as error:
+        AudioProfileFile.model_validate(data)
+    assert error.value.errors()[0]['loc'] == ('description',)
+    (store.roots['default'] / 'invalid.json').write_text(json.dumps(data), encoding='utf-8')
+    for operation in (lambda: store.get('default/invalid.json'), store.list):
+        with pytest.raises(DomainError) as error:
+            operation()
+        assert error.value.error == 'INVALID_PROFILE'
+
+
+def test_description_api_roundtrip_and_validation(store, tmp_path):
+    settings = Settings(tmp_path / 'db', audio_profiles_default_dir=store.roots['default'],
+                        audio_profiles_custom_dir=store.roots['custom'])
+    base = '/api/v1/audio-profiles/files'
+    with TestClient(create_app(settings)) as api:
+        template = api.get(base + '/dsp').json()['template']
+        assert template['schema_version'] == 1
+        assert isinstance(template['description'], str)
+        AudioProfileFile.model_validate({**template, 'name': 'New profile'})
+        data = document()
+        created = api.post(base + '/custom', json=data)
+        assert created.status_code == 201
+        path = created.json()['path']
+        for result in (created.json(), api.get(base + '/' + path).json()):
+            assert result['description'] == result['profile']['description'] == data['description']
+        data['description'] = 'Updated description'
+        saved = api.put(base + '/' + path, json=data)
+        assert saved.status_code == 200
+        assert saved.json()['description'] == saved.json()['profile']['description'] == data['description']
+        listed = next(row for row in api.get(base).json() if row['path'] == path)
+        assert listed['description'] == data['description']
+        for original in (path, 'default/test_filters.json'):
+            before = api.get(base + '/' + original).json()['profile']
+            cloned = api.post(base + '/' + original + '/clone', json={'name': 'Copy'})
+            assert cloned.status_code == 201
+            assert cloned.json()['profile'] == {**before, 'name': 'Copy'}
+            assert cloned.json()['description'] == before['description']
+        missing = dict(data)
+        del missing['description']
+        for invalid in (missing, {**data, 'description': 42}):
+            assert api.post(base + '/custom', json=invalid).status_code == 422
+            assert api.put(base + '/' + path, json=invalid).status_code == 422
+        assert api.get(base + '/' + path).json()['profile']['description'] == data['description']
 
 
 def test_default_and_list(store):
-    item = store.get('default/basic.json')
+    item = store.get('default/test_filters.json')
     assert item.profile.schema_version == 1
     assert item.profile.stages['wideband'].selected == 'OFF'
     assert item.profile.stages['input_gain'].implementations['VOLUME']['gain_db'] == 0
     assert item.profile.stages['lpf'].implementations['CHEBYSHEV'] == dict(cutoff_hz=16000, poles=14, ripple_db=0, type=1)
     assert [x.model_dump() for x in store.list()] == [
-        {'path': 'default/basic.json', 'name': 'Basic', 'kind': 'default'}]
+        {'path': 'default/test_filters.json', 'name': 'Test filters', 'kind': 'default', 'description': document()['description']}]
 
 
 @pytest.mark.parametrize('weighting', [0, 50, 75])
@@ -56,7 +125,7 @@ def test_weighting_persists_even_with_limiter_off(store, weighting):
 
 
 def test_crud_clone_stable_name_and_inactive_settings(store):
-    first = store.clone('default/basic.json', 'Vitézy Dávid for president')
+    first = store.clone('default/test_filters.json', 'Vitézy Dávid for president')
     assert first.path == 'custom/vitezy_david_for_president_20260924213515.json'
     data = first.profile.model_dump()
     data['name'] = 'Renamed'
@@ -74,8 +143,8 @@ def test_crud_clone_stable_name_and_inactive_settings(store):
 
 
 def test_collision_and_empty_slug(store):
-    a = store.clone('default/basic.json', '漢字')
-    b = store.clone('default/basic.json', '漢字')
+    a = store.clone('default/test_filters.json', '漢字')
+    b = store.clone('default/test_filters.json', '漢字')
     assert a.path == 'custom/profile_20260924213515.json'
     assert b.path == 'custom/profile_20260924213515_1.json'
     assert store.get(a.path).name == '漢字'
@@ -141,8 +210,8 @@ def test_settings_invalid_before_replace(store, field, value):
 
 
 def test_default_reference_protection(store):
-    for action in (lambda: store.save('default/basic.json', document()),
-                   lambda: store.delete('default/basic.json')):
+    for action in (lambda: store.save('default/test_filters.json', document()),
+                   lambda: store.delete('default/test_filters.json')):
         with pytest.raises(DomainError) as error:
             action()
         assert error.value.status == 403
@@ -154,8 +223,8 @@ def test_default_reference_protection(store):
     assert store.get(item.path)
 
 
-@pytest.mark.parametrize('path', ['/etc/passwd', '../secret.json', 'custom/../basic.json',
-    'custom/a/b.json', 'custom\\x.json', 'C:/secret.json', 'default//basic.json', 'other/a.json'])
+@pytest.mark.parametrize('path', ['/etc/passwd', '../secret.json', 'custom/../basic_filtering.json',
+    'custom/a/b.json', 'custom\\x.json', 'C:/secret.json', 'default//basic_filtering.json', 'other/a.json'])
 def test_paths(store, path):
     for action in (lambda: store.get(path), lambda: store.save(path, document()), lambda: store.delete(path)):
         with pytest.raises(DomainError):
@@ -230,16 +299,16 @@ def test_file_api(store, tmp_path):
                         audio_profiles_custom_dir=store.roots['custom'])
     base = '/api/v1/audio-profiles/files'
     with TestClient(create_app(settings)) as api:
-        assert api.get(base).json()[0]['path'] == 'default/basic.json'
-        assert api.get(base + '/default/basic.json').status_code == 200
+        assert api.get(base).json()[0]['path'] == 'default/test_filters.json'
+        assert api.get(base + '/default/test_filters.json').status_code == 200
         created = api.post(base + '/custom', json=document())
         assert created.status_code == 201
         path = created.json()['path']
         assert api.put(base + '/' + path, json={**document(), 'name': 'New'}).json()['path'] == path
         assert api.post(base + '/' + path + '/clone', json={'name': 'Copy'}).status_code == 201
-        assert api.post(base + '/default/basic.json/clone', json={'name': 'Default copy'}).status_code == 201
-        assert api.put(base + '/default/basic.json', json=document()).status_code == 405
-        assert api.delete(base + '/default/basic.json').status_code == 405
+        assert api.post(base + '/default/test_filters.json/clone', json={'name': 'Default copy'}).status_code == 201
+        assert api.put(base + '/default/test_filters.json', json=document()).status_code == 405
+        assert api.delete(base + '/default/test_filters.json').status_code == 405
         invalid = copy.deepcopy(document())
         invalid['stages']['hpf']['implementations']['CHEBYSHEV']['limiter_enabled'] = 'yes'
         assert api.post(base + '/custom', json=invalid).status_code == 422
@@ -248,26 +317,26 @@ def test_file_api(store, tmp_path):
         assert api.get('/api/v1/audio-profiles').status_code == 404
 
 
-def test_bundled_profiles_current_structure_and_clipper_off():
+@pytest.mark.parametrize('path', sorted(DEFAULT.parent.glob('*.json')), ids=lambda path: path.name)
+def test_bundled_profiles_current_structure(path):
     from fmheadendd.models.audio_profile_file import AudioProfileFile
     from fmheadendd.models.dsp import STAGES
-    for path in DEFAULT.parent.rglob('*.json'):
-        data = json.loads(path.read_text(encoding='utf-8'))
-        parsed = AudioProfileFile.model_validate(data)
-        assert list(parsed.stages) == list(STAGES)
-        assert parsed.stages['clipper'].selected == 'OFF'
-        assert parsed.model_dump() == data
+    data = json.loads(path.read_text(encoding='utf-8'))
+    parsed = AudioProfileFile.model_validate(data)
+    assert list(parsed.stages) == list(STAGES)
+    assert parsed.description == data['description']
+    assert parsed.model_dump() == data
 
 
 def test_loader_preserves_result_normalization_and_validation_contract(store):
     # Include every saved implementation, including disabled stages, and let
     # validation fill defaults and restore deliberately reversed stage order.
-    data = dict(schema_version=1, name='Defaults', stages={
+    data = dict(schema_version=1, description="Test profile", name='Defaults', stages={
         key: dict(selected=choices[0], implementations={name: {} for name in choices if name != 'OFF'})
         for key, (_, choices) in reversed(list(STAGES.items()))})
     path = store.roots['default'] / 'all.json'
     path.write_text(json.dumps(data), encoding='utf-8')
-    expected = ProfileFileResult(name=data['name'], path='default/all.json', kind='default',
+    expected = ProfileFileResult(description="Test profile", name=data['name'], path='default/all.json', kind='default',
                                 profile=store.validate(copy.deepcopy(data)))
     once = store.validate(copy.deepcopy(data))
     # The second pass is not redundant for default-filled settings: default
@@ -287,7 +356,7 @@ def test_loader_preserves_result_normalization_and_validation_contract(store):
     assert TypeAdapter(ProfileFileResult).validate_python(actual).model_dump() == expected.model_dump()
     assert [x.model_dump() for x in store.list()] == [
         actual.model_dump(exclude={'profile'}),
-        store.get('default/basic.json').model_dump(exclude={'profile'})]
+        store.get('default/test_filters.json').model_dump(exclude={'profile'})]
     # No caller or subsequent load shares the loaded document's mutable settings.
     actual.profile.stages['input_gain'].implementations['VOLUME']['gain_db'] = 12
     assert store.get('default/all.json').profile.stages['input_gain'].implementations['VOLUME']['gain_db'] == 0
@@ -308,13 +377,13 @@ def test_loader_keeps_exact_validation_errors_and_external_models_stay_strict(st
     assert (loaded.value.status, loaded.value.error, str(loaded.value)) == (
         direct.value.status, direct.value.error, str(direct.value))
     with pytest.raises(ValidationError):
-        ProfileFileResult(name='Bad', path='default/bad.json', kind='default', profile=data)
+        ProfileFileResult(description="Test profile", name='Bad', path='default/bad.json', kind='default', profile=data)
 
 
 def test_external_mutated_or_constructed_profile_is_not_trusted_by_result_model(store):
     profile = store.validate(document())
     profile.stages['input_gain'].implementations['VOLUME']['gain_db'] = 21
-    unvalidated = AudioProfileFile.model_construct(schema_version=1, name='Invalid', stages={})
+    unvalidated = AudioProfileFile.model_construct(schema_version=1, description="Test profile", name='Invalid', stages={})
     for supplied in (profile, unvalidated):
         with pytest.raises(ValidationError):
-            ProfileFileResult(name='Invalid', path='custom/bad.json', kind='custom', profile=supplied)
+            ProfileFileResult(description="Test profile", name='Invalid', path='custom/bad.json', kind='custom', profile=supplied)

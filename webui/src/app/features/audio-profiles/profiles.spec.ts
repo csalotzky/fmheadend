@@ -21,7 +21,7 @@ const description: DspDescription = {
       'Adjusts the overall signal level. Higher gain may increase loudness and, when limiting is enabled, make the limiter work harder.',
     output_trim: 'Adjusts the final output level. Attenuation only.',
   },
-  template: { schema_version: 1, name: '', stages: {} },
+  template: { schema_version: 1, name: '', description: 'Neutral settings', stages: {} },
   stages: [
     { key: 'input_gain', label: 'Profile Input Gain', choices: ['VOLUME'] },
     { key: 'hpf', label: 'HPF', choices: ['OFF', 'CHEBYSHEV'] },
@@ -231,6 +231,7 @@ description.template.stages['clipper'].implementations['FM_HEADEND_CLIPPER'] = {
 };
 const profile: ProfileResult = {
   name: 'Studio',
+  description: 'Neutral settings',
   path: 'custom/studio_123.json',
   kind: 'custom',
   profile: { ...structuredClone(description.template), name: 'Studio' },
@@ -304,6 +305,7 @@ describe('File Audio Profiles', () => {
       const request = http.expectOne(base + '/' + profile.path);
       const saved = { ...profile, profile: request.request.body };
       expect(saved.profile.schema_version).toBe(1);
+      expect(saved.profile.description).toBe(profile.description);
       expect(saved.profile.stages.gate.implementations[implementation]).toEqual(settings);
       request.flush({ ...saved, saved: true, applied: true, restart_errors: {} });
       await saving;
@@ -315,6 +317,28 @@ describe('File Audio Profiles', () => {
       expect(reopened.nativeElement.textContent).toContain('Add crossover / band');
     });
   }
+  it('loads, edits and saves description with dirty-state tracking', async () => {
+    const f = await editor(),
+      c = f.componentInstance;
+    const input = f.nativeElement.querySelector('[formControlName=description]');
+    expect(input.value).toBe(profile.description);
+    input.value = 'Updated description';
+    input.dispatchEvent(new Event('input'));
+    expect(c.form.dirty).toBe(true);
+    const pending = c.save();
+    const request = http.expectOne(base + '/' + profile.path);
+    expect(request.request.body.description).toBe('Updated description');
+    expect(request.request.body.stages).toEqual(profile.profile.stages);
+    const saved = { ...profile, description: 'Updated description', profile: request.request.body };
+    request.flush(saved);
+    await pending;
+    expect(c.form.pristine).toBe(true);
+    f.destroy();
+    const reopened = await editor(true, saved);
+    expect(reopened.nativeElement.querySelector('[formControlName=description]').value).toBe(
+      'Updated description',
+    );
+  });
   it('shows documentation only for the selected implementation and keeps fixed modes internal', async () => {
     const f = await editor(),
       c = f.componentInstance;
@@ -355,7 +379,7 @@ describe('File Audio Profiles', () => {
     expect(c.error()).toContain('supported limits');
     expect(c.document!.stages['output_trim'].implementations['TRIM']['gain_db']).toBe(1);
   });
-  it('defaults offer only Clone; customs Edit/Clone/Delete and stable paths', async () => {
+  it('defaults offer View/Clone; customs Edit/Clone/Delete and stable paths', async () => {
     const f = await list();
     const rows = f.nativeElement.querySelectorAll('.source-row');
     expect(rows[0].textContent).toContain('default/basic.json');
@@ -368,7 +392,9 @@ describe('File Audio Profiles', () => {
     }
     expect(rows[0].querySelectorAll('button')).toHaveLength(1);
     expect(rows[0].querySelector('button').textContent).toContain('Clone');
-    expect(rows[0].querySelector('a')).toBeNull();
+    expect(rows[0].querySelector('a').textContent).toContain('View');
+    expect(rows[0].textContent).toContain(factory.description);
+    expect(rows[1].textContent).toContain(profile.description);
     expect(rows[1].querySelector('a').textContent).toContain('Edit');
     expect(rows[1].textContent).toContain('Delete');
   });
@@ -378,11 +404,21 @@ describe('File Audio Profiles', () => {
     const pending = f.componentInstance.clone(item);
     const request = http.expectOne(base + '/' + item.path + '/clone');
     expect(request.request.body).toEqual({ name: 'New name' });
-    request.flush({ ...profile, path: 'custom/server_generated_2.json' });
+    const cloned = {
+      ...item,
+      kind: 'custom' as const,
+      name: 'New name',
+      path: 'custom/server_generated_2.json',
+      profile: { ...item.profile, name: 'New name' },
+    };
+    request.flush(cloned);
     await pending;
     expect(TestBed.inject(Router).navigate).toHaveBeenCalledWith(['/audio-profiles/edit'], {
       queryParams: { path: 'custom/server_generated_2.json' },
     });
+    const opened = await editor(true, cloned);
+    expect(opened.componentInstance.form.controls.description.value).toBe(item.description);
+    expect(opened.componentInstance.document!.description).toBe(item.description);
   });
   it('blocks referenced deletion and default editing', async () => {
     const f = await list(undefined, true);
@@ -393,9 +429,15 @@ describe('File Audio Profiles', () => {
     await f.componentInstance.remove(profile);
     http.expectNone(base + '/' + profile.path);
     const e = await editor(true, factory);
-    expect(e.componentInstance.failed()).toBe(true);
+    expect(e.componentInstance.failed()).toBe(false);
     expect(e.nativeElement.textContent).toContain('read-only');
-    expect(e.nativeElement.querySelector('form')).toBeNull();
+    expect(e.nativeElement.querySelector('[formControlName=description]').value).toBe(
+      factory.description,
+    );
+    expect(e.componentInstance.form.disabled).toBe(true);
+    expect(e.nativeElement.querySelector('fieldset').disabled).toBe(true);
+    await e.componentInstance.save();
+    http.expectNone(base + '/' + factory.path);
   });
   it('reports reference race, then deletes and refreshes', async () => {
     const f = await list();

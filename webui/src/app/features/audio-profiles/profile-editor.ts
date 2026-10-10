@@ -48,8 +48,9 @@ import { errorMessage } from '../../core/api/headend-api';
     }
     @if (!loading() && !failed() && document && description) {
       <form [formGroup]="form" (ngSubmit)="save()">
-        <fieldset [disabled]="saving()">
+        <fieldset [disabled]="saving() || readOnly()">
           <label>Name<input formControlName="name" required maxlength="200" /></label>
+          <label>Description<textarea formControlName="description" rows="2"></textarea></label>
           @for (stage of description.stages; track stage.key; let index = $index) {
             <details class="stage" open>
               <summary>{{ index + 1 }}. {{ stage.label }}</summary>
@@ -143,7 +144,7 @@ import { errorMessage } from '../../core/api/headend-api';
           }
         </div>
         <div class="editor-actions">
-          <button type="submit" [disabled]="saving() || form.invalid">
+          <button type="submit" [disabled]="readOnly() || saving() || form.invalid">
             {{ saving() ? 'Saving...' : 'Save' }}
           </button>
           <button type="button" (click)="cancel()" [disabled]="saving()">Cancel</button>
@@ -158,6 +159,7 @@ export class ProfileEditor implements OnInit {
   private route = inject(ActivatedRoute);
   private router = inject(Router);
   path = this.route.snapshot.queryParamMap.get('path') ?? undefined;
+  readonly readOnly = signal(false);
   readonly loading = signal(false);
   readonly failed = signal(false);
   readonly saving = signal(false);
@@ -166,6 +168,7 @@ export class ProfileEditor implements OnInit {
   document?: ProfileDraft;
   description?: DspDescription;
   readonly form = new FormGroup({
+    description: new FormControl('', { nonNullable: true }),
     name: new FormControl('', {
       nonNullable: true,
       validators: [Validators.required, Validators.maxLength(200), Validators.pattern(/\S/)],
@@ -176,6 +179,7 @@ export class ProfileEditor implements OnInit {
     this.cdr.markForCheck();
   }
   select(stage: string, implementation: string) {
+    if (this.readOnly()) return;
     const entry = this.document!.stages[stage];
     entry.selected = implementation;
     if (implementation !== 'OFF' && !entry.implementations[implementation])
@@ -192,11 +196,14 @@ export class ProfileEditor implements OnInit {
       if (this.path === undefined) this.document = structuredClone(this.description.template);
       else {
         const result = await firstValueFrom(this.api.get(this.path));
-        if (result.kind === 'default')
-          throw new Error('Default profiles are read-only. Clone from the list.');
+        this.readOnly.set(result.kind === 'default');
+        if (this.readOnly())
+          this.message.set('Default profiles are read-only. Clone from the list.');
         this.document = structuredClone(result.profile);
       }
       this.form.controls.name.setValue(this.document.name);
+      this.form.controls.description.setValue(this.document.description);
+      if (this.readOnly()) this.form.disable();
       this.form.markAsPristine();
     } catch (e) {
       this.error.set(e instanceof Error && !('status' in e) ? e.message : errorMessage(e));
@@ -206,7 +213,8 @@ export class ProfileEditor implements OnInit {
     }
   }
   async save() {
-    if (this.saving() || this.loading() || this.failed() || this.form.invalid) return;
+    if (this.readOnly() || this.saving() || this.loading() || this.failed() || this.form.invalid)
+      return;
     if (!this.document) return;
     for (const entry of Object.values(this.document.stages)) {
       if (
@@ -222,6 +230,7 @@ export class ProfileEditor implements OnInit {
     }
     const body = structuredClone(this.document);
     body.name = this.form.controls.name.value;
+    body.description = this.form.controls.description.value;
     this.saving.set(true);
     this.error.set('');
     this.message.set('');

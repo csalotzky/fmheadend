@@ -23,12 +23,15 @@ implementations are validated and preserved. `OFF` creates no element. A stage's
 settings are not erased by switching it off. No arbitrary native property bag is
 accepted. Authoritative fields, bounds and defaults are in `daemon/models/dsp.py`.
 
+`description` is a required string in schema version 1.
+
 Example shape (abbreviated; all twelve stages are required):
 
 ```json
 {
   "schema_version": 1,
   "name": "My processing",
+  "description": "Processing profile",
   "stages": {
     "input_gain": {"selected":"VOLUME","implementations":{"VOLUME":{"gain_db":0}}},
     "hpf": {"selected":"CHEBYSHEV","implementations":{"CHEBYSHEV":{"cutoff_hz":30,"poles":4,"ripple_db":0,"type":1}}},

@@ -18,6 +18,10 @@ import { AudioProfile, ProfileApi } from './profile-api';
       gap: 0.5rem 2rem;
       align-items: baseline;
     }
+    .profile-summary small {
+      flex-basis: 100%;
+      color: var(--muted);
+    }
     .profile-summary span {
       overflow-wrap: anywhere;
       color: var(--muted);
@@ -41,11 +45,25 @@ import { AudioProfile, ProfileApi } from './profile-api';
         <div class="profile-summary">
           <strong>{{ profile.name }}</strong
           ><span>{{ profile.path }}</span>
+          <small>{{ profile.description }}</small>
         </div>
         <div class="actions">
           <span>Used by {{ usedBy(profile.path) }} sources</span>
+          @if (profile.kind === 'default') {
+            <a
+              class="action-link"
+              routerLink="/audio-profiles/edit"
+              [queryParams]="{ path: profile.path }"
+              >View</a
+            >
+          }
           @if (profile.kind === 'custom') {
-            <a class="action-link" routerLink="/audio-profiles/edit" [queryParams]="{ path: profile.path }">Edit</a>
+            <a
+              class="action-link"
+              routerLink="/audio-profiles/edit"
+              [queryParams]="{ path: profile.path }"
+              >Edit</a
+            >
             <button
               type="button"
               [disabled]="deleting() !== null || usedBy(profile.path) > 0"

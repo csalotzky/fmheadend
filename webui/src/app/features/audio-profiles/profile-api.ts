@@ -56,10 +56,12 @@ export interface DspDescription {
 export interface ProfileDraft {
   schema_version: 1;
   name: string;
+  description: string;
   stages: Record<string, DspStage>;
 }
 export interface AudioProfile {
   name: string;
+  description: string;
   path: string;
   kind: 'default' | 'custom';
 }
