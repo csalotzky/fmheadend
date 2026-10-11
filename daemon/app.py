@@ -14,6 +14,9 @@ from starlette.exceptions import HTTPException
 from . import __version__
 from .diagnostics import RecentLogs
 from .api.routes import router
+from .api.radio_browser import router as radio_browser_router
+from .radio_browser import RadioBrowserClient
+from .sources.radio_recovery import RadioRecoveryTask
 from .config import Settings, audio_telemetry_hz
 from .audio_telemetry import AudioTelemetry
 from .audio_profile_files import AudioProfileFiles
@@ -43,7 +46,7 @@ from .status.service import StatusService
 logger = logging.getLogger(__name__)
 
 
-def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipeline, clock=time.monotonic, mux_factory=None):
+def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipeline, clock=time.monotonic, mux_factory=None, radio_browser_client=None):
     settings = settings or Settings()
 
     @asynccontextmanager
@@ -89,6 +92,8 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
             control.close()
             raise
         services = app.state.services
+        services.radio_browser = radio_browser_client or RadioBrowserClient()
+        radio_recovery = RadioRecoveryTask(control, services.sources.radio_recovery, services.radio_browser)
         services.audio_telemetry = (AudioTelemetry(settings.audio_telemetry_socket,
             settings.audio_telemetry_hz, control, services.sources) if settings.audio_telemetry_socket else None)
         next_snapshot = 0.0
@@ -134,6 +139,7 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
                 await asyncio.sleep(min(0.25, interval))
 
         task = asyncio.create_task(maintenance())
+        radio_recovery.start()
         logger.info("fmheadendd started; media backend: %s; RP2354 control: %s",
                     pipeline_factory.__name__, type(services.rp).__name__)
         logger.info("PCM buffers: staging_capacity_ms=%s staging_stale_age_ms=%s consumer_buffer_ms=%s",
@@ -151,6 +157,11 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
+            await radio_recovery.close()
+            try:
+                await services.radio_browser.close()
+            except Exception:
+                logger.error('Radio Browser client shutdown failed')
             def shutdown():
                 try:
                     try:
@@ -204,6 +215,7 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
         return JSONResponse(status_code=500, content={"error": "INTERNAL_ERROR", "message": "Internal server error"})
 
     app.include_router(router)
+    app.include_router(radio_browser_router)
     if settings.webui_dir is not None:
         mount_webui(app, settings.webui_dir)
     return app

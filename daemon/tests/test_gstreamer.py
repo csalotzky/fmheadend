@@ -480,3 +480,48 @@ def test_native_fm_headend_clipper(gst, weighting):
             assert query.parse_latency()[1] == 0
     finally:
         pipeline.set_state(gst.State.NULL)
+
+
+def test_radio_browser_recovery_real_pcm_and_persistence(gst, http_files, tmp_path):
+    from fmheadendd.database import Database
+    from fmheadendd.radio_browser import station
+    from fmheadendd.sources.manager import SourceManager
+    require(gst, "souphttpsrc", "wavparse")
+    folder, url = http_files
+    with wave.open(str(folder / "recovery.wav"), "wb") as wav:
+        wav.setparams((1, 2, 44100, 0, "NONE", "not compressed"))
+        wav.writeframes(b"\x00\x10" * 44100 * 20)
+    uuid = '960e57c5-0601-11e8-ae97-52543be04c81'
+    db = Database(tmp_path / 'radio-native.db')
+    source = db.save('sources', config('HTTP', dict(uri=url + '/missing.wav', radio_browser_uuid=uuid)))
+    manager = SourceManager(db, pipeline_factory=GstPipeline)
+    try:
+        manager.acquire(source.id, 0)
+        manager.acquire(source.id, 1)
+        pipeline = manager.pipelines[source.id]
+        deadline = time.monotonic() + 20
+        ticket = None
+        while time.monotonic() < deadline and ticket is None:
+            tickets = manager.radio_recovery.collect()
+            if tickets:
+                ticket = tickets[0]
+            else:
+                time.sleep(0.05)
+        assert ticket is not None, pipeline.snapshot()
+        assert pipeline.snapshot()['reconnect_count'] >= 2
+        candidate = url + '/recovery.wav'
+        manager.radio_recovery.resolved(ticket, station(dict(stationuuid=uuid, name='Fixture', url=candidate)))
+        assert db.get('sources', source.id).config['uri'] != candidate
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            manager.radio_recovery.collect()
+            if db.get('sources', source.id).config['uri'] == candidate:
+                break
+            time.sleep(0.05)
+        assert db.get('sources', source.id).config['uri'] == candidate, pipeline.snapshot()
+        assert manager.pipelines[source.id] is pipeline
+        assert manager.consumers[source.id] == {0, 1}
+        assert_pcm(pipeline, gst)
+    finally:
+        manager.close()
+        db.close()

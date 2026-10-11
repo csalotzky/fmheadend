@@ -289,6 +289,7 @@ Javasolt mezők:
 ```json
 {
   "uri": "https://example.org/stream",
+  "radio_browser_uuid": null,
   "buffer_ms": 3000,
   "connect_timeout_ms": 10000
 }
@@ -297,6 +298,11 @@ Javasolt mezők:
 - A `uri` kötelező.
 - HLS `.m3u8` is ugyanebbe a típusba tartozik.
 - ICY metadata kinyerése támogatandó, ha a stream szolgáltatja.
+
+HTTP `radio_browser_uuid` is optional (UUID or null). A linked Source still stores and
+plays its ordinary `uri`; manual URI changes remain permitted. Directory lookup and
+PCM-confirmed URL recovery use the existing HTTP retry worker and shared Source.
+See [Radio Browser backend API and recovery](radio-browser.md).
 
 HTTP User-Agent has one configurable path: `gst_options.source["user-agent"]`.
 If absent, the existing application default is `fmheadend/0.1.0`. Example source-level

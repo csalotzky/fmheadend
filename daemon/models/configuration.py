@@ -3,6 +3,7 @@ from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, create_model, field_validator, model_validator
 
@@ -36,6 +37,7 @@ class SourceType(StrEnum):
 
 class HttpConfig(Model):
     uri: str
+    radio_browser_uuid: UUID | None = None
     buffer_ms: int = Field(default=3000, ge=0)
     connect_timeout_ms: int = Field(default=10000, gt=0)
 
