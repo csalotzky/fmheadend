@@ -38,7 +38,11 @@ describe('Sources management', () => {
     vi.spyOn(shared, 'refreshAfterMutation').mockResolvedValue();
     vi.spyOn(shared, 'refresh').mockResolvedValue();
   });
-  afterEach(() => http.verify());
+  afterEach(() => {
+    for (const request of http.match('/api/v1/alsa/capture-devices'))
+      request.flush({ devices: [] });
+    http.verify();
+  });
   it('does not present an expired published Source observation as current', () => {
     const f = TestBed.createComponent(SourcesList);
     f.detectChanges();
@@ -239,7 +243,7 @@ describe('Sources management', () => {
     const el = f.nativeElement as HTMLElement;
     const labels = [...el.querySelectorAll('label')].map((label) => label.textContent);
     expect(labels.some((label) => label?.includes('Stream URL'))).toBe(type === 'HTTP');
-    expect(labels.some((label) => label?.includes('ALSA device'))).toBe(type === 'ALSA');
+    expect(labels.some((label) => label?.includes('ALSA capture device'))).toBe(type === 'ALSA');
     expect(labels.some((label) => label?.includes('Port'))).toBe(['UDP', 'RTP'].includes(type));
   });
   it.each([
@@ -253,7 +257,7 @@ describe('Sources management', () => {
       { port: '5004', codec: 'OPUS', payload_type: '96' },
       { port: 5004, codec: 'OPUS', payload_type: 96 },
     ],
-    ['ALSA', { device: 'plughw:2,0' }, { device: 'plughw:2,0' }],
+    ['ALSA', { device: 'plughw:2,0' }, { device: 'plughw:2,0', channel_selection: 'stereo' }],
   ])('serializes %s without invented defaults', (type, values, expected) => {
     const c = editor().componentInstance;
     c.form.controls.name.setValue('Input');
@@ -360,7 +364,7 @@ describe('Sources management', () => {
     c.form.controls.type.setValue('ALSA');
     c.changeType();
     c.config.controls['device'].setValue('hw:1,0');
-    expect(c.draft()?.config).toEqual({ device: 'hw:1,0' });
+    expect(c.draft()?.config).toEqual({ device: 'hw:1,0', channel_selection: 'stereo' });
     expect(c.draft()?.gst_options).toEqual({});
   });
   it('saves an active source in one request and retains the saved form on apply failure', async () => {

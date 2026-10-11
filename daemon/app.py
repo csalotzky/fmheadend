@@ -23,6 +23,7 @@ from .regions import PLANS
 from .webui import mount_webui
 from .errors import DomainError
 from .filesystem import FilesystemBrowser
+from .alsa import AlsaDiscovery
 from .modulators.manager import ModulatorManager
 from .mux.client import MockMuxClient
 from .mux.unix_client import UnixMuxClient
@@ -78,7 +79,7 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
                                media_backend="MOCK" if getattr(pipeline_factory, "mocked", True) else "GStreamer")
             status.publish()
             return SimpleNamespace(
-                profile_files=profile_files, filesystem=filesystem,
+                profile_files=profile_files, filesystem=filesystem, alsa=AlsaDiscovery(),
                 database=database, rp=rp_client, mux=mux_client, config=config, sources=sources, modulators=modulators, rt=rt, rds=rds, status=status, recovery=recovery,
                 info=status.info,
             )

@@ -4,6 +4,16 @@ import { timeout } from 'rxjs';
 import { InputSource, RdsProfile } from '../../core/api/models';
 export type SourceType = InputSource['type'];
 export type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
+export interface AlsaCaptureDevice {
+  pcm: string;
+  label: string;
+  card_id: string;
+  device: number;
+}
+export interface AlsaSourceConfig {
+  device: string;
+  channel_selection: 'stereo' | 'mono' | 'left' | 'right';
+}
 export interface LocalSourceConfig {
   mode: 'folder' | 'playlist';
   path: string;
@@ -88,6 +98,11 @@ export class SourceApi {
   }
   profiles() {
     return this.http.get<Profile[]>('/api/v1/audio-profiles/files').pipe(timeout(15000));
+  }
+  alsaCaptureDevices() {
+    return this.http
+      .get<{ devices: AlsaCaptureDevice[] }>('/api/v1/alsa/capture-devices')
+      .pipe(timeout(15000));
   }
   filesystemLocations() {
     return this.http

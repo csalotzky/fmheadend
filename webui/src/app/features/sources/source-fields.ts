@@ -1,4 +1,4 @@
-import { LocalSourceConfig, SourceType } from './source-api';
+import { AlsaSourceConfig, LocalSourceConfig, SourceType } from './source-api';
 export interface Field {
   key: string;
   label: string;
@@ -83,21 +83,20 @@ export const fields: Record<SourceType, Field[]> = {
     { key: 'codec_data', label: 'Codec initialization data (hex, optional)' },
   ],
   ALSA: [
-    { key: 'device', label: 'ALSA device (e.g. plughw:2,0)', required: true },
+    { key: 'device', label: 'ALSA capture device', required: true },
     {
-      key: 'sample_rate',
-      label: 'Input sample rate (Hz)',
-      help: defaultHelp,
-      numeric: true,
-      min: 1,
-    },
-    {
-      key: 'channels',
-      label: 'Input channels',
-      help: defaultHelp,
-      numeric: true,
-      min: 1,
-      max: 8,
+      key: 'channel_selection',
+      label: 'Channel selection',
+      required: true,
+      defaultValue: 'stereo',
+      options: [
+        'stereo',
+        'mono',
+        'left',
+        'right',
+      ] satisfies AlsaSourceConfig['channel_selection'][],
+      optionLabels: { stereo: 'Stereo', mono: 'Mono', left: 'Left only', right: 'Right only' },
+      help: 'Audio is automatically normalized to 48 kHz.',
     },
   ],
 };

@@ -15,6 +15,7 @@ import { FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angula
 import { ActivatedRoute, CanDeactivateFn, RouterLink } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import {
+  AlsaCaptureDevice,
   SourceApi,
   SourceDraft,
   SourceType,
@@ -114,6 +115,35 @@ export class SourceEditor implements OnInit {
   readonly error = signal('');
   readonly message = signal('');
   readonly result = signal<SourceTest | null>(null);
+  readonly alsaDevices = signal<AlsaCaptureDevice[]>([]);
+  readonly alsaLoading = signal(false);
+  readonly alsaError = signal('');
+  readonly alsaCustom = signal(false);
+  private customAlsaValue = '';
+  alsaMissing() {
+    const value = this.config.controls['device']?.value;
+    return !!value && !this.alsaDevices().some((device) => device.pcm === value);
+  }
+  selectAlsa(value: string) {
+    const control = this.config.controls['device'];
+    if (this.alsaCustom()) this.customAlsaValue = String(control.value);
+    this.alsaCustom.set(value === '__custom');
+    control.setValue(value === '__custom' ? this.customAlsaValue : value);
+    control.markAsDirty();
+    this.result.set(null);
+  }
+  async refreshAlsa() {
+    if (this.alsaLoading()) return;
+    this.alsaLoading.set(true);
+    this.alsaError.set('');
+    try {
+      this.alsaDevices.set((await firstValueFrom(this.api.alsaCaptureDevices())).devices);
+    } catch (e) {
+      this.alsaError.set(errorMessage(e));
+    } finally {
+      this.alsaLoading.set(false);
+    }
+  }
   readonly browserOpen = signal(false);
   readonly browserLoading = signal(false);
   readonly browserError = signal('');
@@ -216,6 +246,12 @@ export class SourceEditor implements OnInit {
         },
       );
     this.config = new FormGroup(controls);
+    if (type === 'ALSA') {
+      const device = String(values['device'] ?? '');
+      this.customAlsaValue = device;
+      this.alsaCustom.set(!!device && !device.startsWith('plughw:CARD='));
+      void this.refreshAlsa();
+    }
     this.podcast = buildPodcastForm(type === 'PODCAST' ? values : {});
     this.testedFeeds.set([]);
   }
@@ -421,6 +457,15 @@ export class SourceEditor implements OnInit {
         }
         config[f.key] = n;
       } else config[f.key] = raw;
+    }
+    if (
+      v.type === 'ALSA' &&
+      (/[\x00-\x1f\x7f]/.test(String(config['device'])) ||
+        String(config['device']).length > 200 ||
+        !['stereo', 'mono', 'left', 'right'].includes(String(config['channel_selection'])))
+    ) {
+      this.error.set('Enter a valid ALSA PCM name and select a channel mode.');
+      return null;
     }
     if (v.type === 'LOCAL') {
       const { mode, path, order } = config;
