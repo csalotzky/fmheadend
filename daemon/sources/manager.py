@@ -5,6 +5,7 @@ from ..errors import DependencyUnavailable, DomainError
 from ..models.configuration import InputSourceConfig, SourceTestResult
 from ..models.runtime_status import InputSourceStatus, SourceState
 from .pipeline import MockPipeline, probe
+from .radio_recovery import SourceRadioRecovery
 from .output import DEFAULT_STAGING_BUFFER_MS, DEFAULT_CONSUMER_BUFFER_MS, DEFAULT_STAGING_MAX_AGE_MS, pcm_capacity_bytes
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,7 @@ class SourceManager:
         self.statuses: dict[int, InputSourceStatus] = {}
         self.restart_errors: dict[int, str] = {}
         self.clock = clock
+        self.radio_recovery = SourceRadioRecovery(self)
         self._profile_observations = {}
         self._telemetry_request = (False, 50.0)
         self._telemetry_lock = Lock()
@@ -183,6 +185,7 @@ class SourceManager:
     def apply_saved_source(self, previous, saved):
         """Called after persistence on the control executor; retain fanout/consumers."""
         from ..models.configuration import SourceSaveResult
+        self.radio_recovery.invalidate(saved.id)
         runtime_fields = ('type', 'config', 'processor_mode', 'input_gain_db',
                           'audio_profile_path', 'gst_options')
         changed = any(getattr(previous, key) != getattr(saved, key) for key in runtime_fields)
@@ -196,6 +199,7 @@ class SourceManager:
     def _restart_audio(self, source):
         """One ownership-preserving audio replacement, shared by Source/profile Save."""
         source_id = source.id
+        self.radio_recovery.invalidate(source_id)
         self._profile_observations.pop(source_id, None)
         old = self.pipelines[source_id]
         try:
@@ -279,6 +283,7 @@ class SourceManager:
             return
         pipeline = self.pipelines[source_id]
         if len(consumers) == 1:
+            self.radio_recovery.invalidate(source_id)
             # Retain ownership if native teardown fails; never replace a worker
             # that might still be alive with a second pipeline for this source.
             pipeline.stop()
@@ -327,6 +332,7 @@ class SourceManager:
         return getattr(pipeline, "output", None)
 
     def close(self):
+        self.radio_recovery.close()
         for pipeline in list(self.pipelines.values()):
             try:
                 pipeline.stop()

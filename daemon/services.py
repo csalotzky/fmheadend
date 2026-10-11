@@ -19,7 +19,14 @@ class ConfigurationService:
     def update(self, table, record_id, patch):
         current = self.get(table, record_id)
         model = {"sources": InputSourceConfig}[table]
-        config = model.model_validate(current.model_dump(exclude={"id", "timestamp", "rds_profile_id"}) | patch.model_dump(exclude_unset=True))
+        changes = patch.model_dump(exclude_unset=True)
+        # A link/unlink can be changed independently of the saved stream URI.
+        # Other config replacements retain the existing Source API semantics.
+        if (current.type == 'HTTP' and changes.get('type', current.type) == 'HTTP'
+                and isinstance(changes.get('config'), dict)
+                and set(changes['config']) == {'radio_browser_uuid'}):
+            changes['config'] = current.config | changes['config']
+        config = model.model_validate(current.model_dump(exclude={"id", "timestamp", "rds_profile_id"}) | changes)
         if table == "sources":
             self.sources.validate_config(config)
         saved = self.database.save(table, config, record_id)
@@ -31,6 +38,7 @@ class ConfigurationService:
     def delete(self, table, record_id):
         self.database.delete(table, record_id)
         if table == "sources":
+            self.sources.radio_recovery.invalidate(record_id)
             self.sources.statuses.pop(record_id, None)
 
     def get_system(self):

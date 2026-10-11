@@ -13,6 +13,7 @@ from ..errors import DependencyUnavailable
 from ..models.configuration import SourceType, SourceTestResult, LocalConfig
 from .local_playback import LocalPlayback, LocalPlaybackError
 from .alsa_capture import link_alsa_capture
+from .http_recovery import HttpUrlRecovery
 from .output import (PCM_CAPS, PcmQueue, PcmOutput, pcm_capacity_bytes,
                      DEFAULT_STAGING_BUFFER_MS, DEFAULT_CONSUMER_BUFFER_MS, DEFAULT_STAGING_MAX_AGE_MS)
 from .dsp import PROCESSING_CAPS
@@ -134,6 +135,8 @@ class GstPipeline:
         self._metadata_dirty = False
         self._uri_change_lock = threading.Lock()
         self.source = source
+        self.radio_url = HttpUrlRecovery(source.config['uri']) if source.type == SourceType.HTTP and source.config.get('radio_browser_uuid') and reconnect else None
+        self._http_uri = source.config.get('uri')
         self.profile = profile
         self.output = output or PcmOutput(pcm_consumer_buffer_ms)
         self.timeout_s = timeout_s or min(30, max(1, source.config.get("connect_timeout_ms", 10000) / 1000))
@@ -460,7 +463,7 @@ class GstPipeline:
             self._pipeline.set_property('audio-sink', self._element_parent)
             sink.get_static_pad('sink').add_probe(Gst.PadProbeType.EVENT_DOWNSTREAM, self._local_event)
         elif self.source.type == SourceType.HTTP:
-            decode = self._make("uridecodebin", uri=config["uri"], caps=Gst.Caps.from_string("audio/x-raw"),
+            decode = self._make("uridecodebin", uri=self._http_uri, caps=Gst.Caps.from_string("audio/x-raw"),
                                 buffer_duration=config.get("buffer_ms", 3000) * 1000000)
             decode.connect("source-setup", self._source_setup)
             decode.connect("pad-added", self._decoded_pad)
@@ -678,6 +681,8 @@ class GstPipeline:
         return DependencyUnavailable(error.message)
 
     def _attempt(self):
+        if self.radio_url is not None:
+            self._http_uri = self.radio_url.begin_attempt()
         Gst = self.Gst
         self._callback_error, self._caps, self._input_caps = None, None, None
         self._validated_output_caps = self._validated_output_text = None
@@ -712,6 +717,8 @@ class GstPipeline:
         observed_input_caps = None
         input_fields = {}
         while not self._stop.is_set():
+            if self.radio_url is not None and self.radio_url.cancelled():
+                raise DependencyUnavailable('Radio Browser candidate cancelled by a configuration change')
             # Clear before inspecting work, so a concurrent callback cannot be
             # lost between draining staging and waiting. GstBus never delays PCM.
             self._audio_ready.clear()
@@ -769,6 +776,8 @@ class GstPipeline:
                 if data is None:
                     break
                 self.output.publish(data)
+                if self.radio_url is not None:
+                    self.radio_url.pcm()
                 if running_since is None:
                     running_since = time.monotonic()
                 if self.source.type == SourceType.ALSA:
@@ -816,11 +825,18 @@ class GstPipeline:
                 try:
                     self._attempt()
                 except Exception as exc:
-                    if isinstance(exc, (PipelineConfigurationError, LocalPlaybackError)) or not isinstance(exc, DependencyUnavailable):
+                    trial = self.radio_url.observe()[1] if self.radio_url is not None else None
+                    candidate = trial is not None and trial['state'] in ('trying', 'pcm')
+                    if (isinstance(exc, (PipelineConfigurationError, LocalPlaybackError)) and not candidate) or not isinstance(exc, DependencyUnavailable):
                         self.fatal_error = str(exc)
                     self._update(state="ERROR", last_error=str(exc))
-                    log.warning("source %s: %s", getattr(self.source, "id", "probe"), exc)
+                    if self.source.type == SourceType.HTTP and self.source.config.get('radio_browser_uuid'):
+                        log.warning("source %s: HTTP playback failed (%s)", getattr(self.source, "id", "probe"), type(exc).__name__)
+                    else:
+                        log.warning("source %s: %s", getattr(self.source, "id", "probe"), exc)
                 finally:
+                    if self.radio_url is not None:
+                        self.radio_url.failed()
                     self._invalidate_telemetry(discard=True)
                     if self._pipeline is not None:
                         with self._uri_change_lock:
@@ -835,6 +851,8 @@ class GstPipeline:
                 if self._stop.is_set() or not self.reconnect or self.fatal_error:
                     break
                 delay = self._backoff.next_delay()
+                if self.radio_url is not None:
+                    self.radio_url.retry(self._backoff.attempt)
                 self._update(state="CONNECTING", stream_title=None, artist=None, title=None)
                 if self._stop.wait(delay):
                     break

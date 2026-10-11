@@ -184,6 +184,25 @@ class Database:
             raise DomainError(409, 'REFERENCE_CONFLICT', 'Referenced resource does not exist') from exc
         return self.get(table, record_id)
 
+    def source_revision(self, source_id):
+        row = self.connection.execute('SELECT data, rds_profile_id FROM sources WHERE id=?', (source_id,)).fetchone()
+        return tuple(row) if row else None
+
+    def replace_radio_browser_url(self, source_id, revision, uuid, old_uri, new_uri):
+        """Control-owned atomic compare-and-update; never rewrite a Source snapshot."""
+        from .models.configuration import HttpConfig
+        HttpConfig(uri=new_uri, radio_browser_uuid=uuid)
+        timestamp = utcnow()
+        with self.connection:
+            cursor = self.connection.execute("""
+                UPDATE sources SET data=json_set(data, '$.config.uri', ?, '$.timestamp', ?)
+                WHERE id=? AND data=? AND rds_profile_id IS ?
+                  AND json_extract(data, '$.type')='HTTP'
+                  AND json_extract(data, '$.config.uri')=?
+                  AND json_extract(data, '$.config.radio_browser_uuid')=?
+            """, (new_uri, timestamp.isoformat(), source_id, *revision, old_uri, uuid))
+        return timestamp if cursor.rowcount == 1 else None
+
     def delete(self, table, record_id):
         if table != 'sources':
             raise ValueError('Resource cannot be deleted')
