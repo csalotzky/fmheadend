@@ -24,7 +24,56 @@
         </div>
         <div class="fields" [formGroup]="config">
           @for (field of visibleFields(); track field.key) {
-            @if (form.controls.type.value === 'LOCAL' && field.key === 'path') {
+            @if (form.controls.type.value === 'ALSA' && field.key === 'device') {
+              <div class="alsa-device">
+                <label for="alsa-device-select">ALSA capture device *</label>
+                <select id="alsa-device-select" (change)="selectAlsa($any($event.target).value)">
+                  <option value="" [selected]="!alsaCustom() && !config.controls['device'].value">
+                    Select...
+                  </option>
+                  @for (device of alsaDevices(); track device.pcm) {
+                    <option
+                      [value]="device.pcm"
+                      [selected]="!alsaCustom() && config.controls['device'].value === device.pcm"
+                    >
+                      {{ device.label }}
+                    </option>
+                  }
+                  @if (!alsaCustom() && alsaMissing()) {
+                    <option [value]="config.controls['device'].value" [selected]="true">
+                      {{ config.controls['device'].value }} (unavailable / not listed)
+                    </option>
+                  }
+                  <option value="__custom" [selected]="alsaCustom()">
+                    Custom ALSA device&hellip;
+                  </option>
+                </select>
+                <button type="button" (click)="refreshAlsa()" [disabled]="alsaLoading()">
+                  <span aria-hidden="true">&#x21bb;</span>
+                  {{ alsaLoading() ? 'Refreshing devices...' : 'Refresh devices' }}
+                </button>
+                @if (alsaCustom()) {
+                  <label
+                    >Custom ALSA device<input
+                      formControlName="device"
+                      required
+                      maxlength="200"
+                      (input)="changeConfig('device')"
+                  /></label>
+                }
+                @if (config.controls['device'].value) {
+                  <small>Selected: {{ config.controls['device'].value }}</small>
+                }
+                @if (alsaError()) {
+                  <small class="error" role="alert">{{ alsaError() }}</small>
+                } @else if (!alsaLoading() && !alsaDevices().length) {
+                  <small role="status"
+                    >No capture devices found. Connect a USB capture device and refresh, or enter a
+                    custom ALSA device.</small
+                  >
+                }
+              </div>
+            } @else if (form.controls.type.value === 'LOCAL' && field.key === 'path') {
               <section class="local-path-panel" aria-labelledby="source-path-label">
                 <div id="source-path-label" class="local-path-label">
                   {{ field.label }} <span aria-hidden="true">*</span>

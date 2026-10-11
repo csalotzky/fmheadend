@@ -401,6 +401,7 @@ describe('Podcast source configuration', () => {
     f.detectChanges();
     expect(f.componentInstance.form.controls.type.value).toBe('ALSA');
     expect(select.selectedOptions[0].textContent?.trim()).toBe('Sound card (ALSA)');
+    http.expectOne('/api/v1/alsa/capture-devices').flush({ devices: [] });
   });
 
   it('places the single Test feeds button beside Add feed with results below it', async () => {

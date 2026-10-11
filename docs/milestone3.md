@@ -172,7 +172,7 @@ Start both daemons as above. Create an ALSA source using the connected Behringer
 ```sh
 curl -sS -X POST http://127.0.0.1:8080/api/v1/sources \
   -H 'Content-Type: application/json' \
-  -d '{"name":"Behringer USB","type":"ALSA","config":{"device":"plughw:2,0","sample_rate":48000,"channels":2}}'
+  -d '{"name":"Behringer USB","type":"ALSA","config":{"device":"plughw:2,0","channel_selection":"stereo"}}'
 ```
 
 Alternatively create an HTTP/HLS source, replacing the URI with a working stream:

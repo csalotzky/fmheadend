@@ -58,7 +58,7 @@ sufficient. No Python requirement has been lowered or silently bypassed.
   load. Missing required RTP transport details produce a useful probe/start
   error rather than guessed format information. Other RTP packetizations are
   outside this implementation.
-- ALSA: `alsasrc` captures the selected device at configured input rate/channels.
+- ALSA: `alsasrc` requests 48 kHz mono/stereo capture; ALSA plug conversion and GStreamer normalization feed the shared stereo processing chain.
   Capture-device negotiation failure is reported, not converted to mock success.
 - Modulator audio_mode=ANALOG bypasses source acquisition entirely, even if GI is missing. No InputSource, PCM queue or producer exists for the dedicated analog jack.
 - Every digital path uses `audioconvert`, `audioresample` and native `volume` and
@@ -144,7 +144,7 @@ the VM):
 ```sh
 curl -sS http://127.0.0.1:8080/api/v1/sources/test \
   -H 'Content-Type: application/json' \
-  -d '{"name":"ALSA test","type":"ALSA","config":{"device":"plughw:1,0","sample_rate":48000,"channels":2}}'
+  -d '{"name":"ALSA test","type":"ALSA","config":{"device":"plughw:1,0","channel_selection":"stereo"}}'
 ```
 
 Expect `ok: true`, `mocked: false` and output_caps containing S16LE/48000/2 on

@@ -236,9 +236,15 @@ UDP / RTP:
 - audio profile
 
 ALSA:
-- device
-- input format where required
+- capture-device dropdown with readable names and a subdued selected PCM identifier
+- Refresh devices (busy/error/empty states); refresh preserves the draft and missing devices
+- Custom ALSA device entry, including saved virtual PCM names
+- channel selection: Stereo, Mono, Left only, Right only; default Stereo
+- automatic 48 kHz normalization; no editable sample rate or channel count
 - audio profile
+
+Discovery uses `GET /api/v1/alsa/capture-devices`. Selecting a device/channel changes
+only the draft. Normal Save, Cancel and Test Stream behavior is retained.
 
 Analog input is configured on the physical Modulator, not in Sources.
 

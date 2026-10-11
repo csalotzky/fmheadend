@@ -69,9 +69,15 @@ class RtpConfig(Model):
 
 
 class AlsaConfig(Model):
-    device: Name
-    sample_rate: Rate = 48000
-    channels: int = Field(default=2, ge=1, le=8, strict=True)
+    device: Annotated[str, Field(strict=True, min_length=1, max_length=200, pattern=r"\S")]
+    channel_selection: Literal["stereo", "mono", "left", "right"] = "stereo"
+
+    @field_validator("device")
+    @classmethod
+    def valid_device(cls, value):
+        if any(ord(character) < 32 or ord(character) == 127 for character in value):
+            raise ValueError("ALSA device name must not contain control characters")
+        return value
 
 
 class LocalConfig(Model):

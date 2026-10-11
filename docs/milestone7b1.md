@@ -46,12 +46,12 @@ optional existing Audio Profile and advanced source/queue/resample GStreamer opt
 | HTTP / HLS | uri, buffer_ms, connect_timeout_ms |
 | UDP | host, port, multicast_group, format, sample_rate, channels |
 | RTP | host, port, multicast_group, codec, payload_type, clock_rate, channels, codec_data |
-| ALSA | device, sample_rate, channels |
+| ALSA | device, channel_selection |
 
 Type switching clears incompatible config and advanced options. Optional blanks defer
 to existing defaults; helper text reads "Optional. Leave blank to use the default."
 Required fields, URL, numeric range and codec hex syntax receive frontend checks;
-backend validation remains authoritative. ALSA uses a device string, not enumeration.
+backend validation remains authoritative. ALSA offers on-demand capture-device discovery plus custom PCM entry; only the PCM name and channel selection are saved.
 
 The Sources list/header share a left-aligned 1200px maximum width. HTTP URL fills its
 own row beside a compact Test stream button, wrapping at narrow widths. Other HTTP

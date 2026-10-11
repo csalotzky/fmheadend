@@ -350,13 +350,32 @@ A V1 codec lista lehet korlátozott: `PCM`, `MP3`, `AAC`, `OPUS`.
 
 ```json
 {
-  "device": "hw:1,0",
-  "sample_rate": 48000,
-  "channels": 2
+  "device": "plughw:CARD=CODEC,DEV=0",
+  "channel_selection": "stereo"
 }
 ```
 
-A capture formátumot a GStreamer normalizálja a fix belső PCM contractra.
+ALSA requests 48,000 Hz with mono or stereo capture; `plughw:` allows ALSA
+format/rate conversion. Raw `hw:` PCMs may fail if that format is unsupported.
+GStreamer first normalizes mono to positioned stereo at unity gain, then applies
+`channel_selection`: `stereo` (default), `mono` (0.5 L + 0.5 R to both), `left`
+(L to both), or `right` (R to both). Mono input produces the same duplicated
+signal in all four modes. The shared processing chain and 48 kHz S16LE stereo
+output contract remain unchanged. Multichannel routing is not provided.
+
+`GET /api/v1/alsa/capture-devices` returns `{ "devices": [{ "pcm": string,
+"label": string, "card_id": string, "device": integer }] }`. It reads Linux
+`/proc/asound` capture PCM/card metadata on demand without opening PCM devices.
+No capture devices (including absent proc ALSA facilities) returns an empty list;
+read/metadata errors use `503 ALSA_DISCOVERY_ERROR`. Disappearing USB entries are
+omitted. Labels distinguish card identifiers and device numbers. The inventory
+makes no availability, channel-count, or rate guarantee; stable card IDs are
+preferred but identical USB devices may receive driver-assigned suffixes.
+Virtual/custom PCMs are entered manually and need not appear in discovery.
+
+The Source editor offers device refresh, a retained unavailable selection, custom
+PCM entry and channel selection. Refresh never changes the draft or saves/restarts
+anything. Save and Test Stream use the current draft through the existing API.
 
 Source edits are serialized audio-only operations. PATCH validates and persists,
 then rebuilds that Source's existing audio pipeline only if runtime fields changed

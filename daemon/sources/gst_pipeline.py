@@ -12,6 +12,7 @@ import time
 from ..errors import DependencyUnavailable
 from ..models.configuration import SourceType, SourceTestResult, LocalConfig
 from .local_playback import LocalPlayback, LocalPlaybackError
+from .alsa_capture import link_alsa_capture
 from .output import (PCM_CAPS, PcmQueue, PcmOutput, pcm_capacity_bytes,
                      DEFAULT_STAGING_BUFFER_MS, DEFAULT_CONSUMER_BUFFER_MS, DEFAULT_STAGING_MAX_AGE_MS)
 from .dsp import PROCESSING_CAPS
@@ -465,10 +466,9 @@ class GstPipeline:
             decode.connect("pad-added", self._decoded_pad)
         elif self.source.type == SourceType.ALSA:
             src = self._make("alsasrc", device=config["device"])
+            self._alsa_source = src
             self._overrides(src, "source")
-            capture = self._make("capsfilter", caps=Gst.Caps.from_string(
-                f"audio/x-raw,rate={config['sample_rate']},channels={config['channels']}"))
-            self._link(src, capture, self._convert)
+            link_alsa_capture(Gst, self._make, self._link, src, self._convert, config['channel_selection'])
         else:
             src = self._make("udpsrc", address=config.get("multicast_group") or config["host"], port=config["port"])
             self._overrides(src, "source")
@@ -670,6 +670,11 @@ class GstPipeline:
         if error.matches(Gst.CoreError.quark(), Gst.CoreError.MISSING_PLUGIN) or error.matches(
                 Gst.StreamError.quark(), Gst.StreamError.CODEC_NOT_FOUND):
             return PipelineConfigurationError(error.message)
+        if self.source.type == SourceType.ALSA:
+            detail = f"ALSA capture {self.source.config['device']}: {error.message}"
+            if self.source.config['device'].startswith('hw:'):
+                detail += ' Raw hw: capture requires a supported 48 kHz mono/stereo format; use plughw: for ALSA conversion.'
+            return DependencyUnavailable(detail)
         return DependencyUnavailable(error.message)
 
     def _attempt(self):
@@ -766,7 +771,10 @@ class GstPipeline:
                 self.output.publish(data)
                 if running_since is None:
                     running_since = time.monotonic()
-                caps = self._input_caps or self._convert.get_static_pad("sink").get_current_caps()
+                if self.source.type == SourceType.ALSA:
+                    caps = self._alsa_source.get_static_pad("src").get_current_caps()
+                else:
+                    caps = self._input_caps or self._convert.get_static_pad("sink").get_current_caps()
                 if caps is not observed_input_caps and (caps is None or observed_input_caps is None
                                                         or not caps.is_equal(observed_input_caps)):
                     input_fields = {}

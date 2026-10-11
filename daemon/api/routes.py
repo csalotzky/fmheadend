@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Request, Response
 from ..control import control_route
+from ..alsa import AlsaCaptureDevices
 from ..models.configuration import (
     ErrorResponse,
     InputSource, InputSourceConfig, InputSourcePatch, SourceSaveResult, Modulator, ModulatorPatch,
@@ -18,6 +19,13 @@ def published_view(request, response, name):
     response.headers['Cache-Control'] = 'no-store'
     response.headers['X-Observation-Age-Seconds'] = f'{status.publication_age(name):.3f}'
     return status.published_view(name)
+
+
+@router.get("/alsa/capture-devices", response_model=AlsaCaptureDevices, tags=["alsa"])
+@control_route
+def alsa_capture_devices(request: Request, response: Response):
+    response.headers['Cache-Control'] = 'no-store'
+    return request.app.state.services.alsa.capture_devices()
 
 
 @router.get("/filesystem/locations", tags=["filesystem"])

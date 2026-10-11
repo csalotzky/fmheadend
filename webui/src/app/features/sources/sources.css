@@ -392,3 +392,15 @@ summary {
   flex: 1 1 240px;
   line-height: 1.5;
 }
+
+.alsa-device {
+  min-width: 0;
+}
+.alsa-device button {
+  margin: 8px 0;
+}
+.alsa-device small {
+  display: block;
+  overflow-wrap: anywhere;
+  margin-top: 6px;
+}
