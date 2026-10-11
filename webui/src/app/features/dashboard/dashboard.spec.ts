@@ -227,7 +227,7 @@ describe('Operational display', () => {
   });
   it('loads real version branding and clears transient messages on navigation', () => {
     const state = setup();
-    vi.spyOn(state, 'start').mockImplementation(() => { });
+    vi.spyOn(state, 'start').mockImplementation(() => {});
     state.notice.set('Operation accepted');
     const f = TestBed.createComponent(Shell);
     f.detectChanges();
@@ -237,6 +237,25 @@ describe('Operational display', () => {
     f.detectChanges();
     expect(f.nativeElement.textContent).toContain('Version 1.2.3');
     expect(f.nativeElement.textContent).toContain('MULTI-CHANNEL FM MODULATOR');
+    const brand = f.nativeElement.querySelector('.brand');
+    const logo = brand.querySelector('img');
+    expect(logo.getAttribute('src')).toBe('assets/fmheadend_logo_tower.svg');
+    expect(logo.getAttribute('alt')).toBe('');
+    expect(brand.querySelector('.brand-wordmark').textContent).toBe('FMHEADEND');
+    expect(brand.querySelector('.brand-subtitle').textContent).toBe('MULTI-CHANNEL FM MODULATOR');
+    expect(getComputedStyle(brand).alignItems).toBe('center');
+    expect(getComputedStyle(brand).textAlign).toBe('center');
+    expect(getComputedStyle(logo).height).toBe('auto');
+    const wordmarkStyle = getComputedStyle(brand.querySelector('.brand-wordmark'));
+    expect(wordmarkStyle.fontFamily).toContain('Barlow');
+    expect(wordmarkStyle.fontWeight).toBe('200');
+    expect(wordmarkStyle.fontSize).toBe('25px');
+    expect(wordmarkStyle.letterSpacing).toBe('1.5px');
+    expect(f.nativeElement.querySelector('.dependencies').textContent).toContain('Controller');
+    expect(f.nativeElement.querySelector('.connection-line').textContent).toContain(
+      'Controller MOCK',
+    );
+
     const events = TestBed.inject(Router).events as import('rxjs').Subject<
       import('@angular/router').Event
     >;
@@ -245,7 +264,7 @@ describe('Operational display', () => {
   });
   it('shows DEGRADED and global operations in the persistent shell', () => {
     const state = setup();
-    vi.spyOn(state, 'start').mockImplementation(() => { });
+    vi.spyOn(state, 'start').mockImplementation(() => {});
     const action = vi.spyOn(state, 'all').mockResolvedValue();
     const data = sample();
     data.status.system.system_state = 'DEGRADED';
@@ -292,7 +311,7 @@ describe('Operational display', () => {
   });
   it('retains shell/navigation without displaying fake healthy status when offline', () => {
     const state = setup();
-    vi.spyOn(state, 'start').mockImplementation(() => { });
+    vi.spyOn(state, 'start').mockImplementation(() => {});
     state.stale.set(true);
     const fixture = TestBed.createComponent(Shell);
     fixture.detectChanges();
@@ -303,7 +322,7 @@ describe('Operational display', () => {
   });
   it('omits global banners on every route and retains action notifications', () => {
     const state = setup();
-    vi.spyOn(state, 'start').mockImplementation(() => { });
+    vi.spyOn(state, 'start').mockImplementation(() => {});
     const data = sample();
     data.status.system.last_error = 'GET_INFO response CRC mismatch';
     data.status.system.system_state = 'DEGRADED';

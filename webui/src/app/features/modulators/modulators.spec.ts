@@ -173,6 +173,13 @@ describe('Modulator configuration', () => {
       expect(f.nativeElement.querySelector(`a[href="/modulators/${id}"]`).textContent).toContain(
         `TX ${id}`,
       );
+    for (let id = 0; id < 8; id++) {
+      const row = f.nativeElement.querySelectorAll('section.summary')[id];
+      expect(row.querySelector('.list-identity a').getAttribute('href')).toBe(`/modulators/${id}`);
+      expect(row.querySelector('.list-identity a').getAttribute('href')).toBe(
+        row.querySelector('.list-actions a').getAttribute('href'),
+      );
+    }
     expect(f.nativeElement.textContent).toContain('91.6 MHz');
     expect(f.nativeElement.textContent).toContain('Studio feed');
     expect(f.nativeElement.textContent).toContain('Reported state: ON');

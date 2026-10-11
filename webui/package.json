@@ -7,8 +7,15 @@
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
     "test": "ng test --watch=false",
+    "test:branding-assets": "node --test tests/branding-assets.test.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
-    "format:check": "prettier --check src"
+    "format:check": "prettier --check src",
+    "prepare:branding": "node scripts/prepare-branding-assets.mjs",
+    "preng": "npm run prepare:branding",
+    "prestart": "npm run prepare:branding",
+    "prebuild": "npm run prepare:branding",
+    "prewatch": "npm run prepare:branding",
+    "pretest": "npm run prepare:branding"
   },
   "private": true,
   "packageManager": "npm@12.0.2",

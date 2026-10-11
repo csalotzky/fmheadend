@@ -1,6 +1,16 @@
 <a class="skip-link" href="#main">Skip to content</a>
 <aside [class.expanded]="menu()">
-  <a class="brand" routerLink="/dashboard">fmheadend<span>MULTI-CHANNEL FM MODULATOR</span></a>
+  <a class="brand" routerLink="/dashboard">
+    <img
+      class="brand-tower"
+      src="assets/fmheadend_logo_tower.svg"
+      width="320"
+      height="430"
+      alt=""
+    />
+    <span class="brand-wordmark">FMHEADEND</span>
+    <span class="brand-subtitle">MULTI-CHANNEL FM MODULATOR</span>
+  </a>
   <nav aria-label="Main navigation">
     @for (link of links; track link[0]) {
       <a
@@ -39,7 +49,7 @@
       >
       <div class="dependencies">
         <span
-          >RP2354
+          >Controller
           <b>{{ state.stale() ? 'Unknown' : state.data()?.status?.system?.rp2354_state }}</b></span
         ><span
           >mux
@@ -62,7 +72,7 @@
   <div class="connection-line">
     <span>
       @if (state.data()?.status?.system?.mocked) {
-        RP MOCK
+        Controller MOCK
       }
       @if (state.data()?.status?.system?.mux_mocked) {
         &middot; SPI MOCK

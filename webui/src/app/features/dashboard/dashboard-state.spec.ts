@@ -121,12 +121,18 @@ describe('Dashboard API composition and operations', () => {
     expect(state.busy()).toBe(1);
     expect(state.data()?.status.system.global_stopped).toBe(true);
     http.expectOne('/api/v1/modulators/1/start').flush({
-      ...before.status.modulators[1], tx_state: 'ON',
+      ...before.status.modulators[1],
+      tx_state: 'ON',
     });
     await settle();
     // Neither the global intent nor other saved settings are guessed from a TX ACK.
     expect(state.data()?.status.system.global_stopped).toBe(true);
-    expect(state.data()?.modulators.filter((m) => m.enabled).map((m) => m.id)).toEqual([0, 2]);
+    expect(
+      state
+        .data()
+        ?.modulators.filter((m) => m.enabled)
+        .map((m) => m.id),
+    ).toEqual([0, 2]);
     const after = structuredClone(before);
     after.status.system.global_stopped = false;
     after.modulators.forEach((m) => (m.enabled = m.id === 1));
@@ -135,7 +141,12 @@ describe('Dashboard API composition and operations', () => {
     await done;
     expect(state.busy()).toBeNull();
     expect(state.data()?.status.system.global_stopped).toBe(false);
-    expect(state.data()?.modulators.filter((m) => m.enabled).map((m) => m.id)).toEqual([1]);
+    expect(
+      state
+        .data()
+        ?.modulators.filter((m) => m.enabled)
+        .map((m) => m.id),
+    ).toEqual([1]);
     expect(state.channels()[1].runtime?.hardware_tx_state).toBe('OFF');
   });
   it('prevents duplicate and concurrent lifecycle requests', async () => {
@@ -288,7 +299,7 @@ describe('Dashboard API composition and operations', () => {
     await Promise.all([first, second]);
     http.expectNone('/api/v1/status');
   });
-  it('accelerates only until a fresh post-command RP observation confirms the target', async () => {
+  it('accelerates only until a fresh post-command Controller observation confirms the target', async () => {
     vi.useFakeTimers();
     state.start();
     await vi.advanceTimersByTimeAsync(0);
@@ -301,7 +312,7 @@ describe('Dashboard API composition and operations', () => {
     respond(observed(true));
     await settle();
     expect(state.commandStates()[1]).toBeUndefined();
-    expect(state.actionFeedback()[1]).toContain('RP observation confirms ON');
+    expect(state.actionFeedback()[1]).toContain('Controller observation confirms ON');
     await vi.advanceTimersByTimeAsync(4999);
     http.expectNone('/api/v1/status');
     await vi.advanceTimersByTimeAsync(1);
@@ -486,8 +497,8 @@ describe('Dashboard API composition and operations', () => {
     respond(confirmed);
     await settle();
     expect(state.commandStates()).toEqual({});
-    expect(state.actionFeedback()[0]).toContain('RP observation confirms ON');
-    expect(state.actionFeedback()[1]).toContain('RP observation confirms ON');
+    expect(state.actionFeedback()[0]).toContain('Controller observation confirms ON');
+    expect(state.actionFeedback()[1]).toContain('Controller observation confirms ON');
     await vi.advanceTimersByTimeAsync(4999);
     http.expectNone('/api/v1/status');
     await vi.advanceTimersByTimeAsync(1);
@@ -515,7 +526,7 @@ describe('Dashboard API composition and operations', () => {
       respond(lag);
       await settle();
     }
-    expect(state.actionFeedback()[0]).toBe('Outcome unknown; RP confirmation delayed.');
+    expect(state.actionFeedback()[0]).toBe('Outcome unknown; Controller confirmation delayed.');
     http.expectNone('/api/v1/modulators/stop-all');
     await vi.advanceTimersByTimeAsync(4999);
     http.expectNone('/api/v1/status');

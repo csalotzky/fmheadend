@@ -128,7 +128,7 @@ import { errorMessage } from '../../core/api/headend-api';
               }
               @if (stage.key === 'output_trim') {
                 <small
-                  >FM pre-emphasis is handled by the QN transmitter and is configured in Modulator
+                  >FM pre-emphasis is handled by the TX and is configured in Modulator
                   settings.</small
                 >
               }

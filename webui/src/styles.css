@@ -1,3 +1,5 @@
+@import './assets/fonts/barlow/barlow.css';
+
 :root {
   color-scheme: dark;
   --background: #101418;

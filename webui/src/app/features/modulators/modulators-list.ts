@@ -29,7 +29,9 @@ import { mhz } from './values';
           [attr.data-reported-state]="reportedState(channel)"
         >
           <div class="list-identity">
-            <h2 class="list-primary">TX {{ channel.id }}</h2>
+            <h2 class="list-primary">
+              <a [routerLink]="['/modulators', channel.id]">TX {{ channel.id }}</a>
+            </h2>
             <p class="list-secondary">
               {{
                 channel.config?.frequency_khz != null

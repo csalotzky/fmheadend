@@ -58,6 +58,11 @@ describe('System and region plans', () => {
     expect(text).not.toContain('Raster');
     expect(text).not.toContain('Counters and historical codes');
     expect(text).toContain('Multiplexer');
+    expect(text).toContain('Controller');
+    expect(text).toContain('Controller audio-link errors');
+    expect(text).toContain('Last Controller error (history)');
+    expect(text).toContain('QN_ERROR');
+    expect(text).not.toContain('RP2354');
     expect(f.nativeElement.querySelector('button').textContent).toContain('Refresh logs');
     expect(f.nativeElement.querySelectorAll('.error')).toHaveLength(0);
     shared.stale.set(true);

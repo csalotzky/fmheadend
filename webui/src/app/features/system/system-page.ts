@@ -34,7 +34,7 @@ import { errorMessage } from '../../core/api/headend-api';
         </dl>
       </section>
       <section>
-        <h2>RP2354</h2>
+        <h2>Controller</h2>
         <dl>
           <dt>State</dt>
           <dd>
@@ -99,9 +99,9 @@ import { errorMessage } from '../../core/api/headend-api';
             <dd>{{ status.i2c_errors }}</dd>
             <dt>SPI errors</dt>
             <dd>{{ status.spi_errors }}</dd>
-            <dt>RP audio-link errors</dt>
+            <dt>Controller audio-link errors</dt>
             <dd>{{ status.rp_spi_audio_link_error_count ?? 'Unavailable' }}</dd>
-            <dt>Last RP error (history)</dt>
+            <dt>Last Controller error (history)</dt>
             <dd>{{ status.rp_last_error_code ?? 'Unavailable' }}</dd>
           </dl>
           @for (channel of shared.channels(); track channel.id) {
@@ -116,9 +116,7 @@ import { errorMessage } from '../../core/api/headend-api';
           <h3>Recent backend logs</h3>
           <button [disabled]="logsLoading()" (click)="refreshLogs()">Refresh logs</button>
         </div>
-        <p class="muted">
-          Latest 100 entries
-        </p>
+        <p class="muted">Latest 100 entries</p>
         @if (logsError()) {
           <p class="warning" role="status">Logs unavailable: {{ logsError() }}</p>
         } @else if (logsLoading() && !logs().length) {
