@@ -7,9 +7,9 @@ import { SourceEditor, sourceDirtyGuard } from './features/sources/source-editor
 import { Routes } from '@angular/router';
 import { Dashboard } from './features/dashboard/dashboard';
 import { SystemPage } from './features/system/system-page';
-export const routes: Routes = [
+const pages: Routes = [
   { path: '', pathMatch: 'full', redirectTo: 'dashboard' },
-  { path: 'dashboard', component: Dashboard, title: 'Dashboard | fmheadend' },
+  { path: 'dashboard', component: Dashboard },
   { path: 'sources', component: SourcesList },
   { path: 'sources/new', component: SourceEditor, canDeactivate: [sourceDirtyGuard] },
   { path: 'sources/:id', component: SourceEditor, canDeactivate: [sourceDirtyGuard] },
@@ -21,3 +21,6 @@ export const routes: Routes = [
   { path: 'system', component: SystemPage },
   { path: '**', redirectTo: 'dashboard' },
 ];
+
+// Every route uses the same product title; page headings remain independent.
+export const routes: Routes = pages.map((route) => ({ ...route, title: 'FMheadend' }));

@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 320 430">
+ <defs>
+  <g id="tower" fill="none" stroke-linejoin="round" stroke-linecap="round">
+   <g stroke-width="10">
+    <path d="M160 34 L151 60 L138 104 L123 160 L113 218 L119 280 L133 334 L146 374 L160 404"/>
+    <path d="M160 34 L169 60 L182 104 L197 160 L207 218 L201 280 L187 334 L174 374 L160 404"/>
+   </g>
+   <g stroke-width="9">
+    <path d="M160 34 V404"/>
+    <path d="M145 82 H175 M128 144 H192 M113 218 H207 M123 292 H197 M143 365 H177"/>
+    <path d="M145 82 L192 144 L113 218 L197 292 L143 365 L160 404 M175 82 L128 144 L207 218 L123 292 L177 365 L160 404"/>
+   </g>
+  </g>
+  <clipPath id="red"><rect x="90" y="34" width="140" height="56"/><rect x="90" y="150" width="140" height="70"/><rect x="90" y="310" width="140" height="100"/></clipPath>
+  <clipPath id="white"><rect x="90" y="90" width="140" height="60"/><rect x="90" y="220" width="140" height="90"/></clipPath>
+ </defs>
+ <g stroke="#fff" stroke-width="12" stroke-linecap="round" fill="none">
+  <path d="M106 74 C85 91 85 111 106 128 M83 62 C57 82 57 121 83 141 M60 50 C27 77 27 128 60 155"/>
+  <path d="M214 74 C235 91 235 111 214 128 M237 62 C263 82 263 121 237 141 M260 50 C293 77 293 128 260 155"/>
+  <path d="M160 8 V34" stroke-width="8"/>
+ </g>
+ <use xlink:href="#tower" href="#tower" stroke="#d84a4a" clip-path="url(#red)"/>
+ <use xlink:href="#tower" href="#tower" stroke="#fff" clip-path="url(#white)"/>
+</svg>

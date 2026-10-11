@@ -366,9 +366,7 @@ describe('File Audio Profiles', () => {
     expect(f.nativeElement.textContent).not.toContain('Save restarts only active Sources');
     expect(f.nativeElement.textContent).not.toContain('No software pre-emphasis');
     expect(f.nativeElement.textContent).not.toContain('Classic');
-    expect(f.nativeElement.textContent).toContain(
-      'FM pre-emphasis is handled by the QN transmitter',
-    );
+    expect(f.nativeElement.textContent).toContain('FM pre-emphasis is handled by the TX');
   });
   it('refuses out-of-range precise entry without changing it or sending Save', async () => {
     const f = await editor(),
@@ -392,10 +390,10 @@ describe('File Audio Profiles', () => {
     }
     expect(rows[0].querySelectorAll('button')).toHaveLength(1);
     expect(rows[0].querySelector('button').textContent).toContain('Clone');
-    expect(rows[0].querySelector('a').textContent).toContain('View');
+    expect(rows[0].querySelector('.list-actions a').textContent).toContain('View');
     expect(rows[0].textContent).toContain(factory.description);
     expect(rows[1].textContent).toContain(profile.description);
-    expect(rows[1].querySelector('a').textContent).toContain('Edit');
+    expect(rows[1].querySelector('.list-actions a').textContent).toContain('Edit');
     expect(rows[1].textContent).toContain('Delete');
   });
   it('uses four shared columns and type strips while preserving usage and permissions', async () => {
@@ -413,6 +411,13 @@ describe('File Audio Profiles', () => {
       expect(row.querySelector('.list-description')?.textContent).toBe(item.description);
       expect(row.querySelector('.list-status')?.textContent).toContain(`Used by ${i} sources`);
       expect(row.querySelector('.list-actions')).not.toBeNull();
+      const nameLink = row.querySelector('.list-identity a')!;
+      expect(nameLink.getAttribute('href')).toBe(
+        row.querySelector('.list-actions a')!.getAttribute('href'),
+      );
+      expect(nameLink.getAttribute('href')).toBe(
+        '/audio-profiles/edit?path=' + encodeURIComponent(item.path),
+      );
     }
     const deletion = [...rows[1].querySelectorAll('button')].find(
       (button) => button.textContent?.trim() === 'Delete',

@@ -30,7 +30,9 @@ import { AudioProfile, ProfileApi } from './profile-api';
         [attr.data-profile-kind]="profile.kind"
       >
         <div class="list-identity">
-          <strong class="list-primary">{{ profile.name }}</strong>
+          <a routerLink="/audio-profiles/edit" [queryParams]="{ path: profile.path }"
+            ><strong class="list-primary">{{ profile.name }}</strong></a
+          >
           <p class="list-secondary">{{ profile.path }}</p>
         </div>
         <p class="list-description">{{ profile.description }}</p>

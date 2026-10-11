@@ -23,11 +23,19 @@
               {
                 "glob": "**/*",
                 "input": "public"
+              },
+              {
+                "glob": "*",
+                "input": "tmp/branding-assets",
+                "output": "assets"
+              },
+              {
+                "glob": "*.txt",
+                "input": "src/assets/fonts/barlow",
+                "output": "assets/fonts/barlow"
               }
             ],
-            "styles": [
-              "src/styles.css"
-            ]
+            "styles": ["src/styles.css"]
           },
           "configurations": {
             "production": {

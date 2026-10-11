@@ -213,8 +213,8 @@ export class DashboardState {
           this.actionFeedback.update((v) => ({
             ...v,
             [id]: c.commandConfirmed
-              ? `${c.state} command confirmed; RP confirmation delayed.`
-              : 'Outcome unknown; RP confirmation delayed.',
+              ? `${c.state} command confirmed; Controller confirmation delayed.`
+              : 'Outcome unknown; Controller confirmation delayed.',
           }));
       }
     }
@@ -243,7 +243,10 @@ export class DashboardState {
         return next;
       });
       if (c.messageGeneration === this.messageGeneration)
-        this.actionFeedback.update((v) => ({ ...v, [id]: `RP observation confirms ${c.state}.` }));
+        this.actionFeedback.update((v) => ({
+          ...v,
+          [id]: `Controller observation confirms ${c.state}.`,
+        }));
     }
   }
   async operate(id: number, action: 'start' | 'stop') {
@@ -312,7 +315,7 @@ export class DashboardState {
     if (generation === this.messageGeneration)
       this.actionFeedback.update((v) => ({
         ...v,
-        [result.id]: `Command returned ${result.tx_state}; awaiting RP observation.`,
+        [result.id]: `Command returned ${result.tx_state}; awaiting Controller observation.`,
       }));
   }
   private unconfirmedResult(
