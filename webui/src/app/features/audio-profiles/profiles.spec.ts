@@ -191,6 +191,7 @@ description.implementations['FM_HEADEND_LIMITER'].schema = {
     attack_ms: { type: 'number', title: 'Attack (ms)', minimum: 0, maximum: 20 },
     release_ms: { type: 'number', title: 'Release (ms)', minimum: 1, maximum: 1000 },
     stereo_link_percent: { type: 'number', title: 'Stereo Link (%)', minimum: 0, maximum: 100 },
+    true_peak_detection: { type: 'boolean', title: 'True Peak Detection', default: false },
     safety_margin_db: { type: 'number', title: 'Safety margin (dB)', minimum: 0, maximum: 12 },
     bypass: { type: 'boolean', hidden: true },
     weighting_us: {
@@ -210,6 +211,7 @@ description.template.stages['limiter'].implementations['FM_HEADEND_LIMITER'] = {
   stereo_link_percent: 100,
   weighting_us: 50,
   safety_margin_db: 2.5,
+  true_peak_detection: false,
   bypass: false,
 };
 description.implementations['FM_HEADEND_CLIPPER'].schema = {
@@ -221,12 +223,29 @@ description.implementations['FM_HEADEND_CLIPPER'].schema = {
       enum: [0, 50, 75],
       enum_labels: { '0': 'Off', '50': '50 \u00b5s', '75': '75 \u00b5s' },
     },
+    clipping_mode: {
+      type: 'string',
+      title: 'Clipping Mode',
+      enum: ['hard', 'soft'],
+      enum_labels: { hard: 'Hard', soft: 'Soft' },
+      default: 'hard',
+    },
+    soft_knee_db: {
+      type: 'number',
+      title: 'Soft Knee (dB)',
+      minimum: 0,
+      maximum: 6,
+      default: 2,
+      visible_when: { clipping_mode: 'soft' },
+    },
     bypass: { type: 'boolean', hidden: true },
   },
 };
 description.template.stages['clipper'].implementations['FM_HEADEND_CLIPPER'] = {
   threshold_dbfs: -9,
   weighting_us: 50,
+  clipping_mode: 'hard',
+  soft_knee_db: 2,
   bypass: false,
 };
 const profile: ProfileResult = {
@@ -692,6 +711,11 @@ describe('File Audio Profiles', () => {
     ]) {
       expect(section.textContent).toContain(label);
     }
+    const peak = section.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    expect(peak.checked).toBe(false);
+    expect(section.textContent).toContain('True Peak Detection');
+    peak.click();
+    await f.whenStable();
     c.select('limiter', 'LSP_LIMITER');
     f.detectChanges();
     expect(section.textContent).not.toContain('FM detector weighting');
@@ -704,6 +728,9 @@ describe('File Audio Profiles', () => {
     const pending = c.save();
     const request = http.expectOne(base + '/' + profile.path);
     expect(request.request.body.stages.limiter.selected).toBe('OFF');
+    expect(
+      request.request.body.stages.limiter.implementations.FM_HEADEND_LIMITER.true_peak_detection,
+    ).toBe(true);
     expect(
       request.request.body.stages.limiter.implementations.FM_HEADEND_LIMITER.weighting_us,
     ).toBe(75);
@@ -735,10 +762,44 @@ describe('File Audio Profiles', () => {
     expect(
       c.document!.stages['clipper'].implementations['FM_HEADEND_CLIPPER']['weighting_us'],
     ).toBe(75);
+    const mode = section.querySelectorAll('app-dsp-fields select')[1] as HTMLSelectElement;
+    expect([...mode.options].map((o) => o.textContent?.trim())).toEqual(['Hard', 'Soft']);
+    expect(mode.selectedIndex).toBe(0);
+    expect(section.textContent).not.toContain('Soft Knee (dB)');
+    mode.selectedIndex = 1;
+    mode.dispatchEvent(new Event('change'));
+    await f.whenStable();
+    const knee = [...section.querySelectorAll('app-dsp-number')].find((el: any) =>
+      el.textContent.includes('Soft Knee (dB)'),
+    ) as HTMLElement;
+    const input = knee.querySelector('input[type="number"]') as HTMLInputElement;
+    expect(input.value).toBe('2');
+    expect(input.min).toBe('0');
+    expect(input.max).toBe('6');
+    input.value = '4.5';
+    input.dispatchEvent(new Event('input'));
+    await f.whenStable();
+    mode.selectedIndex = 0;
+    mode.dispatchEvent(new Event('change'));
+    await f.whenStable();
+    expect(section.textContent).not.toContain('Soft Knee (dB)');
+    expect(
+      c.document!.stages['clipper'].implementations['FM_HEADEND_CLIPPER']['soft_knee_db'],
+    ).toBe(4.5);
+    mode.selectedIndex = 1;
+    mode.dispatchEvent(new Event('change'));
+    await f.whenStable();
+    expect(section.textContent).toContain('Soft Knee (dB)');
     c.select('clipper', 'OFF');
     const pending = c.save();
     const request = http.expectOne(base + '/' + profile.path);
     expect(request.request.body.stages.clipper.selected).toBe('OFF');
+    expect(
+      request.request.body.stages.clipper.implementations.FM_HEADEND_CLIPPER.clipping_mode,
+    ).toBe('soft');
+    expect(
+      request.request.body.stages.clipper.implementations.FM_HEADEND_CLIPPER.soft_knee_db,
+    ).toBe(4.5);
     expect(
       request.request.body.stages.clipper.implementations.FM_HEADEND_CLIPPER.weighting_us,
     ).toBe(75);

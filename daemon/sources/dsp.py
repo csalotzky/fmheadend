@@ -80,6 +80,9 @@ def dsp_stages(make, profile, *, on_stage=None):
                          boost=p['boost'], alr=p['alr'], alr_at=p['alr_attack_ms'], alr_rt=p['alr_release_ms'])
         elif name in ('FM_HEADEND_LIMITER', 'FM_HEADEND_CLIPPER'):
             props = dict(p)  # Same units; _make converts underscores to native hyphens.
+            if name == 'FM_HEADEND_CLIPPER':
+                # GstFmheadendClippingMode, verified with native gst-inspect.
+                props['clipping_mode'] = {'hard': 0, 'soft': 1}[p['clipping_mode']]
         elif name == 'LSP_EQ':
             props = dict(enabled=True, mode=0)
             for i in range(16):

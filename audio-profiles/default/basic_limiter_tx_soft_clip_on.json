@@ -445,6 +445,7 @@
           "alr_release_ms": 50.0
         },
         "FM_HEADEND_LIMITER": {
+          "true_peak_detection": false,
           "threshold_dbfs": -4.0,
           "lookahead_ms": 5.0,
           "attack_ms": 1.0,
@@ -471,6 +472,8 @@
       "selected": "OFF",
       "implementations": {
         "FM_HEADEND_CLIPPER": {
+          "clipping_mode": "hard",
+          "soft_knee_db": 2.0,
           "threshold_dbfs": -4.4,
           "weighting_us": 50,
           "bypass": false

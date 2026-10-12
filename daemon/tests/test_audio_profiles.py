@@ -330,7 +330,8 @@ def test_clipper_api_roundtrip_preserves_other_stages(api, weighting):
     data = document()
     original = {k:v for k,v in data['stages'].items() if k != 'clipper'}
     data['stages']['clipper'] = dict(selected='FM_HEADEND_CLIPPER', implementations={
-        'FM_HEADEND_CLIPPER': dict(threshold_dbfs=-12., weighting_us=weighting, bypass=False)})
+        'FM_HEADEND_CLIPPER': dict(threshold_dbfs=-12., weighting_us=weighting, bypass=False,
+                                 clipping_mode='soft', soft_knee_db=4.5)})
     response = api.post(BASE+'custom',json=data)
     assert response.status_code == 201, response.text
     path = response.json()['path']

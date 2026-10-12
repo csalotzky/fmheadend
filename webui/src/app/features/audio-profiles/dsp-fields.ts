@@ -35,7 +35,9 @@ import { DspSchema } from './profile-api';
                 [ngModelOptions]="{ standalone: true }"
               >
                 @for (option of field.schema.enum; track option) {
-                  <option [ngValue]="option">{{ field.schema.enum_labels?.[option] ?? option }}</option>
+                  <option [ngValue]="option">
+                    {{ field.schema.enum_labels?.[option] ?? option }}
+                  </option>
                 }
               </select>
             } @else if (field.schema.type === 'boolean') {
@@ -140,7 +142,13 @@ export class DspFields {
   }
   fields() {
     return Object.entries(this.schema().properties ?? {})
-      .filter(([, s]) => !s.hidden)
+      .filter(
+        ([, s]) =>
+          !s.hidden &&
+          Object.entries(s.visible_when ?? {}).every(
+            ([key, value]) => this.values()[key] === value,
+          ),
+      )
       .map(([key, schema]) => ({ key, schema }));
   }
   disabled(s: DspSchema) {

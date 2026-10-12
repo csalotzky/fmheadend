@@ -43,7 +43,7 @@ Example shape (abbreviated; all twelve stages are required):
     "master_gain": {"selected":"VOLUME","implementations":{"VOLUME":{"gain_db":0}}},
     "limiter": {"selected":"OFF","implementations":{}},
     "lpf": {"selected":"CHEBYSHEV","implementations":{"CHEBYSHEV":{"cutoff_hz":16000,"poles":14,"ripple_db":0,"type":1}}},
-    "clipper": {"selected":"OFF","implementations":{"FM_HEADEND_CLIPPER":{"threshold_dbfs":-9,"weighting_us":50,"bypass":false}}},
+    "clipper": {"selected":"OFF","implementations":{"FM_HEADEND_CLIPPER":{"threshold_dbfs":-9,"weighting_us":50,"clipping_mode":"hard","soft_knee_db":2.0,"bypass":false}}},
     "output_trim": {"selected":"TRIM","implementations":{"TRIM":{"gain_db":0}}}
   }
 }
@@ -136,6 +136,7 @@ hyphens, without unit conversion:
 | stereo_link_percent | stereo-link-percent | 0..100% | 100 |
 | weighting_us | weighting-us | 0 / 50 / 75 | 50 |
 | safety_margin_db | safety-margin-db | 0..12 dB | 2.5 |
+| true_peak_detection | true-peak-detection | boolean; fixed 4× weighted detector | false |
 | bypass | bypass | boolean; hidden, preserves latency | false |
 
 Bounds were read from `gst-inspect-1.0 fmheadendlimiter` on `fmheadend@fmheadend`.
@@ -312,7 +313,13 @@ Installed `fmheadendclipper` 0.1.0 accepts F32LE interleaved stereo at 8-192 kHz
 the application uses 48 kHz. `threshold_dbfs` maps to `threshold-dbfs` (-60..0,
 default -9 dBFS), `weighting_us` to `weighting-us` (0/50/75, default 50), and
 `bypass` to `bypass` (default false, hidden as with the custom limiter).
-These bounds/defaults come from Pi `gst-inspect-1.0 fmheadendclipper`.
+`clipping_mode` stores `hard` / `soft` and maps to the native GObject enum
+`clipping-mode` as 0 / 1 (default hard). `soft_knee_db` maps to
+`soft-knee-db` (0..6 dB, default 2.0); the editor shows it only in Soft mode
+and retains its value in Hard mode. Threshold remains the final hard ceiling.
+These properties and limiter `true-peak-detection` were verified read-only with
+Pi `gst-inspect-1.0` on 2026-10-13. Profiles keep schema 1 and the existing
+save/restart lifecycle; no native DSP changes are involved.
 Stage OFF creates no element. Read-only detector peak, clip count and clipping
 depth are not configuration. No latency compensation is added.
 
