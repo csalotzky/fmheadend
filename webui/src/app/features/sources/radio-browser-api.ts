@@ -2,7 +2,7 @@ import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { timeout } from 'rxjs';
 
-export const RADIO_PAGE_SIZE = 20;
+export const RADIO_BATCH_SIZE = 20;
 
 export interface RadioStation {
   stationuuid: string;
@@ -47,7 +47,7 @@ export class RadioBrowserApi {
           ...(countrycode ? { countrycode } : {}),
           ...(tag ? { tag } : {}),
           offset,
-          limit: RADIO_PAGE_SIZE,
+          limit: RADIO_BATCH_SIZE,
         },
       })
       .pipe(timeout(20000));

@@ -33,6 +33,14 @@ h2 {
   font-size: 18px;
   margin: 0;
 }
+.attribution {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.attribution a {
+  color: inherit;
+}
 header button {
   font-size: 20px;
   padding: 3px 9px;
@@ -167,29 +175,9 @@ footer {
   flex-shrink: 0;
 }
 
-.pagination {
+.load-more {
   display: flex;
   justify-content: center;
-  align-items: center;
-  gap: 4px;
   padding: 6px 12px;
   flex-shrink: 0;
-}
-.pagination button {
-  padding: 5px 9px;
-  min-width: 30px;
-  flex-shrink: 0;
-}
-.page-numbers {
-  display: flex;
-  gap: 4px;
-  max-width: min(70vw, 32rem);
-  overflow-x: auto;
-  padding: 4px;
-}
-.pagination [aria-current='page'] {
-  border-color: var(--warning);
-  color: var(--warning);
-  background: var(--hover);
-  opacity: 1;
 }
