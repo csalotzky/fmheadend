@@ -192,7 +192,6 @@ description.implementations['FM_HEADEND_LIMITER'].schema = {
     release_ms: { type: 'number', title: 'Release (ms)', minimum: 1, maximum: 1000 },
     stereo_link_percent: { type: 'number', title: 'Stereo Link (%)', minimum: 0, maximum: 100 },
     true_peak_detection: { type: 'boolean', title: 'True Peak Detection', default: false },
-    safety_margin_db: { type: 'number', title: 'Safety margin (dB)', minimum: 0, maximum: 12 },
     bypass: { type: 'boolean', hidden: true },
     weighting_us: {
       type: 'integer',
@@ -210,7 +209,6 @@ description.template.stages['limiter'].implementations['FM_HEADEND_LIMITER'] = {
   release_ms: 20,
   stereo_link_percent: 100,
   weighting_us: 50,
-  safety_margin_db: 2.5,
   true_peak_detection: false,
   bypass: false,
 };
@@ -222,6 +220,14 @@ description.implementations['FM_HEADEND_CLIPPER'].schema = {
       title: 'FM weighting',
       enum: [0, 50, 75],
       enum_labels: { '0': 'Off', '50': '50 \u00b5s', '75': '75 \u00b5s' },
+    },
+    hf_correction_us: {
+      type: 'integer',
+      title: 'HF Correction (\u00b5s)',
+      minimum: -10,
+      maximum: 30,
+      default: 0,
+      slider: { min: -10, max: 30, scale: 'linear', step: 1 },
     },
     clipping_mode: {
       type: 'string',
@@ -244,6 +250,7 @@ description.implementations['FM_HEADEND_CLIPPER'].schema = {
 description.template.stages['clipper'].implementations['FM_HEADEND_CLIPPER'] = {
   threshold_dbfs: -9,
   weighting_us: 50,
+  hf_correction_us: 0,
   clipping_mode: 'hard',
   soft_knee_db: 2,
   bypass: false,
@@ -707,7 +714,6 @@ describe('File Audio Profiles', () => {
       'Attack (ms)',
       'Release (ms)',
       'Stereo Link (%)',
-      'Safety margin (dB)',
     ]) {
       expect(section.textContent).toContain(label);
     }
