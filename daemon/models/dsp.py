@@ -99,7 +99,6 @@ class FmHeadendLimiter(Model):
         json_schema_extra={'enum_labels': {'0': 'Off', '50': '50 µs', '75': '75 µs'}})
     true_peak_detection: bool = Field(False, title='True Peak Detection',
         description='4\u00d7 oversampled peak detection, including intersample peaks. Improves peak control at additional CPU cost.')
-    safety_margin_db: float = Field(2.5, ge=0, le=12, title='Safety margin (dB)')
     bypass: bool = Field(False, json_schema_extra={'hidden': True})
 
 
@@ -107,6 +106,9 @@ class FmHeadendClipper(Model):
     threshold_dbfs: float = Field(-9, ge=-60, le=0, title='Threshold (dBFS)')
     weighting_us: Literal[0, 50, 75] = Field(50, title='FM weighting',
         json_schema_extra={'enum_labels': {'0': 'Off', '50': '50 \u00b5s', '75': '75 \u00b5s'}})
+    hf_correction_us: int = Field(0, ge=-10, le=30, title='HF Correction (\u00b5s)',
+        description="Adjusts the clipper detector's effective preemphasis time constant without changing transmitter preemphasis. Positive values increase sensitivity to high-frequency peaks.",
+        json_schema_extra={'slider': {'min': -10, 'max': 30, 'scale': 'linear', 'step': 1}})
     clipping_mode: Literal['hard', 'soft'] = Field('hard', title='Clipping Mode',
         description='Hard clipping or smoother soft-knee clipping with the same final weighted-sample ceiling.',
         json_schema_extra={'enum_labels': {'hard': 'Hard', 'soft': 'Soft'}})

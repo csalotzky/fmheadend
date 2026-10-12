@@ -452,7 +452,6 @@
           "release_ms": 20.0,
           "stereo_link_percent": 100.0,
           "weighting_us": 50,
-          "safety_margin_db": 0.0,
           "bypass": false
         }
       }
@@ -472,6 +471,7 @@
       "selected": "FM_HEADEND_CLIPPER",
       "implementations": {
         "FM_HEADEND_CLIPPER": {
+          "hf_correction_us": 0,
           "clipping_mode": "hard",
           "soft_knee_db": 2.0,
           "threshold_dbfs": -4.4,

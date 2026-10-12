@@ -186,7 +186,7 @@ def test_exclusive_limiter_roundtrip_and_order(selected, weighting, true_peak):
     stage['selected'] = selected
     settings = stage['implementations']['FM_HEADEND_LIMITER']
     settings.update(weighting_us=weighting, threshold_dbfs=-11., lookahead_ms=6.,
-                    attack_ms=.5, release_ms=42., stereo_link_percent=80., safety_margin_db=3., true_peak_detection=true_peak)
+                    attack_ms=.5, release_ms=42., stereo_link_percent=80., true_peak_detection=true_peak)
     parsed = AudioProfileFile.model_validate_json(AudioProfileFile.model_validate(doc).model_dump_json())
     assert parsed.model_dump() == doc
     chain = build(doc)
@@ -211,7 +211,7 @@ def test_existing_profiles_need_no_new_implementation_settings(selected):
 
 @pytest.mark.parametrize('key,value', [('weighting_us', 25), ('threshold_dbfs', -61.),
     ('lookahead_ms', 21.), ('attack_ms', -1.), ('release_ms', 0.),
-    ('stereo_link_percent', 101.), ('safety_margin_db', 13.),
+    ('stereo_link_percent', 101.),
     ('true_peak_detection', 'true'), ('true_peak_detection', 1)])
 def test_invalid_fm_limiter_settings(key, value):
     doc = profile()
@@ -224,7 +224,7 @@ def test_fm_editor_defaults_and_choices():
     from fmheadendd.models.dsp_editor import editor_schema
     assert FmHeadendLimiter().model_dump() == dict(threshold_dbfs=-9, lookahead_ms=5,
         attack_ms=.25, release_ms=20, stereo_link_percent=100, weighting_us=50,
-        safety_margin_db=2.5, true_peak_detection=False, bypass=False)
+        true_peak_detection=False, bypass=False)
     assert 'fm_limiter_weighting' not in LspLimiter.model_fields
     field = editor_schema(FmHeadendLimiter)['properties']['weighting_us']
     assert field['enum'] == [0, 50, 75]
