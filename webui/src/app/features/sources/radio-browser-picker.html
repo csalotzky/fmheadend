@@ -1,0 +1,174 @@
+<dialog #dialog aria-labelledby="radio-browser-title" (cancel)="cancel($event)" (close)="close()">
+  <header>
+    <h2 id="radio-browser-title">Browse RadioBrowser (www.radio-browser.info)</h2>
+    <button type="button" aria-label="Close Radio Browser" (click)="close()">&#215;</button>
+  </header>
+  <div class="filters" [formGroup]="filters">
+    <label class="station-search"
+      >Station name<input
+        #search
+        type="search"
+        formControlName="name"
+        maxlength="200"
+        placeholder="Search stations"
+    /></label>
+    <label
+      >Country<select formControlName="countrycode">
+        <option value="">All countries</option>
+        @for (country of countries(); track country.name) {
+          <option [value]="country.name">{{ countryName(country.name) }}</option>
+        }
+      </select></label
+    >
+    <label
+      >Genre / Tag<input
+        type="search"
+        formControlName="tag"
+        maxlength="100"
+        list="radio-tags"
+        placeholder="Any genre"
+        autocomplete="off"
+      />
+      <datalist id="radio-tags">
+        @for (tag of tags(); track tag.name) {
+          <option [value]="tag.name"></option>
+        }
+      </datalist>
+    </label>
+    <label class="checkbox"
+      ><input type="checkbox" formControlName="hidebroken" />Hide reported broken streams</label
+    >
+    @if (countriesError()) {
+      <div class="error" role="alert">
+        Countries: {{ countriesError() }}
+        <button type="button" (click)="loadCountries()">Retry countries</button>
+      </div>
+    }
+    @if (tagsError()) {
+      <div class="error" role="alert">
+        Tags: {{ tagsError() }} <button type="button" (click)="loadTags()">Retry tags</button>
+      </div>
+    }
+  </div>
+  <ng-container *ngTemplateOutlet="pagination; context: { position: 'Top' }" />
+  <section
+    #results
+    id="radio-results"
+    class="results"
+    aria-label="Stations"
+    [attr.aria-busy]="loading()"
+  >
+    @for (station of stations(); track station.stationuuid) {
+      <button
+        type="button"
+        class="station"
+        [disabled]="loading()"
+        [class.selected]="selected()?.stationuuid === station.stationuuid"
+        [attr.aria-pressed]="selected()?.stationuuid === station.stationuuid"
+        (click)="selected.set(station)"
+      >
+        <strong>{{ station.name || 'Unnamed station' }}</strong>
+        <span
+          >{{ station.country || countryName(station.countrycode) }}
+          @if (station.codec) {
+            &middot; {{ station.codec }}
+          }
+          @if (station.bitrate) {
+            &middot; {{ station.bitrate }} kb/s
+          }
+          @if (station.hls) {
+            &middot; HLS
+          }
+        </span>
+        @if (station.tags.length) {
+          <small>{{ station.tags.join(', ') }}</small>
+        }
+        @if (station.lastcheckok === false) {
+          <small class="warning">Reported broken</small>
+        }
+      </button>
+    }
+    @if (loading()) {
+      <p role="status">Loading stations...</p>
+    }
+    @if (error()) {
+      <p class="error" role="alert">
+        {{ error() }} <button type="button" (click)="retry()">Retry search</button>
+      </p>
+    }
+    @if (!loading() && !error() && !stations().length) {
+      <p role="status">No stations found. Try another name or filter.</p>
+    }
+  </section>
+  <ng-container *ngTemplateOutlet="pagination; context: { position: 'Bottom' }" />
+  <ng-template #pagination let-position="position">
+    <nav class="pagination" [attr.aria-label]="position + ' station pages'">
+      <button
+        type="button"
+        aria-label="Previous page"
+        aria-controls="radio-results"
+        [disabled]="loading() || page() === 1"
+        (click)="goToPage(page() - 1)"
+      >
+        &#8249;
+      </button>
+      <div class="page-numbers">
+        @for (number of pages(); track number) {
+          <button
+            type="button"
+            [attr.aria-label]="'Page ' + number"
+            aria-controls="radio-results"
+            [attr.aria-current]="page() === number ? 'page' : null"
+            [disabled]="loading() || page() === number"
+            (click)="goToPage(number)"
+          >
+            {{ number }}
+          </button>
+        }
+      </div>
+      <button
+        type="button"
+        aria-label="Next page"
+        aria-controls="radio-results"
+        [disabled]="loading() || page() >= reachableThrough()"
+        (click)="goToPage(page() + 1)"
+      >
+        &#8250;
+      </button>
+    </nav>
+  </ng-template>
+  <footer>
+    <div class="details" aria-live="polite">
+      @if (selected(); as station) {
+        <strong>{{ station.name || 'Unnamed station' }}</strong>
+        <p>
+          {{ station.country || countryName(station.countrycode) }}
+          @if (station.codec) {
+            &middot; {{ station.codec }}
+          }
+          @if (station.bitrate) {
+            &middot; {{ station.bitrate }} kb/s
+          }
+        </p>
+        <p class="url">
+          {{ station.playable_url || 'No supported stream URL is available for this entry.' }}
+        </p>
+        @if (station.lastcheckok === false) {
+          <p class="warning">Reported broken; playback may fail.</p>
+        }
+      } @else {
+        <span>Select a station to review its stream.</span>
+      }
+    </div>
+    <div class="actions">
+      <button type="button" (click)="close()">Cancel</button
+      ><button
+        type="button"
+        (click)="useStation()"
+        [disabled]="loading() || !selected()?.playable_url"
+      >
+        Use station
+      </button>
+    </div>
+  </footer>
+</dialog>

@@ -404,3 +404,60 @@ summary {
   overflow-wrap: anywhere;
   margin-top: 6px;
 }
+
+.http-url-field {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+.stream-label-row,
+.radio-link-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.stream-label-row {
+  justify-content: space-between;
+}
+.http-url-field .stream-row > input {
+  flex: 1 1 300px;
+  min-width: 0;
+  width: auto;
+}
+.http-url-field .managed-url {
+  color: var(--muted);
+}
+.radio-link-status {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.text-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: normal;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.text-action:hover:not(:disabled) {
+  background: transparent;
+  color: var(--warning);
+}
+.text-action svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+}
+.http-url-field > small {
+  display: block;
+  margin-top: 6px;
+}
