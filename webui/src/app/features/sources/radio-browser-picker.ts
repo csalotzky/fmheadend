@@ -1,29 +1,18 @@
-import { NgTemplateOutlet } from '@angular/common';
-import {
-  computed,
-  Component,
-  ElementRef,
-  OnDestroy,
-  ViewChild,
-  inject,
-  output,
-  signal,
-} from '@angular/core';
+import { Component, ElementRef, OnDestroy, ViewChild, inject, output, signal } from '@angular/core';
 import { FormControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
 import { Subscription } from 'rxjs';
 import { errorMessage } from '../../core/api/headend-api';
-import { RADIO_PAGE_SIZE, RadioBrowserApi, RadioOption, RadioStation } from './radio-browser-api';
+import { RADIO_BATCH_SIZE, RadioBrowserApi, RadioOption, RadioStation } from './radio-browser-api';
 
 @Component({
   selector: 'app-radio-browser-picker',
-  imports: [ReactiveFormsModule, NgTemplateOutlet],
+  imports: [ReactiveFormsModule],
   templateUrl: './radio-browser-picker.html',
   styleUrl: './radio-browser-picker.css',
 })
 export class RadioBrowserPicker implements OnDestroy {
   @ViewChild('dialog', { static: true }) dialog!: ElementRef<HTMLDialogElement>;
   @ViewChild('search', { static: true }) searchInput!: ElementRef<HTMLInputElement>;
-  @ViewChild('results', { static: true }) results!: ElementRef<HTMLElement>;
   private api = inject(RadioBrowserApi);
   readonly chosen = output<RadioStation>();
   readonly opened = signal(false);
@@ -35,13 +24,7 @@ export class RadioBrowserPicker implements OnDestroy {
   readonly tags = signal<RadioOption[]>([]);
   readonly stations = signal<RadioStation[]>([]);
   readonly selected = signal<RadioStation | null>(null);
-  readonly page = signal(1);
-  private readonly visitedThrough = signal(0);
-  private readonly lastPage = signal<number | null>(null);
-  readonly reachableThrough = computed(
-    () => this.lastPage() ?? Math.min(5001, Math.max(1, this.visitedThrough() + 1)),
-  );
-  readonly pages = computed(() => Array.from({ length: this.reachableThrough() }, (_, i) => i + 1));
+  readonly hasMore = signal(false);
   readonly filters = new FormGroup({
     name: new FormControl('', { nonNullable: true }),
     countrycode: new FormControl('', { nonNullable: true }),
@@ -57,8 +40,6 @@ export class RadioBrowserPicker implements OnDestroy {
   private tagRequest?: Subscription;
   private debounce?: ReturnType<typeof setTimeout>;
   private generation = 0;
-  private requestedPage = 1;
-  private resetHistoryOnSuccess = false;
   private previousFocus: HTMLElement | null = null;
   private previousOverflow = '';
   private changes = this.filters.valueChanges.subscribe(() => this.filtersChanged());
@@ -131,16 +112,12 @@ export class RadioBrowserPicker implements OnDestroy {
     this.selected.set(null);
     this.stations.set([]);
     this.tags.set([]);
-    this.page.set(1);
-    this.visitedThrough.set(0);
-    this.lastPage.set(null);
+    this.hasMore.set(false);
     this.loading.set(true);
     this.error.set('');
     this.tagsError.set('');
-    this.requestedPage = 1;
-    this.resetHistoryOnSuccess = false;
     this.debounce = setTimeout(() => {
-      this.searchPage(1);
+      this.searchBatch();
       this.loadTags();
     }, delay);
   }
@@ -162,11 +139,8 @@ export class RadioBrowserPicker implements OnDestroy {
       },
     });
   }
-  private searchPage(target: number) {
+  private searchBatch() {
     this.searchRequest?.unsubscribe();
-    this.requestedPage = target;
-    this.selected.set(null);
-    this.results.nativeElement.scrollTop = 0;
     this.loading.set(true);
     this.error.set('');
     const generation = this.generation;
@@ -174,40 +148,13 @@ export class RadioBrowserPicker implements OnDestroy {
     this.searchRequest = this.api
       .search(
         { ...filters, name: filters.name.trim(), tag: filters.tag.trim() },
-        (target - 1) * RADIO_PAGE_SIZE,
+        this.stations().length,
       )
       .subscribe({
-        next: (page) => {
+        next: (batch) => {
           if (generation !== this.generation) return;
-          if (!page.stations.length && target > 1) {
-            if (target === this.page() + 1 && this.stations().length) {
-              // A full page does not prove the next one exists. Keep the last
-              // nonempty page without an extra fetch or an empty-page flash.
-              this.lastPage.set(this.page());
-              this.visitedThrough.set(this.page());
-              this.loading.set(false);
-              return;
-            }
-            // A previously visited page disappeared from the live catalogue.
-            // Rediscover from page one rather than claim obsolete boundaries.
-            this.resetHistoryOnSuccess = true;
-            this.searchPage(1);
-            return;
-          }
-          if (this.resetHistoryOnSuccess) {
-            this.visitedThrough.set(0);
-            this.lastPage.set(null);
-            this.resetHistoryOnSuccess = false;
-          }
-          this.selected.set(null);
-          this.stations.set(page.stations);
-          this.page.set(target);
-          this.visitedThrough.update((previous) => Math.max(previous, target));
-          if (page.stations.length < RADIO_PAGE_SIZE) {
-            this.lastPage.set(target);
-            this.visitedThrough.set(target);
-          }
-          this.results.nativeElement.scrollTop = 0;
+          this.stations.update((stations) => [...stations, ...batch.stations]);
+          this.hasMore.set(batch.stations.length === RADIO_BATCH_SIZE);
           this.loading.set(false);
         },
         error: (e) => {
@@ -217,13 +164,11 @@ export class RadioBrowserPicker implements OnDestroy {
         },
       });
   }
-  goToPage(target: number) {
-    if (this.loading() || target === this.page() || target < 1 || target > this.reachableThrough())
-      return;
-    this.searchPage(target);
+  loadMore() {
+    if (this.opened() && !this.loading() && this.hasMore()) this.searchBatch();
   }
   retry() {
-    if (!this.loading()) this.searchPage(this.requestedPage);
+    if (this.opened() && !this.loading() && this.error()) this.searchBatch();
   }
   useStation() {
     const station = this.selected();

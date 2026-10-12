@@ -3,7 +3,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { ActivatedRoute, convertToParamMap, provideRouter, Router } from '@angular/router';
 import { RadioBrowserPicker } from './radio-browser-picker';
-import { RadioStation } from './radio-browser-api';
+import { RadioBrowserApi, RadioPage, RadioStation } from './radio-browser-api';
 import { SourceEditor } from './source-editor';
 import { DashboardState } from '../dashboard/dashboard-state';
 import { sample } from '../dashboard/test-fixtures';
@@ -64,6 +64,7 @@ describe('Radio Browser modal', () => {
       .flush([{ name: 'AT', stationcount: 5 }]);
     await vi.advanceTimersByTimeAsync(0);
     const search = http.expectOne((r) => r.url === root + '/stations/search');
+    expect(search.request.params.get('offset')).toBe('0');
     expect(search.request.params.get('limit')).toBe('20');
     expect(search.request.params.get('hidebroken')).toBe('true');
     search.flush({ stations: rows, offset: 0, limit: 20 });
@@ -77,6 +78,16 @@ describe('Radio Browser modal', () => {
     expect(document.body.style.overflow).toBe('hidden');
     expect(document.activeElement).toBe(f.nativeElement.querySelector('input[type=search]'));
     expect(f.nativeElement.textContent).toContain('Austria');
+    const attribution = f.nativeElement.querySelector('.attribution') as HTMLElement;
+    expect(attribution.textContent?.replace(/\s+/g, ' ').trim()).toBe(
+      'Powered by Radio Browser (radio-browser.info)',
+    );
+    const link = attribution.querySelector('a')!;
+    expect(attribution.querySelectorAll('a')).toHaveLength(1);
+    expect(link.textContent).toBe('(radio-browser.info)');
+    expect(link.getAttribute('href')).toBe('https://www.radio-browser.info/');
+    expect(link.target).toBe('_blank');
+    expect(link.rel).toBe('noopener noreferrer');
     const chosen = vi.fn();
     c.chosen.subscribe(chosen);
     f.nativeElement.querySelector('.station').click();
@@ -112,7 +123,7 @@ describe('Radio Browser modal', () => {
       expect(c.opened()).toBe(false);
     },
   );
-  it('debounces name/tag filters, cancels stale searches and resets pagination', async () => {
+  it('debounces name/tag filters, cancels stale searches and resets results', async () => {
     const f = await picker(),
       c = f.componentInstance;
     c.filters.controls.name.setValue('Old');
@@ -145,160 +156,191 @@ describe('Radio Browser modal', () => {
     expect(c.stations()).toEqual([station]);
     expect(c.tags()[0].name).toBe('jazz');
   });
-  const rows = (page: number) =>
-    Array.from({ length: 20 }, (_, i) => ({
+  const rows = (offset: number, count = 20) =>
+    Array.from({ length: count }, (_, i) => ({
       ...station,
-      stationuuid: `${page}-${i}`,
-      name: `Page ${page} station ${i}`,
+      stationuuid: String(offset + i),
+      name: `Station ${offset + i + 1}`,
     }));
-  function respond(page: number, stations = rows(page)) {
+  function respond(offset: number, stations = rows(offset)) {
     const request = http.expectOne((r) => r.url === root + '/stations/search');
-    expect(request.request.params.get('offset')).toBe(String((page - 1) * 20));
+    expect(request.request.params.get('offset')).toBe(String(offset));
     expect(request.request.params.get('limit')).toBe('20');
-    request.flush({ stations, offset: (page - 1) * 20, limit: 20 });
+    request.flush({ stations, offset, limit: 20 });
   }
-  it('replaces pages, synchronizes both controls, and supports numeric and Previous navigation', async () => {
-    const f = await picker(rows(1)),
+  it('appends two batches, retains cards and prevents concurrent requests without numbered controls', async () => {
+    const f = await picker(rows(0)),
       c = f.componentInstance;
-    const navs = () => [...f.nativeElement.querySelectorAll('nav.pagination')] as HTMLElement[];
-    const buttons = (label: string) =>
-      navs().map((nav) => nav.querySelector(`[aria-label="${label}"]`) as HTMLButtonElement);
-    expect(navs()).toHaveLength(2);
+    const more = () => f.nativeElement.querySelector('.load-more button') as HTMLButtonElement;
+    const firstCard = f.nativeElement.querySelector('.station');
     expect(f.nativeElement.querySelectorAll('.station')).toHaveLength(20);
-    expect(buttons('Previous page').every((b) => b.disabled)).toBe(true);
-    expect(c.pages()).toEqual([1, 2]);
-    buttons('Next page')[0].click();
-    f.detectChanges();
-    expect(buttons('Next page').every((b) => b.disabled)).toBe(true);
-    expect([...f.nativeElement.querySelectorAll('.station')].every((b: any) => b.disabled)).toBe(
-      true,
-    );
-    respond(2);
-    f.detectChanges();
-    expect(c.stations()).toEqual(rows(2));
-    expect(f.nativeElement.querySelectorAll('.station')).toHaveLength(20);
+    expect(f.nativeElement.querySelectorAll('.load-more button')).toHaveLength(1);
     expect(
-      navs().every(
-        (nav) => nav.querySelector('[aria-current="page"]')?.textContent?.trim() === '2',
+      f.nativeElement.querySelector('nav, .pagination, .page-numbers, [aria-current="page"]'),
+    ).toBeNull();
+    expect(
+      [...f.nativeElement.querySelectorAll('button')].some((b: any) =>
+        /^(Page \d+|Previous page|Next page)$/.test(
+          b.getAttribute('aria-label') || b.textContent.trim(),
+        ),
       ),
-    ).toBe(true);
-    expect(c.pages()).toEqual([1, 2, 3]);
-    buttons('Page 3')[1].click();
-    respond(3, [station]);
-    f.detectChanges();
-    expect(c.page()).toBe(3);
-    expect(buttons('Next page').every((b) => b.disabled)).toBe(true);
-    buttons('Previous page')[1].click();
-    respond(2);
-    f.detectChanges();
-    buttons('Page 1')[0].click();
-    respond(1);
-    f.detectChanges();
-    expect(c.page()).toBe(1);
-    expect(c.pages()).toEqual([1, 2, 3]);
-    expect(f.nativeElement.textContent).not.toContain('Load more');
+    ).toBe(false);
+    for (const offset of [20, 40]) {
+      more().click();
+      f.detectChanges();
+      expect(more().disabled).toBe(true);
+      expect(more().textContent).toContain('Loading');
+      expect(f.nativeElement.querySelectorAll('.station')).toHaveLength(offset);
+      more().click();
+      c.loadMore();
+      c.retry();
+      respond(offset);
+      f.detectChanges();
+      expect(c.stations()).toEqual(rows(0, offset + 20));
+      expect(f.nativeElement.querySelectorAll('.station')).toHaveLength(offset + 20);
+      expect(f.nativeElement.querySelector('.station')).toBe(firstCard);
+      expect(more().disabled).toBe(false);
+      expect(c.opened()).toBe(true);
+    }
+    http.expectNone((r) => r.url === root + '/stations/search');
     http.expectNone((r) => r.method !== 'GET');
   });
-  it('keeps the nonempty page when optimistic Next finds the exact end', async () => {
-    const f = await picker(rows(1)),
+  it.each([0, 7])('hides Load more after an appended batch of %s stations', async (count) => {
+    const f = await picker(rows(0)),
       c = f.componentInstance;
-    c.goToPage(2);
-    respond(2, []);
+    c.loadMore();
+    respond(20, rows(20, count));
     f.detectChanges();
-    expect(c.page()).toBe(1);
-    expect(c.stations()).toEqual(rows(1));
-    expect(c.pages()).toEqual([1]);
-    expect(
-      [...f.nativeElement.querySelectorAll('[aria-label="Next page"]')].every(
-        (b: any) => b.disabled,
-      ),
-    ).toBe(true);
+    expect(c.stations()).toEqual(rows(0, 20 + count));
+    expect(f.nativeElement.querySelector('.load-more')).toBeNull();
     expect(f.nativeElement.textContent).not.toContain('No stations found');
-    c.goToPage(2);
+    c.loadMore();
     http.expectNone((r) => r.url === root + '/stations/search');
   });
-  it('retains the displayed page on errors and retries the requested page', async () => {
-    const f = await picker(rows(1)),
+  it.each([0, 7])('hides Load more after an initial batch of %s stations', async (count) => {
+    const f = await picker(rows(0, count));
+    expect(f.nativeElement.querySelector('.load-more')).toBeNull();
+    expect(f.componentInstance.hasMore()).toBe(false);
+  });
+  it('preserves results and selection on failure and retries the same offset', async () => {
+    const f = await picker(rows(0)),
       c = f.componentInstance;
-    c.goToPage(2);
+    c.selected.set(c.stations()[0]);
+    c.loadMore();
+    const failed = http.expectOne((r) => r.url === root + '/stations/search');
+    expect(failed.request.params.get('offset')).toBe('20');
+    failed.flush({ message: 'Directory unavailable' }, { status: 503, statusText: 'Unavailable' });
+    f.detectChanges();
+    expect(c.stations()).toEqual(rows(0));
+    expect(f.nativeElement.querySelectorAll('.station')).toHaveLength(20);
+    expect(c.selected()).toEqual(rows(0)[0]);
+    expect(f.nativeElement.querySelector('[role="alert"]').textContent).toContain(
+      'Directory unavailable',
+    );
+    expect(f.nativeElement.querySelector('.load-more button').disabled).toBe(false);
+    f.nativeElement.querySelector('[role="alert"] button').click();
+    respond(20);
+    expect(c.stations()).toEqual(rows(0, 40));
+    expect(c.error()).toBe('');
+    c.loadMore();
+    respond(40);
+  });
+  it('retries an initial search failure at offset zero', async () => {
+    const f = await picker();
+    f.componentInstance.filters.controls.name.setValue('Retry');
+    await vi.advanceTimersByTimeAsync(300);
     http
       .expectOne((r) => r.url === root + '/stations/search')
-      .flush({ message: 'Directory unavailable' }, { status: 503, statusText: 'Unavailable' });
-    expect(c.page()).toBe(1);
-    expect(c.stations()).toEqual(rows(1));
-    expect(c.error()).toContain('Directory unavailable');
-    c.retry();
-    respond(2);
-    expect(c.stations()).toEqual(rows(2));
-    expect(c.page()).toBe(2);
+      .flush({ message: 'Unavailable' }, { status: 503, statusText: 'Unavailable' });
+    f.componentInstance.retry();
+    respond(0);
+    expect(f.componentInstance.stations()).toEqual(rows(0));
+    expect(f.componentInstance.hasMore()).toBe(true);
   });
   it.each(['name', 'countrycode', 'tag', 'hidebroken'] as const)(
-    'resets history and cancels old pages when %s changes',
+    'resets results and offset and cancels an old batch when %s changes',
     async (key) => {
-      const f = await picker(rows(1)),
+      const f = await picker(rows(0)),
         c = f.componentInstance;
-      c.goToPage(2);
-      respond(2);
-      c.goToPage(3);
+      c.loadMore();
+      respond(20);
+      c.loadMore();
       const stale = http.expectOne((r) => r.url === root + '/stations/search');
       c.filters.patchValue({
         [key]: key === 'hidebroken' ? false : key === 'countrycode' ? 'AT' : 'jazz',
       });
       expect(stale.cancelled).toBe(true);
-      expect(c.page()).toBe(1);
-      expect(c.pages()).toEqual([1]);
+      expect(c.hasMore()).toBe(false);
       expect(c.stations()).toEqual([]);
+      c.loadMore();
       await vi.advanceTimersByTimeAsync(299);
       http.expectNone((r) => r.url === root + '/stations/search');
       await vi.advanceTimersByTimeAsync(1);
-      respond(1, [station]);
+      respond(0);
       for (const req of http.match((r) => r.url === root + '/tags')) req.flush([]);
-      expect(c.pages()).toEqual([1]);
-      expect(c.stations()).toEqual([station]);
+      expect(c.stations()).toEqual(rows(0));
+      expect(c.hasMore()).toBe(true);
+      c.loadMore();
+      respond(20);
+      expect(c.stations()).toEqual(rows(0, 40));
     },
   );
-  it('scrolls only the results region and clears selection without emitting a choice', async () => {
-    const f = await picker(rows(1)),
+  it('ignores late success and error callbacks from an invalidated query', async () => {
+    const f = await picker(rows(0)),
+      c = f.componentInstance;
+    let old!: { next: (batch: RadioPage) => void; error: (error: unknown) => void };
+    const unsubscribe = vi.fn();
+    // Deliberately deliver callbacks even after cancellation to exercise the generation guard.
+    vi.spyOn(TestBed.inject(RadioBrowserApi), 'search').mockReturnValueOnce({
+      subscribe: (observer: typeof old) => {
+        old = observer;
+        return { unsubscribe };
+      },
+    } as any);
+    c.loadMore();
+    c.filters.controls.name.setValue('New');
+    expect(unsubscribe).toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(300);
+    respond(0, rows(100));
+    old.next({ stations: rows(20), offset: 20, limit: 20 });
+    old.error(new Error('Old request failed'));
+    expect(c.stations()).toEqual(rows(100));
+    expect(c.error()).toBe('');
+    expect(c.hasMore()).toBe(true);
+    expect(c.loading()).toBe(false);
+  });
+  it('preserves scroll position and selection when appending and confirms only on Use station', async () => {
+    const f = await picker(rows(0)),
       c = f.componentInstance,
       chosen = vi.fn();
     c.chosen.subscribe(chosen);
-    c.selected.set(c.stations()[0]);
-    c.results.nativeElement.scrollTop = 450;
-    const scroll = vi.spyOn(window, 'scrollTo');
-    c.goToPage(2);
+    f.nativeElement.querySelector('.station').click();
     f.detectChanges();
-    expect(c.results.nativeElement.scrollTop).toBe(0);
-    expect(c.selected()).toBeNull();
+    const results = f.nativeElement.querySelector('.results') as HTMLElement;
+    results.scrollTop = 450;
+    const scroll = vi.spyOn(window, 'scrollTo');
+    c.loadMore();
+    f.detectChanges();
+    expect(results.scrollTop).toBe(450);
+    expect(c.selected()).toEqual(rows(0)[0]);
     c.useStation();
     expect(chosen).not.toHaveBeenCalled();
-    respond(2);
+    respond(20);
     f.detectChanges();
+    expect(results.scrollTop).toBe(450);
     expect(c.opened()).toBe(true);
     expect(scroll).not.toHaveBeenCalled();
+    expect(c.selected()).toEqual(rows(0)[0]);
+    const details = f.nativeElement.querySelector('.details').textContent;
+    expect(details).toContain('MP3');
+    expect(details).toContain('64 kb/s');
     const use = [...f.nativeElement.querySelectorAll('button')].find(
       (b: any) => b.textContent.trim() === 'Use station',
     );
-    expect(use.disabled).toBe(true);
-    c.selected.set(c.stations()[0]);
-    c.useStation();
-    expect(chosen).toHaveBeenCalledWith(rows(2)[0]);
-  });
-  it('bounds page navigation and handles a visited page disappearing from the live catalogue', async () => {
-    const f = await picker(rows(1)),
-      c = f.componentInstance;
-    c.goToPage(99);
-    c.goToPage(0);
-    http.expectNone((r) => r.url === root + '/stations/search');
-    c.goToPage(2);
-    respond(2);
-    c.goToPage(3);
-    respond(3);
-    c.goToPage(2);
-    respond(2, []);
-    respond(1, [station]);
-    expect(c.page()).toBe(1);
-    expect(c.pages()).toEqual([1]);
-    expect(c.stations()).toEqual([station]);
+    expect(use.disabled).toBe(false);
+    use.click();
+    expect(chosen).toHaveBeenCalledExactlyOnceWith(rows(0)[0]);
+    expect(c.opened()).toBe(false);
   });
   it('renders empty, broken and unsupported results without requiring optional metadata', async () => {
     const f = await picker([]),
@@ -384,13 +426,11 @@ describe('HTTP Source Radio Browser draft', () => {
   it('shows the browse link only for HTTP and leaves ordinary URLs editable', async () => {
     const { f, c } = await editor();
     expect(f.nativeElement.querySelector('#source-uri').readOnly).toBe(false);
-    expect(f.nativeElement.textContent).toContain('Browse RadioBrowser (www.radio-browser.info)');
+    expect(f.nativeElement.textContent).toContain('Browse stations');
     c.form.controls.type.setValue('UDP');
     c.changeType();
     f.detectChanges();
-    expect(f.nativeElement.textContent).not.toContain(
-      'Browse RadioBrowser (www.radio-browser.info)',
-    );
+    expect(f.nativeElement.textContent).not.toContain('Browse stations');
   });
   it('opens above the editor without navigation or resetting the draft', async () => {
     const { f, c } = await editor();
@@ -523,7 +563,7 @@ describe('HTTP Source Radio Browser draft', () => {
     http.expectNone('/api/v1/sources/1');
     expect(c.form.controls.name.value).toBe('Unsaved name');
   });
-  it('paging never changes the Source draft or emits a save/test request', async () => {
+  it('browsing and loading more change the Source draft only on Use station', async () => {
     const { f, c } = await editor(true);
     const before = c.draft();
     c.openRadioBrowser();
@@ -534,16 +574,27 @@ describe('HTTP Source Radio Browser draft', () => {
       .expectOne((r) => r.url === root + '/stations/search')
       .flush({ stations: rows, offset: 0, limit: 20 });
     c.radioPicker!.selected.set(rows[0]);
-    c.radioPicker!.goToPage(2);
+    c.radioPicker!.loadMore();
     http
       .expectOne((r) => r.url === root + '/stations/search')
       .flush({ stations: [station], offset: 20, limit: 20 });
     f.detectChanges();
     expect(c.draft()).toEqual(before);
     expect(c.dirty()).toBe(false);
-    expect(c.radioPicker!.selected()).toBeNull();
+    expect(c.radioPicker!.selected()).toEqual(rows[0]);
     http.expectNone((r) => r.method !== 'GET');
-    c.radioPicker!.close();
+    c.radioPicker!.filters.controls.name.setValue('New search');
+    expect(c.draft()).toEqual(before);
+    await new Promise((resolve) => setTimeout(resolve, 320));
+    const search = http.expectOne((r) => r.url === root + '/stations/search');
+    expect(search.request.params.get('offset')).toBe('0');
+    search.flush({ stations: [station], offset: 0, limit: 20 });
+    c.radioPicker!.selected.set(station);
+    expect(c.draft()).toEqual(before);
+    c.radioPicker!.useStation();
+    expect(c.draft()?.config).toEqual({ uri: station.playable_url, radio_browser_uuid: uuid });
+    expect(c.dirty()).toBe(true);
+    http.expectNone((r) => r.method !== 'GET');
   });
   it('does not overwrite drafts with dashboard snapshots', async () => {
     const { c, saved } = await editor(true);

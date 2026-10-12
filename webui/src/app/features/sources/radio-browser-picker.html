@@ -1,6 +1,14 @@
 <dialog #dialog aria-labelledby="radio-browser-title" (cancel)="cancel($event)" (close)="close()">
   <header>
-    <h2 id="radio-browser-title">Browse RadioBrowser (www.radio-browser.info)</h2>
+    <div>
+      <h2 id="radio-browser-title">Browse stations</h2>
+      <p class="attribution">
+        Powered by Radio Browser
+        <a href="https://www.radio-browser.info/" target="_blank" rel="noopener noreferrer"
+          >(radio-browser.info)</a
+        >
+      </p>
+    </div>
     <button type="button" aria-label="Close Radio Browser" (click)="close()">&#215;</button>
   </header>
   <div class="filters" [formGroup]="filters">
@@ -50,14 +58,7 @@
       </div>
     }
   </div>
-  <ng-container *ngTemplateOutlet="pagination; context: { position: 'Top' }" />
-  <section
-    #results
-    id="radio-results"
-    class="results"
-    aria-label="Stations"
-    [attr.aria-busy]="loading()"
-  >
+  <section id="radio-results" class="results" aria-label="Stations" [attr.aria-busy]="loading()">
     @for (station of stations(); track station.stationuuid) {
       <button
         type="button"
@@ -88,7 +89,7 @@
         }
       </button>
     }
-    @if (loading()) {
+    @if (loading() && !stations().length) {
       <p role="status">Loading stations...</p>
     }
     @if (error()) {
@@ -100,43 +101,18 @@
       <p role="status">No stations found. Try another name or filter.</p>
     }
   </section>
-  <ng-container *ngTemplateOutlet="pagination; context: { position: 'Bottom' }" />
-  <ng-template #pagination let-position="position">
-    <nav class="pagination" [attr.aria-label]="position + ' station pages'">
+  @if (hasMore()) {
+    <div class="load-more">
       <button
         type="button"
-        aria-label="Previous page"
         aria-controls="radio-results"
-        [disabled]="loading() || page() === 1"
-        (click)="goToPage(page() - 1)"
+        [disabled]="loading()"
+        (click)="loadMore()"
       >
-        &#8249;
+        {{ loading() ? 'Loading...' : 'Load more' }}
       </button>
-      <div class="page-numbers">
-        @for (number of pages(); track number) {
-          <button
-            type="button"
-            [attr.aria-label]="'Page ' + number"
-            aria-controls="radio-results"
-            [attr.aria-current]="page() === number ? 'page' : null"
-            [disabled]="loading() || page() === number"
-            (click)="goToPage(number)"
-          >
-            {{ number }}
-          </button>
-        }
-      </div>
-      <button
-        type="button"
-        aria-label="Next page"
-        aria-controls="radio-results"
-        [disabled]="loading() || page() >= reachableThrough()"
-        (click)="goToPage(page() + 1)"
-      >
-        &#8250;
-      </button>
-    </nav>
-  </ng-template>
+    </div>
+  }
   <footer>
     <div class="details" aria-live="polite">
       @if (selected(); as station) {
