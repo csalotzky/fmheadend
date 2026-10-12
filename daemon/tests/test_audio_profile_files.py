@@ -115,11 +115,17 @@ def test_default_and_list(store):
 @pytest.mark.parametrize('weighting', [0, 50, 75])
 def test_weighting_persists_even_with_limiter_off(store, weighting):
     data = document()
-    data['stages']['limiter']['implementations'] = {'FM_HEADEND_LIMITER': {'weighting_us': weighting}}
+    data['stages']['limiter']['implementations'] = {
+        'FM_HEADEND_LIMITER': {'weighting_us': weighting, 'true_peak_detection': True}}
+    data['stages']['clipper']['implementations']['FM_HEADEND_CLIPPER'].update(
+        clipping_mode='soft', soft_knee_db=4.5)
     item = store.create(data)
     loaded = store.get(item.path)
     assert loaded.profile.stages['limiter'].selected == 'OFF'
     assert loaded.profile.stages['limiter'].implementations['FM_HEADEND_LIMITER']['weighting_us'] == weighting
+    assert loaded.profile.stages['limiter'].implementations['FM_HEADEND_LIMITER']['true_peak_detection'] is True
+    assert loaded.profile.stages['clipper'].implementations['FM_HEADEND_CLIPPER']['clipping_mode'] == 'soft'
+    assert loaded.profile.stages['clipper'].implementations['FM_HEADEND_CLIPPER']['soft_knee_db'] == 4.5
     store.save(item.path, loaded.profile.model_dump())
     assert store.get(item.path) == loaded
 
@@ -387,3 +393,14 @@ def test_external_mutated_or_constructed_profile_is_not_trusted_by_result_model(
     for supplied in (profile, unvalidated):
         with pytest.raises(ValidationError):
             ProfileFileResult(description="Test profile", name='Invalid', path='custom/bad.json', kind='custom', profile=supplied)
+
+
+def test_tracked_profiles_contain_fm_peak_defaults():
+    for path in DEFAULT.parent.glob('*.json'):
+        data = json.loads(path.read_text(encoding='utf-8'))
+        limiter = data['stages']['limiter']['implementations']['FM_HEADEND_LIMITER']
+        clipper = data['stages']['clipper']['implementations']['FM_HEADEND_CLIPPER']
+        assert limiter['true_peak_detection'] is False, path
+        assert clipper['clipping_mode'] == 'hard', path
+        assert clipper['soft_knee_db'] == 2., path
+        assert AudioProfileFile.model_validate(data).model_dump() == data

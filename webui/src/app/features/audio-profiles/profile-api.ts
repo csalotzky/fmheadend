@@ -18,6 +18,7 @@ export interface DspSchema {
   title?: string;
   description?: string;
   hidden?: boolean;
+  visible_when?: Record<string, string>;
   default?: any;
   minimum?: number;
   maximum?: number;

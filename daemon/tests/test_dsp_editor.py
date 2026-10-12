@@ -33,3 +33,18 @@ def test_field_specific_resolution_and_fixed_mode_hidden():
     eq = editor_schema(IMPLEMENTATIONS['LSP_EQ'][0])['$defs']['LspEqBand']['properties']
     assert eq['q']['slider']['scale'] == 'log' and eq['q']['slider']['offset'] == .1
     assert eq['gain_db']['slider']['min'] == -35
+
+
+
+def test_fm_peak_controls_metadata_and_defaults():
+    limiter = editor_schema(IMPLEMENTATIONS['FM_HEADEND_LIMITER'][0])['properties']
+    clipper = editor_schema(IMPLEMENTATIONS['FM_HEADEND_CLIPPER'][0])['properties']
+    assert limiter['true_peak_detection']['type'] == 'boolean'
+    assert limiter['true_peak_detection']['default'] is False
+    assert clipper['clipping_mode']['enum'] == ['hard', 'soft']
+    assert clipper['clipping_mode']['default'] == 'hard'
+    assert clipper['clipping_mode']['enum_labels'] == {'hard': 'Hard', 'soft': 'Soft'}
+    knee = clipper['soft_knee_db']
+    assert (knee['minimum'], knee['maximum'], knee['default']) == (0, 6, 2.)
+    assert knee['visible_when'] == {'clipping_mode': 'soft'}
+    assert knee['slider']['step'] == .1

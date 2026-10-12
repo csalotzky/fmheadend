@@ -179,13 +179,14 @@ def test_lpf_default_is_specific():
 
 @pytest.mark.parametrize('selected', ['OFF', 'LSP_LIMITER', 'FM_HEADEND_LIMITER'])
 @pytest.mark.parametrize('weighting', [0, 50, 75])
-def test_exclusive_limiter_roundtrip_and_order(selected, weighting):
+@pytest.mark.parametrize('true_peak', [False, True])
+def test_exclusive_limiter_roundtrip_and_order(selected, weighting, true_peak):
     doc = profile()
     stage = doc['stages']['limiter']
     stage['selected'] = selected
     settings = stage['implementations']['FM_HEADEND_LIMITER']
     settings.update(weighting_us=weighting, threshold_dbfs=-11., lookahead_ms=6.,
-                    attack_ms=.5, release_ms=42., stereo_link_percent=80., safety_margin_db=3.)
+                    attack_ms=.5, release_ms=42., stereo_link_percent=80., safety_margin_db=3., true_peak_detection=true_peak)
     parsed = AudioProfileFile.model_validate_json(AudioProfileFile.model_validate(doc).model_dump_json())
     assert parsed.model_dump() == doc
     chain = build(doc)
@@ -210,7 +211,8 @@ def test_existing_profiles_need_no_new_implementation_settings(selected):
 
 @pytest.mark.parametrize('key,value', [('weighting_us', 25), ('threshold_dbfs', -61.),
     ('lookahead_ms', 21.), ('attack_ms', -1.), ('release_ms', 0.),
-    ('stereo_link_percent', 101.), ('safety_margin_db', 13.)])
+    ('stereo_link_percent', 101.), ('safety_margin_db', 13.),
+    ('true_peak_detection', 'true'), ('true_peak_detection', 1)])
 def test_invalid_fm_limiter_settings(key, value):
     doc = profile()
     doc['stages']['limiter']['implementations']['FM_HEADEND_LIMITER'][key] = value
@@ -222,7 +224,7 @@ def test_fm_editor_defaults_and_choices():
     from fmheadendd.models.dsp_editor import editor_schema
     assert FmHeadendLimiter().model_dump() == dict(threshold_dbfs=-9, lookahead_ms=5,
         attack_ms=.25, release_ms=20, stereo_link_percent=100, weighting_us=50,
-        safety_margin_db=2.5, bypass=False)
+        safety_margin_db=2.5, true_peak_detection=False, bypass=False)
     assert 'fm_limiter_weighting' not in LspLimiter.model_fields
     field = editor_schema(FmHeadendLimiter)['properties']['weighting_us']
     assert field['enum'] == [0, 50, 75]
@@ -251,27 +253,32 @@ def test_selected_fm_limiter_requires_plugin(monkeypatch):
 @pytest.mark.parametrize('selected', ['OFF', 'FM_HEADEND_CLIPPER'])
 @pytest.mark.parametrize('weighting', [0, 50, 75])
 @pytest.mark.parametrize('limiter', ['LSP_LIMITER', 'FM_HEADEND_LIMITER'])
-def test_clipper_independent_stage_order_properties_and_roundtrip(selected, weighting, limiter):
+@pytest.mark.parametrize('mode,knee', [('hard', 2.), ('soft', 0.), ('soft', 3.5), ('soft', 6.)])
+def test_clipper_independent_stage_order_properties_and_roundtrip(selected, weighting, limiter, mode, knee):
     doc = profile()
     assert doc['stages']['clipper']['selected'] == 'OFF'
     doc['stages']['limiter']['selected'] = limiter
     doc['stages']['clipper']['selected'] = selected
     settings = doc['stages']['clipper']['implementations']['FM_HEADEND_CLIPPER']
-    settings.update(threshold_dbfs=-12., weighting_us=weighting, bypass=False)
+    settings.update(threshold_dbfs=-12., weighting_us=weighting, bypass=False,
+                    clipping_mode=mode, soft_knee_db=knee)
     parsed = AudioProfileFile.model_validate_json(AudioProfileFile.model_validate(doc).model_dump_json())
     assert parsed.model_dump() == doc
     chain = build(doc)
     expected = ['volume', 'audiocheblimit', 'volume', IMPLEMENTATIONS[limiter][1], 'audiocheblimit']
     if selected != 'OFF': expected.append('fmheadendclipper')
     assert [e.factory for e in chain] == expected + ['volume']
-    if selected != 'OFF': assert chain[-2].props == settings
+    if selected != 'OFF': assert chain[-2].props == {**settings, 'clipping_mode': {'hard': 0, 'soft': 1}[mode]}
     doc['stages']['clipper']['selected'] = 'OFF'
     original = build(doc)
     assert [(e.factory,e.props) for e in chain if e.factory != 'fmheadendclipper'] == [(e.factory,e.props) for e in original]
 
 
 @pytest.mark.parametrize('key,value', [('threshold_dbfs', -61.), ('threshold_dbfs', 1.),
-    ('weighting_us', 25), ('bypass', 'false'), ('clip_count', 0), ('max_clipping_db', 0.)])
+    ('weighting_us', 25), ('bypass', 'false'), ('clipping_mode', 'invalid'),
+    ('clipping_mode', 1), ('soft_knee_db', -0.1), ('soft_knee_db', 6.1),
+    ('soft_knee_db', '2'), ('soft_knee_db', True), ('soft_knee_db', float('nan')),
+    ('clip_count', 0), ('max_clipping_db', 0.)])
 def test_clipper_rejects_invalid_or_runtime_fields(key, value):
     doc = profile()
     doc['stages']['clipper']['implementations']['FM_HEADEND_CLIPPER'][key] = value
