@@ -1,3 +1,6 @@
+import { RadioBrowserPicker } from './radio-browser-picker';
+import { RadioBrowserApi, RadioStation } from './radio-browser-api';
+import { InputSource } from '../../core/api/models';
 import { rdsText } from '../modulators/values';
 import { RdsProfileForm } from '../../shared/rds-profile-editor/rds-profile-form';
 import { RdsProfileEditor } from '../../shared/rds-profile-editor/rds-profile-editor';
@@ -6,6 +9,7 @@ import {
   ElementRef,
   HostListener,
   OnInit,
+  OnDestroy,
   ViewChild,
   computed,
   inject,
@@ -47,13 +51,110 @@ import { DashboardState } from '../dashboard/dashboard-state';
 @Component({
   host: { class: 'page-content editor-narrow' },
   selector: 'app-source-editor',
-  imports: [ReactiveFormsModule, RouterLink, TestResult, RdsProfileEditor],
+  imports: [ReactiveFormsModule, RouterLink, TestResult, RdsProfileEditor, RadioBrowserPicker],
   templateUrl: './source-editor.html',
   styleUrl: './sources.css',
 })
-export class SourceEditor implements OnInit {
+export class SourceEditor implements OnInit, OnDestroy {
   @ViewChild('pathPicker') pathPicker?: ElementRef<HTMLDialogElement>;
   private api = inject(SourceApi);
+  @ViewChild(RadioBrowserPicker) radioPicker?: RadioBrowserPicker;
+  openRadioBrowser() {
+    if (!this.saving() && !this.testing()) this.radioPicker?.open();
+  }
+  private radioApi = inject(RadioBrowserApi);
+  readonly radioUuid = new FormControl<string | null>(null);
+  readonly radioRefreshing = signal(false);
+  readonly radioMessage = signal('');
+  readonly radioError = signal('');
+  readonly sourceConflict = signal(false);
+  private loadedSource: InputSource | null = null;
+  private radioGeneration = 0;
+  ngOnDestroy() {
+    ++this.radioGeneration;
+  }
+  private invalidateRadioRefresh() {
+    ++this.radioGeneration;
+    this.radioRefreshing.set(false);
+    this.radioMessage.set('');
+    this.radioError.set('');
+  }
+  useRadioStation(station: RadioStation) {
+    if (
+      this.form.controls.type.value !== 'HTTP' ||
+      !station.playable_url ||
+      this.saving() ||
+      this.testing()
+    )
+      return;
+    this.invalidateRadioRefresh();
+    this.config.controls['uri'].setValue(station.playable_url);
+    this.config.controls['uri'].markAsDirty();
+    this.radioUuid.setValue(station.stationuuid);
+    this.radioUuid.markAsDirty();
+    if (!this.form.controls.name.value.trim()) {
+      this.form.controls.name.setValue(station.name.trim().slice(0, 200));
+      this.form.controls.name.markAsDirty();
+    }
+    this.result.set(null);
+  }
+  unlinkRadio() {
+    this.invalidateRadioRefresh();
+    this.radioUuid.setValue(null);
+    this.radioUuid.markAsDirty();
+  }
+  async refreshRadioUrl() {
+    const uuid = this.radioUuid.value;
+    if (!uuid || this.radioRefreshing() || this.saving() || this.testing()) return;
+    this.invalidateRadioRefresh();
+    const generation = this.radioGeneration;
+    const uri = this.config.controls['uri'].value;
+    this.radioRefreshing.set(true);
+    const current = () =>
+      generation === this.radioGeneration &&
+      this.radioUuid.value === uuid &&
+      this.form.controls.type.value === 'HTTP' &&
+      this.config.controls['uri'].value === uri;
+    try {
+      const station = await firstValueFrom(this.radioApi.lookup(uuid));
+      if (!current()) return;
+      if (station.stationuuid !== uuid || !station.playable_url) {
+        this.radioError.set(
+          'This Radio Browser entry has no usable stream URL. The current URL was kept.',
+        );
+      } else if (station.playable_url === uri) {
+        this.radioMessage.set('The stream URL is unchanged.');
+      } else {
+        this.config.controls['uri'].setValue(station.playable_url);
+        this.config.controls['uri'].markAsDirty();
+        this.result.set(null);
+        this.radioMessage.set('URL updated in the draft. Save to apply.');
+      }
+    } catch (e) {
+      if (current()) this.radioError.set(errorMessage(e));
+    } finally {
+      if (generation === this.radioGeneration) this.radioRefreshing.set(false);
+    }
+  }
+  async reloadSource() {
+    if (
+      this.saving() ||
+      this.testing() ||
+      (this.dirty() &&
+        !window.confirm('Discard unsaved Source changes and reload the saved Source?'))
+    )
+      return;
+    this.error.set('');
+    await this.ngOnInit();
+    if (!this.loadFailed()) {
+      this.config.markAsPristine();
+      this.radioUuid.markAsPristine();
+      this.podcast.markAsPristine();
+      this.configureRds.markAsPristine();
+      this.rds.form.markAsPristine();
+      this.sourceConflict.set(false);
+    }
+  }
   private route = inject(ActivatedRoute);
   private shared = inject(DashboardState);
   id = this.route.snapshot.paramMap.has('id')
@@ -213,6 +314,8 @@ export class SourceEditor implements OnInit {
     this.loading.set(true);
     try {
       const source = await firstValueFrom(this.api.get(this.id));
+      this.loadedSource = source;
+      this.loadFailed.set(false);
       this.form.setValue({
         name: source.name,
         type: source.type,
@@ -236,6 +339,12 @@ export class SourceEditor implements OnInit {
     }
   }
   rebuild(type: SourceType, values: Record<string, unknown> = {}) {
+    this.invalidateRadioRefresh();
+    this.radioUuid.reset(
+      type === 'HTTP' && typeof values['radio_browser_uuid'] === 'string'
+        ? values['radio_browser_uuid']
+        : null,
+    );
     const controls: Record<string, FormControl<string | boolean>> = {};
     for (const f of fields[type])
       controls[f.key] = new FormControl<string | boolean>(
@@ -391,6 +500,7 @@ export class SourceEditor implements OnInit {
   }
   dirty() {
     return (
+      this.radioUuid.dirty ||
       this.form.dirty ||
       this.config.dirty ||
       this.podcast.dirty ||
@@ -491,6 +601,8 @@ export class SourceEditor implements OnInit {
     }
     if (v.type === 'PODCAST') Object.assign(config, podcastConfig(this.podcast));
     if (v.type === 'HTTP') {
+      if (this.radioUuid.value || this.radioUuid.dirty)
+        config['radio_browser_uuid'] = this.radioUuid.value;
       try {
         const url = new URL(String(config['uri']));
         if (!['http:', 'https:'].includes(url.protocol) || /\s/.test(String(config['uri'])))
@@ -546,13 +658,36 @@ export class SourceEditor implements OnInit {
     };
   }
   async save() {
-    if (this.saving() || this.testing() || this.loadFailed()) return;
+    if (this.saving() || this.testing() || this.loadFailed() || this.radioRefreshing()) return;
     this.message.set('');
     const body = this.draft();
     if (!body) return;
     this.saving.set(true);
     try {
+      // No background snapshot is ever copied over the editor. Check linked
+      // Sources immediately before saving so known automatic recovery is noticed.
+      if (
+        this.id !== undefined &&
+        this.loadedSource &&
+        (this.loadedSource.config['radio_browser_uuid'] || this.radioUuid.value)
+      ) {
+        const current = await firstValueFrom(this.api.get(this.id));
+        if (
+          current.timestamp !== this.loadedSource.timestamp ||
+          current.config['uri'] !== this.loadedSource.config['uri'] ||
+          current.config['radio_browser_uuid'] !== this.loadedSource.config['radio_browser_uuid']
+        ) {
+          this.sourceConflict.set(true);
+          this.error.set(
+            'The saved Source changed while this editor was open (possibly stream URL recovery). Your edits are retained. Reload the saved Source before saving.',
+          );
+          return;
+        }
+      }
       const result = await firstValueFrom(this.api.save(body, this.id));
+      this.loadedSource = result;
+      this.sourceConflict.set(false);
+      this.radioUuid.markAsPristine();
       this.id = result.id;
       this.form.markAsPristine();
       this.config.markAsPristine();
@@ -575,7 +710,7 @@ export class SourceEditor implements OnInit {
     }
   }
   async test() {
-    if (this.testing() || this.saving() || this.loadFailed()) return;
+    if (this.testing() || this.saving() || this.loadFailed() || this.radioRefreshing()) return;
     const body = this.draft(true);
     if (!body) return;
     this.testing.set(true);

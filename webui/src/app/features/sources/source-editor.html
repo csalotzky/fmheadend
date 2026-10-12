@@ -1,639 +1,474 @@
+@if (sourceConflict()) {
+<p class="warning" role="alert">
+  The saved Source has changed.
+  <button type="button" (click)="reloadSource()" [disabled]="saving() || testing()">
+    Reload saved Source
+  </button>
+</p>
+}
 <div class="page-header">
   <h1>{{ id === undefined ? 'Add source' : 'Edit source' }}</h1>
 </div>
 @if (loading()) {
-  <p role="status">Loading source...</p>
+<p role="status">Loading source...</p>
 }
 @if (loadFailed() && error()) {
-  <p class="error" role="alert">{{ error() }}</p>
+<p class="error" role="alert">{{ error() }}</p>
 }
 @if (!loading() && !loadFailed()) {
-  <form class="source-editor-form" [formGroup]="form" (ngSubmit)="save()">
-    <fieldset [disabled]="saving() || testing()">
-      <section class="source-editor-panel" aria-labelledby="source-heading">
-        <h2 id="source-heading">Source</h2>
-        <div class="fields">
-          <label>Name<input formControlName="name" required maxlength="200" /></label>
-          <label
-            >Source type<select formControlName="type" (change)="changeType()">
-              @for (type of types; track type) {
-                <option [value]="type">{{ typeLabels[type] }}</option>
-              }
-            </select></label
-          >
-        </div>
-        <div class="fields" [formGroup]="config">
-          @for (field of visibleFields(); track field.key) {
-            @if (form.controls.type.value === 'ALSA' && field.key === 'device') {
-              <div class="alsa-device">
-                <label for="alsa-device-select">ALSA capture device *</label>
-                <select id="alsa-device-select" (change)="selectAlsa($any($event.target).value)">
-                  <option value="" [selected]="!alsaCustom() && !config.controls['device'].value">
-                    Select...
-                  </option>
-                  @for (device of alsaDevices(); track device.pcm) {
-                    <option
-                      [value]="device.pcm"
-                      [selected]="!alsaCustom() && config.controls['device'].value === device.pcm"
-                    >
-                      {{ device.label }}
-                    </option>
-                  }
-                  @if (!alsaCustom() && alsaMissing()) {
-                    <option [value]="config.controls['device'].value" [selected]="true">
-                      {{ config.controls['device'].value }} (unavailable / not listed)
-                    </option>
-                  }
-                  <option value="__custom" [selected]="alsaCustom()">
-                    Custom ALSA device&hellip;
-                  </option>
-                </select>
-                <button type="button" (click)="refreshAlsa()" [disabled]="alsaLoading()">
-                  <span aria-hidden="true">&#x21bb;</span>
-                  {{ alsaLoading() ? 'Refreshing devices...' : 'Refresh devices' }}
-                </button>
-                @if (alsaCustom()) {
-                  <label
-                    >Custom ALSA device<input
-                      formControlName="device"
-                      required
-                      maxlength="200"
-                      (input)="changeConfig('device')"
-                  /></label>
-                }
-                @if (config.controls['device'].value) {
-                  <small>Selected: {{ config.controls['device'].value }}</small>
-                }
-                @if (alsaError()) {
-                  <small class="error" role="alert">{{ alsaError() }}</small>
-                } @else if (!alsaLoading() && !alsaDevices().length) {
-                  <small role="status"
-                    >No capture devices found. Connect a USB capture device and refresh, or enter a
-                    custom ALSA device.</small
-                  >
-                }
-              </div>
-            } @else if (form.controls.type.value === 'LOCAL' && field.key === 'path') {
-              <section class="local-path-panel" aria-labelledby="source-path-label">
-                <div id="source-path-label" class="local-path-label">
-                  {{ field.label }} <span aria-hidden="true">*</span>
-                </div>
-                <div class="local-path-control-group">
-                  <button
-                    type="button"
-                    class="path-browse"
-                    (click)="openBrowser()"
-                    [disabled]="saving() || testing()"
-                  >
-                    Browse...
-                  </button>
-                  <input
-                    id="source-path"
-                    class="local-path-input"
-                    [formControlName]="'path'"
-                    type="text"
-                    required
-                    [attr.title]="config.controls['path'].value || null"
-                    aria-labelledby="source-path-label"
-                    [attr.aria-describedby]="field.help ? 'source-path-help' : null"
-                  />
-                  @if (localMode() === 'folder') {
-                    <label class="recursive-toggle">
-                      <input
-                        type="checkbox"
-                        id="source-recursive"
-                        [formControlName]="'recursive'"
-                      />
-                      Include subfolders
-                    </label>
-                  }
-                </div>
-                @if (field.help) {
-                  <small id="source-path-help">{{ field.help }}</small>
-                }
-              </section>
-            } @else if (field.key !== 'recursive') {
-              <div [class.stream-row]="form.controls.type.value === 'HTTP' && field.key === 'uri'">
-                <label
-                  >{{ field.label }}
-                  @if (field.required) {
-                    <span aria-hidden="true">*</span>
-                  }
-                  @if (field.checkbox) {
-                    <input
-                      type="checkbox"
-                      [id]="'source-' + field.key"
-                      [formControlName]="field.key"
-                    />
-                  } @else if (field.options) {
-                    <select
-                      [id]="'source-' + field.key"
-                      [formControlName]="field.key"
-                      [required]="!!field.required"
-                      (change)="changeConfig(field.key)"
-                    >
-                      <option value="">Select...</option>
-                      @for (option of field.options; track option) {
-                        <option [value]="option">
-                          {{ field.optionLabels?.[option] ?? option }}
-                        </option>
-                      }
-                    </select>
-                  } @else {
-                    <input
-                      [id]="'source-' + field.key"
-                      [formControlName]="field.key"
-                      [type]="field.numeric ? 'number' : 'text'"
-                      [required]="!!field.required"
-                      [attr.min]="field.min ?? null"
-                      [attr.max]="field.max ?? null"
-                      [attr.step]="field.numeric ? 1 : null"
-                    />
-                  }
-                  @if (field.help) {
-                    <small>{{ field.help }}</small>
-                  }
-                </label>
-                @if (form.controls.type.value === 'HTTP' && field.key === 'uri') {
-                  <button type="button" (click)="test()" [disabled]="testing() || saving()">
-                    {{ testing() ? 'Testing...' : 'Test stream' }}
-                  </button>
-                }
-              </div>
+<form class="source-editor-form" [formGroup]="form" (ngSubmit)="save()">
+  <fieldset [disabled]="saving() || testing()">
+    <section class="source-editor-panel" aria-labelledby="source-heading">
+      <h2 id="source-heading">Source</h2>
+      <div class="fields">
+        <label>Name<input formControlName="name" required maxlength="200" /></label>
+        <label>Source type<select formControlName="type" (change)="changeType()">
+            @for (type of types; track type) {
+            <option [value]="type">{{ typeLabels[type] }}</option>
             }
+          </select></label>
+      </div>
+      <div class="fields" [formGroup]="config">
+        @for (field of visibleFields(); track field.key) {
+        @if (form.controls.type.value === 'ALSA' && field.key === 'device') {
+        <div class="alsa-device">
+          <label for="alsa-device-select">ALSA capture device *</label>
+          <select id="alsa-device-select" (change)="selectAlsa($any($event.target).value)">
+            <option value="" [selected]="!alsaCustom() && !config.controls['device'].value">
+              Select...
+            </option>
+            @for (device of alsaDevices(); track device.pcm) {
+            <option [value]="device.pcm" [selected]="!alsaCustom() && config.controls['device'].value === device.pcm">
+              {{ device.label }}
+            </option>
+            }
+            @if (!alsaCustom() && alsaMissing()) {
+            <option [value]="config.controls['device'].value" [selected]="true">
+              {{ config.controls['device'].value }} (unavailable / not listed)
+            </option>
+            }
+            <option value="__custom" [selected]="alsaCustom()">
+              Custom ALSA device&hellip;
+            </option>
+          </select>
+          <button type="button" (click)="refreshAlsa()" [disabled]="alsaLoading()">
+            <span aria-hidden="true">&#x21bb;</span>
+            {{ alsaLoading() ? 'Refreshing devices...' : 'Refresh devices' }}
+          </button>
+          @if (alsaCustom()) {
+          <label>Custom ALSA device<input formControlName="device" required maxlength="200"
+              (input)="changeConfig('device')" /></label>
+          }
+          @if (config.controls['device'].value) {
+          <small>Selected: {{ config.controls['device'].value }}</small>
+          }
+          @if (alsaError()) {
+          <small class="error" role="alert">{{ alsaError() }}</small>
+          } @else if (!alsaLoading() && !alsaDevices().length) {
+          <small role="status">No capture devices found. Connect a USB capture device and refresh, or enter a
+            custom ALSA device.</small>
           }
         </div>
-        @if (form.controls.type.value === 'PODCAST') {
-          <div class="podcast-config" [formGroup]="podcast">
-            <div id="podcast-feeds-label" class="podcast-label">Feeds</div>
-            <p id="podcast-feeds-help" class="muted">
-              Episode age eligibility is set per feed with Max age.
-            </p>
-            <div
-              class="feed-list"
-              role="group"
-              aria-labelledby="podcast-feeds-label"
-              aria-describedby="podcast-feeds-help"
-              formArrayName="feeds"
-            >
-              @for (feed of feeds.controls; track feed; let i = $index) {
-                <div
-                  class="feed-card"
-                  [formGroupName]="i"
-                  role="group"
-                  [attr.aria-label]="'Feed ' + (i + 1)"
-                >
-                  <label class="feed-url"
-                    >Feed URL
-                    <input
-                      type="text"
-                      formControlName="url"
-                      inputmode="url"
-                      placeholder="https://example.org/feed.xml"
-                      [attr.aria-label]="'Feed ' + (i + 1) + ' URL'"
-                      [attr.aria-invalid]="controlError(feed.controls.url, 'url') ? 'true' : null"
-                      [attr.aria-describedby]="
+        } @else if (form.controls.type.value === 'LOCAL' && field.key === 'path') {
+        <section class="local-path-panel" aria-labelledby="source-path-label">
+          <div id="source-path-label" class="local-path-label">
+            {{ field.label }} <span aria-hidden="true">*</span>
+          </div>
+          <div class="local-path-control-group">
+            <button type="button" class="path-browse" (click)="openBrowser()" [disabled]="saving() || testing()">
+              Browse...
+            </button>
+            <input id="source-path" class="local-path-input" [formControlName]="'path'" type="text" required
+              [attr.title]="config.controls['path'].value || null" aria-labelledby="source-path-label"
+              [attr.aria-describedby]="field.help ? 'source-path-help' : null" />
+            @if (localMode() === 'folder') {
+            <label class="recursive-toggle">
+              <input type="checkbox" id="source-recursive" [formControlName]="'recursive'" />
+              Include subfolders
+            </label>
+            }
+          </div>
+          @if (field.help) {
+          <small id="source-path-help">{{ field.help }}</small>
+          }
+        </section>
+        } @else if (form.controls.type.value === 'HTTP' && field.key === 'uri') {
+        <div class="http-url-field">
+          <div class="stream-label-row">
+            <label for="source-uri">Stream URL <span aria-hidden="true">*</span></label>
+            <button type="button" class="text-action" (click)="openRadioBrowser()">
+              <svg aria-hidden="true" viewBox="0 0 24 24">
+                <circle cx="10" cy="10" r="6" />
+                <path d="m15 15 6 6" />
+              </svg>
+              Browse RadioBrowser (www.radio-browser.info)
+            </button>
+          </div>
+          <div class="stream-row">
+            <input id="source-uri" formControlName="uri" type="text" required [readOnly]="!!radioUuid.value"
+              [class.managed-url]="!!radioUuid.value" [attr.aria-describedby]="radioUuid.value ? 'radio-linked' : null"
+              (input)="changeConfig('uri')" />
+            <button type="button" (click)="test()" [disabled]="testing() || saving() || radioRefreshing()">
+              {{ testing() ? 'Testing...' : 'Test stream' }}
+            </button>
+          </div>
+          @if (radioUuid.value) {
+          <div id="radio-linked" class="radio-link-status">
+            <span>Radio Browser linked</span><span aria-hidden="true">&middot;</span>
+            <button type="button" class="text-action" (click)="refreshRadioUrl()" [disabled]="radioRefreshing()">
+              {{ radioRefreshing() ? 'Refreshing...' : 'Refresh URL' }}</button><span aria-hidden="true">&middot;</span>
+            <button type="button" class="text-action" (click)="unlinkRadio()">
+              Unlink
+            </button>
+          </div>
+          }
+          @if (radioMessage()) {
+          <small role="status">{{ radioMessage() }}</small>
+          }
+          @if (radioError()) {
+          <small class="error" role="alert">{{ radioError() }}</small>
+          }
+        </div>
+        } @else if (field.key !== 'recursive') {
+        <div [class.stream-row]="form.controls.type.value === 'HTTP' && field.key === 'uri'">
+          <label>{{ field.label }}
+            @if (field.required) {
+            <span aria-hidden="true">*</span>
+            }
+            @if (field.checkbox) {
+            <input type="checkbox" [id]="'source-' + field.key" [formControlName]="field.key" />
+            } @else if (field.options) {
+            <select [id]="'source-' + field.key" [formControlName]="field.key" [required]="!!field.required"
+              (change)="changeConfig(field.key)">
+              <option value="">Select...</option>
+              @for (option of field.options; track option) {
+              <option [value]="option">
+                {{ field.optionLabels?.[option] ?? option }}
+              </option>
+              }
+            </select>
+            } @else {
+            <input [id]="'source-' + field.key" [formControlName]="field.key" [type]="field.numeric ? 'number' : 'text'"
+              [required]="!!field.required" [attr.min]="field.min ?? null" [attr.max]="field.max ?? null"
+              [attr.step]="field.numeric ? 1 : null" />
+            }
+            @if (field.help) {
+            <small>{{ field.help }}</small>
+            }
+          </label>
+        </div>
+        }
+        }
+      </div>
+      @if (form.controls.type.value === 'PODCAST') {
+      <div class="podcast-config" [formGroup]="podcast">
+        <div id="podcast-feeds-label" class="podcast-label">Feeds</div>
+        <p id="podcast-feeds-help" class="muted">
+          Episode age eligibility is set per feed with Max age.
+        </p>
+        <div class="feed-list" role="group" aria-labelledby="podcast-feeds-label" aria-describedby="podcast-feeds-help"
+          formArrayName="feeds">
+          @for (feed of feeds.controls; track feed; let i = $index) {
+          <div class="feed-card" [formGroupName]="i" role="group" [attr.aria-label]="'Feed ' + (i + 1)">
+            <label class="feed-url">Feed URL
+              <input type="text" formControlName="url" inputmode="url" placeholder="https://example.org/feed.xml"
+                [attr.aria-label]="'Feed ' + (i + 1) + ' URL'"
+                [attr.aria-invalid]="controlError(feed.controls.url, 'url') ? 'true' : null" [attr.aria-describedby]="
                         controlError(feed.controls.url, 'url') ? 'feed-' + i + '-url-error' : null
-                      "
-                    />
-                  </label>
-                  @if (controlError(feed.controls.url, 'url'); as message) {
-                    <small class="field-error" [id]="'feed-' + i + '-url-error'"
-                      >Error: {{ message }}</small
-                    >
-                  }
-                  @if (feedResult(i); as probe) {
-                    <div class="feed-result" role="status">
-                      <span class="feed-result-name" [attr.title]="probe.label">{{
-                        probe.label
-                      }}</span>
-                      <span [class.error]="!probe.ok">{{ probe.status }}</span>
-                    </div>
-                  }
-                  <div class="feed-limits">
-                    <label
-                      >Max age (days)
-                      <input
-                        type="number"
-                        min="0"
-                        step="1"
-                        formControlName="max_age_days"
-                        placeholder="Unlimited"
-                        [attr.aria-label]="'Feed ' + (i + 1) + ' maximum age in days'"
-                        [attr.aria-invalid]="
+                      " />
+            </label>
+            @if (controlError(feed.controls.url, 'url'); as message) {
+            <small class="field-error" [id]="'feed-' + i + '-url-error'">Error: {{ message }}</small>
+            }
+            @if (feedResult(i); as probe) {
+            <div class="feed-result" role="status">
+              <span class="feed-result-name" [attr.title]="probe.label">{{
+                probe.label
+                }}</span>
+              <span [class.error]="!probe.ok">{{ probe.status }}</span>
+            </div>
+            }
+            <div class="feed-limits">
+              <label>Max age (days)
+                <input type="number" min="0" step="1" formControlName="max_age_days" placeholder="Unlimited"
+                  [attr.aria-label]="'Feed ' + (i + 1) + ' maximum age in days'" [attr.aria-invalid]="
                           controlError(feed.controls.max_age_days, 'limit') ? 'true' : null
-                        "
-                        [attr.aria-describedby]="
+                        " [attr.aria-describedby]="
                           controlError(feed.controls.max_age_days, 'limit')
                             ? 'feed-' + i + '-age-error'
                             : null
-                        "
-                      />
-                    </label>
-                    <label
-                      >Max episodes
-                      <input
-                        type="number"
-                        min="0"
-                        step="1"
-                        formControlName="max_episodes"
-                        placeholder="Unlimited"
-                        [attr.aria-label]="'Feed ' + (i + 1) + ' maximum episodes'"
-                        [attr.aria-invalid]="
+                        " />
+              </label>
+              <label>Max episodes
+                <input type="number" min="0" step="1" formControlName="max_episodes" placeholder="Unlimited"
+                  [attr.aria-label]="'Feed ' + (i + 1) + ' maximum episodes'" [attr.aria-invalid]="
                           controlError(feed.controls.max_episodes, 'limit') ? 'true' : null
-                        "
-                        [attr.aria-describedby]="
+                        " [attr.aria-describedby]="
                           controlError(feed.controls.max_episodes, 'limit')
                             ? 'feed-' + i + '-episodes-error'
                             : null
-                        "
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      class="feed-remove"
-                      (click)="removeFeed(i)"
-                      [disabled]="feeds.length <= 1"
-                      [attr.aria-label]="'Remove feed ' + (i + 1)"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                  @if (controlError(feed.controls.max_age_days, 'limit'); as message) {
-                    <small class="field-error" [id]="'feed-' + i + '-age-error'"
-                      >Error: {{ message }}</small
-                    >
-                  }
-                  @if (controlError(feed.controls.max_episodes, 'limit'); as message) {
-                    <small class="field-error" [id]="'feed-' + i + '-episodes-error'"
-                      >Error: {{ message }}</small
-                    >
-                  }
-                </div>
-              }
+                        " />
+              </label>
+              <button type="button" class="feed-remove" (click)="removeFeed(i)" [disabled]="feeds.length <= 1"
+                [attr.aria-label]="'Remove feed ' + (i + 1)">
+                Remove
+              </button>
             </div>
-            @if (feedsError(feeds); as message) {
-              <small class="field-error" role="alert">Error: {{ message }}</small>
+            @if (controlError(feed.controls.max_age_days, 'limit'); as message) {
+            <small class="field-error" [id]="'feed-' + i + '-age-error'">Error: {{ message }}</small>
             }
-            <div class="feed-actions">
-              <button
-                type="button"
-                class="feed-add"
-                (click)="addFeed()"
-                [disabled]="feeds.length >= maxFeeds"
-              >
-                + Add feed
-              </button>
-              <button
-                type="button"
-                class="feed-test"
-                (click)="test()"
-                [disabled]="testing() || saving()"
-              >
-                {{ testing() ? 'Testing...' : 'Test feeds' }}
-              </button>
-            </div>
-            <app-source-test-result
-              [result]="result()"
-              [feeds]="testedFeeds()"
-              [showFeeds]="false"
-            />
-            <div class="fields podcast-settings">
-              <label
-                >Schedule mode<select
-                  formControlName="schedule_mode"
-                  aria-describedby="podcast-mode-help"
-                >
-                  <option value="RANDOM">Random</option>
-                  <option value="SMART">Smart</option>
-                </select>
-                <small id="podcast-mode-help">{{
-                  scheduleDescriptions[scheduleMode()]
-                }}</small></label
-              >
-              <label
-                >Feed refresh interval (minutes)<input
-                  type="number"
-                  min="1"
-                  step="1"
-                  formControlName="refresh_interval_minutes"
-                  [attr.aria-invalid]="
+            @if (controlError(feed.controls.max_episodes, 'limit'); as message) {
+            <small class="field-error" [id]="'feed-' + i + '-episodes-error'">Error: {{ message }}</small>
+            }
+          </div>
+          }
+        </div>
+        @if (feedsError(feeds); as message) {
+        <small class="field-error" role="alert">Error: {{ message }}</small>
+        }
+        <div class="feed-actions">
+          <button type="button" class="feed-add" (click)="addFeed()" [disabled]="feeds.length >= maxFeeds">
+            + Add feed
+          </button>
+          <button type="button" class="feed-test" (click)="test()" [disabled]="testing() || saving()">
+            {{ testing() ? 'Testing...' : 'Test feeds' }}
+          </button>
+        </div>
+        <app-source-test-result [result]="result()" [feeds]="testedFeeds()" [showFeeds]="false" />
+        <div class="fields podcast-settings">
+          <label>Schedule mode<select formControlName="schedule_mode" aria-describedby="podcast-mode-help">
+              <option value="RANDOM">Random</option>
+              <option value="SMART">Smart</option>
+            </select>
+            <small id="podcast-mode-help">{{
+              scheduleDescriptions[scheduleMode()]
+              }}</small></label>
+          <label>Feed refresh interval (minutes)<input type="number" min="1" step="1"
+              formControlName="refresh_interval_minutes" [attr.aria-invalid]="
                     controlError(podcast.controls.refresh_interval_minutes, 'refresh')
                       ? 'true'
                       : null
-                  "
-                  [attr.aria-describedby]="
+                  " [attr.aria-describedby]="
                     controlError(podcast.controls.refresh_interval_minutes, 'refresh')
                       ? 'podcast-refresh-error'
                       : null
-                  "
-                />
-                @if (
-                  controlError(podcast.controls.refresh_interval_minutes, 'refresh');
-                  as message
-                ) {
-                  <small class="field-error" id="podcast-refresh-error">Error: {{ message }}</small>
-                }
-              </label>
-              <label
-                >Replay cooldown (hours)<input
-                  type="number"
-                  min="0"
-                  step="1"
-                  formControlName="replay_cooldown_hours"
-                  [attr.aria-invalid]="
+                  " />
+            @if (
+            controlError(podcast.controls.refresh_interval_minutes, 'refresh');
+            as message
+            ) {
+            <small class="field-error" id="podcast-refresh-error">Error: {{ message }}</small>
+            }
+          </label>
+          <label>Replay cooldown (hours)<input type="number" min="0" step="1" formControlName="replay_cooldown_hours"
+              [attr.aria-invalid]="
                     controlError(podcast.controls.replay_cooldown_hours, 'cooldown') ? 'true' : null
-                  "
-                  [attr.aria-describedby]="
+                  " [attr.aria-describedby]="
                     'podcast-cooldown-help' +
                     (controlError(podcast.controls.replay_cooldown_hours, 'cooldown')
                       ? ' podcast-cooldown-error'
                       : '')
-                  "
-                />
-                <small id="podcast-cooldown-help">{{
-                  scheduleMode() === 'SMART'
-                    ? 'Avoids replaying an episode too soon.'
-                    : 'Used by Smart scheduling only; the value is kept.'
-                }}</small>
-                @if (controlError(podcast.controls.replay_cooldown_hours, 'cooldown'); as message) {
-                  <small class="field-error" id="podcast-cooldown-error"
-                    >Error: {{ message }}</small
-                  >
-                }
-              </label>
-            </div>
-          </div>
-        }
-      </section>
-      <section class="source-editor-panel" aria-labelledby="audio-processing-heading">
-        <h2 id="audio-processing-heading">Audio processing</h2>
-        <div class="fields">
-          <label
-            >Processor<select formControlName="processor_mode" (change)="changeProcessor()">
-              <option value="bypass">Bypass</option>
-              <option value="builtin">Built-in DSP</option>
-              <option value="stereotool" disabled>Stereo Tool (coming soon)</option>
-            </select></label
-          >
-          <label
-            >Source Gain (dB)<input
-              type="number"
-              step="any"
-              max="20"
-              formControlName="input_gain_db"
-          /></label>
-        </div>
-        @if (form.controls.processor_mode.value === 'builtin') {
-          <label
-            >Audio Profile<select formControlName="audio_profile_path">
-              <option [ngValue]="null">Select a profile</option>
-              @for (profile of profileOptions(); track profile.path) {
-                <option [ngValue]="profile.path">{{ profile.label }}</option>
-              }
-              @if (missingProfile()) {
-                <option [ngValue]="form.controls.audio_profile_path.value">
-                  Current profile (unavailable)
-                </option>
-              }
-            </select></label
-          >
-          @if (selectedProfile(); as profile) {
-            <small class="muted">{{ profile.description }}</small>
-          }
-        }
-        @if (profileError()) {
-          <p class="warning">Audio profiles unavailable: {{ profileError() }}</p>
-        }
-        <details>
-          <summary>Advanced source options</summary>
-          <label
-            >GStreamer element properties (JSON)<textarea
-              formControlName="gst_options"
-              rows="5"
-              spellcheck="false"
-            ></textarea>
-          </label>
-          <p class="muted">
-            Optional source, queue and resample property objects. Leave blank to use the defaults.
-          </p>
-        </details>
-      </section>
-      <section class="source-editor-panel" aria-labelledby="source-rds-heading">
-        <h2 id="source-rds-heading">RDS</h2>
-        <label class="source-rds-toggle"
-          ><input
-            type="checkbox"
-            [formControl]="configureRds"
-            (change)="toggleRds()"
-            [attr.disabled]="saving() || testing() ? '' : null"
-          />Configure RDS for this source</label
-        >
-        @if (configureRds.value) {
-          <fieldset class="source-rds-content" [disabled]="saving() || testing()">
-            <div class="source-rds-fill">
-              <button
-                type="button"
-                (click)="fillFromSource()"
-                [disabled]="!form.controls.name.value.trim()"
-              >
-                Fill from source
-              </button>
-              <small
-                >Fill PS and fallback RadioText from the source name. PI stays unchanged. Save to
-                apply.</small
-              >
-            </div>
-            <app-rds-profile-editor [model]="rds" />
-          </fieldset>
-        }
-      </section>
-    </fieldset>
-    <div class="editor-feedback" aria-live="polite">
-      @if (message()) {
-        <p role="status">{{ message() }}</p>
-      }
-      @if (error()) {
-        <p class="error" role="alert">{{ error() }}</p>
-      }
-    </div>
-    <div class="editor-actions source-editor-actions">
-      <button type="submit" [disabled]="saving() || testing()">
-        {{ saving() ? 'Saving...' : 'Save' }}
-      </button>
-      <button type="button" routerLink="/sources" [disabled]="saving() || testing()">Cancel</button>
-      <span class="muted source-action-info"
-        >Testing does not save changes or prove RF transmission.</span
-      >
-      @if (form.controls.type.value !== 'HTTP' && form.controls.type.value !== 'PODCAST') {
-        <button type="button" (click)="test()" [disabled]="testing() || saving()">
-          {{ testing() ? 'Testing...' : 'Test unsaved configuration' }}
-        </button>
-      }
-    </div>
-    @if (form.controls.type.value !== 'PODCAST') {
-      <app-source-test-result [result]="result()" />
-    }
-  </form>
-  @if (form.controls.type.value === 'LOCAL') {
-    <dialog
-      #pathPicker
-      class="media-path-picker"
-      aria-labelledby="media-path-picker-title"
-      (close)="browserOpen.set(false)"
-      (cancel)="browserOpen.set(false)"
-    >
-      <header class="picker-header">
-        <h2 id="media-path-picker-title">{{ pickerTitle() }}</h2>
-        <button
-          type="button"
-          class="picker-close"
-          aria-label="Close path picker"
-          (click)="closeBrowser()"
-        >
-          ×
-        </button>
-      </header>
-      <div class="picker-toolbar">
-        <nav aria-label="Media path breadcrumb">
-          <button
-            type="button"
-            class="breadcrumb"
-            (click)="loadLocations()"
-            [disabled]="browserLoading()"
-          >
-            Locations
-          </button>
-          @for (crumb of breadcrumbs(); track crumb.path) {
-            <span aria-hidden="true">›</span>
-            <button
-              type="button"
-              class="breadcrumb"
-              (click)="browsePath(crumb.path)"
-              [disabled]="browserLoading() || !crumb.enabled"
-            >
-              {{ crumb.name }}
-            </button>
-          }
-        </nav>
-        <button type="button" (click)="refreshBrowser()" [disabled]="browserLoading()">
-          {{ browserLoading() ? 'Refreshing...' : 'Refresh' }}
-        </button>
-      </div>
-      @if (browserError()) {
-        <div class="picker-message">
-          <p role="alert" class="error">{{ browserError() }}</p>
-          <button type="button" (click)="loadLocations()" [disabled]="browserLoading()">
-            Back to Locations
-          </button>
-        </div>
-      } @else if (browserLoading() && !browser()) {
-        <p role="status" class="picker-message">Loading locations...</p>
-      } @else if (!browser()) {
-        <div class="picker-list" role="list" aria-label="Media locations">
-          @for (location of browserLocations(); track location.path) {
-            <button
-              type="button"
-              role="listitem"
-              class="picker-row"
-              (click)="browsePath(location.path)"
-              [disabled]="!location.available || browserLoading()"
-            >
-              <span>{{ location.name }}</span>
-              <span class="picker-path">{{ location.path }}</span>
-              @if (!location.available) {
-                <small>Unavailable</small>
-              }
-            </button>
-          } @empty {
-            <p class="picker-message">No media locations are configured.</p>
-          }
-        </div>
-      } @else {
-        <div class="picker-list" role="list" aria-label="Media directory contents">
-          @if (browser()!.can_go_up) {
-            <button
-              type="button"
-              role="listitem"
-              class="picker-row"
-              (click)="goUp()"
-              [disabled]="browserLoading()"
-            >
-              <span>..</span><small>Parent directory</small>
-            </button>
-          }
-          @for (entry of browser()!.entries; track entry.name) {
-            @if (entry.type === 'directory') {
-              <button
-                type="button"
-                role="listitem"
-                class="picker-row"
-                (click)="navigateEntry(entry.name)"
-                [disabled]="browserLoading()"
-              >
-                <span class="picker-entry">
-                  <svg
-                    class="picker-entry-icon folder"
-                    aria-hidden="true"
-                    focusable="false"
-                    viewBox="0 0 24 24"
-                  >
-                    <path d="M3 6h6l2 2h10v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6Z" />
-                  </svg>
-                  <span class="picker-entry-name">{{ entry.name }}</span>
-                </span>
-                <small>Directory</small>
-              </button>
-            } @else {
-              <button
-                type="button"
-                role="listitem"
-                class="picker-row"
-                [class.selected]="selectedPlaylist() === browser()!.path + '/' + entry.name"
-                (click)="selectPlaylist(browser()!.path + '/' + entry.name)"
-                [disabled]="browserLoading()"
-              >
-                <span class="picker-entry">
-                  <svg
-                    class="picker-entry-icon playlist"
-                    aria-hidden="true"
-                    focusable="false"
-                    viewBox="0 0 24 24"
-                  >
-                    <path d="M5 3h9l5 5v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" />
-                    <path
-                      d="M14 3v5h5M8 12h5M8 15h3M16 14v4.5a1.5 1.5 0 1 1-1-1.42V12l4-1v5.5a1.5 1.5 0 1 1-1-1.42V10.5"
-                    />
-                  </svg>
-                  <span class="picker-entry-name">{{ entry.name }}</span>
-                </span>
-                <small>Playlist</small>
-              </button>
+                  " />
+            <small id="podcast-cooldown-help">{{
+              scheduleMode() === 'SMART'
+              ? 'Avoids replaying an episode too soon.'
+              : 'Used by Smart scheduling only; the value is kept.'
+              }}</small>
+            @if (controlError(podcast.controls.replay_cooldown_hours, 'cooldown'); as message) {
+            <small class="field-error" id="podcast-cooldown-error">Error: {{ message }}</small>
             }
-          } @empty {
-            <p class="picker-message">No matching entries in this location.</p>
-          }
+          </label>
         </div>
+      </div>
       }
-      <footer class="picker-footer">
-        <output>{{
-          localMode() === 'playlist'
-            ? (selectedPlaylist() ?? 'Select a playlist file')
-            : (browser()?.path ?? 'Choose a location')
-        }}</output>
-        <div>
-          <button type="button" (click)="closeBrowser()">Cancel</button>
-          <button
-            type="button"
-            (click)="selectBrowserValue()"
-            [disabled]="
-              browserLoading() || (localMode() === 'playlist' && !selectedPlaylist()) || !browser()
-            "
-          >
-            {{ confirmLabel() }}
+    </section>
+    <section class="source-editor-panel" aria-labelledby="audio-processing-heading">
+      <h2 id="audio-processing-heading">Audio processing</h2>
+      <div class="fields">
+        <label>Processor<select formControlName="processor_mode" (change)="changeProcessor()">
+            <option value="bypass">Bypass</option>
+            <option value="builtin">Built-in DSP</option>
+            <option value="stereotool" disabled>Stereo Tool (coming soon)</option>
+          </select></label>
+        <label>Source Gain (dB)<input type="number" step="any" max="20" formControlName="input_gain_db" /></label>
+      </div>
+      @if (form.controls.processor_mode.value === 'builtin') {
+      <label>Audio Profile<select formControlName="audio_profile_path">
+          <option [ngValue]="null">Select a profile</option>
+          @for (profile of profileOptions(); track profile.path) {
+          <option [ngValue]="profile.path">{{ profile.label }}</option>
+          }
+          @if (missingProfile()) {
+          <option [ngValue]="form.controls.audio_profile_path.value">
+            Current profile (unavailable)
+          </option>
+          }
+        </select></label>
+      @if (selectedProfile(); as profile) {
+      <small class="muted">{{ profile.description }}</small>
+      }
+      }
+      @if (profileError()) {
+      <p class="warning">Audio profiles unavailable: {{ profileError() }}</p>
+      }
+      <details>
+        <summary>Advanced source options</summary>
+        <label>GStreamer element properties (JSON)<textarea formControlName="gst_options" rows="5"
+            spellcheck="false"></textarea>
+        </label>
+        <p class="muted">
+          Optional source, queue and resample property objects. Leave blank to use the defaults.
+        </p>
+      </details>
+    </section>
+    <section class="source-editor-panel" aria-labelledby="source-rds-heading">
+      <h2 id="source-rds-heading">RDS</h2>
+      <label class="source-rds-toggle"><input type="checkbox" [formControl]="configureRds" (change)="toggleRds()"
+          [attr.disabled]="saving() || testing() ? '' : null" />Configure RDS for this source</label>
+      @if (configureRds.value) {
+      <fieldset class="source-rds-content" [disabled]="saving() || testing()">
+        <div class="source-rds-fill">
+          <button type="button" (click)="fillFromSource()" [disabled]="!form.controls.name.value.trim()">
+            Fill from source
           </button>
+          <small>Fill PS and fallback RadioText from the source name. PI stays unchanged. Save to
+            apply.</small>
         </div>
-      </footer>
-    </dialog>
+        <app-rds-profile-editor [model]="rds" />
+      </fieldset>
+      }
+    </section>
+  </fieldset>
+  <div class="editor-feedback" aria-live="polite">
+    @if (message()) {
+    <p role="status">{{ message() }}</p>
+    }
+    @if (error()) {
+    <p class="error" role="alert">{{ error() }}</p>
+    }
+  </div>
+  <div class="editor-actions source-editor-actions">
+    <button type="submit" [disabled]="saving() || testing() || radioRefreshing()">
+      {{ saving() ? 'Saving...' : 'Save' }}
+    </button>
+    <button type="button" routerLink="/sources" [disabled]="saving() || testing()">Cancel</button>
+    <span class="muted source-action-info">Testing does not save changes or prove RF transmission.</span>
+    @if (form.controls.type.value !== 'HTTP' && form.controls.type.value !== 'PODCAST') {
+    <button type="button" (click)="test()" [disabled]="testing() || saving()">
+      {{ testing() ? 'Testing...' : 'Test unsaved configuration' }}
+    </button>
+    }
+  </div>
+  @if (form.controls.type.value !== 'PODCAST') {
+  <app-source-test-result [result]="result()" />
   }
+</form>
+@if (form.controls.type.value === 'HTTP') {
+<app-radio-browser-picker (chosen)="useRadioStation($event)" />
+}
+@if (form.controls.type.value === 'LOCAL') {
+<dialog #pathPicker class="media-path-picker" aria-labelledby="media-path-picker-title" (close)="browserOpen.set(false)"
+  (cancel)="browserOpen.set(false)">
+  <header class="picker-header">
+    <h2 id="media-path-picker-title">{{ pickerTitle() }}</h2>
+    <button type="button" class="picker-close" aria-label="Close path picker" (click)="closeBrowser()">
+      ×
+    </button>
+  </header>
+  <div class="picker-toolbar">
+    <nav aria-label="Media path breadcrumb">
+      <button type="button" class="breadcrumb" (click)="loadLocations()" [disabled]="browserLoading()">
+        Locations
+      </button>
+      @for (crumb of breadcrumbs(); track crumb.path) {
+      <span aria-hidden="true">›</span>
+      <button type="button" class="breadcrumb" (click)="browsePath(crumb.path)"
+        [disabled]="browserLoading() || !crumb.enabled">
+        {{ crumb.name }}
+      </button>
+      }
+    </nav>
+    <button type="button" (click)="refreshBrowser()" [disabled]="browserLoading()">
+      {{ browserLoading() ? 'Refreshing...' : 'Refresh' }}
+    </button>
+  </div>
+  @if (browserError()) {
+  <div class="picker-message">
+    <p role="alert" class="error">{{ browserError() }}</p>
+    <button type="button" (click)="loadLocations()" [disabled]="browserLoading()">
+      Back to Locations
+    </button>
+  </div>
+  } @else if (browserLoading() && !browser()) {
+  <p role="status" class="picker-message">Loading locations...</p>
+  } @else if (!browser()) {
+  <div class="picker-list" role="list" aria-label="Media locations">
+    @for (location of browserLocations(); track location.path) {
+    <button type="button" role="listitem" class="picker-row" (click)="browsePath(location.path)"
+      [disabled]="!location.available || browserLoading()">
+      <span>{{ location.name }}</span>
+      <span class="picker-path">{{ location.path }}</span>
+      @if (!location.available) {
+      <small>Unavailable</small>
+      }
+    </button>
+    } @empty {
+    <p class="picker-message">No media locations are configured.</p>
+    }
+  </div>
+  } @else {
+  <div class="picker-list" role="list" aria-label="Media directory contents">
+    @if (browser()!.can_go_up) {
+    <button type="button" role="listitem" class="picker-row" (click)="goUp()" [disabled]="browserLoading()">
+      <span>..</span><small>Parent directory</small>
+    </button>
+    }
+    @for (entry of browser()!.entries; track entry.name) {
+    @if (entry.type === 'directory') {
+    <button type="button" role="listitem" class="picker-row" (click)="navigateEntry(entry.name)"
+      [disabled]="browserLoading()">
+      <span class="picker-entry">
+        <svg class="picker-entry-icon folder" aria-hidden="true" focusable="false" viewBox="0 0 24 24">
+          <path d="M3 6h6l2 2h10v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6Z" />
+        </svg>
+        <span class="picker-entry-name">{{ entry.name }}</span>
+      </span>
+      <small>Directory</small>
+    </button>
+    } @else {
+    <button type="button" role="listitem" class="picker-row"
+      [class.selected]="selectedPlaylist() === browser()!.path + '/' + entry.name"
+      (click)="selectPlaylist(browser()!.path + '/' + entry.name)" [disabled]="browserLoading()">
+      <span class="picker-entry">
+        <svg class="picker-entry-icon playlist" aria-hidden="true" focusable="false" viewBox="0 0 24 24">
+          <path d="M5 3h9l5 5v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" />
+          <path d="M14 3v5h5M8 12h5M8 15h3M16 14v4.5a1.5 1.5 0 1 1-1-1.42V12l4-1v5.5a1.5 1.5 0 1 1-1-1.42V10.5" />
+        </svg>
+        <span class="picker-entry-name">{{ entry.name }}</span>
+      </span>
+      <small>Playlist</small>
+    </button>
+    }
+    } @empty {
+    <p class="picker-message">No matching entries in this location.</p>
+    }
+  </div>
+  }
+  <footer class="picker-footer">
+    <output>{{
+      localMode() === 'playlist'
+      ? (selectedPlaylist() ?? 'Select a playlist file')
+      : (browser()?.path ?? 'Choose a location')
+      }}</output>
+    <div>
+      <button type="button" (click)="closeBrowser()">Cancel</button>
+      <button type="button" (click)="selectBrowserValue()" [disabled]="
+              browserLoading() || (localMode() === 'playlist' && !selectedPlaylist()) || !browser()
+            ">
+        {{ confirmLabel() }}
+      </button>
+    </div>
+  </footer>
+</dialog>
+}
 }
