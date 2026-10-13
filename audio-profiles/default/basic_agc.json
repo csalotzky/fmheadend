@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "name": "Basic AGC",
-  "description": "Lightweight processing / AGC + hard clipping",
+  "description": "Lightweight processing / AGC + FM-aware soft clipping",
   "stages": {
     "input_gain": {
       "selected": "VOLUME",
@@ -251,7 +251,7 @@
       "selected": "LSP_AGC",
       "implementations": {
         "LSP_AGC": {
-          "target_lufs": -18.0,
+          "target_lufs": -17.0,
           "maximum_gain_enabled": true,
           "maximum_gain_db": 6.0,
           "silence_lufs": -50.0,
@@ -471,10 +471,10 @@
       "selected": "FM_HEADEND_CLIPPER",
       "implementations": {
         "FM_HEADEND_CLIPPER": {
-          "hf_correction_us": 0,
-          "clipping_mode": "hard",
+          "hf_correction_us": 10,
+          "clipping_mode": "soft",
           "soft_knee_db": 2.0,
-          "threshold_dbfs": -4.4,
+          "threshold_dbfs": -4.5,
           "weighting_us": 50,
           "bypass": false
         }

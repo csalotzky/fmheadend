@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "name": "Basic Clipper",
-  "description": "Minimal processing / Filtering + hard clipping",
+  "description": "Minimal processing / Filtering + FM-aware soft clipping",
   "stages": {
     "input_gain": {
       "selected": "VOLUME",
@@ -471,8 +471,8 @@
       "selected": "FM_HEADEND_CLIPPER",
       "implementations": {
         "FM_HEADEND_CLIPPER": {
-          "hf_correction_us": 0,
-          "clipping_mode": "hard",
+          "hf_correction_us": 10,
+          "clipping_mode": "soft",
           "soft_knee_db": 2.0,
           "threshold_dbfs": -4.4,
           "weighting_us": 50,

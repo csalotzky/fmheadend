@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "name": "Moderate Normal [TX Soft Clip ON]",
-  "description": "Moderate multiband compression / Normal loudness / Requires TX Soft Clip ON",
+  "description": "Moderate multiband compression / Normal loudness / [Requires TX Soft Clip ON!]",
   "stages": {
     "input_gain": {
       "selected": "VOLUME",
@@ -484,7 +484,7 @@
       "selected": "TRIM",
       "implementations": {
         "TRIM": {
-          "gain_db": -4.0
+          "gain_db": -5.0
         }
       }
     }
