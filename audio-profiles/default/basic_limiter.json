@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "name": "Basic Limiter",
-  "description": "Lightweight processing / AGC + FM peak limiting",
+  "description": "Lightweight processing / AGC + true-peak FM limiting + hard clipping",
   "stages": {
     "input_gain": {
       "selected": "VOLUME",
@@ -251,7 +251,7 @@
       "selected": "LSP_AGC",
       "implementations": {
         "LSP_AGC": {
-          "target_lufs": -18.0,
+          "target_lufs": -14.0,
           "maximum_gain_enabled": true,
           "maximum_gain_db": 6.0,
           "silence_lufs": -50.0,
@@ -445,7 +445,7 @@
           "alr_release_ms": 50.0
         },
         "FM_HEADEND_LIMITER": {
-          "true_peak_detection": false,
+          "true_peak_detection": true,
           "threshold_dbfs": -4.0,
           "lookahead_ms": 5.0,
           "attack_ms": 1.0,
@@ -471,7 +471,7 @@
       "selected": "FM_HEADEND_CLIPPER",
       "implementations": {
         "FM_HEADEND_CLIPPER": {
-          "hf_correction_us": 0,
+          "hf_correction_us": 5,
           "clipping_mode": "hard",
           "soft_knee_db": 2.0,
           "threshold_dbfs": -4.4,

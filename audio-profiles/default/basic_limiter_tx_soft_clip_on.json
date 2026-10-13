@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "name": "Basic Limiter [TX Soft Clip ON]",
-  "description": "Lightweight processing / AGC + FM peak limiting / Requires TX Soft Clip ON",
+  "description": "Lightweight processing / AGC + true-peak FM limiting / [Requires TX Soft Clip ON!]",
   "stages": {
     "input_gain": {
       "selected": "VOLUME",
@@ -251,7 +251,7 @@
       "selected": "LSP_AGC",
       "implementations": {
         "LSP_AGC": {
-          "target_lufs": -18.0,
+          "target_lufs": -14.0,
           "maximum_gain_enabled": true,
           "maximum_gain_db": 6.0,
           "silence_lufs": -50.0,
@@ -445,7 +445,7 @@
           "alr_release_ms": 50.0
         },
         "FM_HEADEND_LIMITER": {
-          "true_peak_detection": false,
+          "true_peak_detection": true,
           "threshold_dbfs": -4.0,
           "lookahead_ms": 5.0,
           "attack_ms": 1.0,
