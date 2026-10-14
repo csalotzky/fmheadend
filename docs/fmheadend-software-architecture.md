@@ -62,8 +62,8 @@ A Linux oldali logikai architektúrának ezt az analóg bypass módot első oszt
 
 A rendszer két lényegében független síkra válik szét:
 
-- **Audio data plane:** GStreamer -> `fmheadendd` -> Unix socket -> `fmheadend-muxd` -> SPI -> RP2354.
-- **Control plane:** Web/API -> `fmheadendd` -> I2C -> RP2354 -> QN8007B.
+- **Audio data plane:** GStreamer -> `fmheadendd` -> Unix socket -> `fmheadend-muxd` -> SPI -> Controller.
+- **Control plane:** Web/API -> `fmheadendd` -> I2C -> Controller -> TX.
 
 Az RDS a control plane része. Az RDS tartalmi logikája és schedulere Linux/Python oldalon fut; az RP2354 csak a már előállított groupokat fogadja és buffereli.
 
@@ -79,10 +79,10 @@ flowchart LR
     GST --> HD
 
     HD -->|8 x raw PCM via Unix sockets| MUX[fmheadend-muxd - C++]
-    MUX -->|single multiplexed SPI audio stream| RP[RP2354]
+    MUX -->|single multiplexed SPI audio stream| RP[Controller]
 
     HD -->|I2C control/status/RDS| RP
-    RP --> QN[8 x QN8007B]
+    RP --> QN[8 x TX]
     ANALOG[External analog audio] --> QN
 
     HD --> DB[(SQLite)]
@@ -126,7 +126,7 @@ A `fmheadendd` a rendszer fő orchestratora és control plane-je. Pythonban kés
 - modulátor start/stop/config lifecycle orchestration;
 - RP2354 I2C kliens;
 - RDS encoder és online scheduler;
-- RP RDS FIFO-k credit/free-space alapú feltöltése;
+- Controller RDS FIFO-k credit/free-space alapú feltöltése;
 - runtime státusz aggregálása;
 - FastAPI HTTP szerver és REST API;
 - később a statikus web UI kiszolgálása;
@@ -388,7 +388,7 @@ then rebuilds that Source's existing audio pipeline only if runtime fields chang
 (or a previous apply failed). Consumer/fanout ownership remains intact. Name-only
 edits to healthy audio do not restart it; idle Sources stay idle. A response with
 `saved:true, applied:false, apply_error` preserves the saved desired configuration
-and reports runtime failure. No RF/QN operation or STOP ALL hold release occurs.
+and reports runtime failure. No RF/TX operation or STOP ALL hold release occurs.
 Source RDS content changes additionally hot-apply the existing target-local RDS
 boundary to followers; RDS-only saves never rebuild audio.
 See [Source save contract](dsp-editor-controls.md#source-save-api-and-lifecycle).
@@ -445,7 +445,7 @@ A `Modulator` a nyolc fizikai QN egyikét reprezentálja. Az `id` **fizikai azon
 
 | Mező | Típus | Jelentés |
 |---|---|---|
-| `id` | integer 0..7 | Fizikai QN index |
+| `id` | integer 0..7 | Fizikai TX index |
 | `enabled` | bool | Desired boot/runtime ON állapot |
 | `audio_mode` | enum | `DIGITAL` / `ANALOG`; default `DIGITAL` |
 | `input_source_id` | nullable FK | Hozzárendelt `InputSource` |
@@ -838,7 +838,7 @@ A carrier nem flappelhet minden rövid internetes streamhiba miatt.
 
 ## 9.5 Persistent desired state
 
-A `Modulator.enabled` a kívánt állapot. Reboot vagy RP reset után a `fmheadendd` a persistent desired state alapján állítja helyre a rendszert.
+A `Modulator.enabled` a kívánt állapot. Reboot vagy Controller reset után a `fmheadendd` a persistent desired state alapján állítja helyre a rendszert.
 
 ---
 
@@ -1090,7 +1090,7 @@ A Linux számára modulátoronként szükséges minimum:
 
 Globálisan legalább:
 
-- RP alive/uptime jellegű állapot;
+- Controller alive/uptime jellegű állapot;
 - SPI audio link hiba/számláló, ha firmware szolgáltatja;
 - globális error state.
 
@@ -1178,9 +1178,9 @@ flowchart LR
     CFG[Static RDS config] --> SCHED[Python RDS Scheduler/Encoder]
     META[GStreamer metadata] --> SCHED
     API[Runtime RT API override] --> SCHED
-    STAT[RP GET_RDS_FIFO_FREE] --> SCHED
-    SCHED -->|RDS_PUSH: N groups| FIFO[RP2354 per-TX RDS FIFO]
-    FIFO --> QN[QN8007B]
+    STAT[Controller GET_RDS_FIFO_FREE] --> SCHED
+    SCHED -->|RDS_PUSH: N groups| FIFO[Controller per-TX RDS FIFO]
+    FIFO --> QN[TX]
 ```
 
 ## 12.2 V1 RDS funkciók
@@ -1199,7 +1199,7 @@ Kötelező:
 - API runtime RT override;
 - RT Text A/B bit helyes kezelése tartalomváltozáskor;
 - standard rövid RT lezárás kezelése;
-- RP FIFO credit alapú feltöltés;
+- Controller FIFO credit alapú feltöltés;
 - underrun számlálás/státusz.
 
 CT V1-ben **nem szükséges**.
@@ -1439,7 +1439,7 @@ Külön namespace:
 
 Minimum lehetőségek:
 
-- raw RP status;
+- raw Controller status;
 - QN register read;
 - QN register write;
 - error counter reset.
@@ -1523,7 +1523,7 @@ Modulator oldalon legalább:
 
 ## 14.3 Advanced/Debug
 
-- RP firmware/protocol info;
+- Controller firmware/protocol info;
 - raw QN register read/write;
 - transport/error counters;
 - log/debug információk.
@@ -1593,7 +1593,7 @@ Javasolt:
 
 A HTTP API indulhat a startup alatt is; ilyenkor `system_state = STARTING`.
 
-## 15.3 RP communication loss and scoped recovery
+## 15.3 Controller communication loss and scoped recovery
 
 Communication health is separate from hardware synchronization. Transport loss
 marks observations stale and the system DEGRADED, while RF/audio and persistent
@@ -1617,7 +1617,7 @@ The database and restored STOP ALL holds remain the desired-state authority.
 Explicit START/STOP may reacquire the control session once only when metadata
 proves the requested command was NOT_SENT (open/backoff/implicit GET_INFO failure).
 The existing shared backoff is honored; bulk operations share one extra attempt.
-Ambiguous command responses and valid RP rejections are never retried by this
+Ambiguous command responses and valid Controller rejections are never retried by this
 allowance. No synchronous GET_STATUS is added to a lifecycle request.
 
 A valid OFF ACK confirms STOP even if later mux/source cleanup fails: the response
@@ -1666,7 +1666,7 @@ Példák:
 INFO  source 3 connected: AAC 44100 Hz
 INFO  modulator 2 started at 98.1 MHz
 WARN  source 3 disconnected, retry in 5 s
-ERROR RP2354 I2C communication failed
+ERROR Controller I2C communication failed
 ```
 
 Nem kell V1-ben saját log file rotation vagy SQLite log history.
@@ -1701,7 +1701,7 @@ Példa:
 
 ```text
 desired frequency = 98.1 MHz
-actual hardware state = ERROR / RP unavailable
+actual hardware state = ERROR / Controller unavailable
 ```
 
 A desired configot nem kell visszagörgetni csak azért, mert pillanatnyilag nem sikerült hardverre alkalmazni.
@@ -1856,7 +1856,7 @@ api/
 ```mermaid
 flowchart TD
     API[FastAPI routes] --> MAN[Managers / domain services]
-    MAN --> SRV[Source / RDS / RP / Mux services]
+    MAN --> SRV[Source / RDS / Controller / Mux services]
     SRV --> LOW[SQLite / GStreamer / I2C / Unix sockets]
 ```
 
@@ -1993,7 +1993,7 @@ Kötelező eredmény:
 - `RDS_PUSH`;
 - `RDS_CLEAR`;
 - raw QN register debug;
-- RP reconnect/recovery.
+- Controller reconnect/recovery.
 
 ## Milestone 5 - RDS
 
@@ -2012,7 +2012,7 @@ Kötelező eredmény:
 - TTL;
 - RT Text A/B helyes váltás;
 - online scheduler;
-- RP FIFO free-space alapú töltés;
+- Controller FIFO free-space alapú töltés;
 - underrun monitoring.
 
 ## Milestone 6 - Integration és reliability
@@ -2020,7 +2020,7 @@ Kötelező eredmény:
 - systemd units;
 - desired-state startup restore;
 - muxd reconnect;
-- RP reset recovery;
+- Controller reset recovery;
 - network stream reconnect;
 - journald logging;
 - `DEGRADED` állapot;
@@ -2188,15 +2188,15 @@ Ezeket mérés vagy a firmware contract véglegesítése alapján lehet lezárni
 | Audio mux | `fmheadend-muxd`, C++ |
 | Ingest/decode/SRC | GStreamer |
 | Belső PCM | 48 kHz, S16LE, stereo |
-| Pi -> RP audio | egyetlen multiplexelt SPI stream |
-| Pi -> RP control | I2C request/response |
-| QN analog input | támogatott source mód |
+| Pi -> Controller audio | egyetlen multiplexelt SPI stream |
+| Pi -> Controller control | I2C request/response |
+| TX analog input | támogatott source mód |
 | Persistent storage | SQLite |
 | Source / Modulator | külön entitások, FK assignment |
 | HLS | HTTP source része |
 | Audio processing | opcionális `AudioProfile` |
 | RDS | Python encoder + online scheduler |
-| RDS RP oldalon | per-TX FIFO, credit/free-space flow control |
+| RDS Controller oldalon | per-TX FIFO, credit/free-space flow control |
 | CT | nincs V1-ben |
 | Dynamic PS | advanced, támogatott |
 | Metadata -> RT | támogatott |
@@ -2246,7 +2246,7 @@ A `fmheadend` Linux architektúra szándékosan két processzre oszlik: a Python
 
 `--region` selects only the Modulator editor frequency plan, default 1. The
 single authoritative plan table is `daemon/regions.py`; `/api/v1/system/info`
-exposes it alongside real backend/media/schema/RP identity information.
+exposes it alongside real backend/media/schema/Controller identity information.
 Hardware tuning validation is independently 76000..108000 kHz, 50 kHz raster.
 Region never changes other settings or stored frequencies. AF remains independent.
 

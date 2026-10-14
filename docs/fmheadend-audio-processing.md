@@ -217,7 +217,7 @@ operator tuning and RF measurements determine an appropriate limiting setup.
 
 | Field | Short helper text |
 |---|---|
-| Threshold (user-facing dBFS) | “The peak-level target for the selected limiting mode; **not** a guarantee of RF deviation after the later LPF or QN.” |
+| Threshold (user-facing dBFS) | “The peak-level target for the selected limiting mode; **not** a guarantee of RF deviation after the later LPF or TX.” |
 | Lookahead (ms) | “Gives the limiter advance notice of an approaching peak; introduces latency.” |
 | Attack (ms) | “Time required to build peak attenuation; the valid range may depend on lookahead and algorithm.” |
 | Release (ms) | “How long gain reduction takes to recover after a peak; too short a release can cause audible distortion or pumping.” |
@@ -253,7 +253,7 @@ The default LPF is **16000 Hz / 14 poles**, type I, ripple 0. HPF defaults are i
 Off / FM Headend Clipper. Default OFF. This independent stage uses
 `fmheadendclipper` with Threshold (dBFS) and FM weighting Off / 50 us / 75 us.
 It clips residual peaks after filtering, before attenuation-only Output Trim.
-It does not alter the limiter or QN pre-emphasis. See the native property mapping
+It does not alter the limiter or TX pre-emphasis. See the native property mapping
 in [implementation notes](modular-dsp-implementation.md#optional-final-clipper).
 
 ### 3.11. Output Trim — `volume`, **after the LPF**
@@ -262,9 +262,9 @@ in [implementation notes](modular-dsp-implementation.md#optional-final-clipper).
 
 **Helper:** “Adjusts the final output level. Attenuation only.”
 
-Secondary note: “FM pre-emphasis is handled by the QN transmitter and is configured in Modulator settings.”
+Secondary note: “FM pre-emphasis is handled by the TX and is configured in Modulator settings.”
 
-Output Trim does not replace alignment of the QN's analogue/RF modulation chain. Negative trim reduces the output PCM level; it cannot repair clipping that may already have happened during an earlier fixed-point conversion. Keep the DSP backbone floating-point until the final output conversion.
+Output Trim does not replace alignment of the TX analogue/RF modulation chain. Negative trim reduces the output PCM level; it cannot repair clipping that may already have happened during an earlier fixed-point conversion. Keep the DSP backbone floating-point until the final output conversion.
 
 ---
 
@@ -272,15 +272,15 @@ Output Trim does not replace alignment of the QN's analogue/RF modulation chain.
 
 **Common DSP caps:** stereo, **48 kHz, F32LE** in the GStreamer/LSP processing backbone, with explicit and minimal `audioconvert`/`audioresample` steps. The stereo LSP LV2-wrapper documentation likewise specifies two-channel F32LE for the inspected compressor/limiter/EQ elements. The builder negotiates this domain before processing. [G6] [G8]
 
-Final mux/RP PCM is S16LE/48 kHz/stereo; the audio transport remains unchanged.
+Final mux/Controller PCM is S16LE/48 kHz/stereo; the audio transport remains unchanged.
 
 The QN8007B performs transmitter pre-emphasis, stereo pilot/MPX generation, and RDS;
-the Pi must not add uncompensated pre-emphasis. FM Headend Limiter weights only its detector and does not change the QN setting. A DSP
+the Pi must not add uncompensated pre-emphasis. FM Headend Limiter weights only its detector and does not change the TX setting. A DSP
 sample-peak limiter **cannot guarantee FM deviation after pre-emphasis**. Validate
 the 16 kHz / 14-pole LPF response, spectrum around the 19 kHz pilot, stereo behaviour,
 and actual modulation level through **RF/MPX measurement**.
 
-The QN's own AGC, observed to perform poorly, must not remain “accidentally active” as a substitute for software AGC; clarify and verify this separately in the hardware configuration. Saving a software profile, however, is **not** grounds for restarting the QN or the RF lifecycle.
+The QN's own AGC, observed to perform poorly, must not remain “accidentally active” as a substitute for software AGC; clarify and verify this separately in the hardware configuration. Saving a software profile, however, is **not** grounds for restarting the TX or the RF lifecycle.
 
 ---
 

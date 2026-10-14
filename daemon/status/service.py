@@ -128,7 +128,7 @@ class StatusService:
                 self.system.rp_spi_audio_link_error_count = rp_status["rp_spi_audio_link_error_count"]
                 self.system.rp_last_error_code = rp_status.get("last_error_code")
                 if rp_status["state"] != "OK":
-                    errors.append("RP hardware: " + (rp_status.get("last_error_code") or rp_status["state"]))
+                    errors.append("Controller hardware: " + (rp_status.get("last_error_code") or rp_status["state"]))
             for channel in rp_status["modulators"]:
                 row = self.modulators.statuses[channel["id"]]
                 row.hardware_tx_state = channel["tx_state"]
@@ -140,11 +140,11 @@ class StatusService:
                 row.rds_fifo_free = channel["rds_fifo_free"]
                 row.hardware_last_error = channel["last_error_code"]
                 if row.hardware_tx_state == "ERROR":
-                    errors.append(f"RP TX{row.id}: {row.hardware_last_error}")
+                    errors.append(f"Controller TX{row.id}: {row.hardware_last_error}")
                 elif row.hardware_tx_state != ('ON' if self.modulators.desired_on(row.id) else 'OFF'):
-                    errors.append(f"RP TX{row.id}: observed state differs from desired state")
+                    errors.append(f"Controller TX{row.id}: observed state differs from desired state")
                 elif row.hardware_tx_state == 'ON' and row.rf_attenuation_db != self.modulators.get(row.id).rf_attenuation_db:
-                    errors.append(f"RP TX{row.id}: observed attenuation differs from desired configuration")
+                    errors.append(f"Controller TX{row.id}: observed attenuation differs from desired configuration")
         except DependencyUnavailable as exc:
             self.system.rp_communication_state = communication_state(exc)
             self.system.rp_observation_stale = True

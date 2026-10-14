@@ -399,7 +399,7 @@ def test_api_incompatible_protocol_does_not_enable_or_crash(calls, tmp_path):
         assert api.get('/docs').status_code == 200
         result = api.get('/api/v1/status').json()
         assert result['system']['system_state'] == 'DEGRADED'
-        assert 'Unsupported RP protocol' in result['system']['last_error']
+        assert 'Unsupported Controller protocol' in result['system']['last_error']
         assert api.get('/api/v1/system/info').json()['mocked'] is False
     assert packets(calls) and all(packet == b'\x01\xff\0' for packet in packets(calls))
 
@@ -579,7 +579,7 @@ def test_single_malformed_read_retains_all_tx_and_rds(calls, running_wire_backen
         command, header, field = p.Command.GET_STATUS, b'\x00\x82', ''
         if kind == 'global128': data[9] = 128; field = 'global.last_error_code'
         if kind == 'tx255': data[23] = 255; field = 'TX0.last_error_code'
-        if kind == 'status128': header = b'\x80\x82'; field = 'Unknown RP status: 128'
+        if kind == 'status128': header = b'\x80\x82'; field = 'Unknown Controller status: 128'
         if kind == 'attenuation80e1': data[11:13] = b'\xe1\x80'; field = 'TX0.rf_attenuation_db_x10'
         if kind.startswith('fifo'):
             command = p.Command.GET_RDS_FIFO_FREE
@@ -603,8 +603,9 @@ def test_single_malformed_read_retains_all_tx_and_rds(calls, running_wire_backen
         services.rp._retry_at = 0
         services.rds.tick()
         assert any(packet[0] == p.Command.RDS_PUSH for packet in packets(calls))
-        logs = [r.getMessage() for r in caplog.records if 'RP malformed response' in r.getMessage()]
+        logs = [r.getMessage() for r in caplog.records if 'Controller malformed response' in r.getMessage()]
         assert len(logs) == 1
+        assert any(r.name == 'fmheadendd.controller.linux_client' for r in caplog.records)
         assert f'command={command.name}' in logs[0] and f'header={header.hex()}' in logs[0] and field in logs[0]
         if kind == 'global128': assert 'Invalid hardware error code: 128' in logs[0]
         if kind == 'tx255': assert 'Invalid hardware error code: 255' in logs[0]
@@ -636,7 +637,7 @@ def test_crc_rejects_every_single_bit_in_response(command):
 
 @pytest.mark.parametrize('command', [p.Command.GET_STATUS, p.Command.RDS_PUSH, p.Command.SET_TX_ENABLED])
 @pytest.mark.parametrize('status', [p.Status.OK, p.Status.BUSY, p.Status.QN_ERROR, p.Status.INTERNAL_ERROR])
-def test_crc_failure_keeps_certainty_and_never_accepts_status_or_retries(calls, command, status):
+def test_crc_failure_keeps_certainty_and_never_accepts_status_or_retries(calls, command, status, caplog):
     rp = client(); rp.info = p.parse_info(INFO)
     payload = status_payload() if command == p.Command.GET_STATUS and status == p.Status.OK else b''
     wire = frame(bytes((status,len(payload))) + payload)
@@ -649,6 +650,14 @@ def test_crc_failure_keeps_certainty_and_never_accepts_status_or_retries(calls, 
     assert caught.value.command == command and caught.value.stage == 'payload'
     assert caught.value.outcome == (p.Outcome.OBSERVATION if command == p.Command.GET_STATUS else p.Outcome.AMBIGUOUS)
     assert len(packets(calls)) == 1  # Even corrupted BUSY cannot authorize replay.
+    record, = [r for r in caplog.records if 'Controller malformed response' in r.getMessage()]
+    assert record.name == 'fmheadendd.controller.linux_client'
+    assert record.levelname == 'WARNING'
+    message = record.getMessage()
+    assert f'command={command.name}' in message and f'header={bad[:2].hex()}' in message
+    assert f'payload={bad[2:].hex()}' in message
+    assert 'received 0x' in message and 'expected 0x' in message
+    assert f'Controller I2C /dev/i2c-test address 66:' in rp.last_error
 
 
 @pytest.mark.parametrize('command', [p.Command.GET_STATUS, p.Command.GET_RDS_FIFO_FREE, p.Command.RDS_PUSH])
@@ -713,7 +722,7 @@ def test_read_failures_and_observations_never_trigger_global_restore(calls, runn
             assert services.status.snapshot().system.rp_observation_stale
         # Only the first malformed frame in the incident is dumped, including
         # a second corruption/incompatible response during verification.
-        assert len([r for r in caplog.records if 'RP malformed response' in r.getMessage()]) == 1
+        assert len([r for r in caplog.records if 'Controller malformed response' in r.getMessage()]) == 1
         wire.info = INFO; wire.state = 0; wire.now += 3
         services.rp._retry_at = 0  # Advance the real-client backoff without sleeping in this test.
         calls[0].write.reset_mock()
@@ -821,6 +830,7 @@ def test_explicit_rp_error_retains_identity_and_target(calls, status):
     with pytest.raises(p.RpResponseError) as caught:
         rp.set_tx_enabled(3, True)
     assert caught.value.rp_status == status and caught.value.target == 3
+    assert str(caught.value) == f'Controller SET_TX_ENABLED: {status.name}'
     assert caught.value.outcome == p.Outcome.RESPONSE and caught.value.stage == 'response'
     calls[0].close.assert_not_called()
 

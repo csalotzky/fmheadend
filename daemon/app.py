@@ -140,8 +140,10 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
 
         task = asyncio.create_task(maintenance())
         radio_recovery.start()
-        logger.info("fmheadendd started; media backend: %s; RP2354 control: %s",
-                    pipeline_factory.__name__, type(services.rp).__name__)
+        logger.info("fmheadendd started; media backend: %s; Controller control: %s",
+                    pipeline_factory.__name__,
+                    {'Rp2354Client': 'ControllerClient', 'MockRp2354Client': 'MockControllerClient'}.get(
+                        type(services.rp).__name__, type(services.rp).__name__))
         logger.info("PCM buffers: staging_capacity_ms=%s staging_stale_age_ms=%s consumer_buffer_ms=%s",
                     settings.pcm_staging_buffer_ms, settings.pcm_staging_max_age_ms, settings.pcm_consumer_buffer_ms)
         try:
@@ -233,12 +235,12 @@ def pcm_buffer_ms(text):
 
 
 def argument_parser():
-    parser = argparse.ArgumentParser(description="fmheadendd media and RP2354 control")
+    parser = argparse.ArgumentParser(description="fmheadendd media and Controller control")
     parser.add_argument("--database", default="/var/lib/fmheadend/fmheadend.db")
     parser.add_argument("--host", help="Override persistent web_listen_address")
     parser.add_argument("--port", type=int, help="Override persistent web_port")
-    parser.add_argument("--mock", action="store_true", help="Use mock sources, mux and RP2354 control")
-    parser.add_argument("--mock-rp", action="store_true", help="Use the original high-level mock RP2354 client")
+    parser.add_argument("--mock", action="store_true", help="Use mock sources, mux and Controller control")
+    parser.add_argument("--mock-rp", action="store_true", help="Use the original high-level mock Controller client")
     parser.add_argument("--i2c-device", help="Override persistent i2c_device, e.g. /dev/i2c-1")
     parser.add_argument("--rp-i2c-address", type=lambda value: int(value, 0), help="7-bit slave address, decimal or 0x hex; no default")
     parser.add_argument("--i2c-timeout-ms", type=int, default=200)

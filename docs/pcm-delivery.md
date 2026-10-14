@@ -12,7 +12,7 @@ The callback copies one whole, frame-aligned buffer, bounded by staging capacity
 does not do socket/hardware IO. One source still has one decoder/DSP worker and
 independent consumer queues. All PCM remains interleaved S16LE/48 kHz/stereo.
 
-The reported hardware run has stable mux frame cadence/SPI and RP/QN counters
+The reported hardware run has stable mux frame cadence/SPI and Controller/TX counters
 while Linux PCM under/overruns burst, including bypass channels. This points to
 delivery before the SPI pump. It does not identify Python/GIL as the sole cause:
 `late_frames` measures the mux pump, not the scheduling latency of its separate
@@ -59,7 +59,7 @@ samples arrive earlier, and is not needed by muxd's existing stream assembler.
   closed before discarding bytes so muxd cannot splice partial stereo frames.
 * Stop/close wakes idle waits. Source hot-save retains its existing shared
   `PcmOutput` object and consumer notifications. No lifecycle/recovery policy was
-  changed. No TX, QN, RDS, firmware, DSP or SPI code was changed.
+  changed. No TX, TX, RDS, firmware, DSP or SPI code was changed.
 
 Queue age bounds remain per queue, not a promised end-to-end latency.
 Kernel buffering and the mux ring also contribute; prolonged stalls intentionally
@@ -118,8 +118,8 @@ policy no longer exists. Native appsink/GStreamer-internal loss is not counted
 by Python queue counters; source errors retain their existing diagnostics.
 
 Snapshots have bounded locking and no audio-path logging. Python counters are
-live snapshots; mux/RP observations retain their existing refresh cadence and
-RP freshness flags. These are not one simultaneous distributed measurement.
+live snapshots; mux/Controller observations retain their existing refresh cadence and
+Controller freshness flags. These are not one simultaneous distributed measurement.
 Counters last for a queue/producer object's lifetime. Source replacement resets
 staging counters; detach/reattach resets consumer/writer counters. Reconnect clears
 queues without resetting their counters. Restart measurement windows after edits.
@@ -136,7 +136,7 @@ python -m fmheadendd.tools.pcm_delivery_probe --profile /absolute/path/profile.j
 
 This creates a temporary localhost MP3 fixture, tests Bypass and Built-in
 sequentially for four seconds each, reports callback size/cadence and staging
-residence, then closes all pipelines. It does not connect to muxd or RP hardware.
+residence, then closes all pipelines. It does not connect to muxd or Controller hardware.
 The default Built-in case uses the current neutral stage configuration, not the
 operator's tuned LSP preset. Tests use isolated files, not production deployment.
 
@@ -171,16 +171,16 @@ Run **one command after configuring its corresponding case**, not all five
 against the same source configuration. Override `--url` if not localhost:8080.
 The sampler stores no growing in-memory history: each line includes raw status,
 interval deltas and total deltas. Null means unavailable/reset, never success.
-A fetch failure exits visibly. A stale RP observation is not proof of zero errors.
+A fetch failure exits visibly. A stale Controller observation is not proof of zero errors.
 Cached mux counts can repeat between refreshes; expect ~375 frames/s over the
 whole window, allowing the existing refresh phase offset. For sub-refresh timing,
 use the mux's existing read-only control status alongside this sampler.
 
 Healthy steady-state targets:
 
-* `mux_late_frames`, transport/SPI errors and RP audio-link error deltas zero.
+* `mux_late_frames`, transport/SPI errors and Controller audio-link error deltas zero.
 * Queue capacity/stale/invalid loss and writer discarded bytes zero.
-* Each active TX's mux under/overrun and QN audio underrun deltas zero.
+* Each active TX's mux under/overrun and TX audio underrun deltas zero.
 * No monotonically growing queue occupancy/stale playback, no source reconnects
   or unexpected lifecycle changes. Lifecycle transients belong outside the window.
 

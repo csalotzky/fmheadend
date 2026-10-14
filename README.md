@@ -138,7 +138,7 @@ missing routes, resource conflicts and unavailable dependencies.
   validation is independently 76000..108000 kHz on a 50 kHz raster. See
   [M7B5](docs/milestone7b5.md) for all four regions and production static hosting.
   Configure `rf_attenuation_db` as relative attenuation: 0 (Maximum), then 1.5 dB
-  steps through 22.5 dB. RP firmware maps these levels without changing IPOW.
+  steps through 22.5 dB. Controller firmware maps these levels without changing IPOW.
   Fresh Modulators have null attenuation. Select a level explicitly before real hardware use.
   See the [canonical protocol](docs/rp2354-protocol.md).
 - PI is represented as a uint16 integer. PS entries contain up to eight printable
@@ -176,7 +176,7 @@ Milestone 3 adds the Unix PCM/control sockets, bounded C++ rings, fixed frame
 builder, mock capture and Linux spidev transport. Milestone 4 adds RP2354 I2C protocol/client primitives and hardware status.
 M5 adds Linux RDS encoding and FIFO scheduling. M6A adds safe desired-state
 restoration, integration recovery and systemd deployment. M7A adds the Angular Dashboard; M7B1 adds Sources management; M7B2 adds Modulator/RDS configuration; M7B3 adds
-[Audio Profiles management](docs/milestone7b3.md). M7B5 completes System diagnostics and production WebUI hosting. RP firmware
+[Audio Profiles management](docs/milestone7b3.md). M7B5 completes System diagnostics and production WebUI hosting. Controller firmware
 remains unimplemented; Zero 2 W stress/performance validation is deferred to M6B. New modulators
 remain disabled with no frequency until explicitly configured.
 

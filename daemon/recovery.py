@@ -17,7 +17,7 @@ class Recovery:
         # Hardware synchronization and communication health are independent.
         self.ready = False
         self.retry_at = 0.0
-        self.error = DependencyUnavailable('RP startup synchronization pending')
+        self.error = DependencyUnavailable('Controller startup synchronization pending')
         self.uptime = None
         self.stopping = False
         self.pending = {}  # channel -> next idempotent reconciliation step
@@ -36,11 +36,11 @@ class Recovery:
         return not self.stopping and self.retry_delay == 0
 
     def communication_failed(self, error):
-        """Coalesce bus failures; never invalidate QN state or discard RDS queues."""
+        """Coalesce bus failures; never invalidate TX state or discard RDS queues."""
         if isinstance(error, (RpResponseError, ValueError)):
             return
         if str(error) != str(self.error):
-            logger.warning('RP control unavailable; retaining RF/audio state: %s', error)
+            logger.warning('Controller unavailable; retaining RF/audio state: %s', error)
         self.error = error
         # Real client owns its 250 ms backoff. Mocks share the same minimum.
         # Repeated calls during that interval do not extend it.
@@ -49,7 +49,7 @@ class Recovery:
 
     def require_ready(self):
         if not self.ready or self.stopping:
-            raise DomainError(503, 'DEPENDENCY_UNAVAILABLE', str(self.error or 'RP stopping'))
+            raise DomainError(503, 'DEPENDENCY_UNAVAILABLE', str(self.error or 'Controller stopping'))
 
     def boundary(self, channel):
         self.rds.fence(channel)
@@ -73,7 +73,7 @@ class Recovery:
         if step == 'info':
             info = self.rp.get_info()
             if info['rp_protocol_version'] != PROTOCOL_VERSION or info['modulator_count'] != 8:
-                raise IncompatibleProtocol('Unsupported RP protocol version or modulator count')
+                raise IncompatibleProtocol('Unsupported Controller protocol version or modulator count')
             return
         config = self.modulators.get(channel)
         if step == 'off':
@@ -126,7 +126,7 @@ class Recovery:
 
     def observe(self):
         if not self.can_communicate():
-            raise self.error or DependencyUnavailable('RP reconnect backoff')
+            raise self.error or DependencyUnavailable('Controller reconnect backoff')
         try:
             if not self.ready:
                 return self._restore()
@@ -159,12 +159,12 @@ class Recovery:
             c['tx_state'] != ('ON' if self.modulators.desired_on(c['id']) else 'OFF')
             for c in observed['modulators']
         ):
-            raise DependencyUnavailable('RP startup read-back does not match desired TX state')
+            raise DependencyUnavailable('Controller startup read-back does not match desired TX state')
         self.ready = True
         self.error = None
         self.uptime = observed.get('uptime_ms')
         self.rds.suspended = False
-        logger.info('RP startup hardware synchronization completed')
+        logger.info('Controller startup hardware synchronization completed')
         return observed
 
     def shutdown(self):
