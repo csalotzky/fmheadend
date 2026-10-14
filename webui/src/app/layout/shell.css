@@ -131,10 +131,7 @@ header {
   color: var(--success, #68b88a);
 }
 .host-metrics {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  margin-left: auto;
+  display: contents;
 }
 .numeric {
   font-variant-numeric: tabular-nums;
