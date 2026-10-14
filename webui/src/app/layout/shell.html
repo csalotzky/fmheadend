@@ -55,6 +55,8 @@
           >mux
           <b>{{ state.stale() ? 'Unknown' : state.data()?.status?.system?.mux_state }}</b></span
         ><span>{{ state.stale() ? '\u2014' : state.activeCount() }} / 8 TX ON</span>
+        <span>CPU <b>{{ hostMetric(state.data()?.status?.system?.cpu_percent, '%') }}</b></span>
+        <span><b>{{ hostMetric(state.data()?.status?.system?.temperature_c, ' °C') }}</b></span>
       </div>
     </div>
     <div class="global-actions">

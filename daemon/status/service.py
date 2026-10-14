@@ -1,6 +1,7 @@
 import time
 import logging
 
+from .host_metrics import HostMetrics
 from ..errors import DependencyUnavailable, DomainError
 from .. import __version__
 from ..rp2354.linux_client import Rp2354Client
@@ -24,6 +25,7 @@ class StatusService:
         self.modulators, self.sources, self.rp, self.mux = modulators, sources, rp, mux
         self.radiotext = radiotext
         self.clock, self.started = clock, clock()
+        self.host_metrics = HostMetrics(clock)
         self.recovery = recovery
         self.config, self.profile_files = config, profile_files
         self._profile_list = None
@@ -99,10 +101,11 @@ class StatusService:
                                         'observation_stale': self._publication_failed or age > max_age_s})
 
     def published_snapshot(self):
-        """ASGI reader: no dependency IO, DB access, or audio/control locks."""
+        """ASGI reader: cached host metrics, no DB or audio/control access."""
         published_at, max_age_s, snapshot, _ = self._published
         age = max(0, self.clock() - published_at)
         system = snapshot.system.model_copy()
+        system.cpu_percent, system.temperature_c = self.host_metrics.read()
         system.snapshot_age_s = age
         system.snapshot_stale = self._publication_failed or age > max_age_s
         system.uptime_s += age
