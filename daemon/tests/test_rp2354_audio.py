@@ -94,7 +94,7 @@ def test_api_reconnect_preserves_config_and_stale_saturation(tmp_path, settings)
     def refresh(): app.state.control.executor.submit(app.state.services.status.refresh).result()
     with TestClient(app) as api:
         prefix = "/api/v1"
-        assert api.get(prefix + "/system/info").json()["rp_protocol_version"] == 1
+        assert api.get(prefix + "/system/info").json()["controller_protocol_version"] == 1
         original = api.get(prefix + "/modulators/0").json()
         assert {key:original[key] for key in DEFAULTS} == DEFAULTS
         body = dict(audio_mode="ANALOG", frequency_khz=98100, rf_attenuation_db=6.0, rds_enabled=True, **settings)
@@ -108,7 +108,7 @@ def test_api_reconnect_preserves_config_and_stale_saturation(tmp_path, settings)
             assert api.get(prefix + "/status").json()["modulators"][0]["input_saturated"] is saturation
         rp.available = False; refresh()
         assert api.get(prefix + "/status").json()["modulators"][0]["input_saturated"] is False
-        assert api.get(prefix + "/status").json()["system"]["rp_observation_stale"]
+        assert api.get(prefix + "/status").json()["system"]["controller_observation_stale"]
         rp.available = True; now[0] = 3; refresh()
         assert {key:getattr(rp.configs[0],key) for key in settings} == settings
         assert rp.enabled[0] and app.state.services.recovery.ready

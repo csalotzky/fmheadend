@@ -82,8 +82,8 @@ def test_expiration_retains_values_without_inventing_hardware_failure(tmp_path):
         now[0]=3.0
         stale=status.published_snapshot()
         assert stale.system.snapshot_age_s == 3
-        assert stale.system.snapshot_stale and stale.system.rp_observation_stale
-        assert stale.system.rp_observation_age_s == old.system.rp_observation_age_s + 3
+        assert stale.system.snapshot_stale and stale.system.controller_observation_stale
+        assert stale.system.controller_observation_age_s == old.system.controller_observation_age_s + 3
         assert stale.modulators == old.modulators
         assert stale.system.system_state == old.system.system_state
         assert status.published_source(sid).observation_stale

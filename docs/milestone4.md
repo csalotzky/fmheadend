@@ -33,7 +33,7 @@ Use **`--mock-rp` to continue the validated Milestone 3 setup without Controller
 its original mock defaults; inject the real client explicitly when embedding.
 
 The existing persistent `SystemConfig.i2c_device` and
-`SystemConfig.rp2354_i2c_address` select the hardware. CLI overrides are
+`SystemConfig.controller_i2c_address` select the hardware. CLI overrides are
 `--i2c-device /dev/i2c-N` and `--rp-i2c-address 0xNN`. No address is assumed when
 unset; startup reports hardware unavailable while serving the API. I2C configuration
 changes take effect on daemon restart. `--i2c-timeout-ms` defaults to 200.

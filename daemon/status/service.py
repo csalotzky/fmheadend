@@ -33,8 +33,8 @@ class StatusService:
         self._observed_at = None
         self.real_rp = isinstance(rp, Rp2354Client)
         self.system = SystemStatus(mocked=not self.real_rp)
-        self.info = {"fmheadend_version": __version__, "rp_protocol_version": None,
-                     "rp_firmware_version": None, "hardware_revision": None,
+        self.info = {"fmheadend_version": __version__, "controller_protocol_version": None,
+                     "controller_firmware_version": None, "hardware_revision": None,
                      "modulator_count": 8, "mocked": not self.real_rp}
         self.refresh()
 
@@ -106,10 +106,10 @@ class StatusService:
         system.snapshot_age_s = age
         system.snapshot_stale = self._publication_failed or age > max_age_s
         system.uptime_s += age
-        if system.rp_observation_age_s is not None:
-            system.rp_observation_age_s += age
+        if system.controller_observation_age_s is not None:
+            system.controller_observation_age_s += age
         if system.snapshot_stale:
-            system.rp_observation_stale = True
+            system.controller_observation_stale = True
         # Published nested models belong to this generation and are never mutated.
         return snapshot.model_copy(update={'system': system})
 
@@ -117,15 +117,21 @@ class StatusService:
         errors = []
         try:
             rp_status = self.recovery.observe() if self.recovery else self.rp.get_status()
-            self.system.rp2354_state = rp_status["state"]
+            self.system.controller_state = rp_status["state"]
             self.system.i2c_errors = rp_status["i2c_errors"]
-            self.info.update((self.rp.info or self.rp.get_info()) if self.real_rp else self.rp.get_info())
+            info = (self.rp.info or self.rp.get_info()) if self.real_rp else self.rp.get_info()
+            self.info.update(
+                controller_protocol_version=info["rp_protocol_version"],
+                controller_firmware_version=info["rp_firmware_version"],
+                hardware_revision=info["hardware_revision"],
+                modulator_count=info["modulator_count"],
+            )
             self._observed_at = self.clock()
-            self.system.rp_observation_stale = False
-            self.system.rp_communication_state = 'AVAILABLE'
+            self.system.controller_observation_stale = False
+            self.system.controller_communication_state = 'AVAILABLE'
             if self.real_rp:
-                self.system.rp_uptime_ms = rp_status["uptime_ms"]
-                self.system.rp_spi_audio_link_error_count = rp_status["rp_spi_audio_link_error_count"]
+                self.system.controller_uptime_ms = rp_status["uptime_ms"]
+                self.system.controller_spi_audio_link_error_count = rp_status["rp_spi_audio_link_error_count"]
                 self.system.controller_last_error_code = rp_status.get("last_error_code")
                 if rp_status["state"] != "OK":
                     errors.append("Controller hardware: " + (rp_status.get("last_error_code") or rp_status["state"]))
@@ -146,11 +152,11 @@ class StatusService:
                 elif row.hardware_tx_state == 'ON' and row.rf_attenuation_db != self.modulators.get(row.id).rf_attenuation_db:
                     errors.append(f"Controller TX{row.id}: observed attenuation differs from desired configuration")
         except DependencyUnavailable as exc:
-            self.system.rp_communication_state = communication_state(exc)
-            self.system.rp_observation_stale = True
+            self.system.controller_communication_state = communication_state(exc)
+            self.system.controller_observation_stale = True
             self.system.i2c_errors = self.rp.i2c_errors
             if self._observed_at is None:
-                self.system.rp2354_state = 'UNKNOWN'
+                self.system.controller_state = 'UNKNOWN'
             errors.append(str(exc))
         try:
             mux_status = self.mux.get_status()
@@ -188,10 +194,10 @@ class StatusService:
         system = self.system.model_copy(deep=True)
         system.global_stopped = self.modulators.global_stopped
         if self.recovery and self.recovery.error is not None:
-            system.rp_communication_state = communication_state(self.recovery.error)
-            system.rp_observation_stale = True
+            system.controller_communication_state = communication_state(self.recovery.error)
+            system.controller_observation_stale = True
             system.last_error = str(self.recovery.error)
-        system.rp_observation_age_s = None if self._observed_at is None else max(0, self.clock() - self._observed_at)
+        system.controller_observation_age_s = None if self._observed_at is None else max(0, self.clock() - self._observed_at)
         system.uptime_s = max(0, self.clock() - self.started)
         rows = []
         source_statuses = {} if source_statuses is None else dict(source_statuses)

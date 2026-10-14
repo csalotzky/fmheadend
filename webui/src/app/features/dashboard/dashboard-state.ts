@@ -60,9 +60,9 @@ export function compose(snapshot: Snapshot, previous?: Snapshot): ChannelView[] 
       analog,
       pcm,
       error,
-      observationStale: snapshot.status.system.rp_observation_stale === true,
+      observationStale: snapshot.status.system.controller_observation_stale === true,
       confirmedOff:
-        snapshot.status.system.rp_observation_stale !== true &&
+        snapshot.status.system.controller_observation_stale !== true &&
         runtime?.hardware_tx_state === 'OFF' &&
         runtime?.tx_state === 'OFF',
       sourceName: analog
@@ -221,10 +221,10 @@ export class DashboardState {
   }
   private confirmObservations(snapshot: Snapshot, requestedAt: number) {
     const system = snapshot.status.system;
-    const age = system.rp_observation_age_s;
+    const age = system.controller_observation_age_s;
     if (
       system.snapshot_stale === true ||
-      system.rp_observation_stale !== false ||
+      system.controller_observation_stale !== false ||
       age == null ||
       !Number.isFinite(age) ||
       age < 0
@@ -347,7 +347,7 @@ export class DashboardState {
         action === 'start' ||
         this.stale() ||
         !c.confirmedOff ||
-        this.data()?.status.system.rp_observation_stale !== false ||
+        this.data()?.status.system.controller_observation_stale !== false ||
         this.confirmations.has(c.id),
     );
     this.busy.set(action === 'start' ? 'start-all' : 'stop-all');

@@ -64,7 +64,7 @@ def test_current_configuration_reopens_without_writes(tmp_path):
     db.save("modulators", ModulatorConfig(
         audio_mode="ANALOG", frequency_khz=99500,
         rds_ps=[PsEntry(text="STUDIO")]), 7)
-    db.save_system(SystemConfig(web_port=8090, log_level="DEBUG", rp2354_i2c_address=32))
+    db.save_system(SystemConfig(web_port=8090, log_level="DEBUG", controller_i2c_address=32))
     before = snapshot(db.connection)
     db.close()
     for _ in range(2):

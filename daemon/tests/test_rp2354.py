@@ -297,15 +297,15 @@ def test_http_stays_available_when_real_i2c_fails(calls, tmp_path):
     with TestClient(create_app(Settings(tmp_path / 'test.db'), rp=rp)) as api:
         assert api.get('/docs').status_code == 200
         status = api.get('/api/v1/status').json()
-        assert status['system']['rp2354_state'] == 'UNKNOWN'
-        assert status['system']['rp_communication_state'] == 'UNAVAILABLE'
-        assert status['system']['rp_observation_stale']
+        assert status['system']['controller_state'] == 'UNKNOWN'
+        assert status['system']['controller_communication_state'] == 'UNAVAILABLE'
+        assert status['system']['controller_observation_stale']
         assert status['system']['system_state'] == 'DEGRADED'
         assert status['system']['mocked'] is False
         assert status['modulators'][0]['hardware_tx_state'] is None
         assert status['modulators'][0]['rf_attenuation_db'] is None
         info = api.get('/api/v1/system/info').json()
-        assert info['rp_firmware_version'] is None and info['mocked'] is False
+        assert info['controller_firmware_version'] is None and info['mocked'] is False
 
 
 def test_native_status_reaches_existing_api(calls, tmp_path):
@@ -328,7 +328,7 @@ def test_native_status_reaches_existing_api(calls, tmp_path):
         assert status['modulators'][1]['rf_attenuation_db'] == 6.0
         assert status['modulators'][1]['audio_underrun_count'] == 11
         assert status['modulators'][1]['underruns'] == 0  # Separate mux count.
-        assert api.get('/api/v1/system/info').json()['rp_firmware_version'] == '0.1.0'
+        assert api.get('/api/v1/system/info').json()['controller_firmware_version'] == '0.1.0'
 
 @pytest.mark.parametrize('code', [1, 2, 3, 5, 6])
 def test_client_maps_protocol_failure_without_retry(calls, code):
@@ -490,7 +490,7 @@ def test_latched_errors_do_not_imply_current_fault(calls, tmp_path, global_activ
         assert status['system']['controller_last_error_code'] == 'QN_ERROR'
         assert status['modulators'][0]['hardware_last_error'] == 'QN_ERROR'
         assert status['system']['system_state'] == ('DEGRADED' if global_active or tx_active else 'RUNNING')
-        assert status['system']['rp_spi_audio_link_error_count'] == 9
+        assert status['system']['controller_spi_audio_link_error_count'] == 9
 
 
 def test_m83_command_waits_and_two_read_cursor(calls):
@@ -678,7 +678,7 @@ def test_crc_failure_preserves_all_rf_and_existing_scoped_recovery(calls, runnin
         else:
             assert not any(c.needs_clear for c in s.rds.channels)
         if command == p.Command.GET_STATUS:
-            assert s.status.snapshot().system.rp_observation_stale
+            assert s.status.snapshot().system.controller_observation_stale
         wire.now += .3; s.rp._retry_at = 0
         s.rds.tick()
         sent = packets(calls)
@@ -718,8 +718,8 @@ def test_read_failures_and_observations_never_trigger_global_restore(calls, runn
         if failure in ('qn_fault', 'mismatch', 'attenuation', 'qn_response'):
             assert services.status.snapshot().system.system_state == 'DEGRADED'
         if failure == 'qn_response':
-            assert services.status.snapshot().system.rp_communication_state == 'AVAILABLE'
-            assert services.status.snapshot().system.rp_observation_stale
+            assert services.status.snapshot().system.controller_communication_state == 'AVAILABLE'
+            assert services.status.snapshot().system.controller_observation_stale
         # Only the first malformed frame in the incident is dumped, including
         # a second corruption/incompatible response during verification.
         assert len([r for r in caplog.records if 'Controller malformed response' in r.getMessage()]) == 1
@@ -863,15 +863,15 @@ def test_repeated_os_read_failures_do_not_restore(calls, running_wire_backend, c
         assert s.recovery.ready and not s.rds.suspended and not s.recovery.pending
         assert all(a is b for a,b in zip(channels, s.rds.channels))
         stale = s.status.snapshot()
-        assert stale.system.rp_observation_stale
-        assert stale.system.rp_communication_state == 'UNAVAILABLE'
-        assert stale.system.rp_observation_age_s >= 1
+        assert stale.system.controller_observation_stale
+        assert stale.system.controller_communication_state == 'UNAVAILABLE'
+        assert stale.system.controller_observation_age_s >= 1
         assert [r.hardware_tx_state for r in stale.modulators] == ['ON']*8
-        assert stale.system.rp_uptime_ms == last.system.rp_uptime_ms
+        assert stale.system.controller_uptime_ms == last.system.controller_uptime_ms
         calls[0].read.side_effect = original
         wire.now += .3; s.rp._retry_at = 0
         s.status.refresh()
-        assert not s.status.snapshot().system.rp_observation_stale
+        assert not s.status.snapshot().system.controller_observation_stale
         assert all(packet[0] in (1,4,11) for packet in packets(calls))
         assert wire.enabled == [True]*8
     app.state.control.executor.submit(check).result()
@@ -1011,7 +1011,7 @@ def test_status_crc_failure_then_stop_reacquires_once(calls, running_wire_backen
     def fail_poll():
         wire.corrupt_crc = p.Command.GET_STATUS
         s.status.refresh()
-        assert s.status.snapshot().system.rp_observation_stale
+        assert s.status.snapshot().system.controller_observation_stale
         calls[0].write.reset_mock()
     app.state.control.executor.submit(fail_poll).result()
     response = TestClient(app).post('/api/v1/modulators/3/stop')
@@ -1026,7 +1026,7 @@ def test_status_crc_failure_then_stop_reacquires_once(calls, running_wire_backen
     wire.corrupt_crc = p.Command.GET_STATUS
     app.state.control.executor.submit(s.status.refresh).result()
     assert response.status_code == 200 and s.modulators.statuses[3].tx_state == 'OFF'
-    assert s.status.snapshot().system.rp_observation_stale
+    assert s.status.snapshot().system.controller_observation_stale
 
 
 @pytest.mark.parametrize('action', ['start', 'stop'])

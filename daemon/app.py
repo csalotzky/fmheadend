@@ -106,7 +106,7 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
             next_snapshot = now + 1.0
             # Observation errors must not retroactively fail a confirmed action.
             try:
-                interval = services.config.get_system().rp_status_poll_interval_ms / 1000
+                interval = services.config.get_system().controller_status_poll_interval_ms / 1000
                 services.status.publish(max_age_s=max(2.0, 2 * interval), configuration_changed=force)
             except Exception:
                 services.status.publication_failed()
@@ -122,7 +122,7 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
             now = time.monotonic()
             if now >= next_poll:
                 services.status.refresh(publish=False)
-                next_poll = now + services.config.get_system().rp_status_poll_interval_ms / 1000
+                next_poll = now + services.config.get_system().controller_status_poll_interval_ms / 1000
             publish_status(force=False)
             interval = min(POLL_SECONDS, max(0.01, next_poll - time.monotonic()))
             delay = services.recovery.retry_delay
@@ -286,7 +286,7 @@ def main():
     try:
         rp = MockRp2354Client() if args.mock or args.mock_rp else Rp2354Client(
             args.i2c_device or config.i2c_device,
-            config.rp2354_i2c_address if args.rp_i2c_address is None else args.rp_i2c_address,
+            config.controller_i2c_address if args.rp_i2c_address is None else args.rp_i2c_address,
             timeout_ms=args.i2c_timeout_ms)
     except ValueError as exc:
         parser.error(str(exc))

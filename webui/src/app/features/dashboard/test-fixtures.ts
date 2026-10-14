@@ -43,7 +43,7 @@ export function sample(): Snapshot {
     status: {
       system: {
         system_state: 'RUNNING',
-        rp2354_state: 'OK',
+        controller_state: 'OK',
         mux_state: 'RUNNING',
         mux_transport: 'mock',
         mux_transport_state: 'RUNNING',
@@ -51,8 +51,8 @@ export function sample(): Snapshot {
         mux_mocked: true,
         spi_errors: 0,
         i2c_errors: 0,
-        rp_uptime_ms: null,
-        rp_spi_audio_link_error_count: null,
+        controller_uptime_ms: null,
+        controller_spi_audio_link_error_count: null,
         controller_last_error_code: null,
         uptime_s: 10,
         cpu_percent: null,

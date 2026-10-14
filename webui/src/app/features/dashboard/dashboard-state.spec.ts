@@ -48,7 +48,7 @@ describe('Dashboard API composition and operations', () => {
     const data = sample();
     data.status.system.snapshot_age_s = 3;
     data.status.system.snapshot_stale = true;
-    data.status.system.rp_observation_stale = true;
+    data.status.system.controller_observation_stale = true;
     await load(data);
     expect(state.stale()).toBe(true);
     expect(state.channels()).toHaveLength(8);
@@ -248,8 +248,8 @@ describe('Dashboard API composition and operations', () => {
   });
   function observed(on: boolean, age: number | null = 0, stale = false) {
     const value = sample();
-    value.status.system.rp_observation_stale = stale;
-    value.status.system.rp_observation_age_s = age;
+    value.status.system.controller_observation_stale = stale;
+    value.status.system.controller_observation_age_s = age;
     value.status.modulators[1].hardware_tx_state = on ? 'ON' : 'OFF';
     value.status.modulators[1].tx_state = on ? 'ON' : 'OFF';
     return value;

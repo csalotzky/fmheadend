@@ -38,15 +38,15 @@ import { errorMessage } from '../../core/api/headend-api';
         <dl>
           <dt>State</dt>
           <dd>
-            {{ runtime()?.rp2354_state ?? 'Unavailable' }}{{ runtime()?.mocked ? ' (mock)' : '' }}
+            {{ runtime()?.controller_state ?? 'Unavailable' }}{{ runtime()?.mocked ? ' (mock)' : '' }}
           </dd>
           <dt>Protocol</dt>
           <dd>
-            {{ rpAvailable() ? (info()?.rp_protocol_version ?? 'Unavailable') : 'Unavailable' }}
+            {{ rpAvailable() ? (info()?.controller_protocol_version ?? 'Unavailable') : 'Unavailable' }}
           </dd>
           <dt>Firmware</dt>
           <dd>
-            {{ rpAvailable() ? (info()?.rp_firmware_version ?? 'Unavailable') : 'Unavailable' }}
+            {{ rpAvailable() ? (info()?.controller_firmware_version ?? 'Unavailable') : 'Unavailable' }}
           </dd>
           <dt>Hardware</dt>
           <dd>
@@ -100,15 +100,15 @@ import { errorMessage } from '../../core/api/headend-api';
             <dt>SPI errors</dt>
             <dd>{{ status.spi_errors }}</dd>
             <dt>Controller audio-link errors</dt>
-            <dd>{{ status.rp_spi_audio_link_error_count ?? 'Unavailable' }}</dd>
+            <dd>{{ status.controller_spi_audio_link_error_count ?? 'Unavailable' }}</dd>
             <dt>Last Controller error (history)</dt>
             <dd>
               {{
                 status.controller_last_error_code ??
                   (!status.mocked &&
-                  status.rp_communication_state === 'AVAILABLE' &&
-                  status.rp_observation_stale === false &&
-                  status.rp_observation_age_s != null &&
+                  status.controller_communication_state === 'AVAILABLE' &&
+                  status.controller_observation_stale === false &&
+                  status.controller_observation_age_s != null &&
                   status.snapshot_stale !== true
                     ? 'None'
                     : 'Unavailable')
@@ -182,7 +182,7 @@ export class SystemPage {
   );
   readonly rpAvailable = computed(
     () =>
-      !!this.runtime() && !['UNRESPONSIVE', 'INCOMPATIBLE'].includes(this.runtime()!.rp2354_state),
+      !!this.runtime() && !['UNRESPONSIVE', 'INCOMPATIBLE'].includes(this.runtime()!.controller_state),
   );
   readonly frequency = frequencyLabel;
   constructor() {

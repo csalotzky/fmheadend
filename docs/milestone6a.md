@@ -188,9 +188,9 @@ TimeoutStopSec is the final bound if a native driver/worker does not return.
 The existing `/api/v1/status` remains the health surface. Failed dependencies yield
 DEGRADED while HTTP remains available; successful current dependency observations
 and restoration return RUNNING. On communication failure the last valid hardware
-TX, attenuation and counter values are retained. `rp_communication_state` reports
-AVAILABLE/UNAVAILABLE/INCOMPATIBLE; `rp_observation_stale` marks uncertain data and
-`rp_observation_age_s` measures time since the last successful snapshot (null before
+TX, attenuation and counter values are retained. `controller_communication_state` reports
+AVAILABLE/UNAVAILABLE/INCOMPATIBLE; `controller_observation_stale` marks uncertain data and
+`controller_observation_age_s` measures time since the last successful snapshot (null before
 one exists). Transport uncertainty does not turn every TX into hardware ERROR.
 Desired enabled state is still read from the persistent modulator configuration.
 Mux counters are last-observed diagnostics while mux_state=ERROR, not proof of

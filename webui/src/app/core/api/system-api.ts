@@ -10,8 +10,8 @@ export interface FrequencyPlan {
 }
 export interface SystemInfo {
   fmheadend_version: string;
-  rp_protocol_version: number | null;
-  rp_firmware_version: string | null;
+  controller_protocol_version: number | null;
+  controller_firmware_version: string | null;
   hardware_revision: string | null;
   modulator_count: number;
   mocked: boolean;
