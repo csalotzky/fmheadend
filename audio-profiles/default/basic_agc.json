@@ -251,7 +251,7 @@
       "selected": "LSP_AGC",
       "implementations": {
         "LSP_AGC": {
-          "target_lufs": -17.0,
+          "target_lufs": -16.0,
           "maximum_gain_enabled": true,
           "maximum_gain_db": 6.0,
           "silence_lufs": -50.0,
