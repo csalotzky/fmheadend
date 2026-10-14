@@ -2,17 +2,17 @@
 
 M6A adds integration recovery, safe lifecycle handling and service units. It does
 not tune buffers, benchmark the Zero 2 W, implement firmware or add RDS features.
-The architecture and RP protocol remain the canonical component/wire contracts.
+The architecture and Controller protocol remain the canonical component/wire contracts.
 
-## Startup and RP recovery
+## Startup and Controller recovery
 
 The existing single control executor owns recovery as well as API control, SQLite,
 status polling and RDS refill. No new I2C worker, supervisor or process launcher
 is introduced. Recovery scope must not exceed failure scope. Reopening the Linux
-I2C session does not imply loss of RP/QN state.
+I2C session does not imply loss of Controller/TX state.
 
 After loading configuration, startup attempts GET_INFO and checks protocol V1 and
-exactly eight modulators. Missing/incompatible RP hardware leaves the API available
+exactly eight modulators. Missing/incompatible Controller hardware leaves the API available
 with DEGRADED status, without a mock fallback. Transport failures use the shared
 250 ms client/coordinator backoff; normal later polls retry communication. No
 additional fixed one-second RDS transport delay is imposed.
@@ -39,15 +39,15 @@ acknowledged startup enable state. If START/STOP changes desired state before th
 final observation succeeds, only targets with obsolete confirmed states receive
 another desired-state enable write before the next observation. Unrelated completed
 OFF/config/CLEAR/enable steps are retained. There is currently no
-daemon-issued RP reset path. Startup is the only full hardware synchronization
+daemon-issued Controller reset path. Startup is the only full hardware synchronization
 trigger. A suspicious uptime decrease (including wrap), status mismatch, failed poll
 or reconnect never invokes global restoration. Valid hardware faults/mismatches
 remain visible; they are not silently converted to success or configuration replay.
 
 The client preserves command, target, transaction stage and execution certainty:
-NOT_SENT, AMBIGUOUS, read-only OBSERVATION failure, or a valid RP RESPONSE. An
+NOT_SENT, AMBIGUOUS, read-only OBSERVATION failure, or a valid Controller RESPONSE. An
 implicit GET_INFO failure is not an executed SET. Local validation raises ValueError
-before I/O. Valid QN_ERROR/INTERNAL_ERROR remain typed RP errors.
+before I/O. Valid QN_ERROR/INTERNAL_ERROR remain typed Controller errors.
 
 Read-only GET_INFO/GET_STATUS/GET_RDS_FIFO_FREE failures perform no RF/config/CLEAR
 recovery. Capacity failure skips refill and preserves scheduler/pending state; a
@@ -60,7 +60,7 @@ its FIFO until RDS_CLEAR is positively acknowledged. An uncertain CLEAR is retri
 without intervening PUSHes. Recovery then refills to the unchanged two-second
 lookahead in that same tick, bypassing the normal 100 ms gate. NOT_SENT retains
 the pending batch; BUSY retains its existing exact-batch/single-retry semantics.
-Valid RP RDS error replies retain a bounded channel retry interval. Other channels
+Valid Controller RDS error replies retain a bounded channel retry interval. Other channels
 continue once the shared bus is usable; no RDS failure disables RF.
 
 An ambiguous SET_TX_ENABLED queues just the target's latest desired ON/OFF write,
@@ -80,7 +80,7 @@ mux/source cleanup. Neither lifecycle adds a synchronous GET_STATUS. Periodic
 status remains observation; a later failed read cannot revoke a confirmed command.
 
 Each explicit lifecycle request has at most **one extra session reacquisition**,
-shared across its RP commands. START ALL/STOP ALL share that one budget across all
+shared across its Controller commands. START ALL/STOP ALL share that one budget across all
 eight targets and retain their existing partial-result/persistent-state semantics.
 The allowance requires NOT_SENT metadata identifying device/session open, active
 backoff, or an implicit GET_INFO failure before the requested command. It waits
@@ -89,10 +89,10 @@ without bypassing it. The second attempt's failure propagates normally. Existing
 bounded command waits and the client's BUSY retry remain unchanged.
 
 There is no lifecycle retry for a write that may have begun, a missing/corrupt SET
-response, an explicit RP rejection, incompatibility, validation, or source failure.
+response, an explicit Controller rejection, incompatibility, validation, or source failure.
 There is no new background retry queue. Ambiguous SETs retain target-only recovery;
 NOT_SENT failures retain desired state without scheduling reconciliation. HTTP 503
-messages distinguish `not sent` from `outcome unknown (AMBIGUOUS)` and explicit RP
+messages distinguish `not sent` from `outcome unknown (AMBIGUOUS)` and explicit Controller
 errors. Shutdown does not use this additional retry allowance.
 
 After a valid OFF ACK, HTTP STOP returns 200 with `tx_state=OFF`, including when
@@ -108,12 +108,12 @@ CRC corruption, exhausted reacquisition, ambiguous SET after reacquisition,
 cleanup failures and a desired OFF following failed startup observation. Hardware
 validation under real I2C corruption remains an operator test.
 
-Validation for this hardening pass: focused lifecycle/RP/recovery/RDS suites
+Validation for this hardening pass: focused lifecycle/Controller/recovery/RDS suites
 390 passed, 1 skipped; full daemon suite 558 passed, 30 skipped. Skips require
 Linux I2C/mux or GStreamer dependencies unavailable in the Windows test environment.
 
 Current hardware fault observations remain distinct from latched diagnostic error
-codes: historical counters/codes alone do not mean the RP is currently unhealthy.
+codes: historical counters/codes alone do not mean the Controller is currently unhealthy.
 No RF measurement or successful physical RDS transmission is inferred.
 
 ## Editor save-and-resume
@@ -170,7 +170,7 @@ Existing bounded queues and stale-audio discard behavior are unchanged. On mux
 return, producers resume without API reconfiguration, RF reconfiguration, or a
 new GStreamer pipeline. `fmheadendd` never starts or kills muxd.
 
-An existing HTTP source failure/reconnect does not imply an RP failure. TX may
+An existing HTTP source failure/reconnect does not imply a Controller failure. TX may
 remain ON while the mux emits silence. M2 reconnect/backoff remains responsible
 for restarting ingest. M6A only changes source shutdown cleanup so one failed
 pipeline teardown does not prevent attempting the remaining pipelines.
@@ -179,8 +179,8 @@ pipeline teardown does not prevent attempting the remaining pipelines.
 
 Uvicorn handles SIGTERM through the ASGI lifespan. Shutdown cancels maintenance,
 suspends/discards RDS work, attempts RF disable, releases producers/source workers,
-closes mux and RP resources, and closes SQLite/control execution. It does not save
-`enabled=false`. On RP communication failure, the shutdown disable pass stops rather
+closes mux and Controller resources, and closes SQLite/control execution. It does not save
+`enabled=false`. On Controller communication failure, the shutdown disable pass stops rather
 than hammering unavailable hardware; OFF cannot be guaranteed without communication.
 The existing I2C adapter timeout and worker join bounds apply. systemd's 30-second
 TimeoutStopSec is the final bound if a native driver/worker does not return.
@@ -197,7 +197,7 @@ Mux counters are last-observed diagnostics while mux_state=ERROR, not proof of
 current transport. No second health API is added.
 
 Standard application logging writes to stdout/stderr for journald. Startup,
-shutdown, RP compatibility/loss, resynchronization and mux state transitions are
+shutdown, Controller compatibility/loss, resynchronization and mux state transitions are
 logged. Repeated identical dependency failures are not logged on every poll.
 
 ## systemd deployment
@@ -231,7 +231,7 @@ Create `/etc/fmheadend/fmheadendd.env` for current hardware-free testing:
 FMHEADEND_ARGS="--database /var/lib/fmheadend/fmheadend.db --mock-rp"
 ```
 
-For real RP, remove `--mock-rp` and configure `--i2c-device /dev/i2c-1` and the
+For real Controller, remove `--mock-rp` and configure `--i2c-device /dev/i2c-1` and the
 actual `--rp-i2c-address` (or set those persistent system fields). No slave address
 is invented. Environment files are required so transport/hardware mode is explicit.
 
@@ -245,10 +245,10 @@ sudo systemctl enable --now fmheadend-muxd.service fmheadendd.service
 journalctl -u fmheadendd -u fmheadend-muxd -f
 ```
 
-Do not run a second daemon against the same database/RP/runtime sockets. No units
+Do not run a second daemon against the same database/Controller/runtime sockets. No units
 are enabled or installed automatically by development tests.
 
-## Manual smoke now: real HTTP and native mux, mock RP/SPI
+## Manual smoke now: real HTTP and native mux, mock Controller/SPI
 
 Use the service setup above, or run the two executables separately with mock SPI
 and `--mock-rp`. Create an HTTP source with a working HTTP/HLS URI:
@@ -282,10 +282,10 @@ fmheadendd as well and verify desired ON restores through the same safe path.
 
 The automated `test_real_http_gstreamer_to_mux_via_existing_api[True]` performs the
 kill/restart variant with a local HTTP WAV server, native GStreamer, real mux Unix
-sockets and mock RP/SPI. It checks resumed PCM, unchanged pipeline identity and
+sockets and mock Controller/SPI. It checks resumed PCM, unchanged pipeline identity and
 DEGRADED -> RUNNING. This is an integration smoke, not a stress or soak test.
 
-## Real RP scoped-recovery smoke (operator validation pending)
+## Real Controller scoped-recovery smoke (operator validation pending)
 
 With the terminated RF bench setup, observe running TXs during the intermittent
 host-I2C corruption. Failed polls should mark observations stale/DEGRADED without
@@ -294,8 +294,8 @@ uncertain RDS_PUSH should produce only that TX's CLEAR/refill, without RF change
 Confirm other TX audio and RDS continue after the shared transport backoff.
 
 An uncertain enable ACK should repeat only the target desired enable value; an
-uncertain config ACK may reconcile only that TX. Inspect both Linux logs and RP
-UART. Do not equate unplugging/rebooting the RP with a control-only outage: actual
+uncertain config ACK may reconcile only that TX. Inspect both Linux logs and Controller
+UART. Do not equate unplugging/rebooting the Controller with a control-only outage: actual
 reset loses hardware state, and V1 currently provides no reliable automatic reset
 identification here. Restarting the daemon explicitly performs startup restore.
 Finally SIGTERM fmheadendd and verify the bounded OFF pass, preserved persistent
@@ -305,7 +305,7 @@ recovery changes have automated coverage, not final physical acceptance yet.
 ## Validation and remaining scope
 
 Scoped-recovery update validation (Windows, isolated Python 3.13 test dependencies):
-focused recovery/RDS/RP-client suites **271 passed, 1 skipped**; full daemon suite
+focused recovery/RDS/Controller-client suites **271 passed, 1 skipped**; full daemon suite
 **474 passed, 30 skipped**. Skips require Linux i2c-dev, native Linux mux integration,
 or GStreamer/PyGObject. The existing transaction-serialization and two-second RDS
 lookahead tests pass. No firmware, wire format, SPI/audio code or Linux scheduler
@@ -344,11 +344,11 @@ venv/native mux executable paths in temporary copies of the units. This validate
 unit syntax/dependencies without installing units or pretending production paths
 already exist. No systemd service was enabled or restarted by these tests.
 
-RP recovery tests use the existing MockRp2354Client; protocol regression mocks
+Controller recovery tests use the existing MockRp2354Client; protocol regression mocks
 low-level OS I2C calls. The missing-I2C-path test uses real Linux OS calls.
 The mux restart smoke uses a real Linux C++ process (SIGKILL/restart), real HTTP
-server/GStreamer and Unix PCM/control sockets, with mock RP and mock SPI. PCM resumes
-on the same source pipeline without reconfiguration. No physical RP/QN hardware
+server/GStreamer and Unix PCM/control sockets, with mock Controller and mock SPI. PCM resumes
+on the same source pipeline without reconfiguration. No physical Controller/TX hardware
 was used and physical RF/RDS transmission or recovery remains unverified.
 
 The old architecture Requires= example was changed to Wants=/After= as explicitly
@@ -367,7 +367,7 @@ See [M7B5](milestone7b5.md) for the production hosting procedure.
 Profile PUT shares the existing control executor. After validation and atomic save,
 it restarts only active Sources selecting that file, preserving consumer sets and
 PCM output objects. It never invokes ModulatorManager START/STOP, changes desired
-state/STOP ALL holds, or calls QN/RDS control. Source teardown failure retains
+state/STOP ALL holds, or calls TX/RDS control. Source teardown failure retains
 ownership; saved-file/restart failure is a partial outcome, not failed RF control.
 Source configuration edits now reuse this audio-only replacement path even with
 active consumers; persistence/apply outcomes are separate. Name-only edits to

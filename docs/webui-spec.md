@@ -49,7 +49,7 @@ The global header is visible on every page.
 
 It should show a compact system summary such as:
 
-- RP2354 status
+- Controller status
 - muxd status
 - active TX count, e.g. `6 / 8 TX ON`
 - significant global error indication
@@ -98,7 +98,7 @@ The Dashboard is the main operational page and should be the default landing pag
 
 Its primary subject is the set of physical modulators.
 
-For an eight-QN board, all eight modulators should fit comfortably on a normal desktop display, preferably as a 4 × 2 grid.
+For an eight-TX board, all eight modulators should fit comfortably on a normal desktop display, preferably as a 4 × 2 grid.
 
 ### 5.1 Modulator cards
 
@@ -131,7 +131,7 @@ pre-emphasis and PI/PS/AF/ECC) already use the latest persisted Modulator. RT is
 not displayed on the current card. RF attenuation has hardware readback: confirmed
 OFF uses saved attenuation; ON retains observed attenuation. STARTING, unknown or
 stale observations do not select the OFF configuration branch. Confirmation here
-requires both runtime and observed OFF with non-stale RP observations; backend
+requires both runtime and observed OFF with non-stale Controller observations; backend
 unavailability keeps the existing unavailable display. No configured/readback
 labels are added. Source activity, PCM flow, RDS state/counters/FIFO and health are
 always runtime data. Saving OFF never writes SET_TX_CONFIG just to update a card.
@@ -168,7 +168,7 @@ Do not turn every statistic into a colored badge.
 
 Errors should be visible directly on the relevant modulator card without requiring the user to open another page.
 
-Cards show TX-specific lifecycle/configuration, source, RDS and current QN faults.
+Cards show TX-specific lifecycle/configuration, source, RDS and current TX faults.
 Backend `last_error_scope` and `rds_last_error_scope` distinguish `TX` from `GLOBAL`
 using exception command/stage metadata, never message matching. Existing raw errors
 and health classification are retained. Shared GET_INFO/GET_STATUS/session failures
@@ -409,7 +409,7 @@ displayed beside the control. Bypass saves a null path. Source
 Gain and Profile Input Gain are independent, sequential gain stages. Changing mode
 clears the old selection. Save is allowed while TXs consume a Source: one serialized
 PATCH persists and rebuilds only that Source's audio when runtime fields change.
-Consumers/fanout remain attached, without TX/QN/RDS lifecycle operations. Name-only
+Consumers/fanout remain attached, without TX/RDS lifecycle operations. Name-only
 edits avoid a healthy audio restart. Idle Sources stay idle. A saved-but-not-applied
 result keeps the saved form and displays the audio failure beside Save.
 
@@ -425,7 +425,7 @@ official developer documentation link (safe new tab); Off has none.
 
 Stage helpers describe audible consequences. Overall Gain is the UI label for
 unchanged `master_gain`; fixed Classic multiband mode stays internal. Output Trim
-is attenuation-only, with a note directing users to Modulator settings for QN
+is attenuation-only, with a note directing users to Modulator settings for TX
 pre-emphasis. The editor does not permanently display Save lifecycle trivia.
 
 The Limiter card selects Off / LSP Limiter Stereo / FM Headend Limiter. Only the
@@ -450,7 +450,7 @@ them again. Encoding and scheduling semantics are unchanged.
 ## 10. System
 
 V1 System is a read-only overview: backend version/status and selected media
-backend, RP connection/protocol/firmware/hardware, mux status/transport, current
+backend, Controller connection/protocol/firmware/hardware, mux status/transport, current
 region plan and database schema. Diagnostics use existing counters and current
 errors; latched codes are marked historical. Missing values are unavailable.
 No CPU/temperature claims, raw register controls or administrative commands are
@@ -520,13 +520,13 @@ WebSockets are not required for V1.
 
 Individual START / STOP shows per-card progress immediately and blocks duplicate
 commands while the request is pending. A successful response's `tx_state` is
-shown explicitly as command-confirmed, separately from reported RP state; it
+shown explicitly as command-confirmed, separately from reported Controller state; it
 does not supply hardware readbacks or Source RUNNING. An immediate shared refresh
 follows the action. Pre-action requests are discarded by generation and cannot
 satisfy that refresh. Simultaneous refresh requests coalesce without overlap.
 
 The same shared poller accelerates to approximately one second for at most ten
-seconds after command success, ending early on a matching fresh post-command RP
+seconds after command success, ending early on a matching fresh post-command Controller
 observation. Existing observation age/staleness fields establish freshness;
 missing or stale evidence cannot confirm a command. Delayed confirmation is
 reported separately from failure. HTTP failures/timeouts report an unknown or
@@ -537,7 +537,7 @@ and bounded shared confirmation polling. START progress follows the backend's
 desired-enabled/configured eligibility; STOP ALL progress covers active or
 unconfirmed channels. Each result/error is shown on its own card; missing results
 and request failures remain unconfirmed and are never replayed automatically.
-Progress ends with the request, while delayed RP confirmation is separate feedback.
+Progress ends with the request, while delayed Controller confirmation is separate feedback.
 All conflicting controls are locked during a bulk request. STOP ALL holds and
 persistent desired-state semantics are unchanged.
 
@@ -548,7 +548,7 @@ selection; it is not receiver-confirmed content. The entire row is hidden unless
 both persisted `rds_enabled` and `rds_rt_enabled` are true, without clearing text.
 Long values wrap. Selection is collected during control-thread status publication;
 HTTP readers use that snapshot without new requests or hardware/PCM lock access. The
-compact audio configuration line also shows the QN Soft clipping ON/OFF setting.
+compact audio configuration line also shows the TX Soft clipping ON/OFF setting.
 Neither field introduces new requests or editable Dashboard controls.
 
 The Sources list resolves Built-in audio-profile names from the existing shared
@@ -568,7 +568,7 @@ The initial Web UI does not require:
 - server-side rendering
 - network management
 - direct Linux hardware configuration
-- RP2354 firmware update UI
+- Controller firmware update UI
 - arbitrary QN register control in normal views
 
 ## 15. Implementation freedom

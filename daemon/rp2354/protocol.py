@@ -42,7 +42,7 @@ class Status(IntEnum):
 
 
 class ProtocolError(DependencyUnavailable):
-    """Invalid framing, payload or enum received from RP."""
+    """Invalid framing, payload or enum received from Controller."""
 
 
 class IncompatibleProtocol(ProtocolError):
@@ -85,7 +85,7 @@ class RpResponseError(DependencyUnavailable):
     def __init__(self, command: Command, status: Status):
         self.command, self.rp_status = command, status
         self.outcome = Outcome.RESPONSE
-        super().__init__(f"RP2354 {command.name}: {status.name}")
+        super().__init__(f"Controller {command.name}: {status.name}")
 
 
 class InvalidCommand(RpResponseError): pass
@@ -154,11 +154,11 @@ def request(command: Command, target: int, payload: bytes = b"") -> bytes:
 def response_header(command: Command, data: bytes) -> tuple[Status, int]:
     """Validate header semantics only after response() verifies the frame CRC."""
     if len(data) != 2:
-        raise ProtocolError("RP response header must be exactly two bytes")
+        raise ProtocolError("Controller response header must be exactly two bytes")
     try:
         status = Status(data[0])
     except ValueError as exc:
-        raise ProtocolError(f"Unknown RP status: {data[0]}") from exc
+        raise ProtocolError(f"Unknown Controller status: {data[0]}") from exc
     expected = RESPONSE_SIZES[command] if status == Status.OK else 0
     if data[1] != expected:
         raise ProtocolError(f"{command.name} response length {data[1]}, expected {expected}")
@@ -251,7 +251,7 @@ def parse_info(payload: bytes) -> dict:
     info = {"rp_protocol_version": version, "rp_firmware_version": _text(firmware, "rp_firmware_version"),
             "hardware_revision": _text(hardware, "hardware_revision"), "modulator_count": count}
     if version != PROTOCOL_VERSION or count != 8:
-        raise IncompatibleProtocol(f"Unsupported RP protocol/count: {version}/{count}; expected {PROTOCOL_VERSION}/8")
+        raise IncompatibleProtocol(f"Unsupported Controller protocol/count: {version}/{count}; expected {PROTOCOL_VERSION}/8")
     return info
 
 
@@ -274,7 +274,7 @@ def parse_status(payload: bytes) -> dict:
         raise ProtocolError("Invalid GET_STATUS payload size")
     # Current state and latched error are independent. SPI count excludes silence.
     state, uptime, spi_errors, error = GLOBAL_STATUS.unpack_from(payload)
-    result = {"state": _enum(state, ("OK", "ERROR"), "RP state"), "uptime_ms": uptime,
+    result = {"state": _enum(state, ("OK", "ERROR"), "Controller state"), "uptime_ms": uptime,
               "rp_spi_audio_link_error_count": spi_errors, "last_error_code": _error(error, "global.last_error_code"), "modulators": []}
     for channel in range(8):
         # audio counts detected QN I2S underrun flags, not missing Linux PCM.

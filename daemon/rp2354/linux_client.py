@@ -1,4 +1,4 @@
-"""Real Linux RP2354 client. OS calls are patched directly in unit tests."""
+"""Real Linux Controller client. OS calls are patched directly in unit tests."""
 from array import array
 import logging
 import os
@@ -19,7 +19,7 @@ I2C_TIMEOUT = 0x0702
 I2C_SLAVE = 0x0703
 I2C_FUNCS = 0x0705
 I2C_FUNC_I2C = 1
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('fmheadendd.controller.linux_client')
 
 
 class Rp2354Client:
@@ -34,7 +34,7 @@ class Rp2354Client:
         if not isinstance(device, str) or not device:
             raise ValueError("I2C device path is required")
         if address is not None and (type(address) is not int or not 8 <= address <= 119):
-            raise ValueError("RP slave address must be an unreserved 7-bit address (0x08..0x77)")
+            raise ValueError("Controller slave address must be an unreserved 7-bit address (0x08..0x77)")
         if type(timeout_ms) is not int or not 10 <= timeout_ms <= 1000:
             raise ValueError("I2C timeout must be 10..1000 ms")
         self.device, self.address, self.timeout_ms = device, address, timeout_ms
@@ -52,7 +52,7 @@ class Rp2354Client:
         if self.address is None:
             raise p.HardwareUnavailable("Configure rp2354_i2c_address or --rp-i2c-address; no default slave address is assumed")
         if fcntl is None or not sys.platform.startswith("linux"):
-            raise p.HardwareUnavailable("Real RP2354 I2C requires Linux i2c-dev")
+            raise p.HardwareUnavailable("Controller I2C requires Linux i2c-dev")
         fd = os.open(self.device, os.O_RDWR | os.O_CLOEXEC)
         try:
             # Cooperating clients must not interleave response reads on this bus.
@@ -87,7 +87,7 @@ class Rp2354Client:
     def _exchange(self, command: p.Command, target: int, payload: bytes = b"", *, decode=None):
         packet = p.request(command, target, payload)
         if time.monotonic() < self._retry_at:
-            error = p.HardwareUnavailable(self.last_error or "RP reconnect backoff")
+            error = p.HardwareUnavailable(self.last_error or "Controller reconnect backoff")
             error.command, error.target, error.stage, error.outcome = command, target, 'backoff', p.Outcome.NOT_SENT
             raise error
         header = received = None
@@ -106,7 +106,7 @@ class Rp2354Client:
                 stage = 'header'
                 header = os.read(self._fd, 2)
                 if len(header) != 2:
-                    raise p.ProtocolError("RP response header must be exactly two bytes")
+                    raise p.ProtocolError("Controller response header must be exactly two bytes")
                 # Length is untrusted but u8-bounded. Interpret neither status
                 # nor payload until the complete frame (including CRC) validates.
                 length = header[1]
@@ -132,13 +132,13 @@ class Rp2354Client:
         except (OSError, p.ProtocolError, p.HardwareUnavailable) as exc:
             if isinstance(exc, p.ProtocolError) and not self._malformed_reported:
                 # Actual read bytes, including the CRC trailer in payload.
-                logger.warning("RP malformed response command=%s header=%s payload=%s payload_length=%s error=%s",
+                logger.warning("Controller malformed response command=%s header=%s payload=%s payload_length=%s error=%s",
                     command.name, header.hex() if header is not None else "unavailable",
                     received.hex() if received is not None else "unavailable",
                     len(received) if received is not None else "unavailable", exc)
                 self._malformed_reported = True
             self.i2c_errors += 1
-            self.last_error = f"RP2354 I2C {self.device} address {self.address}: {exc}"
+            self.last_error = f"Controller I2C {self.device} address {self.address}: {exc}"
             self._close()
             self._retry_at = time.monotonic() + 0.25
             error = (exc if isinstance(exc, p.IncompatibleProtocol) else
@@ -195,7 +195,7 @@ class Rp2354Client:
 
     def reset_error_counters(self) -> None:
         self._call(p.Command.RESET_ERROR_COUNTERS, p.GLOBAL)
-        # Linux transport error count remains cumulative; RP counters are separate.
+        # Linux transport error count remains cumulative; Controller counters are separate.
 
     def reset(self) -> None:
         with self._lock:

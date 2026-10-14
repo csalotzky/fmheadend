@@ -108,7 +108,7 @@ settings; plugin availability is checked before actual start or later Save.
 Each Source remains one pipeline regardless of TX count. The existing `PcmOutput`
 fanout and consumer sets survive replacement; mux producers retain their object
 and sockets. Native stop clears queued PCM; missing audio yields the usual bounded
-silence. Restarting audio creates no TX OFF/ON, QN config, RDS CLEAR, desired-state
+silence. Restarting audio creates no TX OFF/ON, TX config, RDS CLEAR, desired-state
 change or STOP ALL hold release. A failed stop retains ownership so a second
 worker is not created over a worker that may still be alive. Failures are isolated
 per Source; subsequent Save can retry.

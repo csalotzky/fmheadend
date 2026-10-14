@@ -9,7 +9,7 @@ metadata-to-RT policy. Validation/defaults are defined once in `RdsProfileConfig
 - Every physical Modulator owns its persistent override through
   `rds_override_profile_id`. The FK is nullable defensively; a missing effective
   override is an explicit configuration error.
-- `rds_enabled` remains a physical Modulator/QN setting. `rds_follow_source` chooses
+- `rds_enabled` remains a physical Modulator/TX setting. `rds_follow_source` chooses
   Source content or Custom override. ANALOG must use Custom. Follow requires
   DIGITAL, an assigned Source and a Source profile, even when RDS/RF is disabled.
 - Source/profile creation, updates and removal are one SQLite transaction. Profiles

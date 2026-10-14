@@ -1,4 +1,4 @@
-"""Per-channel quota policy; speculative batches commit only after RP ACK."""
+"""Per-channel quota policy; speculative batches commit only after Controller ACK."""
 from copy import deepcopy
 from dataclasses import dataclass
 from .allocator import GroupAllocator, quotas

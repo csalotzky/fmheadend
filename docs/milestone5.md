@@ -1,10 +1,10 @@
 # Milestone 5: Linux RDS
 
-M5 implements information-group encoding, per-modulator content scheduling and RP
-FIFO refill on Linux. RP firmware remains a transport endpoint. No RDS checkwords
+M5 implements information-group encoding, per-modulator content scheduling and Controller
+FIFO refill on Linux. Controller firmware remains a transport endpoint. No RDS checkwords
 are generated: each group is exactly four unsigned 16-bit information words.
-The separate I2C frame CRC belongs to the RP client, not the RDS encoder.
-The [RP2354 protocol](rp2354-protocol.md) remains the only RP wire specification.
+The separate I2C frame CRC belongs to the Controller client, not the RDS encoder.
+The [RP2354 protocol](rp2354-protocol.md) remains the only Controller wire specification.
 
 ## Configuration
 
@@ -19,7 +19,7 @@ accepted in JSON. No country code is inferred. Null ECC means no ECC group is se
 omit this field. It alone enables/disables 2A scheduling; an empty text or missing
 metadata never disables RT. `rds_rt_termination` independently selects `CR`
 (default) or `PAD`. These are persistent per-TX backend/API settings; no UI or
-RP protocol field is added. Existing Stop-before-edit API lifecycle rules apply.
+Controller protocol field is added. Existing Stop-before-edit API lifecycle rules apply.
 
 Fresh pre-V1 schema-1 databases seed rds_ecc=null and rds_af_khz=[] from the current model. Old development databases are unsupported and may be recreated; see architecture section 16.4.
 
@@ -142,7 +142,7 @@ not toggle A/B; a CR/PAD change toggles it if the encoded bytes change.
 
 `rds/allocator.py` derives quotas and selects group types;
 `rds/scheduler.py` owns content/segment state per channel.
-It has no RP, database, API or GStreamer dependency. A bounded speculative copy
+It has no Controller, database, API or GStreamer dependency. A bounded speculative copy
 produces a batch and its candidate next state; callers commit that state on ACK.
 
 Allocation is expressed as fractions of all groups, not independent groups/s:
@@ -201,7 +201,7 @@ jitter. This Linux buffering margin does not change the 100 ms cadence, total
 group rate or CLEAR/lifecycle boundaries. The quota policy above replaces the
 original M5 weighting. Dynamic PS switching is decided using current monotonic time, never early
 because of lookahead; queued older segments can delay the on-air transition by
-that bounded lookahead. Actual RP consumption/timing still needs physical testing.
+that bounded lookahead. Actual Controller consumption/timing still needs physical testing.
 When RT is enabled, empty RT is transmitted according to CR/PAD mode.
 
 ## Refill and failure behavior
@@ -230,20 +230,20 @@ A capacity-query failure does not consume pending scheduler state or initiate
 hardware restoration. A known NOT_SENT PUSH retains its pending batch without
 CLEAR. Neither path interrupts RF/audio or resets another channel's scheduler.
 
-Disable/stop drops Linux pending groups and clears the RP FIFO. Re-enable starts
+Disable/stop drops Linux pending groups and clears the Controller FIFO. Re-enable starts
 coherently after a successful clear. Content configuration changes also establish
 a clean FIFO boundary. RT enable/termination changes participate in that same
 target-only boundary: discard pending batches, require acknowledged RDS_CLEAR,
 then refill using the new allocation/format. Failed CLEAR blocks that TX's
 PUSHes; other TXs are not reset and no RF command is issued. A group already
-handed to the QN may finish; CLEAR cannot retract it. While RT is disabled,
+handed to the TX may finish; CLEAR cannot retract it. While RT is disabled,
 metadata changes alone do not clear the remaining PS/ECC stream.
-M5 itself introduced no RP reboot detection, RF desired-state restore, systemd
+M5 itself introduced no Controller reboot detection, RF desired-state restore, systemd
 service or firmware. Lifecycle recovery is now described in [Milestone 6A](milestone6a.md).
 
 RDS errors are caught and exposed through existing modulator status fields:
 `rds_state`, `rds_last_error`, `rds_groups_accepted`, `rds_text_ab`. `rds_fifo_free`
-continues to mean free groups, and the RP's RDS underrun counter keeps its original
+continues to mean free groups, and the Controller's RDS underrun counter keeps its original
 meaning. Accepted groups mean acknowledged FIFO writes, not verified RF transmission.
 No new REST surface is introduced. The media callback never schedules RDS or waits
 for I2C. Polling and lifecycle operations share the existing serialized worker.
@@ -282,7 +282,7 @@ No new Python or system dependencies are required.
 
 Intentionally excluded: Method B, regional AF, EON-AF, automatic AF discovery,
 RT+, TMC, ODA, CT, EON, firmware, QN driver, Web UI, and the recovery milestone.
-No physical RP/QN RDS transmission has been tested. There is no architectural
+No physical Controller/TX RDS transmission has been tested. There is no architectural
 component-boundary deviation; AF Method A is included by explicit user instruction.
 
 
@@ -306,5 +306,5 @@ using 55 FIFO queries and 55 pushes. First information words were:
 | 2A | 1234 | 2540 | 5465 | 6D70 |
 
 These hexadecimal words prove Linux encoding and mock FIFO delivery only.
-RP/I2C protocol unit tests mock low-level calls; no connected RP/QN hardware was
+Controller/I2C protocol unit tests mock low-level calls; no connected Controller/TX hardware was
 used. Native audio/mux tests do not establish physical RDS transmission.

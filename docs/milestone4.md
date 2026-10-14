@@ -1,4 +1,4 @@
-# Milestone 4: real Linux RP2354 control
+# Milestone 4: real Linux Controller control
 
 For Linux RDS encoding, nullable ECC/AF configuration, scheduling and refill added
 after M4, see [Milestone 5](milestone5.md). The wire contract remains in the existing protocol document.
@@ -16,19 +16,19 @@ been validated against RP firmware because no RP/Pico is connected.
 
 ## Modes and configuration
 
-The CLI now selects real GStreamer, Unix mux and RP I2C by default. Startup calls
-GET_INFO and validates protocol 1 / eight modulators before any operational RP
+The CLI now selects real GStreamer, Unix mux and Controller I2C by default. Startup calls
+GET_INFO and validates protocol 1 / eight modulators before any operational Controller
 command. The HTTP server remains available on communication or compatibility
 failure, with DEGRADED status and a useful error. There is never automatic fallback.
 
-| CLI mode | Sources | Mux | RP control |
+| CLI mode | Sources | Mux | Controller control |
 |---|---|---|---|
 | no mock flags | GStreamer | Unix client | Linux I2C |
 | `--mock-rp` | GStreamer | Unix client | Original high-level mock |
 | `--mock-rp --mock-mux` | GStreamer | Original mock | Original high-level mock |
 | `--mock` | Original mock | Original mock | Original high-level mock |
 
-Use **`--mock-rp` to continue the validated Milestone 3 setup without RP hardware**.
+Use **`--mock-rp` to continue the validated Milestone 3 setup without Controller hardware**.
 `--mock-mux` alone does not mock I2C. The embedding `create_app()` factory retains
 its original mock defaults; inject the real client explicitly when embedding.
 

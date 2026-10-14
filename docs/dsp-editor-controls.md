@@ -132,7 +132,7 @@ saved desired configuration, reports Source ERROR and keeps consumers attached.
 Normal bounded silence applies while no PCM is produced. The frontend preserves
 the saved form as pristine and reports the partial outcome beside Save.
 
-No ModulatorManager START/STOP, TX ENABLE/CONFIG, QN, RDS CLEAR, desired-state
+No ModulatorManager START/STOP, TX ENABLE/CONFIG, RDS CLEAR, desired-state
 mutation or STOP ALL hold release is performed. Fake-pipeline regression tests
 assert output identity, multiple consumers, one replacement and no hardware
 calls. This change has not been deployed or physically auditioned.
@@ -176,7 +176,7 @@ Documentation:
 
 The pre-existing edit to `webui/src/app/features/system/system-page.ts` was left
 untouched. No profile JSON, schema version, DSP adapter mapping, Pi data, firmware,
-RP protocol, RF/RDS lifecycle or persistent desired-state behavior was changed.
+Controller protocol, RF/RDS lifecycle or persistent desired-state behavior was changed.
 
 Source RDS-only saves are an exception to audio retry/rebuild: they persist owned
 content and hot-apply RDS followers without touching audio. Mixed saves preserve

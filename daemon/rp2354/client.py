@@ -51,7 +51,7 @@ class MockRp2354Client:
     def _check(self):
         if not self.available:
             self.i2c_errors += 1
-            raise DependencyUnavailable("Mock RP2354 is unavailable")
+            raise DependencyUnavailable("Mock Controller is unavailable")
 
     def set_tx_config(self, modulator_id, config):
         self._check()

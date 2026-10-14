@@ -3,12 +3,12 @@
 ## Measured investigation (Pi 3B+, 2026-09-26)
 
 The operator reproduced audible popping and mux PCM underrun/overrun bursts with
-WebUI open, including bypass channels. Mux cadence, SPI errors and RP/QN audio
+WebUI open, including bypass channels. Mux cadence, SPI errors and Controller/TX audio
 errors remained stable. This is evidence for a Linux-side interaction, not proof
 of a particular GIL pause or queue-lock hold.
 
 Before this change, `GET /status` ran on `ControlExecutor` behind maintenance,
-RDS and lifecycle commands. It did **not** itself query RP or mux hardware.
+RDS and lifecycle commands. It did **not** itself query Controller or mux hardware.
 `StatusService.snapshot` nevertheless read Source records, reopened/validated
 active DSP profile JSON, constructed models and sampled audio diagnostics.
 
@@ -23,7 +23,7 @@ Read-only localhost HTTP probes against the existing live daemon:
 
 A separate process on the same Pi ran the existing snapshot code with the actual
 read-only DB/profile inputs and synthetic runtime/queue objects. It did not
-instantiate DSP, connect PCM sockets or execute RP commands. Three runs:
+instantiate DSP, connect PCM sockets or execute Controller commands. Three runs:
 
 | Phase | Mean wall time | Mean thread CPU time |
 | --- | ---: | ---: |
@@ -42,7 +42,7 @@ These isolated figures exclude live lock contention and are not an exact
 profile of the live HTTP handler.
 
 A separate, short `strace` attachment to only the existing control thread
-confirmed the actual 849.876 ms `clock_nanosleep` for RP GET_STATUS, followed
+confirmed the actual 849.876 ms `clock_nanosleep` for Controller GET_STATUS, followed
 by the header/payload reads. RDS capacity/refill preceded it. Mux control then
 used a separate Unix socket; no PCM ownership lock surrounds this control I/O.
 In that trace one request took 2041 ms: 1674 ms elapsed until the maintenance
@@ -52,7 +52,7 @@ syscall costs; these are ordering evidence, not uninstrumented performance numbe
 No GStreamer/PCM thread was traced.
 
 The measured long request latency is mainly control-executor queueing. Sleeping
-for RP response timing does not hold a PCM mutex. Audio interference has a
+for Controller response timing does not hold a PCM mutex. Audio interference has a
 separate credible mechanism: request-amplified Source/profile/model work and
 sampling of locks also used by PCM workers. No measurement in this round proves
 a specific GC pause, long-held lock or uninterrupted GIL stall. Live audible
@@ -99,19 +99,19 @@ mutations remain on the control executor. Their DB reads do not run hardware
 queries or take PCM locks merely to fetch configuration.
 
 Maintenance attempts publication at most once a second after its existing work.
-There is no hard scheduling deadline: a slow RP/lifecycle action can delay it.
+There is no hard scheduling deadline: a slow Controller/lifecycle action can delay it.
 All mutating control-route completions, including partial failures, publish before
-returning. This is observation only: no extra RP or mux-control query. Publication
+returning. This is observation only: no extra Controller or mux-control query. Publication
 failure is logged, marks observations stale and cannot fail an already confirmed
 RF action. Startup and shutdown ownership/order remain unchanged.
 
 ### Explicit freshness
 
 * `/status.system.snapshot_age_s` and `snapshot_stale` describe publication age.
-  Freshness limit is `max(2 seconds, 2 * configured RP poll interval)`.
-* Expired/publication-failed snapshots retain actual values, set RP observation
+  Freshness limit is `max(2 seconds, 2 * configured Controller poll interval)`.
+* Expired/publication-failed snapshots retain actual values, set Controller observation
   stale, and are treated as stale by the shared UI. They do not invent TX ERROR
-  or alter desired/recovery/RF state. RP observation age and daemon uptime advance
+  or alter desired/recovery/RF state. Controller observation age and daemon uptime advance
   when served, without a hardware query.
 * Source status adds `observation_age_s` / `observation_stale`. The Sources page
   does not render expired samples as current RUNNING observations.
@@ -135,7 +135,7 @@ per response; independent HTTP responses can straddle generations, as before.
 
 Candidate code in an isolated temporary Pi directory used actual read-only
 configuration/profile input and synthetic runtime (no application lifespan,
-RP commands, PCM producer connections or audio playback). An ephemeral localhost
+Controller commands, PCM producer connections or audio playback). An ephemeral localhost
 ASGI server tested the real routes, with collection methods replaced by assertions
 that fail if an HTTP read accesses them:
 
@@ -161,7 +161,7 @@ identical DSP/RDS/configuration and existing mux SCHED_RR settings:
 4. Production WebUI build, same routes and workload.
 
 Use direct `mux-control.sock` before/after counters, HTTP latency distribution,
-all staging/consumer/writer drop counters, RP SPI link and QN audio underruns.
+all staging/consumer/writer drop counters, Controller SPI link and TX audio underruns.
 Check snapshot ages/staleness and audible popping too. The existing bounded
 `daemon/tools/pcm_status_probe.py` can collect API/counter deltas; keep its cadence
 identical between cases. Success requires no steady-state audio loss/pop regression,
@@ -178,8 +178,8 @@ Control/collection path:
   shielded already-submitted work; unchanged serialization for side effects.
 * `daemon/app.py:tick`: expiry/recovery/RDS, scheduled hardware refresh, then
   throttled publication. No second maintenance task or hardware poller.
-* `daemon/status/service.py:refresh`: RP observation plus Unix mux-control query.
-  RP uses its existing client RLock and command wait; mux-control socket has a
+* `daemon/status/service.py:refresh`: Controller observation plus Unix mux-control query.
+  Controller uses its existing client RLock and command wait; mux-control socket has a
   0.5-second deadline. Neither holds the PCM writer ownership lock.
 * `StatusService.publish/snapshot`: Source inventory read once, one Source
   observation per ID, reuse across fanout TXs, one writer-counter sample, per-TX
