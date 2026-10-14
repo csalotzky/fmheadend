@@ -42,6 +42,11 @@ export class Shell implements OnInit, OnDestroy {
       });
     });
   }
+  hostMetric(value: number | null | undefined, suffix: string): string {
+    return this.state.stale() || value == null || !Number.isFinite(value)
+      ? '\u2014'
+      : `${Math.round(value)}${suffix}`;
+  }
   readonly links = [
     ['dashboard', 'Dashboard'],
     ['sources', 'Sources'],

@@ -98,6 +98,7 @@ header {
 }
 .dependencies {
   display: flex;
+  flex-wrap: wrap;
   gap: 22px;
   margin-top: 9px;
   font-size: 12px;
