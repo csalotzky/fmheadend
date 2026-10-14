@@ -53,7 +53,7 @@ export function sample(): Snapshot {
         i2c_errors: 0,
         rp_uptime_ms: null,
         rp_spi_audio_link_error_count: null,
-        rp_last_error_code: null,
+        controller_last_error_code: null,
         uptime_s: 10,
         cpu_percent: null,
         memory_percent: null,

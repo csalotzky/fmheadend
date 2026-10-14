@@ -396,7 +396,7 @@ pass `rp=Rp2354Client(device, address)` to opt into real control.
 
 Runtime status adds independent RP `hardware_tx_state`, `audio_underrun_count`,
 `rds_underrun_count`, `rds_fifo_free`, `hardware_last_error`, plus global
-`rp_uptime_ms`, `rp_spi_audio_link_error_count` and latched `rp_last_error_code`. Real reported TX state updates `tx_state`.
+`rp_uptime_ms`, `rp_spi_audio_link_error_count` and latched `controller_last_error_code`. Real reported TX state updates `tx_state`.
 On communication failure, the last valid measurements/counters and TX states are
 retained with `rp_observation_stale=true`, `rp_observation_age_s` and a separate
 `rp_communication_state`. Before the first valid snapshot, hardware values remain

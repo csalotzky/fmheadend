@@ -37,7 +37,7 @@ describe('System and region plans', () => {
     const shared = TestBed.inject(DashboardState);
     const data = sample();
     data.status.system.rp2354_state = state;
-    data.status.system.rp_last_error_code = 'QN_ERROR';
+    data.status.system.controller_last_error_code = 'QN_ERROR';
     shared.data.set(data);
     shared.stale.set(false);
     const f = TestBed.createComponent(SystemPage);
@@ -70,6 +70,41 @@ describe('System and region plans', () => {
     expect(f.nativeElement.textContent).toContain('Backend unavailable');
     TestBed.inject(HttpTestingController).verify();
   });
+  it.each([
+    [false, 'AVAILABLE', false, 0, null, 'None'],
+    [false, 'AVAILABLE', false, 0, 'QN_ERROR', 'QN_ERROR'],
+    [false, 'UNAVAILABLE', true, 5, 'QN_ERROR', 'QN_ERROR'],
+    [false, 'UNAVAILABLE', true, 5, null, 'Unavailable'],
+    [false, 'AVAILABLE', true, 5, null, 'Unavailable'],
+    [false, 'AVAILABLE', false, null, null, 'Unavailable'],
+    [true, 'AVAILABLE', false, 0, null, 'Unavailable'],
+  ] as const)('renders Controller history for %s/%s/%s/%s/%s',
+    (mocked, communication, stale, age, error, expected) => {
+      const shared = TestBed.inject(DashboardState);
+      const data = sample();
+      Object.assign(data.status.system, {
+        mocked,
+        rp2354_state: 'OK',
+        rp_communication_state: communication,
+        rp_observation_stale: stale,
+        rp_observation_age_s: age,
+        controller_last_error_code: error,
+      });
+      shared.data.set(data);
+      shared.stale.set(false);
+      const f = TestBed.createComponent(SystemPage);
+      f.detectChanges();
+      const http = TestBed.inject(HttpTestingController);
+      http.expectOne('/api/v1/system/info').flush(systemInfo);
+      http.expectOne('/api/v1/system/logs').flush([]);
+      f.detectChanges();
+      const label = [...f.nativeElement.querySelectorAll('dt')].find(
+        (el: any) => el.textContent.trim() === 'Last Controller error (history)',
+      );
+      expect(label.nextElementSibling.textContent.trim()).toBe(expected);
+      http.verify();
+    },
+  );
   it('keeps runtime visible if information request fails', () => {
     const shared = TestBed.inject(DashboardState);
     shared.data.set(sample());
