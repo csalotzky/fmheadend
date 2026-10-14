@@ -85,7 +85,7 @@
               <rect x="6" y="6" width="12" height="12" rx="2" />
               <path d="M9 9h6v6H9zM9 3v3m6-3v3M9 18v3m6-3v3M3 9h3m-3 6h3m12-6h3m-3 6h3" />
             </svg>
-            <b>{{ hostMetric(state.data()?.status?.system?.cpu_percent, '%') }}</b>
+            CPU <b>{{ hostMetric(state.data()?.status?.system?.cpu_percent, '%') }}</b>
           </span>
           <span class="status-group" title="CPU / SoC temperature">
             <svg class="status-icon" viewBox="0 0 24 24" role="img" aria-label="CPU temperature" focusable="false">
