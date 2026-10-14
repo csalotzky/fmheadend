@@ -36,7 +36,7 @@ describe('System and region plans', () => {
   it.each(['OK', 'UNRESPONSIVE', 'INCOMPATIBLE'])('renders partial RP state %s', (state) => {
     const shared = TestBed.inject(DashboardState);
     const data = sample();
-    data.status.system.rp2354_state = state;
+    data.status.system.controller_state = state;
     data.status.system.controller_last_error_code = 'QN_ERROR';
     shared.data.set(data);
     shared.stale.set(false);
@@ -84,10 +84,10 @@ describe('System and region plans', () => {
       const data = sample();
       Object.assign(data.status.system, {
         mocked,
-        rp2354_state: 'OK',
-        rp_communication_state: communication,
-        rp_observation_stale: stale,
-        rp_observation_age_s: age,
+        controller_state: 'OK',
+        controller_communication_state: communication,
+        controller_observation_stale: stale,
+        controller_observation_age_s: age,
         controller_last_error_code: error,
       });
       shared.data.set(data);

@@ -60,7 +60,7 @@ def test_startup_loss_recovery_order_and_shutdown(tmp_path):
         assert all(a is b for a,b in zip(previous_channels, services.rds.channels))
         assert not services.rds.suspended
         assert api.get(P+'/status').json()['modulators'][0]['hardware_tx_state'] == 'ON'
-        assert api.get(P+'/status').json()['system']['rp_observation_stale']
+        assert api.get(P+'/status').json()['system']['controller_observation_stale']
         rp.available=True;now[0]=6;events.clear();refresh(app)
         assert events == [('get_status',), ('get_info',)]  # Mock info refresh; no writes.
         assert services.recovery.ready

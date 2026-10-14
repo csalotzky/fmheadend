@@ -33,7 +33,7 @@ The user-selected deployment address is **7-bit `0x62`** (wire address bytes
 and can be changed with `-DFMHEADEND_HOST_I2C_ADDRESS=0x62`. CMake rejects values
 outside `0x08..0x77` and nonnumeric input. This does not add a universal default to
 protocol V1 or the Linux client. Pi `--rp-i2c-address 0x62` / persistent
-`rp2354_i2c_address=98` must match the firmware build.
+`controller_i2c_address=98` must match the firmware build.
 
 ## Implemented commands and deliberate exceptions
 

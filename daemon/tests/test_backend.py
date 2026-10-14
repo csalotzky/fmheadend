@@ -404,7 +404,7 @@ def test_dependency_errors_through_api(tmp_path):
         status = client.get(P + "/status").json()
         assert status["system"]["system_state"] == "DEGRADED"
         assert status["modulators"][0]["tx_state"] == "OFF"
-        assert status["system"]["rp_observation_stale"]
+        assert status["system"]["controller_observation_stale"]
         rp.available = True
 
 

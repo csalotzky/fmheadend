@@ -1,8 +1,8 @@
 import { SystemInfo } from '../../core/api/system-api';
 export const systemInfo: SystemInfo = {
   fmheadend_version: '0.1.0',
-  rp_protocol_version: 1,
-  rp_firmware_version: 'mock',
+  controller_protocol_version: 1,
+  controller_firmware_version: 'mock',
   hardware_revision: 'mock',
   modulator_count: 8,
   mocked: true,

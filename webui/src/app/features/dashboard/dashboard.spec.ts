@@ -420,7 +420,7 @@ describe('Operational display', () => {
         mode === 'ON' ? 'ON' : mode === 'STARTING' ? 'STARTING' : 'OFF';
       data.status.modulators[0].hardware_tx_state =
         mode === 'unknown' ? null : mode === 'ON' ? 'ON' : 'OFF';
-      data.status.system.rp_observation_stale = mode === 'stale';
+      data.status.system.controller_observation_stale = mode === 'stale';
       state.channels.set(compose(data));
       const f = TestBed.createComponent(Dashboard);
       f.detectChanges();

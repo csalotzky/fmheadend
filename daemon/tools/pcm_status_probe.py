@@ -10,7 +10,7 @@ from urllib.request import urlopen
 
 
 SYSTEM_COUNTERS = ('mux_frames_sent', 'mux_late_frames', 'mux_transport_errors',
-                   'spi_errors', 'rp_spi_audio_link_error_count')
+                   'spi_errors', 'controller_spi_audio_link_error_count')
 TX_COUNTERS = ('underruns', 'overruns', 'pcm_bytes_received', 'pcm_bytes_consumed',
                'audio_underrun_count')
 

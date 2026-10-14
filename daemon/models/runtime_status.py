@@ -101,10 +101,10 @@ class SystemStatus(Model):
     snapshot_age_s: float = 0
     snapshot_stale: bool = False
     system_state: str = "RUNNING"
-    rp2354_state: str = "OK"
-    rp_communication_state: str = "UNAVAILABLE"
-    rp_observation_stale: bool = True
-    rp_observation_age_s: float | None = None
+    controller_state: str = "OK"
+    controller_communication_state: str = "UNAVAILABLE"
+    controller_observation_stale: bool = True
+    controller_observation_age_s: float | None = None
     mux_state: str = "RUNNING"
     mux_transport: str = "mock"
     mux_transport_state: str = "RUNNING"
@@ -114,8 +114,8 @@ class SystemStatus(Model):
     mux_mocked: bool = True
     spi_errors: int = 0
     i2c_errors: int = 0
-    rp_uptime_ms: int | None = None
-    rp_spi_audio_link_error_count: int | None = None
+    controller_uptime_ms: int | None = None
+    controller_spi_audio_link_error_count: int | None = None
     controller_last_error_code: str | None = None
     uptime_s: float = 0
     cpu_percent: float | None = None

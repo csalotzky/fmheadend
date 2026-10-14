@@ -50,7 +50,7 @@ class Rp2354Client:
         if self._fd is not None:
             return
         if self.address is None:
-            raise p.HardwareUnavailable("Configure rp2354_i2c_address or --rp-i2c-address; no default slave address is assumed")
+            raise p.HardwareUnavailable("Configure controller_i2c_address or --rp-i2c-address; no default slave address is assumed")
         if fcntl is None or not sys.platform.startswith("linux"):
             raise p.HardwareUnavailable("Controller I2C requires Linux i2c-dev")
         fd = os.open(self.device, os.O_RDWR | os.O_CLOEXEC)

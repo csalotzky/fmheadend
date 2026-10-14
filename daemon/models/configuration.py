@@ -244,8 +244,8 @@ class SystemConfig(Model):
     spi_device: Name = "/dev/spidev0.0"
     spi_clock_hz: int = Field(default=25000000, gt=0)
     i2c_device: Name = "/dev/i2c-1"
-    rp2354_i2c_address: int | None = Field(default=None, ge=8, le=119)
-    rp_status_poll_interval_ms: int = Field(default=1000, gt=0)
+    controller_i2c_address: int | None = Field(default=None, ge=8, le=119)
+    controller_status_poll_interval_ms: int = Field(default=1000, gt=0)
     web_listen_address: Name = "0.0.0.0"
     web_port: Port = 8080
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"

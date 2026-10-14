@@ -72,11 +72,11 @@ export interface SystemStatus {
   global_stopped?: boolean;
   snapshot_age_s?: number;
   snapshot_stale?: boolean;
-  rp_communication_state?: string;
-  rp_observation_stale?: boolean;
-  rp_observation_age_s?: number | null;
+  controller_communication_state?: string;
+  controller_observation_stale?: boolean;
+  controller_observation_age_s?: number | null;
   system_state: string;
-  rp2354_state: string;
+  controller_state: string;
   mux_state: string;
   mux_transport: string;
   mux_transport_state: string;
@@ -84,8 +84,8 @@ export interface SystemStatus {
   mux_mocked: boolean;
   spi_errors: number;
   i2c_errors: number;
-  rp_uptime_ms: number | null;
-  rp_spi_audio_link_error_count: number | null;
+  controller_uptime_ms: number | null;
+  controller_spi_audio_link_error_count: number | null;
   controller_last_error_code: string | null;
   uptime_s: number;
   cpu_percent: number | null;

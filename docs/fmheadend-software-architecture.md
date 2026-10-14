@@ -565,8 +565,8 @@ Javasolt V1 mezők:
 | `spi_device` | `/dev/spidev0.0` |
 | `spi_clock_hz` | `25000000` |
 | `i2c_device` | `/dev/i2c-1` |
-| `rp2354_i2c_address` | implementation-defined |
-| `rp_status_poll_interval_ms` | pl. 1000 |
+| `controller_i2c_address` | implementation-defined |
+| `controller_status_poll_interval_ms` | pl. 1000 |
 | `web_listen_address` | `0.0.0.0` |
 | `web_port` | `8080` |
 | `log_level` | `INFO` |
@@ -657,7 +657,7 @@ Példa:
 ```json
 {
   "system_state": "RUNNING",
-  "rp2354_state": "OK",
+  "controller_state": "OK",
   "mux_state": "RUNNING",
   "spi_errors": 0,
   "i2c_errors": 0,
@@ -677,7 +677,7 @@ Példa:
 - `ERROR`
 - `SHUTTING_DOWN`
 
-`rp2354_state`:
+`controller_state`:
 
 - `OK`
 - `UNRESPONSIVE`
@@ -1384,7 +1384,7 @@ Példa:
 {
   "system": {
     "system_state": "RUNNING",
-    "rp2354_state": "OK",
+    "controller_state": "OK",
     "mux_state": "RUNNING",
     "uptime_s": 123456,
     "cpu_percent": 27,
@@ -1422,8 +1422,8 @@ GET   /api/v1/system/info
 ```json
 {
   "fmheadend_version": "0.1.0",
-  "rp_protocol_version": 1,
-  "rp_firmware_version": "...",
+  "controller_protocol_version": 1,
+  "controller_firmware_version": "...",
   "hardware_revision": "...",
   "modulator_count": 8
 }

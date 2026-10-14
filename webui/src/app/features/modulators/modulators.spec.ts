@@ -224,7 +224,7 @@ describe('Modulator configuration', () => {
   );
   it('does not present stale RP ON as confirmed and handles unassigned sources', () => {
     const data = sample();
-    data.status.system.rp_observation_stale = true;
+    data.status.system.controller_observation_stale = true;
     data.modulators[0].input_source_id = null;
     shared.channels.set(compose(data));
     const f = TestBed.createComponent(ModulatorsList);

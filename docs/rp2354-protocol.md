@@ -145,8 +145,8 @@ the second read returns 35 payload bytes followed by two CRC bytes.
 | 34 | u8 | modulator_count, exactly 8 |
 
 Strings are nonempty printable ASCII, maximum 15 characters, NUL terminated and
-zero padded to 16 bytes. Linux exposes the existing keys `rp_protocol_version`,
-`rp_firmware_version`, `hardware_revision`, `modulator_count`. Unknown versions or
+zero padded to 16 bytes. The public API exposes the keys `controller_protocol_version`,
+`controller_firmware_version`, `hardware_revision`, `modulator_count`. Unknown versions or
 counts block every command except GET_INFO; no best-effort interpretation or mock
 fallback is allowed. Successful GET_INFO is required before the first operational
 command and after a failed/reopened session or explicit reset.
@@ -396,10 +396,10 @@ pass `rp=Rp2354Client(device, address)` to opt into real control.
 
 Runtime status adds independent RP `hardware_tx_state`, `audio_underrun_count`,
 `rds_underrun_count`, `rds_fifo_free`, `hardware_last_error`, plus global
-`rp_uptime_ms`, `rp_spi_audio_link_error_count` and latched `controller_last_error_code`. Real reported TX state updates `tx_state`.
+`controller_uptime_ms`, `controller_spi_audio_link_error_count` and latched `controller_last_error_code`. Real reported TX state updates `tx_state`.
 On communication failure, the last valid measurements/counters and TX states are
-retained with `rp_observation_stale=true`, `rp_observation_age_s` and a separate
-`rp_communication_state`. Before the first valid snapshot, hardware values remain
+retained with `controller_observation_stale=true`, `controller_observation_age_s` and a separate
+`controller_communication_state`. Before the first valid snapshot, hardware values remain
 unknown. Transport uncertainty is not a confirmed TX hardware ERROR.
 Persistent desired state and the existing PCM streams are retained. A subsequent
 snapshot restores observed status; it does not silently enable RF or restore desired
