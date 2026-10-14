@@ -72,6 +72,7 @@ export interface SystemStatus {
   global_stopped?: boolean;
   snapshot_age_s?: number;
   snapshot_stale?: boolean;
+  rp_communication_state?: string;
   rp_observation_stale?: boolean;
   rp_observation_age_s?: number | null;
   system_state: string;
@@ -85,7 +86,7 @@ export interface SystemStatus {
   i2c_errors: number;
   rp_uptime_ms: number | null;
   rp_spi_audio_link_error_count: number | null;
-  rp_last_error_code: string | null;
+  controller_last_error_code: string | null;
   uptime_s: number;
   cpu_percent: number | null;
   memory_percent: number | null;

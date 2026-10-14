@@ -116,7 +116,7 @@ class SystemStatus(Model):
     i2c_errors: int = 0
     rp_uptime_ms: int | None = None
     rp_spi_audio_link_error_count: int | None = None
-    rp_last_error_code: str | None = None
+    controller_last_error_code: str | None = None
     uptime_s: float = 0
     cpu_percent: float | None = None
     memory_percent: float | None = None

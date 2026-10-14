@@ -102,7 +102,18 @@ import { errorMessage } from '../../core/api/headend-api';
             <dt>Controller audio-link errors</dt>
             <dd>{{ status.rp_spi_audio_link_error_count ?? 'Unavailable' }}</dd>
             <dt>Last Controller error (history)</dt>
-            <dd>{{ status.rp_last_error_code ?? 'Unavailable' }}</dd>
+            <dd>
+              {{
+                status.controller_last_error_code ??
+                  (!status.mocked &&
+                  status.rp_communication_state === 'AVAILABLE' &&
+                  status.rp_observation_stale === false &&
+                  status.rp_observation_age_s != null &&
+                  status.snapshot_stale !== true
+                    ? 'None'
+                    : 'Unavailable')
+              }}
+            </dd>
           </dl>
           @for (channel of shared.channels(); track channel.id) {
             @if (channel.error) {

@@ -487,7 +487,7 @@ def test_latched_errors_do_not_imply_current_fault(calls, tmp_path, global_activ
         data[0] = int(global_active); data[10] = 2 if tx_active else 0
         api.app.state.control.executor.submit(api.app.state.services.status.refresh).result()
         status = api.get('/api/v1/status').json()
-        assert status['system']['rp_last_error_code'] == 'QN_ERROR'
+        assert status['system']['controller_last_error_code'] == 'QN_ERROR'
         assert status['modulators'][0]['hardware_last_error'] == 'QN_ERROR'
         assert status['system']['system_state'] == ('DEGRADED' if global_active or tx_active else 'RUNNING')
         assert status['system']['rp_spi_audio_link_error_count'] == 9

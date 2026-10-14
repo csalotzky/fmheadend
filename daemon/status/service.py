@@ -126,7 +126,7 @@ class StatusService:
             if self.real_rp:
                 self.system.rp_uptime_ms = rp_status["uptime_ms"]
                 self.system.rp_spi_audio_link_error_count = rp_status["rp_spi_audio_link_error_count"]
-                self.system.rp_last_error_code = rp_status.get("last_error_code")
+                self.system.controller_last_error_code = rp_status.get("last_error_code")
                 if rp_status["state"] != "OK":
                     errors.append("Controller hardware: " + (rp_status.get("last_error_code") or rp_status["state"]))
             for channel in rp_status["modulators"]:
