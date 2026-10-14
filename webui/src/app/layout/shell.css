@@ -92,22 +92,56 @@ header {
   gap: 18px;
   padding: 14px 24px;
 }
+.global-state {
+  flex: 1;
+  min-width: 0;
+}
 .global-state > strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   font-size: 11px;
   letter-spacing: 0.08em;
 }
 .dependencies {
   display: flex;
   flex-wrap: wrap;
-  gap: 22px;
+  gap: 8px 20px;
   margin-top: 9px;
   font-size: 12px;
   color: var(--muted);
 }
+.status-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.status-icon {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.system-icon.healthy {
+  color: var(--success, #68b88a);
+}
+.host-metrics {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-left: auto;
+}
+.numeric {
+  font-variant-numeric: tabular-nums;
+}
 .dependencies b {
   color: var(--text);
   font-weight: 500;
-  margin-left: 5px;
 }
 .global-actions {
   display: flex;
