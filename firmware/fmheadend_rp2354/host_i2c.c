@@ -11,6 +11,13 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdatomic.h>
+#ifdef FMHEADEND_FLASH_UPDATE
+#include "flash_update.h"
+static volatile bool update_ack_read;
+static volatile uint32_t update_ack_generation;
+static volatile bool update_ack_armed;
+static volatile uint8_t update_ack_command;
+#endif
 
 #if !defined(FMHEADEND_HOST_I2C_ADDRESS) || FMHEADEND_HOST_I2C_ADDRESS < 0x08 || FMHEADEND_HOST_I2C_ADDRESS > 0x77
 #error "Configure an unreserved 7-bit FMHEADEND_HOST_I2C_ADDRESS"
@@ -133,6 +140,12 @@ static void host_i2c_irq(void)
     }
     if (flags & I2C_IC_INTR_STAT_R_STOP_DET_BITS) {
         (void)hw->clr_stop_det;
+#ifdef FMHEADEND_FLASH_UPDATE
+        if(update_ack_armed && !host.receiving && host.generation==update_ack_generation &&
+           host.response_cursor==host.response_size && hw->txflr==0 &&
+           !(flags & I2C_IC_INTR_STAT_R_TX_ABRT_BITS)) update_ack_read=true;
+        if(host.receiving) { update_ack_read=false; update_ack_armed=false; }
+#endif
         host_protocol_stop(&host, (uint32_t)(time_us_64() / 1000));
     }
     if (flags & I2C_IC_INTR_STAT_R_RX_DONE_BITS) {
@@ -204,10 +217,24 @@ void host_i2c_poll(void)
         }
         lock=save_and_disable_interrupts();
         host_protocol_complete_work(&host,&work);
+#ifdef FMHEADEND_FLASH_UPDATE
+        update_ack_armed=work.event.command==FU_COMMAND && (work.update_payload[0]==FU_ACTIVATE || work.update_payload[0]==FU_CONFIRM || work.update_payload[0]==FU_ABORT) &&
+            work.event.status==HOST_OK && host.generation==work.generation;
+        update_ack_command=work.update_payload[0];
+        update_ack_generation=work.generation;
+        update_ack_read=false;
+#endif
         restore_interrupts(lock);
     }
     /* QN bus is serialized with host work on core0. Audio stays on core1;
      * host IRQs remain enabled throughout bounded RDS register operations. */
+#ifdef FMHEADEND_FLASH_UPDATE
+    if(update_ack_read && update_ack_armed) {
+        update_ack_armed=false; update_ack_read=false;
+        flash_update_ack_consumed(update_ack_command);
+    }
+    if(!flash_update_maintenance())
+#endif
     rds_tx_service(&host.rds_tx,&host.qn,host.rds);
     log_drain();
     if (log_cursor<log_size) return;

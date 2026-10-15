@@ -1,4 +1,6 @@
 """Real Linux Controller client. OS calls are patched directly in unit tests."""
+from __future__ import annotations
+from typing import TYPE_CHECKING
 from array import array
 import logging
 import os
@@ -12,7 +14,8 @@ except ImportError:  # Keep mock mode importable on non-Linux hosts.
     fcntl = None
 
 from . import protocol as p
-from .client import TxConfig
+if TYPE_CHECKING:
+    from .client import TxConfig
 
 I2C_RETRIES = 0x0701
 I2C_TIMEOUT = 0x0702
@@ -39,6 +42,7 @@ class Rp2354Client:
             raise ValueError("I2C timeout must be 10..1000 ms")
         self.device, self.address, self.timeout_ms = device, address, timeout_ms
         self._fd = None
+        self._retain_bus = False
         self._lock = threading.RLock()
         self._retry_at = 0.0
         self.info: dict | None = None
@@ -71,13 +75,25 @@ class Rp2354Client:
         self._fd = fd
 
     def _close(self):
-        fd, self._fd = self._fd, None
         self.info = None
+        if self._retain_bus:
+            return  # Standalone uploader owns the advisory lock across reconciliation.
+        fd, self._fd = self._fd, None
         if fd is not None:
             os.close(fd)
 
+    def reserve_bus(self):
+        """CLI-only lifetime ownership. Never stop or compete with the daemon."""
+        with self._lock:
+            try:
+                self._open()
+            except BlockingIOError as exc:
+                raise p.HardwareUnavailable('I2C device is locked; stop the daemon manually before updating') from exc
+            self._retain_bus = True
+
     def close(self):
         with self._lock:
+            self._retain_bus = False
             self._close()
 
     @property
@@ -102,7 +118,8 @@ class Rp2354Client:
                 # Firmware must prepare a response, or BUSY without side effects,
                 # within the command window. Each transaction ends with STOP.
                 stage = 'wait'
-                time.sleep(p.RESPONSE_WAIT_MS[command] / 1000)
+                time.sleep((p.FLASH_WAIT_MS[p.FlashCommand(payload[0])] if command == p.Command.FLASH_UPDATE
+                            else p.RESPONSE_WAIT_MS[command]) / 1000)
                 stage = 'header'
                 header = os.read(self._fd, 2)
                 if len(header) != 2:
@@ -202,3 +219,6 @@ class Rp2354Client:
             self._call(p.Command.RP_SOFT_RESET, p.GLOBAL)
             self._close()
             self._retry_at = time.monotonic() + 0.25
+
+    def flash_update(self, payload: bytes) -> dict:
+        return self._call(p.Command.FLASH_UPDATE, p.GLOBAL, payload, decode=p.parse_flash_status)

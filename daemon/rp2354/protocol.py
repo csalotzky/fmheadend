@@ -22,6 +22,7 @@ class Command(IntEnum):
     RESET_ERROR_COUNTERS = 9
     RP_SOFT_RESET = 10
     GET_RDS_FIFO_FREE = 11
+    FLASH_UPDATE = 0xF0
 
 
 # Approved M8.3 synchronous completion windows, milliseconds after write STOP.
@@ -98,7 +99,7 @@ class InternalError(RpResponseError): pass
 ERROR_TYPES = {Status.INVALID_COMMAND: InvalidCommand, Status.INVALID_TARGET: InvalidTarget,
                Status.INVALID_ARGUMENT: InvalidArgument, Status.BUSY: Busy,
                Status.QN_ERROR: QnError, Status.INTERNAL_ERROR: InternalError}
-GLOBAL_COMMANDS = {Command.GET_INFO, Command.GET_STATUS, Command.RESET_ERROR_COUNTERS, Command.RP_SOFT_RESET, Command.GET_RDS_FIFO_FREE}
+GLOBAL_COMMANDS = {Command.FLASH_UPDATE, Command.GET_INFO, Command.GET_STATUS, Command.RESET_ERROR_COUNTERS, Command.RP_SOFT_RESET, Command.GET_RDS_FIFO_FREE}
 # All successful responses have exact fixed sizes in V1.
 INFO = struct.Struct("<H16s16sB")
 GLOBAL_STATUS = struct.Struct("<BIIB")
@@ -106,7 +107,7 @@ TX_CONFIG = struct.Struct("<IHBBBBBhBB")
 CHANNEL_STATUS = struct.Struct("<BhIIHBB")
 RESPONSE_SIZES = {command: 0 for command in Command}
 RESPONSE_SIZES.update({Command.GET_INFO: INFO.size, Command.GET_STATUS: GLOBAL_STATUS.size + 8 * CHANNEL_STATUS.size,
-                       Command.QN_READ_REGISTER: 1, Command.GET_RDS_FIFO_FREE: 16})
+                       Command.QN_READ_REGISTER: 1, Command.GET_RDS_FIFO_FREE: 16, Command.FLASH_UPDATE: 128})
 
 
 def uint(value: int, bits: int, name: str) -> int:
@@ -136,7 +137,9 @@ def request(command: Command, target: int, payload: bytes = b"") -> bytes:
         raise ValueError("payload must be at most 255 bytes")
     lengths = {Command.SET_TX_CONFIG: TX_CONFIG.size, Command.SET_TX_ENABLED: 1,
                Command.QN_READ_REGISTER: 1, Command.QN_WRITE_REGISTER: 2}
-    if command == Command.RDS_PUSH:
+    if command == Command.FLASH_UPDATE:
+        validate_flash_payload(payload)
+    elif command == Command.RDS_PUSH:
         if not payload or not 1 <= payload[0] <= 31 or len(payload) != 1 + 8 * payload[0]:
             raise ValueError("RDS_PUSH must contain 1..31 complete four-block groups")
     elif len(payload) != lengths.get(command, 0):
@@ -289,3 +292,56 @@ def parse_status(payload: bytes) -> dict:
             "input_saturated": None if saturated == 255 else bool(saturated),
             "rds_fifo_free": free, "last_error_code": _error(error, f"TX{channel}.last_error_code")})
     return result
+
+
+class FlashCommand(IntEnum):
+    BEGIN = 1
+    WRITE = 2
+    STATUS = 3
+    VERIFY = 4
+    ACTIVATE = 5
+    CONFIRM = 6
+    ABORT = 7
+
+
+# Foreground erase/program windows; no flash operation occurs while reading ACK.
+FLASH_WAIT_MS = {FlashCommand.BEGIN: 2000, FlashCommand.WRITE: 500,
+                 FlashCommand.STATUS: 20, FlashCommand.VERIFY: 2000,
+                 FlashCommand.ACTIVATE: 2000, FlashCommand.CONFIRM: 2000,
+                 FlashCommand.ABORT: 2000}
+RESPONSE_WAIT_MS[Command.FLASH_UPDATE] = 2000
+
+
+def validate_flash_payload(payload):
+    if not payload:
+        raise ValueError('Missing FLASH_UPDATE subcommand')
+    sub = FlashCommand(payload[0])
+    if sub == FlashCommand.BEGIN:
+        if len(payload) != 74 or payload[73] != 1:
+            raise ValueError('BEGIN requires the native XIP artifact format 1')
+        size = struct.unpack_from('<I', payload, 17)[0]
+        if not 512 <= size <= 0xf0000:
+            raise ValueError('Image exceeds the application slot or is too small')
+    elif sub == FlashCommand.WRITE:
+        if len(payload) < 23 or not 1 <= payload[21] <= 128 or len(payload) != 22 + payload[21]:
+            raise ValueError('WRITE requires 1..128 bytes')
+    elif len(payload) != (1 if sub == FlashCommand.STATUS else 17):
+        raise ValueError('Invalid FLASH_UPDATE payload length')
+
+
+def parse_flash_status(data):
+    if (len(data) != 128 or data[0] != 1 or data[1] > 7 or data[4] not in (0, 1, 255) or
+            any(data[i] not in (0, 1, 255) for i in (2, 3, 126)) or
+            data[5] > 10 or data[6] > 1 or data[7] > 1 or data[127]):
+        raise ProtocolError('Invalid FLASH_UPDATE status')
+    accepted, committed, size = struct.unpack_from('<III', data, 8)
+    if committed > accepted or accepted > size or size > 0xf0000:
+        raise ProtocolError('Invalid FLASH_UPDATE offsets')
+    return dict(state=data[1], boot=data[2], target=data[3], tbyb=data[4], error=data[5],
+                maintenance=bool(data[6]), ready=bool(data[7]), accepted=accepted,
+                committed=committed, size=size, session=data[20:36], sha256=data[36:68],
+                build=data[68:84], running_build=data[84:100],
+                version=struct.unpack_from('<HH', data, 100),
+                firmware_version=_text(data[104:120], 'firmware_version'),
+                capacity=struct.unpack_from('<I',data,120)[0],
+                chunk=struct.unpack_from('<H',data,124)[0], inactive=data[126])

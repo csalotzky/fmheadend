@@ -13,4 +13,5 @@ void gpio_init(unsigned);
 void gpio_set_dir(unsigned,bool);
 void gpio_pull_up(unsigned);
 void gpio_acknowledge_irq(unsigned,uint32_t);
+void gpio_set_irq_enabled(unsigned,uint32_t,bool);
 void gpio_set_irq_enabled_with_callback(unsigned,uint32_t,bool,void (*)(unsigned,uint32_t));

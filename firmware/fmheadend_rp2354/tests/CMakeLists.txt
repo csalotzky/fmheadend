@@ -42,3 +42,20 @@ foreach(target test_rds_tx test_rds_fifo test_rds_protocol test_spi_audio test_s
     add_test(NAME ${target} COMMAND ${target})
     set_tests_properties(${target} PROPERTIES TIMEOUT 10)
 endforeach()
+
+add_executable(test_flash_update test_flash_update.c ../flash_update.c)
+target_include_directories(test_flash_update PRIVATE ..)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(test_flash_update PRIVATE -Wall -Wextra -Werror -UNDEBUG)
+endif()
+add_test(NAME test_flash_update COMMAND test_flash_update)
+
+add_executable(test_flash_wire test_flash_wire.c ../flash_update.c ../host_protocol.c ../rds_fifo.c ../qn_control.c fake_qn.c)
+target_include_directories(test_flash_wire PRIVATE . ..)
+target_compile_definitions(test_flash_wire PRIVATE FMHEADEND_FLASH_UPDATE=1)
+add_test(NAME test_flash_wire COMMAND test_flash_wire)
+
+add_executable(test_flash_ack test_flash_ack.c ../host_protocol.c ../rds_fifo.c ../rds_tx.c ../qn_control.c fake_qn.c)
+target_include_directories(test_flash_ack PRIVATE . ..)
+target_compile_definitions(test_flash_ack PRIVATE FMHEADEND_FLASH_UPDATE=1 FMHEADEND_HOST_I2C_ADDRESS=0x62 TEST_ADAPTER_CLOCK=1)
+add_test(NAME test_flash_ack COMMAND test_flash_ack)

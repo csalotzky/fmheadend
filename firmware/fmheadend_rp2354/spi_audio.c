@@ -69,6 +69,13 @@ static bool stop_dma(void)
     __dmb(); /* All outstanding SRAM writes completed before publishing a frame. */
     return true;
 }
+bool spi_audio_stop_for_update(void)
+{
+    if(!initialized) return true;
+    gpio_set_irq_enabled(AUDIO_SPI_CS_PIN,GPIO_IRQ_EDGE_RISE|GPIO_IRQ_EDGE_FALL,false);
+    armed=active=false;
+    return stop_dma();
+}
 static void arm_capture(void)
 {
     armed=false;

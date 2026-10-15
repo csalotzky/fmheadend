@@ -20,6 +20,7 @@ static jmp_buf idle_done;
 static uint64_t now_us;
 static bool host_started;
 bool spi_audio_init(void) { return true; }
+void flash_update_platform_init(bool ready) { assert(ready && initialized && !host_started); }
 bool audio_engine_init(void)
 {
     assert(!host_started);

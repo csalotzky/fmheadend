@@ -8,6 +8,7 @@
 #include "host_i2c.h"
 #include "audio_engine.h"
 #include "spi_audio.h"
+#include "flash_update.h"
 
 /* Inspectable via SWD; Boot observations remain available independently of runtime control. */
 qn_boot_result_t qn_boot_results[QN_COUNT];
@@ -67,6 +68,7 @@ int main(void)
     audio_state_t audio_state=audio_engine_state();
     uart_printf("AUDIO: %s; 48000 Hz stereo S16; BCLK=1536000 Hz; DATA=GPIO4..11\r\n",
                 audio_engine_state_name(audio_state));
+    flash_update_platform_init(audio_engine_state()==AUDIO_RUNNING);
     host_i2c_init(ready_mask);
 
     /* Runtime LED includes active RF and current hardware faults. */
