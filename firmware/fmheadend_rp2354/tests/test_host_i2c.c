@@ -257,4 +257,5 @@ int main(void)
     assert(host.qn.channel[3].enabled); /* Audio failure never fabricates RF OFF. */
     assert(!host_i2c_led(0) && host_i2c_led(250000));
     puts("I2C adapter: pins/address, split reads, foreground QN/audio, source selection, real audio fault PASS");
+    return 0;
 }

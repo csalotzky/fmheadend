@@ -13,6 +13,7 @@ static uint8_t *destination;
 static void (*callback)(unsigned,uint32_t);
 static bool late_dma_byte;
 static bool in_flight_byte, busy_stuck;
+static bool cs_irq_enabled;
 static uint8_t in_flight_value;
 uint64_t time_us_64(void)
 {
@@ -42,7 +43,9 @@ void gpio_set_dir(unsigned p,bool out) { assert(p<4 && !out); }
 void gpio_pull_up(unsigned p) { assert(p==1); }
 void gpio_acknowledge_irq(unsigned p,uint32_t e) { assert(p==1 && e==12); }
 void gpio_set_irq_enabled_with_callback(unsigned p,uint32_t e,bool on,void (*fn)(unsigned,uint32_t))
-{ assert(p==1 && e==12 && on);callback=fn; }
+{ assert(p==1 && e==12 && on);callback=fn;cs_irq_enabled=true; }
+void gpio_set_irq_enabled(unsigned p,uint32_t e,bool on)
+{ assert(p==1 && e==12 && !on);cs_irq_enabled=on; }
 uint32_t clock_get_hz(unsigned c) { (void)c;return fail_resource==1?125000000:150000000; }
 int pio_claim_unused_sm(PIO p,bool required) { assert(p==pio1 && !required);return fail_resource==2?-1:2; }
 bool pio_can_add_program(PIO p,const pio_program_t *pr) { (void)p;(void)pr;return fail_resource!=3; }
@@ -213,5 +216,15 @@ int main(void)
     assert(!spi_audio_take());
     transfer(9,4100,0,32800,false);transfer(10,4100,0,32800,false);
     assert(spi_audio_take()[0]==9);spi_audio_release();
-    puts("SPI resource, CS, residual FIFO, DMA abort and recovery tests OK");
+    /* Update shutdown must disable CS rearming even if DMA cannot retire. */
+    for(unsigned failure=0;failure<3;++failure) {
+        abort_stuck=busy_stuck=false;fake_dma.abort=0;
+        fake_dma.ch[3].ctrl_trig=0;cs=true;
+        assert(spi_audio_init());spi_audio_start();assert(cs_irq_enabled && armed);
+        fake_dma.ch[3].ctrl_trig|=DMA_CH0_CTRL_TRIG_BUSY_BITS;
+        abort_stuck=failure==1;busy_stuck=failure==2;
+        assert(spi_audio_stop_for_update()==(failure==0));
+        assert(!cs_irq_enabled && !enabled && !armed && !active);
+    }
+    puts("SPI resource, CS, residual FIFO, DMA abort, recovery and update stop tests OK");
 }

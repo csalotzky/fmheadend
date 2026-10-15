@@ -30,6 +30,7 @@ typedef struct {
     host_log_event_t event;
     uint32_t generation;
     uint8_t result[130];
+    uint8_t update_payload[255];
 } host_work_t;
 
 /* IRQ owns framing; foreground owns QN state. Work/log handoffs use short IRQ

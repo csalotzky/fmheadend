@@ -8,6 +8,7 @@ typedef enum {
 } audio_state_t;
 /* Boot once, after QNs are safe. Core 1 owns the engine thereafter. */
 bool audio_engine_init(void);
+bool audio_engine_enter_update(void);
 void audio_engine_set_sources(uint8_t sine_mask, uint8_t digital_mask);
 audio_state_t audio_engine_state(void);
 const char *audio_engine_state_name(audio_state_t state);

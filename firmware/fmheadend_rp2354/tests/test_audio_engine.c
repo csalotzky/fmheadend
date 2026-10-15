@@ -4,6 +4,7 @@
 #include <setjmp.h>
 #include <stdio.h>
 #include <string.h>
+#define FMHEADEND_FLASH_UPDATE 1
 #include "../audio_engine.c"
 fake_pio_t fake_pio;
 fake_dma_t fake_dma;
@@ -21,6 +22,9 @@ enum { NORMAL, NO_SM, NO_PROGRAM, NO_DMA, BAD_CLOCK, NO_PRIME, STALL, DMA_ERROR,
        PROGRAM_LOAD_ERROR, SM_CONFIG_ERROR, PINDIR_ERROR, SPI_NORMAL };
 static uint8_t pcm[4100];
 static bool borrowed;
+static bool testing_stop, stop_stuck, spi_stop_ok=true;
+bool flash_safe_execute_core_init(void) { return true; }
+bool spi_audio_stop_for_update(void) { assert(on_core1);return spi_stop_ok; }
 void spi_audio_start(void) { assert(on_core1); }
 void spi_audio_poll(void) {}
 const uint8_t *spi_audio_take(void) {
@@ -108,9 +112,16 @@ void dma_channel_set_read_addr(unsigned ch,const void *read,bool trigger)
 }
 void dma_channel_set_trans_count(unsigned ch,uint32_t count,bool trigger)
 { assert(!trigger && !busy[ch] && count==1024); }
-uint64_t time_us_64(void) { now+=10;return now; }
+uint64_t time_us_64(void) {
+    now+=10;
+    if(testing_stop && !stop_stuck && fake_dma.abort) {
+        fake_dma.abort=0;busy[0]=busy[1]=false;
+    }
+    return now;
+}
 void tight_loop_contents(void)
 {
+    if(testing_stop) longjmp(done,1); /* Observe the permanent core1 park. */
     if(audio_engine_state()>AUDIO_RUNNING) longjmp(done,1);
     if(!enabled || now<next_complete) return;
     if(scenario==STALL) { fake_pio.fdebug=stall_bit;return; }
@@ -147,6 +158,8 @@ void multicore_launch_core1(void (*fn)(void))
 }
 static void reset(unsigned test)
 {
+    atomic_store(&update_requested,false);atomic_store(&update_ready,false);atomic_store(&flash_ready,false);
+    testing_stop=stop_stuck=false;spi_stop_ok=true;
     scenario=test;claims=releases=starts=completions=current=pins=rendered_phase=0;
     now=next_complete=0;enabled=false;memset(busy,0,sizeof(busy));
     memset(&fake_pio,0,sizeof(fake_pio));memset(&fake_dma,0,sizeof(fake_dma));
@@ -193,5 +206,16 @@ int main(void)
         if(s==SM_CONFIG_ERROR || s==PINDIR_ERROR) assert(audio_engine_state()==AUDIO_PIO_FAULT && programs_removed==1);
         size_t size=strlen(uart_text);audio_engine_log_fault();assert(strlen(uart_text)==size);
     }
-    puts("Production DMA engine: startup, pins/divider, 24 continuous buffers, lane changes, resource/stall/deadline faults PASS");
+    for(unsigned failure=0;failure<3;++failure) {
+        reset(NORMAL);assert(audio_engine_init());
+        testing_stop=true;stop_stuck=failure==1;spi_stop_ok=failure!=2;
+        atomic_store(&update_requested,true);on_core1=true;
+        if(!setjmp(done)) update_stop();
+        on_core1=false;
+        assert(!enabled && !(fake_dma.ch[0].al1_ctrl&1) && !(fake_dma.ch[1].al1_ctrl&1));
+        assert(atomic_load(&update_ready)==(failure==0));
+        assert(audio_engine_enter_update()==(failure==0));
+    }
+    reset(NORMAL);assert(!audio_engine_enter_update());assert(!atomic_load(&update_requested));
+    puts("Production DMA engine: startup, continuous buffers, faults, update stop/partial stop/lockout readiness PASS");
 }

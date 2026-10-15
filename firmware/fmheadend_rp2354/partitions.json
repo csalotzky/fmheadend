@@ -1,0 +1,8 @@
+{
+  "version": [1, 0],
+  "unpartitioned": {"families": ["absolute"], "permissions": {"secure": "rw", "nonsecure": "", "bootloader": "rw"}},
+  "partitions": [
+    {"name": "Application A", "id": 0, "start": "16K", "size": "960K", "families": ["rp2350-arm-s"], "permissions": {"secure": "rw", "nonsecure": "", "bootloader": "rw"}},
+    {"name": "Application B", "id": 0, "start": "976K", "size": "960K", "families": ["rp2350-arm-s"], "permissions": {"secure": "rw", "nonsecure": "", "bootloader": "rw"}, "link": ["a", 0]}
+  ]
+}

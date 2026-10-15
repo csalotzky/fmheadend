@@ -14,6 +14,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 
+
 /* Core 0 only reads PIO/DMA for fault diagnostics after launch. No audio IRQ and no dependency on
  * QN bitbang/UART scheduling. Each buffer lasts 2.667 ms, total RAM 8 KiB.
  * Read rings are a containment measure for a missed rearm, NOT sample loops. */
@@ -24,6 +25,24 @@ static atomic_uint state=AUDIO_STARTING, requested_mask;
 static PIO pio=pio0;
 static int sm=-1, channels[2]={-1,-1};
 static uint32_t dma_mask, stall_bit;
+#ifdef FMHEADEND_FLASH_UPDATE
+#include "pico/flash.h"
+static atomic_bool update_requested, update_ready, flash_ready;
+static void update_stop(void) {
+    if(!atomic_load(&update_requested)) return;
+    bool ok=spi_audio_stop_for_update();
+    pio_sm_set_enabled(pio0,sm,false);
+    for(unsigned i=0;i<2;++i) hw_clear_bits(&dma_hw->ch[channels[i]].al1_ctrl,DMA_CH0_CTRL_TRIG_EN_BITS);
+    dma_hw->abort=dma_mask;
+    uint64_t until=time_us_64()+1000;
+    while(dma_hw->abort & dma_mask) if(time_us_64()>until) { ok=false; break; }
+    for(unsigned i=0;i<2;++i) if(dma_channel_is_busy(channels[i])) ok=false;
+    pio_sm_set_pins_with_mask(pio0,sm,0,0x3ffu<<I2S_DATA_FIRST_PIN);
+    atomic_store(&update_ready,ok);
+    /* Permanent maintenance until reset. SDK lockout IRQ remains enabled. */
+    while(true) tight_loop_contents();
+}
+#endif
 /* Core 1 only publishes milestones and a pre-cleanup fault snapshot. UART is
  * exclusively on core 0: printing after DMA start must never delay refill. */
 enum init_stage { CLOCK_CHECK, SM_CLAIM, PROGRAM_LOAD, DMA_CLAIM, SM_CONFIG, PIN_CONFIG,
@@ -120,6 +139,9 @@ static void fail(audio_state_t reason, const char *condition)
 }
 static void core1_audio(void)
 {
+#ifdef FMHEADEND_FLASH_UPDATE
+    atomic_store(&flash_ready,flash_safe_execute_core_init());
+#endif
     spi_audio_start(); /* CS IRQ and queue consumption both belong to core 1. */
     atomic_fetch_or(&milestones,CORE_READY);
     atomic_store(&stage,BUFFER_PREPARE);
@@ -147,6 +169,9 @@ static void core1_audio(void)
     atomic_store(&stage,REFILL);
     deadline=time_us_64()+6000;
     while (true) {
+#ifdef FMHEADEND_FLASH_UPDATE
+        update_stop();
+#endif
         spi_audio_poll();
         uint32_t flags=dma_hw->intr & dma_mask;
         if (pio->fdebug & stall_bit) { fail(AUDIO_STALL_FAULT,"TXSTALL"); break; }
@@ -183,7 +208,23 @@ static void core1_audio(void)
     }
 stopped:
     /* Latched failure, reset required. No automatic clock restarts. */
-    while (true) tight_loop_contents();
+    while (true) {
+#ifdef FMHEADEND_FLASH_UPDATE
+        update_stop();
+#endif
+        tight_loop_contents();
+    }
+}
+bool audio_engine_enter_update(void) {
+#ifdef FMHEADEND_FLASH_UPDATE
+    if(!atomic_load(&flash_ready)) return false;
+    atomic_store(&update_requested,true);
+    uint64_t until=time_us_64()+100000;
+    while(!atomic_load(&update_ready)) if(time_us_64()>until) return false;
+    return true;
+#else
+    return false;
+#endif
 }
 bool audio_engine_init(void)
 {

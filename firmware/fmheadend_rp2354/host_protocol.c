@@ -1,5 +1,8 @@
 #include "host_protocol.h"
 #include <string.h>
+#ifdef FMHEADEND_FLASH_UPDATE
+#include "flash_update.h"
+#endif
 
 enum { GET_INFO = 1, SET_TX_CONFIG, SET_TX_ENABLED, GET_STATUS, RDS_PUSH,
        RDS_CLEAR, QN_READ_REGISTER, QN_WRITE_REGISTER, RESET_ERROR_COUNTERS,
@@ -80,6 +83,12 @@ static uint8_t validate(const host_protocol_t *host)
     const uint8_t *r = host->request;
     const uint8_t command = r[0], target = r[1], length = r[2];
     const uint8_t *p = r + 3;
+#ifdef FMHEADEND_FLASH_UPDATE
+    if(command==FU_COMMAND) {
+        if(target!=0xff) return HOST_INVALID_TARGET;
+        return length ? HOST_OK : HOST_INVALID_ARGUMENT;
+    }
+#endif
     if (command < GET_INFO || command > GET_RDS_FIFO_FREE) return HOST_INVALID_COMMAND;
     const bool global = command == GET_INFO || command == GET_STATUS ||
                         command >= RESET_ERROR_COUNTERS;
@@ -108,6 +117,9 @@ static uint8_t validate(const host_protocol_t *host)
 unsigned host_response_wait_ms(uint8_t command)
 {
     switch (command) {
+#ifdef FMHEADEND_FLASH_UPDATE
+    case FU_COMMAND: return 2000;
+#endif
     case SET_TX_CONFIG: return 1000;
     case GET_STATUS: return 850;
     case SET_TX_ENABLED: return 150;
@@ -153,6 +165,13 @@ void host_protocol_stop(host_protocol_t *host, uint32_t uptime_ms)
         event.status = HOST_BUSY; /* This NEW request will not execute. */
     } else if (event.status == HOST_OK) {
         switch (event.command) {
+#ifdef FMHEADEND_FLASH_UPDATE
+        case FU_COMMAND:
+            host->work=(host_work_t){.event=event,.generation=host->generation};
+            memcpy(host->work.update_payload,host->request+3,event.length);
+            host->pending=true;
+            break;
+#endif
         case GET_INFO:
             event.response_length = 35;
             memset(host->response + 2, 0, 35);
@@ -213,6 +232,16 @@ bool host_protocol_take_work(host_protocol_t *host, host_work_t *work)
 void host_protocol_run_work(host_protocol_t *host, host_work_t *work, uint32_t uptime)
 {
     host_log_event_t *e=&work->event;
+#ifdef FMHEADEND_FLASH_UPDATE
+    if(e->command==FU_COMMAND) {
+        e->status=flash_update_execute(work->update_payload,e->length,work->result);
+        e->response_length=e->status==HOST_OK ? FU_REPLY_SIZE : 0;
+        return;
+    }
+    if(flash_update_maintenance() && e->command!=GET_STATUS) {
+        e->status=HOST_BUSY; e->response_length=0; return;
+    }
+#endif
     if (e->command==GET_STATUS) {
         qn_control_status(&host->qn,work->result,uptime);
         e->response_length=130;
@@ -278,6 +307,9 @@ const char *host_command_name(uint8_t command)
     static const char *const names[] = {"UNKNOWN", "GET_INFO", "SET_TX_CONFIG",
         "SET_TX_ENABLED", "GET_STATUS", "RDS_PUSH", "RDS_CLEAR", "QN_READ_REGISTER",
         "QN_WRITE_REGISTER", "RESET_ERROR_COUNTERS", "RP_SOFT_RESET", "GET_RDS_FIFO_FREE"};
+#ifdef FMHEADEND_FLASH_UPDATE
+    if(command==FU_COMMAND) return "FLASH_UPDATE";
+#endif
     return command <= GET_RDS_FIFO_FREE ? names[command] : names[0];
 }
 const char *host_status_name(uint8_t status)
