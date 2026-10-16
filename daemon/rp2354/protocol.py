@@ -255,8 +255,8 @@ def parse_info(payload: bytes) -> dict:
     version, firmware, hardware, count = INFO.unpack(payload)
     info = {"rp_protocol_version": version, "rp_firmware_version": _text(firmware, "rp_firmware_version"),
             "hardware_revision": _text(hardware, "hardware_revision"), "modulator_count": count}
-    if version != PROTOCOL_VERSION or count != 8:
-        raise IncompatibleProtocol(f"Unsupported Controller protocol/count: {version}/{count}; expected {PROTOCOL_VERSION}/8")
+    if version != PROTOCOL_VERSION or not 1 <= count <= 8:
+        raise IncompatibleProtocol(f"Unsupported Controller protocol/count: {version}/{count}; expected {PROTOCOL_VERSION}/1..8")
     return info
 
 

@@ -6,6 +6,8 @@ from .errors import DependencyUnavailable, DomainError, SourceUnavailable
 from .models.runtime_status import TxState
 from .rp2354.client import TxConfig
 from .rp2354.protocol import Command, IncompatibleProtocol, Outcome, RpResponseError, execution_outcome, PROTOCOL_VERSION
+from .rp2354.linux_client import Rp2354Client
+from .mux.client import validate_stream_status
 
 logger = logging.getLogger(__name__)
 
@@ -25,12 +27,85 @@ class Recovery:
         self._audio_enabled = {}
         self._audio_config = {}
         self.hardware_error = None
+        self.verified_info = None
+        self.capability_transition = False
+        self.mux_retry_at = 0.0
+        if isinstance(self.rp, Rp2354Client):
+            self.rp.on_info = self._record_info
+            self.rp.before_command = self._guard_command
         self._startup_step = 0
         self._startup_enabled = {}  # Last positively acknowledged startup state.
         self._startup = [('info', None)] + [('off', i) for i in range(8)]
         for i in range(8):
             self._startup.extend([('config', i), ('clear', i)])
         self._startup.extend(('enable', i) for i in range(8))
+
+    def _record_info(self, info):
+        count = info.get('modulator_count')
+        if info.get('rp_protocol_version') != PROTOCOL_VERSION or type(count) is not int or not 1 <= count <= 8:
+            raise IncompatibleProtocol('Unsupported Controller protocol version or modulator count')
+        if self.verified_info is not None and self.verified_info['modulator_count'] != count:
+            self.capability_transition = True
+        self.verified_info = dict(info)
+        if count < 8:
+            # Phase 3 owns application/RDS availability. Until then, no TX replay.
+            self.ready = False
+            self.rds.suspend()
+            self.hardware_error = 'TX application lifecycle for fewer than 8 channels requires Phase 3'
+
+    @property
+    def capability_current(self):
+        return (self.verified_info is not None and self.error is None and
+                (not isinstance(self.rp, Rp2354Client) or self.rp.info == self.verified_info))
+
+    def _guard_command(self, command, target):
+        # Also runs after the client's implicit reconnect handshake, before I/O.
+        if target != 0xff and (self.capability_transition or self.verified_info is None or self.verified_info['modulator_count'] < 8):
+            error = DependencyUnavailable('TX command blocked: capability coordination or Phase 3 availability support required; not sent')
+            error.outcome = Outcome.NOT_SENT
+            raise error
+
+    def reconcile_mux(self, status):
+        """Existing control worker only; at most one mutation per status tick.
+
+        No recurring GET_INFO: silent board replacement needs explicit reinitialization.
+        """
+        validate_stream_status(status)
+        if not self.capability_current or self.stopping:
+            return status
+        count = self.verified_info['modulator_count']
+        if status['stream_state'] == 'STREAMING' and status['tx_count'] == count:
+            self.capability_transition = False
+            return status
+        if self.clock() < self.mux_retry_at:
+            raise DependencyUnavailable('Mux configuration retry pending')
+        mux = self.modulators.mux
+        try:
+            state = status['stream_state']
+            if state == 'STREAMING':
+                mux.pause()
+                expected_state, expected_count = 'PAUSED', status['tx_count']
+            elif status['tx_count'] != count:
+                mux.set_tx_count(count)
+                expected_state, expected_count = ('STREAMING' if state == 'WAITING_FOR_CONFIG' else 'PAUSED'), count
+            else:
+                mux.resume()
+                expected_state, expected_count = 'STREAMING', count
+            observed = mux.get_status()
+            validate_stream_status(observed)
+            if observed['stream_state'] != expected_state or observed['tx_count'] != expected_count:
+                raise DependencyUnavailable('Mux acknowledgement does not match applied configuration')
+            if observed['stream_state'] == 'STREAMING' and observed['tx_count'] == count:
+                self.capability_transition = False
+            return observed
+        except DependencyUnavailable:
+            self.mux_retry_at = self.clock() + 1.0
+            # Observe ambiguous outcomes, but never report this failed attempt healthy.
+            try:
+                mux.get_status()
+            except DependencyUnavailable:
+                pass
+            raise
 
     @property
     def retry_delay(self):
@@ -107,9 +182,9 @@ class Recovery:
     def _apply(self, step, channel):
         if step == 'info':
             info = self.rp.get_info()
-            if info['rp_protocol_version'] != PROTOCOL_VERSION or info['modulator_count'] != 8:
-                raise IncompatibleProtocol('Unsupported Controller protocol version or modulator count')
+            self._record_info(info)
             return
+        self._guard_command(Command.SET_TX_CONFIG, channel)
         config = self.modulators.get(channel)
         if step == 'off':
             self.rp.set_tx_enabled(channel, False)
@@ -187,6 +262,16 @@ class Recovery:
         if not self.can_communicate():
             raise self.error or DependencyUnavailable('Controller reconnect backoff')
         try:
+            if self.verified_info is None or (isinstance(self.rp, Rp2354Client) and self.rp.info is None):
+                self._record_info(self.rp.get_info())
+            if self.verified_info['modulator_count'] < 8:
+                status = self.rp.get_status()
+                self.error = None
+                return status
+            if self.capability_transition:
+                status = self.rp.get_status()
+                self.error = None
+                return status  # Mux reconciliation runs independently below observation.
             if not self.ready:
                 try:
                     return self._restore()
@@ -212,6 +297,8 @@ class Recovery:
 
     def _restore(self):
         # Startup only. Keep progress so a bad final read cannot repeat OFF/config.
+        if self._startup_step == 0 and self.verified_info is not None:
+            self._startup_step = 1  # observe() already negotiated this session.
         while self._startup_step < len(self._startup):
             self._apply(*self._startup[self._startup_step])
             self._startup_step += 1
@@ -241,7 +328,8 @@ class Recovery:
         self.rds.suspend()
         logger.info('fmheadendd shutdown: disabling RF; preserving desired configuration')
         # Explicit OFF pass, no recovery loop; never claim OFF after a failed ACK.
-        for channel in range(8):
+        count = self.verified_info['modulator_count'] if self.verified_info else 0
+        for channel in range(count if count == 8 else 0):
             try:
                 self.rp.set_tx_enabled(channel, False)
             except DependencyUnavailable as exc:
