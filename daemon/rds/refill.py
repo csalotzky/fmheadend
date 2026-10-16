@@ -119,8 +119,7 @@ class RdsRefill:
             if not self.channel_ready(channel):
                 continue
             state = self.channels[channel]
-            active = config.rds_enabled and (channel in self.modulators.active_sources or
-                (config.audio_mode == "ANALOG" and self.modulators.statuses[channel].tx_state == "ON"))
+            active = config.rds_enabled and self.modulators.statuses[channel].tx_state == 'ON'
             if not active:
                 if state.active:
                     state.active = False

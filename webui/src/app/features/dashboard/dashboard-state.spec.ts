@@ -6,6 +6,20 @@ import { Snapshot } from '../../core/api/models';
 import { sample } from './test-fixtures';
 
 describe('Dashboard API composition and operations', () => {
+  it('shows the assigned source error without inventing a hardware fault', () => {
+    const data = sample();
+    data.status.system.system_state = 'RUNNING';
+    data.status.system.controller_observation_stale = false;
+    data.status.modulators[0].source_state = 'ERROR';
+    data.status.modulators[0].source_last_error = 'FOLDER_UNREADABLE';
+    data.status.modulators[0].hardware_tx_state = 'OFF';
+    data.status.modulators[0].tx_state = 'OFF';
+    const channel = compose(data)[0];
+    expect(channel.error).toBe('FOLDER_UNREADABLE');
+    expect(channel.observationStale).toBe(false);
+    expect(channel.runtime?.hardware_tx_state).toBe('OFF');
+    expect(data.status.system.system_state).toBe('RUNNING');
+  });
   let state: DashboardState, http: HttpTestingController;
   function respond(snapshot = sample()) {
     http.expectOne('/api/v1/status').flush(snapshot.status);

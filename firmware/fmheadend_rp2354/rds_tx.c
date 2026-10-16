@@ -1,4 +1,5 @@
 #include "rds_tx.h"
+#include "firmware_config.h"
 #include "qn_bus.h"
 #include "qn_boot.h"
 #include "host_protocol.h"
@@ -239,9 +240,9 @@ static void step(rds_tx_t *r, qn_control_t *q, rds_fifo_t *fifo, unsigned i)
 void rds_tx_service(rds_tx_t *r, qn_control_t *q, rds_fifo_t fifo[8])
 {
     const uint64_t start=time_us_64();
-    for (unsigned n=0;n<8;++n) {
+    for (unsigned n=0;n<TX_COUNT;++n) {
         const unsigned i=r->cursor;
-        r->cursor=(i+1)%8;
+        r->cursor=(i+1)%TX_COUNT;
         step(r,q,&fifo[i],i);
         /* At most one already-bounded bus operation can overrun the budget. */
         if (time_us_64()-start>=RDS_SERVICE_BUDGET_US) break;
@@ -250,9 +251,9 @@ void rds_tx_service(rds_tx_t *r, qn_control_t *q, rds_fifo_t fifo[8])
 
 bool rds_tx_diagnostic(rds_tx_t *r, char *line, size_t size)
 {
-    for (unsigned n=0;n<8;++n) {
+    for (unsigned n=0;n<TX_COUNT;++n) {
         unsigned i=r->log_cursor;
-        r->log_cursor=(i+1)%8;
+        r->log_cursor=(i+1)%TX_COUNT;
         rds_tx_channel_t *s=&r->channel[i];
         if (!s->events) continue;
         const unsigned event=s->events & (0u-s->events);

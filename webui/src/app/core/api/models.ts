@@ -51,6 +51,8 @@ export interface ModulatorStatus {
   tx_state: TxState;
   hardware_tx_state: string | null;
   source_state: string | null;
+  source_last_error?: string | null;
+  source_error_scope?: 'SOURCE' | 'INTERNAL';
   rf_attenuation_db: number | null;
   underruns: number;
   overruns: number;

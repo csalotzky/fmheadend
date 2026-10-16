@@ -16,9 +16,9 @@
 
 
 /* Core 0 only reads PIO/DMA for fault diagnostics after launch. No audio IRQ and no dependency on
- * QN bitbang/UART scheduling. Each buffer lasts 2.667 ms, total RAM 8 KiB.
+ * QN bitbang/UART scheduling. Each buffer holds FRAMES_PER_PACKET active frames, total RAM 8 KiB.
  * Read rings are a containment measure for a missed rearm, NOT sample loops. */
-static uint32_t buffers[2][AUDIO_BUFFER_WORDS] __attribute__((aligned(4096)));
+static uint32_t buffers[2][AUDIO_BUFFER_CAPACITY_WORDS] __attribute__((aligned(4096)));
 _Static_assert(sizeof(buffers[0])==4096, "DMA read ring must match buffer size");
 _Static_assert(ATOMIC_INT_LOCK_FREE==2, "Cross-core audio handoff must be lock-free");
 static atomic_uint state=AUDIO_STARTING, requested_mask;
@@ -167,7 +167,7 @@ static void core1_audio(void)
         fail(AUDIO_DEADLINE_FAULT,"startup publication timeout"); goto stopped;
     }
     atomic_store(&stage,REFILL);
-    deadline=time_us_64()+6000;
+    deadline=time_us_64()+((2u*FRAMES_PER_PACKET*1000000u+47999u)/48000u+666u);
     while (true) {
 #ifdef FMHEADEND_FLASH_UPDATE
         update_stop();
@@ -202,8 +202,8 @@ static void core1_audio(void)
              * peer. Use the non-trigger alias; only CHAIN_TO may start it. */
             hw_set_bits(&dma_hw->ch[ch].al1_ctrl,DMA_CH0_CTRL_TRIG_EN_BITS);
             next^=1u;
-            deadline=time_us_64()+6000;
-        } else if (time_us_64()>deadline) { fail(AUDIO_DEADLINE_FAULT,"no DMA progress for 6 ms"); break; }
+            deadline=time_us_64()+((2u*FRAMES_PER_PACKET*1000000u+47999u)/48000u+666u);
+        } else if (time_us_64()>deadline) { fail(AUDIO_DEADLINE_FAULT,"no DMA progress within two buffers plus guard"); break; }
         tight_loop_contents();
     }
 stopped:

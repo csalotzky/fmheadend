@@ -50,6 +50,7 @@ class WriterPcmStatus(Model):
 
 
 class InputSourceStatus(Model):
+    error_scope: Literal['SOURCE', 'INTERNAL'] = 'SOURCE'
     observation_age_s: float = 0
     observation_stale: bool = False
     pcm: SourcePcmStatus | None = None
@@ -68,6 +69,8 @@ class InputSourceStatus(Model):
 
 
 class ModulatorStatus(Model):
+    source_last_error: str | None = None
+    source_error_scope: Literal['SOURCE', 'INTERNAL'] = 'SOURCE'
     pcm_staging: PcmQueueStatus | None = None
     pcm_consumer: PcmQueueStatus | None = None
     pcm_writer: WriterPcmStatus | None = None

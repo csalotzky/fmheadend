@@ -90,9 +90,11 @@ def test_failed_restore_never_claims_healthy(tmp_path,failure):
     with TestClient(app) as api:
         status=api.get(P+'/status').json()
         assert status['system']['system_state']=='DEGRADED'
-        assert status['modulators'][0]['hardware_tx_state'] is None
+        assert status['modulators'][0]['hardware_tx_state'] == ('OFF' if failure == 'readback' else None)
         assert app.state.services.rp is rp
         assert app.state.services.rds.suspended
+        assert status['modulators'][0]['rds_state'] == 'SUSPENDED'
+        assert status['modulators'][1]['rds_state'] == 'DISABLED'
         assert not rp.rds_history
         if failure!='readback': assert not any(rp.enabled)
         assert api.get(P+'/modulators/0').json()['enabled']

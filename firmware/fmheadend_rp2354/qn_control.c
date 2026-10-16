@@ -55,7 +55,7 @@ static bool checked_write(qn_control_t *q, unsigned i, uint8_t reg, uint8_t v, u
     uint8_t actual;
     return write_reg(q,i,reg,v) && read_reg(q,i,reg,&actual) && !((actual^v)&mask);
 }
-void qn_control_isolate_channel(qn_control_t *q, unsigned i) { (void)isolate(q,i); }
+void qn_control_isolate_channel(qn_control_t *q, unsigned i) { if(i<TX_COUNT) (void)isolate(q,i); }
 static void observed_system1(qn_control_t *q, unsigned i, uint8_t v)
 {
     qn_channel_t *c=&q->channel[i];
@@ -75,7 +75,7 @@ static void observed_power(qn_channel_t *c, uint8_t v)
 void qn_control_init(qn_control_t *q, uint8_t ready_mask)
 {
     memset(q,0,sizeof(*q));
-    for (unsigned i=0;i<8;++i) {
+    for (unsigned i=0;i<TX_COUNT;++i) {
         qn_channel_t *c=&q->channel[i];
         c->ready=(ready_mask&(1u<<i))!=0;
         c->system1=5; c->attenuation=INT16_MIN; c->saturated=255;
@@ -136,7 +136,7 @@ static uint8_t configure(qn_control_t *q, unsigned i, const uint8_t *p)
 uint8_t qn_control_execute(qn_control_t *q, uint8_t command, uint8_t target,
                            const uint8_t *p, uint8_t *result)
 {
-    if (target>=8) return HOST_INVALID_TARGET;
+    if (target>=TX_COUNT) return HOST_INVALID_TARGET;
     qn_channel_t *c=&q->channel[target];
     if (command==2) return configure(q,target,p);
     if (!c->ready) return HOST_QN_ERROR;
@@ -178,7 +178,7 @@ uint8_t qn_control_execute(qn_control_t *q, uint8_t command, uint8_t target,
     return HOST_OK;
 }
 bool qn_control_fault(const qn_control_t *q)
-{ for (unsigned i=0;i<8;++i) if (q->channel[i].fault) return true; return q->audio_fault; }
+{ for (unsigned i=0;i<TX_COUNT;++i) if (q->channel[i].fault) return true; return q->audio_fault; }
 void qn_control_audio_fault(qn_control_t *q, bool fault)
 {
     if (fault && !q->audio_fault) q->last_error=HOST_INTERNAL_ERROR;
@@ -187,7 +187,7 @@ void qn_control_audio_fault(qn_control_t *q, bool fault)
 uint8_t qn_control_sine_mask(const qn_control_t *q)
 {
     uint8_t mask=0;
-    for (unsigned i=0;i<8;++i) {
+    for (unsigned i=0;i<TX_COUNT;++i) {
         const qn_channel_t *c=&q->channel[i];
         if (c->ready && c->configured && c->enabled && c->audio_mode==2 && (c->system1&4))
             mask |= 1u<<i;
@@ -197,7 +197,7 @@ uint8_t qn_control_sine_mask(const qn_control_t *q)
 uint8_t qn_control_digital_mask(const qn_control_t *q)
 {
     uint8_t mask=0;
-    for (unsigned i=0;i<8;++i) {
+    for (unsigned i=0;i<TX_COUNT;++i) {
         const qn_channel_t *c=&q->channel[i];
         /* Approved M8.5 bench access: configured DIGITAL PCM even with RF OFF. */
         if (c->ready && c->configured && c->audio_mode==0 && (c->system1&4)) mask |= 1u<<i;
@@ -205,14 +205,14 @@ uint8_t qn_control_digital_mask(const qn_control_t *q)
     return mask;
 }
 bool qn_control_active(const qn_control_t *q)
-{ for (unsigned i=0;i<8;++i) if (q->channel[i].enabled) return true; return false; }
+{ for (unsigned i=0;i<TX_COUNT;++i) if (q->channel[i].enabled) return true; return false; }
 bool qn_control_led(const qn_control_t *q, uint64_t now_us)
 { return qn_control_fault(q) ? (now_us/250000)%2!=0 : qn_control_active(q); }
 void qn_control_status(qn_control_t *q, uint8_t p[130], uint32_t uptime)
 {
     memset(p,0,130);
     for (unsigned b=0;b<4;++b) p[1+b]=uptime>>(8*b);
-    for (unsigned i=0;i<8;++i) {
+    for (unsigned i=0;i<TX_COUNT;++i) {
         qn_channel_t *c=&q->channel[i]; uint8_t v;
         if (c->ready) {
             if (!read_reg(q,i,SYSTEM1,&v)) isolate(q,i);

@@ -16,16 +16,32 @@ or host virtual environment is required. From this project directory:
 powershell -NoProfile -ExecutionPolicy Bypass -File tools/rp2354_build.ps1
 ```
 
-**Compile Project** runs this same operation. It builds both variants from the
+**Compile Project** runs this same operation. It builds all eight TX populations, factory and OTA, from the
 same source, validates both manifests and generates the partition table:
 
 ```text
-build/factory/fmheadend_rp2354.bin
-build/factory/fmheadend_rp2354.bin.json
-build/ota/fmheadend_rp2354.bin
-build/ota/fmheadend_rp2354.bin.json
+build/factory/fmheadend_rp2354_tx{1..8}.bin
+build/factory/fmheadend_rp2354_tx{1..8}.bin.json
+build/ota/fmheadend_rp2354_tx{1..8}.bin
+build/ota/fmheadend_rp2354_tx{1..8}.bin.json
 build/partitions.bin
 ```
+
+Each image has an isolated target/build header; the build ID includes TX count
+and packet frame count. Manifests retain the existing uploader-compatible schema.
+Provisioning selects `build/factory/fmheadend_rp2354_tx8.bin` by default.
+
+`firmware_config.h` defines `TX_COUNT` (1..8, default 8) and
+`FRAMES_PER_PACKET` (1..128, default 128). CMake builds every TX count and accepts
+`-DFRAMES_PER_PACKET=64` (use a separate build directory for different packet
+sizes). The two 4096-byte output buffers and four SPI slots stay statically sized;
+only the active DMA count, PCM stride and refill timing vary. Missing TX lanes
+are zero-filled. GET_INFO reports the actual population; existing fixed-size
+status/FIFO replies retain eight entries, with absent entries inactive/empty.
+
+The unmodified host supports only TX8/128. Other populations need matching host
+SPI lengths and GET_INFO support; smaller packets also need matching send cadence.
+No hardware timing qualification is implied for small packet sizes.
 
 Factory: ROM 1.0, non-TBYB. OTA: ROM 1.1, TBYB. Manifests contain the embedded
 build ID, ROM version, image size, TBYB and complete SHA-256. Source/build settings

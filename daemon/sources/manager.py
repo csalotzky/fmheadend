@@ -1,7 +1,7 @@
 import logging
 import time
 from threading import Lock
-from ..errors import DependencyUnavailable, DomainError
+from ..errors import DependencyUnavailable, DomainError, SourceUnavailable
 from ..models.configuration import InputSourceConfig, SourceTestResult
 from ..models.runtime_status import InputSourceStatus, SourceState
 from .pipeline import MockPipeline, probe
@@ -92,9 +92,9 @@ class SourceManager:
         if pipeline is not None:
             error = self._observed_profile_error(source, profile_errors=profile_errors)
             if error:
-                return InputSourceStatus(source_id=source_id, state=SourceState.ERROR, last_error=error)
+                return InputSourceStatus(source_id=source_id, state=SourceState.ERROR, last_error=error, error_scope='INTERNAL')
         if source_id in self.restart_errors:
-            return InputSourceStatus(source_id=source_id, state=SourceState.ERROR, last_error=self.restart_errors[source_id])
+            return self.statuses[source_id]
         if pipeline is not None and not getattr(pipeline, "mocked", True):
             status = InputSourceStatus(source_id=source_id, **pipeline.snapshot(),
                                       pcm=pipeline.pcm_snapshot() if hasattr(pipeline, 'pcm_snapshot') else None)
@@ -212,10 +212,12 @@ class SourceManager:
             self.statuses[source_id] = InputSourceStatus(source_id=source_id,
                 **({'state': SourceState.RUNNING} if getattr(replacement, 'mocked', True) else replacement.snapshot()))
             return None
-        except (DependencyUnavailable, DomainError, ValueError, OSError) as exc:
+        except Exception as exc:
             self.restart_errors[source_id] = str(exc)
-            self.statuses[source_id] = InputSourceStatus(source_id=source_id, state=SourceState.ERROR, last_error=str(exc))
-            logger.error('Configuration saved; source %s audio restart failed: %s', source_id, exc)
+            self.statuses[source_id] = InputSourceStatus(source_id=source_id, state=SourceState.ERROR, last_error=str(exc),
+                error_scope='SOURCE' if isinstance(exc, SourceUnavailable) else 'INTERNAL')
+            logger.error('Configuration saved; source %s audio restart failed: %s', source_id, exc,
+                         exc_info=not isinstance(exc, SourceUnavailable))
             return str(exc)
 
     def acquire(self, source_id, modulator_id):
@@ -226,7 +228,7 @@ class SourceManager:
             self.validate_config(source)
         except DomainError as exc:
             self.statuses[source_id] = InputSourceStatus(source_id=source_id, state=SourceState.ERROR,
-                                                        last_error=f'{exc.error}: {exc}')
+                                                        last_error=f'{exc.error}: {exc}', error_scope='INTERNAL')
             raise DependencyUnavailable(f'{exc.error}: {exc}') from exc
         with self._registry_lock:
             consumers = self.consumers.setdefault(source_id, set())
@@ -245,7 +247,7 @@ class SourceManager:
                 if not getattr(pipeline, "mocked", True):
                     pipeline.output.attach(modulator_id)
                 pipeline.start()
-            except DependencyUnavailable as exc:
+            except Exception as exc:
                 try:
                     if pipeline is not None:
                         self.release(source_id, modulator_id)
@@ -254,7 +256,8 @@ class SourceManager:
                             self.consumers.pop(source_id, None)
                 finally:
                     self.statuses[source_id] = InputSourceStatus(
-                        source_id=source_id, state=SourceState.ERROR, last_error=str(exc))
+                        source_id=source_id, state=SourceState.ERROR, last_error=str(exc),
+                        error_scope='SOURCE' if isinstance(exc, SourceUnavailable) else 'INTERNAL')
                 raise
             if getattr(pipeline, 'mocked', True):
                 status.state, status.last_error = SourceState.RUNNING, None
@@ -269,7 +272,8 @@ class SourceManager:
             pipeline = self.pipelines[source_id]
             error = self.restart_errors.get(source_id) or getattr(pipeline, 'fatal_error', None)
             if error:
-                raise DependencyUnavailable(error)
+                scope = self.status(source_id).error_scope
+                raise (SourceUnavailable if scope == 'SOURCE' else DependencyUnavailable)(error)
             if not getattr(pipeline, "mocked", True):
                 pipeline.output.attach(modulator_id)
         with self._registry_lock:

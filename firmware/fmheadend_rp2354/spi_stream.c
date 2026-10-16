@@ -33,6 +33,9 @@ void spi_stream_complete(spi_stream_t *s, size_t bytes, uint32_t bits, bool hw_e
     if (s->write-s->read>=SPI_FRAME_SLOTS-1) {
         spi_stream_error(s,SPI_QUEUE_FULL); return;
     }
+    /* Complete the fixed eight-lane PCM layout before publishing the slot.
+     * Bytes left by an earlier capture must never reach a missing TX. */
+    memset(spi_stream_capture(s)+SPI_FRAME_BYTES,0,PCM_INTERNAL_BYTES-SPI_FRAME_BYTES);
     s->received[s->write%SPI_FRAME_SLOTS]=now;
     ++s->write;
     if (!s->seen_valid) { s->seen_valid=true; atomic_fetch_or(&s->events,SPI_FIRST); }
