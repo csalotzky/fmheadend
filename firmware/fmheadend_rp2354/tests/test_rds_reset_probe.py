@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 import types
 
-linux = types.ModuleType("daemon.rp2354.linux_client")
+linux = types.ModuleType("bench_support.linux_client")
 linux.Rp2354Client = None
 sys.modules[linux.__name__] = linux
 spec = importlib.util.spec_from_file_location("rds_reset_probe", Path(__file__).parents[1] / "tools/rds_reset_probe.py")

@@ -84,6 +84,13 @@ static void trial(void) {
     memset(environment_state.build,0x55,16);flash_update_init(&ops);
 }
 int main(void) {
+    /* ROM flash-update boot explicitly selects either slot even when its
+     * version is equal or lower. BEGIN must not invent a monotonic policy. */
+    for(unsigned boot=0;boot<2;++boot) for(unsigned newer=0;newer<2;++newer) {
+        fresh(boot);environment_state.major=newer ? 2 : 1;environment_state.minor=1;
+        upload();assert(!command(FU_VERIFY));assert(!command(FU_ACTIVATE));
+        assert(!reboots);flash_update_ack_consumed(FU_ACTIVATE);assert(reboots==1);
+    }
     for(unsigned boot=0;boot<2;++boot) {
         fresh(boot); assert(!flash_update_execute(begin,sizeof(begin),reply));
         unsigned saved_erases=erases;

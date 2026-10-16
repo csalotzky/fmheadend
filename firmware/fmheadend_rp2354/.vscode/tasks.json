@@ -4,55 +4,57 @@
         {
             "label": "Compile Project",
             "type": "process",
-            "isBuildCommand": true,
-            "command": "${userHome}/.pico-sdk/ninja/v1.13.2/ninja",
-            "args": ["-C", "${workspaceFolder}/build"],
-            "group": "build",
+            "command": "powershell.exe",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}/tools/rp2354_build.ps1"
+            ],
+            "problemMatcher": "$gcc",
             "presentation": {
                 "reveal": "always",
                 "panel": "dedicated"
             },
-            "problemMatcher": "$gcc",
-            "windows": {
-                "command": "${env:USERPROFILE}/.pico-sdk/ninja/v1.13.2/ninja.exe"
+            "group": {
+                "kind": "build",
+                "isDefault": true
             }
         },
         {
-            "label": "Run Project",
+            "label": "Flash RP2354 Factory (SWD)",
             "type": "process",
-            "command": "${env:HOME}/.pico-sdk/picotool/2.3.1/picotool/picotool",
+            "command": "powershell.exe",
             "args": [
-                "load",
-                "${command:raspberry-pi-pico.launchTargetPath}",
-                "-fx"
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}/tools/rp2354_build.ps1",
+                "-Provision"
             ],
+            "problemMatcher": "$gcc",
             "presentation": {
                 "reveal": "always",
                 "panel": "dedicated"
-            },
-            "problemMatcher": [],
-            "windows": {
-                "command": "${env:USERPROFILE}/.pico-sdk/picotool/2.3.1/picotool/picotool.exe"
             }
         },
         {
             "label": "Flash",
+            "dependsOn": "Flash RP2354 Factory (SWD)",
+            "problemMatcher": []
+        },
+        {
+            "label": "Run Project",
             "type": "process",
-            "command": "${userHome}/.pico-sdk/openocd/0.12.0+dev/openocd.exe",
+            "command": "powershell.exe",
             "args": [
-                "-s",
-                "${userHome}/.pico-sdk/openocd/0.12.0+dev/scripts",
-                "-f",
-                "interface/cmsis-dap.cfg",
-                "-f",
-                "target/${command:raspberry-pi-pico.getTarget}.cfg",
-                "-c",
-                "adapter speed 5000; program \"${command:raspberry-pi-pico.launchTargetPath}\" verify reset exit"
+                "-NoProfile",
+                "-Command",
+                "Write-Error 'Flat ELF/UF2 loading is disabled for A/B firmware. Use Flash Pico Project (SWD) or OTA.'; exit 1"
             ],
-            "problemMatcher": [],
-            "windows": {
-                "command": "${env:USERPROFILE}/.pico-sdk/openocd/0.12.0+dev/openocd.exe"
-            }
+            "problemMatcher": []
         },
         {
             "label": "Rescue Reset",

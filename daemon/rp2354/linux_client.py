@@ -139,6 +139,9 @@ class Rp2354Client:
                     self.last_error = None
                     return result
                 except p.Busy:
+                    if self._retain_bus:
+                        logger.warning("Controller BUSY command=%s attempt=%s; %s", command.name,
+                                       attempt + 1, "not retrying again" if attempt else "retrying once")
                     if attempt:
                         raise
                     time.sleep(0.01)
@@ -147,7 +150,7 @@ class Rp2354Client:
             self.last_error = str(exc)
             raise
         except (OSError, p.ProtocolError, p.HardwareUnavailable) as exc:
-            if isinstance(exc, p.ProtocolError) and not self._malformed_reported:
+            if isinstance(exc, p.ProtocolError) and (not self._malformed_reported or self._retain_bus):
                 # Actual read bytes, including the CRC trailer in payload.
                 logger.warning("Controller malformed response command=%s header=%s payload=%s payload_length=%s error=%s",
                     command.name, header.hex() if header is not None else "unavailable",

@@ -53,9 +53,9 @@ class Client:
 
 
 for name, values in {
-    'daemon.rp2354.linux_client': {'Rp2354Client': Client},
-    'daemon.rp2354.client': {'TxConfig': Config},
-    'daemon.rp2354.protocol': {'InvalidArgument': InvalidArgument},
+    'bench_support.linux_client': {'Rp2354Client': Client},
+    'bench_support.client': {'TxConfig': Config},
+    'bench_support.protocol': {'InvalidArgument': InvalidArgument},
 }.items():
     fake = types.ModuleType(name)
     fake.__dict__.update(values)

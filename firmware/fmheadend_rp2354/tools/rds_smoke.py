@@ -3,8 +3,8 @@ import argparse
 from pathlib import Path
 import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-from daemon.rp2354.linux_client import Rp2354Client
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from bench_support.linux_client import Rp2354Client
 
 
 def check(rp, expected, label):
