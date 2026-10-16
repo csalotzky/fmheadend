@@ -136,112 +136,58 @@ The device-node permissions must allow the invoking user to access /dev/i2c-1.
 ```sh
 python3 tools/rp2354_flash.py --dry-run firmware/fmheadend_rp2354/build/ota/fmheadend_rp2354.bin
 python3 tools/rp2354_flash.py --device /dev/i2c-1 --address 0x62 --status
-python3 tools/rp2354_flash.py --device /dev/i2c-1 --address 0x62 --yes firmware/fmheadend_rp2354/build/ota/fmheadend_rp2354.bin
+python3 tools/rp2354_flash.py --device /dev/i2c-1 --address 0x62 firmware/fmheadend_rp2354/build/ota/fmheadend_rp2354.bin
 ```
 
-Without --yes, upload requires typing UPDATE. --dry-run is entirely local:
-artifact/manifest validation and operation plan only, no device access, session,
-erase or reboot. A locked device fails immediately; the uploader never competes
-with the daemon. A stale inactive session can be explicitly abandoned with
-`--abort-session SESSION_HEX --yes`, followed by a new upload.
+Upload is non-interactive. `--dry-run` validates the image/manifest locally;
+`--status` is read-only. Detailed transport faults go to `rp2354-upload.log`
+(or `--log PATH`); progress and cumulative error counts stay on the terminal.
 
 ## Update, maintenance and confirmation
 
-BEGIN validates ROM layout and image parameters, latches maintenance, holds
-all transmitter reset pins low, stops SPI/I2S DMA and PIO on core1 and verifies
-all DMA is idle. Core1 then remains parked with the SDK flash-lockout IRQ enabled.
-Quiescence failure prevents flash writes and leaves maintenance requested.
-No persistent application/RF configuration is changed. Normal RF commands and
-RDS service are gated during maintenance; GET_INFO/GET_STATUS/update STATUS remain.
+OTA format 2 has no upload identifiers, resume or ABORT. Every BEGIN replaces
+incomplete inactive-slot work and starts at offset zero, including when the
+same image/version is already running. A pending TBYB trial must roll back
+before a new upload; its fallback cannot be erased. A previously successful
+buy with a lost ACK is finalized first, then the new upload still starts fresh.
 
-This is deliberately a fail-closed latch, not a transaction that restores RF.
-If core1 has partially stopped, it may already be parked permanently; DMA can
-still be busy and RF reset pins remain low. Releasing maintenance in place is
-not safe. A failed BEGIN retains its attempted session in RAM and reports
-FAILED / QUIESCE. Use `--abort-session SESSION_HEX --yes` to recover. If BEGIN
-failed before quiescence completed, ABORT performs no flash writes: it reports
-ABORTED in RAM and requests a normal reboot only after its complete ACK/STOP.
-After that reboot the earlier durable journal (or IDLE) is visible. Once
-quiescence succeeded, ABORT seals an ABORTED record before acknowledging. It
-does not need to erase the candidate: an unbought TBYB image is not eligible
-for normal boot. If the journal write itself fails, ABORT reports failure and
-does not arm a successful-response reboot; inspect STATUS/retry after diagnosis.
+BEGIN retains the existing RF/audio quiescence and flash-safe lockout. Failed
+quiescence performs no flash writes and never restores RF automatically; a new
+BEGIN retries the stop operation. Persistent hardware stop failures remain an
+explicit error. Active-slot writes are rejected independently by the platform.
 
-Flash erase is 4 KiB aligned, programming is 256-byte aligned. Flash-safe SDK
-lockout masks core0 IRQs and parks core1. One SRAM callback encloses flash mode
-setup, the SDK-declared ROM entry point, and SDK XIP restoration. It never
-returns to XIP code in the middle. All buffers are SRAM; DMA is stopped. The
-checked flash-op lock is held around storage-address operations. The explicit-
-buy call uses the same safety boundary and a word-aligned 4096-byte buffer.
-Readback and SHA-256 run in foreground. There is no flash mutation in I2C IRQ.
+WRITE carries up to 250 bytes and returns a 9-byte ACK (format, accepted and
+durable offsets). Packets can cross 256-byte programming pages and 4 KiB erase
+sectors. Page readback precedes advancing the durable offset. VERIFY checks the
+full flash SHA256 and native image metadata; build/version come from the binary.
 
-The host waits the documented command execution window before reading. Writes
-use 128-byte chunks; progress distinguishes RAM accepted from verified flash
-committed bytes. Lost ACKs trigger STATUS reconciliation, not blind replay.
-Interrupted RECEIVING after reset restarts safely from zero. VERIFIED and
-ACTIVATING survive reset via alternating sealed CRC32 metadata records. The
-previous valid record is not erased until its successor is durable.
+The first response read is after 2 ms. A CRC-protected BUSY response means the
+OTA reply is not ready; the same response is polled every 10 ms for at most
+3 seconds, without resending the command. Partial BUSY frames remain immutable
+across the V1 two READs. Other commands retain their existing timing/semantics.
+CRC failures trigger bounded STATUS reconciliation; a WRITE is resent only if
+its offset was not accepted. BEGIN is also reconciled against an empty, matching receiver before retrying.
 
-VERIFY hashes the actual flash image and validates native image metadata.
-ACTIVATE verifies again, persists intent and sends its response. Only a fully
-consumed ACK plus final STOP allows a ROM FLASH_UPDATE reboot preferring the
-new physical slot. No watchdog-only activation or custom boot selection exists.
-
-The ROM provides the approximately 16.7-second TBYB watchdog. The application
-does not feed/extend it or automatically buy on entry to main. The CLI uses
-monotonic deadlines, GET_INFO, GET_STATUS and update STATUS to check protocol,
-text/build/version, target slot, session/hash, essential initialization and
-pending trial. External transmitter faults alone do not block confirmation.
-It reserves time for CONFIRM and never confirms after a failed identity check.
-
-CONFIRM validates the session/current image again before ROM explicit buy.
-ROM buy clears the TBYB bit in flash; subsequent full-image verification
-normalizes that bit only. If a CONFIRM ACK is lost, STATUS reconciles success.
-If power fails after buy but before the CONFIRMED journal record, the matching
-ACTIVATING record plus ROM state and normalized hash reconstruct confirmation.
-If ROM buy returns an error, a normal ROM reboot is requested: the ROM disables
-the trial watchdog even on an explicit-buy failure, so silently waiting would
-be unsafe. A successful CONFIRM is not reported before verification succeeds.
-
-Successful CONFIRM persists CONFIRMED before returning its response. Like
-ACTIVATE, CONFIRM and ABORT arm reboot for the exact response generation and
-subcommand. Only the complete header, payload and CRC followed by final STOP,
-with an empty TX FIFO and no TX abort, releases the reboot gate. CONFIRM/ABORT
-request a NORMAL ROM reboot, never another FLASH_UPDATE boot. No manual reset
-is required for the successful path. Boot reinitializes audio and QNs with RF
-OFF; no transmitter enable command or automatic service restart is issued.
-
-The uploader waits for matching GET_INFO and update STATUS: correct running
-slot/build/version/session/hash, no pending TBYB, CONFIRMED, ready, no update
-error and maintenance=false. GET_STATUS must also report no channel ON.
-External QN faults alone are not proof of a failed MCU boot. A reset gap or a
-cleared BUY_PENDING flag alone is never success. For ABORT it instead verifies
-the original running firmware, no pending trial and maintenance=false; the
-RAM-only failed-BEGIN cancellation need not survive as a journal record.
-
-If the full ACK/STOP happened but its result was lost on the host, polling finds
-the normal boot. If the response was only partly read, matching STATUS permits
-a bounded replay of CONFIRM/ABORT to obtain a new full ACK/STOP. CONFIRM never
-buys twice. Explicit `--resume` with the same artifact recovers
-an already bought, matching ACTIVATING/CONFIRMED image. A normal invocation
-always creates a fresh session and writes the requested image, even if its build
-ID and ROM version already match. `--resume` also reuses a matching RECEIVING,
-VERIFIED or INTERRUPTED session; a reset-interrupted write restarts from zero.
-Unrelated artifacts or pending trials do not enter the bought-image recovery path. An interrupted pre-buy trial
-still relies on the ROM watchdog/rollback. A confirmed journal after reboot is
-idempotent and does not cause a reboot loop. There is no unattended timeout
-that reboots before a successful response has been fully read.
-
-Without valid CONFIRM the ROM returns to the previous bought image. Missing or
-corrupt session metadata cannot authorize a buy. An unbootable candidate or
-broken I2C is never auto-accepted. The CLI reports the old image returning, or
-an unknown final state when communication remains unavailable. Partial ACTIVATE
-ACK loss can also leave the old image running; it does not prove a rollback.
-The ROM's own first-sector rewrite during buy is not application-journalled;
-power loss there must be tested with the old slot intact. No claim is made
-that every flash silicon fault can be recovered in software.
+ACTIVATE persists intent before its ACK and uses native ROM FLASH_UPDATE boot.
+The uploader checks the actual trial slot/build/version, initialization and RF
+OFF before CONFIRM. Buy, normalized full-image verification and CONFIRMED journal
+writes finish before the ACK. Only the complete response and final STOP permit
+the normal reboot. Lost ACKs are reconciled with STATUS and bounded replay.
+Success requires the requested firmware running normally, CONFIRMED, no pending
+TBYB, maintenance cleared and RF OFF. The ROM watchdog/rollback is unchanged.
+Old identifier-based OTA peers are incompatible and must be replaced together;
+first installation requires SWD. No bus-speed, build or provisioning change.
 
 ## Validation and remaining board qualification
+
+OTA format 2 board run (2026-10-16): 63,612 bytes transferred in 23.5 s;
+28.5 s through checked B-slot activation, CONFIRM and normal RF-OFF operation.
+124 transport errors were reconciled, not ignored. The first attempt stopped
+on six damaged BEGIN ACKs; adding BEGIN STATUS reconciliation allowed a fresh
+run to finish. Diagnostics: `build/ota-hardware-format2.log` in the firmware
+project. Initial SWD full-flash readback passed; OpenOCD's final reset failed
+and required a manual normal reset. No claim of fault-free I2C is made.
+
 
 Host checks cover V1 framing/CRC, split reads, update state transitions, both
 slot directions/bounds, duplicate blocks, lost ACK, torn metadata, reset during

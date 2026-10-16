@@ -1,253 +1,233 @@
 #!/usr/bin/env python3
-"""Standalone V1 I2C updater: no HTTP backend, bus speed changes or daemon control."""
+"""Fresh, bounded-retry V1 I2C OTA upload; no daemon or bus configuration changes."""
 import argparse
+import logging
 import struct
 import sys
 import time
-import uuid
 from pathlib import Path
-sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from daemon.rp2354 import protocol as p
 from daemon.rp2354.linux_client import Rp2354Client
 from firmware.fmheadend_rp2354.tools.rp2354_artifact import load_artifact
-F=p.FlashCommand
+F = p.FlashCommand
+TRANSIENT = (p.ProtocolError, p.HardwareUnavailable, p.InternalError, p.Busy)
+log = logging.getLogger('rp2354.ota')
 
 
 class UpdateError(RuntimeError): pass
 
 
 class Uploader:
-    def __init__(self,client,clock=time.monotonic,sleep=time.sleep,progress=print):
-        self.client,self.clock,self.sleep,self.progress=client,clock,sleep,progress
+    def __init__(self, client, clock=time.monotonic, sleep=time.sleep, progress=print):
+        self.client, self.clock, self.sleep, self.progress = client, clock, sleep, progress
+        self.recoveries = 0
+
+    def uncertain(self, operation, exc):
+        if isinstance(exc, p.IncompatibleProtocol):
+            raise exc
+        self.recoveries += 1
+        log.warning('%s uncertain: %s; reconciling/retrying', operation, exc)
+        self.sleep(max(0.02, getattr(self.client, 'retry_delay', 0)))
+
+    def retry(self, operation, call):
+        for attempt in range(6):
+            try:
+                return call()
+            except TRANSIENT as exc:
+                self.uncertain(operation, exc)
+                if attempt == 5:
+                    raise UpdateError(f'{operation}: retry limit reached') from exc
 
     def status(self):
-        deadline=self.clock()+2
-        while True:
-            try: return self.client.flash_update(bytes([F.STATUS]))
-            except (p.ProtocolError,p.HardwareUnavailable,p.InternalError) as exc:
-                self.progress(f'I2C response uncertain: {exc}; checking device state')
-                if self.clock()>=deadline: raise
-                self.sleep(max(0.05,getattr(self.client,'retry_delay',0)))
+        return self.retry('STATUS', lambda: self.client.flash_update(bytes([F.STATUS])))
 
     def check_rf_off(self):
-        # A normal reboot initializes the MCU with RF off. External QN faults
-        # may still be reported as ERROR; they must not result in RF ON.
-        health=self.client.get_status()
-        if any(tx['tx_state']=='ON' for tx in health['modulators']):
-            raise UpdateError('Unexpected RF ON; normal recovery not established')
+        health = self.retry('GET_STATUS', self.client.get_status)
+        if any(tx['tx_state'] == 'ON' for tx in health['modulators']):
+            raise UpdateError('Unexpected RF ON')
 
     @staticmethod
-    def identity(s,session,meta,target):
-        if (s['session']!=session or s['size']!=meta['size'] or s['target']!=target or
-                s['sha256'].hex()!=meta['sha256'] or s['build'].hex()!=meta['build_id']):
-            raise UpdateError('Session/image/target mismatch; no further writes or CONFIRM')
+    def identity(s, meta, target, verified=False):
+        if (s['target'] != target or s['size'] != meta['size'] or
+                s['sha256'].hex() != meta['sha256'] or
+                (verified and s['build'].hex() != meta['build_id'])):
+            raise UpdateError('Image/target mismatch; stopping')
 
-    def wait_normal(self, expected, info, command, session):
-        """Observe normal operation, not merely a bought flag or a reset gap.
-
-        Reissue only after a matching STATUS: a partially read ACK may have
-        prevented reset. CONFIRM/ABORT are idempotent for this exact session.
-        """
-        deadline=self.clock()+10
-        retries=2
-        while self.clock()<deadline:
-            self.sleep(max(0.05,getattr(self.client,'retry_delay',0)))
+    def finalized(self, meta, target, deadline):
+        """Reconcile lost CONFIRM ACK; normal firmware must return after buy."""
+        sends = 0
+        while self.clock() < deadline:
             try:
-                current_info=self.client.get_info()
-                s=self.client.flash_update(bytes([F.STATUS]))
-                if (s['boot']!=expected['boot'] or s['running_build']!=expected['running_build'] or
-                    s['version']!=expected['version'] or current_info!=info or s['tbyb']!=0):
-                    raise UpdateError('Unexpected firmware after normal reboot; success not proven')
-                if command==F.CONFIRM:
-                    for key in ('session','target','size','sha256','build'):
-                        if s[key]!=expected[key]: raise UpdateError('Confirmation identity changed after reboot')
-                    if s['state']==6 or s['error']==10:
-                        raise UpdateError('ROM confirmation failed; cleared pending bit is not success')
-                if not s['maintenance']:
-                    if not s['ready'] or s['error'] or (command==F.CONFIRM and s['state']!=4):
-                        raise UpdateError('Firmware returned without healthy finalized state')
+                s = self.client.flash_update(bytes([F.STATUS]))
+                info = self.client.get_info()
+                self.identity(s, meta, target, True)
+                if (s['boot'] != target or s['running_build'].hex() != meta['build_id'] or
+                        s['version'] != tuple(meta['rom_version']) or not s['ready'] or
+                        info['rp_protocol_version'] != 1 or info['rp_firmware_version'] != meta['firmware_version']):
+                    raise UpdateError('New firmware identity/health not established')
+                if s['state'] == 6 or s['error'] not in (0, 5):
+                    raise UpdateError('Finalization failed; no success assumed')
+                if s['state'] == 4 and s['tbyb'] == 0 and not s['maintenance'] and not s['error']:
                     self.check_rf_off()
                     return s
-                if s['session']!=session:
-                    raise UpdateError('Recovery session changed; no replay')
-                if retries:
-                    retries-=1
-                    self.client.flash_update(bytes([command])+session)
-            except (p.ProtocolError,p.HardwareUnavailable,p.InternalError) as exc:
-                self.progress(f'I2C response uncertain: {exc}; checking device state')
-                pass
-        raise UpdateError('Normal operation not observed after ACK; inspect STATUS, no success assumed')
+                if s['state'] in (3, 4) and sends < 6:
+                    sends += 1
+                    self.client.flash_update(bytes([F.CONFIRM]))
+            except TRANSIENT as exc:
+                self.uncertain('CONFIRM/normal boot', exc)
+            self.sleep(0.05)
+        raise UpdateError('Finalized normal firmware not observed before deadline')
 
-    def abort(self, session):
-        info=self.client.get_info()
-        before=self.status()
-        if before['session']!=session or before['tbyb']!=0 or before['boot'] not in (0,1):
-            raise UpdateError('ABORT session/boot mismatch')
-        try:
-            if self.client.flash_update(bytes([F.ABORT])+session)['state']!=7:
-                raise UpdateError('Abort not established')
-        except (p.ProtocolError,p.HardwareUnavailable,p.InternalError) as exc:
-            self.progress(f'I2C response uncertain: {exc}; checking device state')
-            pass
-        result=self.wait_normal(before,info,F.ABORT,session)
-        self.progress('ABORT recovery complete; original firmware running normally, RF remains off')
-        return result
-
-    def run(self,data,meta,*,resume=False):
-        info=self.client.get_info()
-        old=self.status()
-        if (info['rp_protocol_version']!=1 or old['boot'] not in (0,1) or
-            old['inactive']!=(old['boot']^1) or old['tbyb']!=0 or not old['ready']):
-            raise UpdateError('Require valid A/B layout, no pending trial and successful MCU initialization')
-        # Only explicit --resume may report a previous write as recovered.
-        # A normal invocation always starts a new session and writes the image.
-        if (resume and old['state'] in (3,4) and old['boot']==old['target'] and
-                old['running_build'].hex()==meta['build_id'] and old['version']==tuple(meta['rom_version'])):
-            self.identity(old,old['session'],meta,old['boot'])
-            if info['rp_firmware_version']!=meta['firmware_version'] or old['error'] not in (0,5):
-                raise UpdateError('Finalization recovery identity/health check failed')
-            self.check_rf_off()
-            result=self.wait_normal(old,info,F.CONFIRM,old['session'])
-            self.progress('Previous buy finalized; matching firmware running normally, RF off')
-            return result
-        if old['maintenance'] and old['target']==old['boot']:
-            raise UpdateError('Previous finalization needs --resume with its exact image before a new upload')
-        if tuple(meta['rom_version'])<=old['version']:
-            self.progress('Equal/older ROM version: flash-update boot selects the requested slot. '
-                          'CONFIRM may erase the old IMAGE_DEF; rollback remains available until buy.')
-        if old['capacity']!=0xf0000 or old['chunk']!=128:
-            raise UpdateError('Unsupported receiver geometry')
-        if resume and old['state']==3 and old['target']==old['inactive']:
-            self.identity(old,old['session'],meta,old['inactive'])
-            self.progress('Resuming matching activation intent; ROM will revalidate the candidate')
-            return self.activate(old['session'],meta,old['inactive'],old)
-        session=uuid.uuid4().bytes
-        if resume and old['state'] in (1,2,5):
-            self.identity(old,old['session'],meta,old['inactive'])
-            session=old['session']
-        elif resume:
-            raise UpdateError('No matching interrupted update to resume; omit --resume for a fresh upload')
-        target=old['inactive']
-        self.progress(f"Active slot {old['boot']}; target {target}; session {session.hex()}")
-        packet=bytes([F.BEGIN])+session+struct.pack('<I',len(data))+bytes.fromhex(meta['sha256'])+bytes.fromhex(meta['build_id'])+struct.pack('<HHB',*meta['rom_version'],1)
-        try: current=self.client.flash_update(packet)
-        except (p.ProtocolError,p.HardwareUnavailable,p.InternalError) as exc:
-            self.progress(f'BEGIN response uncertain: {exc}; reconciling STATUS')
-            current=self.status()
-        self.identity(current,session,meta,target)
-        if current['state'] not in (1,2): raise UpdateError('BEGIN not established; inspect STATUS')
-        offset=current['accepted']
-        while offset<len(data):
-            block=data[offset:offset+128]
-            packet=bytes([F.WRITE])+session+struct.pack('<IB',offset,len(block))+block
-            try: ack=self.client.flash_update(packet)
-            except (p.ProtocolError,p.HardwareUnavailable,p.InternalError) as exc:
-                self.progress(f'I2C response uncertain: {exc}; checking device state')
-                ack=self.status()  # Never replay an uncertain write before reconciliation.
-                self.identity(ack,session,meta,target)
-                if ack['state']!=1: raise UpdateError('Upload interrupted; restart from BEGIN')
-                if ack['accepted']==offset: ack=self.client.flash_update(packet)
-            self.identity(ack,session,meta,target)
-            if ack['state']!=1 or ack['accepted']!=offset+len(block): raise UpdateError('Unexpected WRITE offset')
-            expected=ack['accepted'] if ack['accepted']==len(data) else ack['accepted']//256*256
-            if ack['committed']!=expected: raise UpdateError('Unexpected durable WRITE offset')
-            offset=ack['accepted']
-            self.progress(f"Accepted {offset}/{len(data)}; committed {ack['committed']}")
-        try:
-            verified=self.client.flash_update(bytes([F.VERIFY])+session)
-        except (p.ProtocolError,p.HardwareUnavailable,p.InternalError) as exc:
-            self.progress(f'VERIFY response uncertain: {exc}; require matching durable VERIFIED status')
-            verified=self.status()
-        self.identity(verified,session,meta,target)
-        if verified['state']!=2 or verified['committed']!=len(data): raise UpdateError('VERIFY failed')
-        self.progress('Flash SHA256 matches: '+meta['sha256'])
-        return self.activate(session,meta,target,old)
-
-    def activate(self,session,meta,target,old):
-        """Activate a verified session, including an ACK-interrupted activation."""
-        try:
-            activated=self.client.flash_update(bytes([F.ACTIVATE])+session)
-            self.identity(activated,session,meta,target)
-            if activated['state']!=3: raise UpdateError('ACTIVATE failed')
-        except (p.ProtocolError,p.HardwareUnavailable,p.InternalError) as exc:
-            self.progress(f'I2C response uncertain: {exc}; checking device state')
-            self.progress('ACTIVATE ACK uncertain; observe boot, do not replay')
-        deadline=self.clock()+12
-        while self.clock()<deadline:
+    def run(self, data, meta):
+        started = self.clock()
+        info = self.retry('GET_INFO', self.client.get_info)
+        old = self.status()
+        # An interrupted trial must roll back before its fallback may be erased.
+        # Do not buy an unobserved trial merely to make a new BEGIN possible.
+        deadline = self.clock() + 20
+        while old['tbyb'] == 1 and self.clock() < deadline:
+            self.sleep(0.25)
+            old = self.status()
+        if (info['rp_protocol_version'] != 1 or old['boot'] not in (0, 1) or
+                old['inactive'] != (old['boot'] ^ 1) or old['tbyb'] != 0 or not old['ready']):
+            raise UpdateError('Require valid A/B layout and healthy bought firmware; trial still pending')
+        # A successful buy with lost ACK can need its normal reboot. Complete
+        # that checked operation, then still perform the requested fresh upload.
+        if old['target'] == old['boot'] and old['state'] in (3, 4) and old['maintenance']:
+            previous = dict(size=old['size'], sha256=old['sha256'].hex(),
+                            build_id=old['build'].hex(), rom_version=old['version'],
+                            firmware_version=old['firmware_version'])
+            self.finalized(previous, old['boot'], self.clock()+10)
+            old = self.status()
+        if old['capacity'] != 0xf0000 or old['chunk'] != p.FLASH_CHUNK:
+            raise UpdateError('Unsupported OTA receiver geometry')
+        target = old['inactive']
+        self.progress(f"Slot {old['boot']} -> {target}; {len(data)} bytes; chunks {p.FLASH_CHUNK}")
+        packet = bytes([F.BEGIN]) + struct.pack('<I', len(data)) + bytes.fromhex(meta['sha256'])
+        # A damaged BEGIN ACK can still mean successful erase. Reconcile the
+        # empty receiver before retrying; no image data has been sent yet.
+        for attempt in range(6):
             try:
-                info=self.client.get_info()
-                s=self.client.flash_update(bytes([F.STATUS]))
-                if s['boot']==target:
-                    self.identity(s,session,meta,target)
-                    if (s['state']!=3 or s['tbyb']!=1 or not s['ready'] or s['error'] or
-                        s['running_build'].hex()!=meta['build_id'] or s['version']!=tuple(meta['rom_version']) or
-                        info['rp_protocol_version']!=1 or info['rp_firmware_version']!=meta['firmware_version']):
-                        raise UpdateError('Trial identity/health check failed; allow ROM rollback')
-                    self.check_rf_off()  # Existing V1 CRC and payload validation.
-                    if self.clock()+3>=deadline: raise UpdateError('Trial deadline too close; allow rollback')
-                    try: self.client.flash_update(bytes([F.CONFIRM])+session)
-                    except (p.ProtocolError,p.HardwareUnavailable,p.InternalError) as exc: self.progress(f'I2C recovery: {exc}')
-                    confirmed=self.wait_normal(s,info,F.CONFIRM,session)
-                    self.progress(f"Confirmed slot {target}, build {meta['build_id']}; normal operation verified, RF off")
-                    return confirmed
-            except (p.ProtocolError,p.HardwareUnavailable,p.InternalError) as exc: self.progress(f'I2C recovery: {exc}')
-            self.sleep(max(0.05,getattr(self.client,'retry_delay',0)))
-        rollback_deadline=self.clock()+8
-        while self.clock()<rollback_deadline:
+                current = self.client.flash_update(packet)
+            except TRANSIENT as exc:
+                self.uncertain('BEGIN', exc)
+                current = self.status()
+            if (current['state'] == 1 and current['target'] == target and
+                    current['size'] == len(data) and current['sha256'].hex() == meta['sha256'] and
+                    not current['accepted'] and not current['committed'] and not current['error']):
+                break
+        else:
+            raise UpdateError('Fresh BEGIN retry limit reached')
+        self.identity(current, meta, target)
+        if current['state'] != 1 or current['accepted'] or current['committed'] or current['error']:
+            raise UpdateError('Fresh BEGIN not established')
+        offset, last_progress = 0, self.clock()
+        while offset < len(data):
+            block = data[offset:offset+p.FLASH_CHUNK]
+            packet = bytes([F.WRITE]) + struct.pack('<I', offset) + block
+            for attempt in range(6):
+                try:
+                    ack = self.client.flash_update(packet)
+                except TRANSIENT as exc:
+                    self.uncertain('WRITE', exc)
+                    ack = self.status()
+                    self.identity(ack, meta, target)
+                    if ack['state'] != 1 or ack['error']:
+                        raise UpdateError('Receiver interrupted; rerun uploader for a fresh BEGIN')
+                    if ack['accepted'] == offset:
+                        continue
+                if ack['accepted'] != offset + len(block):
+                    raise UpdateError('Unexpected WRITE offset; no blind replay')
+                durable = ack['accepted'] if ack['accepted'] == len(data) else ack['accepted']//256*256
+                if ack['committed'] != durable:
+                    raise UpdateError('Unexpected durable WRITE offset')
+                offset = ack['accepted']
+                break
+            else:
+                raise UpdateError('WRITE retry limit reached')
+            if self.clock()-last_progress >= 1 or offset == len(data):
+                elapsed = max(self.clock()-started, 0.001)
+                self.progress(f'{offset}/{len(data)} bytes; {offset/elapsed/1024:.1f} KiB/s; {elapsed:.1f}s')
+                last_progress = self.clock()
+        for attempt in range(6):
             try:
-                s=self.client.flash_update(bytes([F.STATUS]))
-                if s['boot']==old['boot'] and s['running_build']==old['running_build']:
-                    raise UpdateError('Old firmware returned or activation never occurred; update not confirmed')
-            except (p.ProtocolError,p.HardwareUnavailable,p.InternalError) as exc: self.progress(f'I2C recovery: {exc}')
-            self.sleep(max(0.1,getattr(self.client,'retry_delay',0)))
-        raise UpdateError('Trial not confirmed; rollback expected, final hardware state unavailable')
+                verified = self.client.flash_update(bytes([F.VERIFY]))
+            except TRANSIENT as exc:
+                self.uncertain('VERIFY', exc)
+                verified = self.status()
+            self.identity(verified, meta, target)
+            if verified['state'] == 2 and verified['committed'] == len(data) and not verified['error']:
+                self.identity(verified, meta, target, True)
+                break
+            if verified['state'] != 1 or verified['error']:
+                raise UpdateError('Flash SHA256/image verification failed')
+        else:
+            raise UpdateError('VERIFY retry limit reached')
+        # Reissue ACTIVATE only after observing the original slot with the same
+        # verified image. A complete ACK, including final STOP, gates reboot.
+        deadline, sends = self.clock()+12, 0
+        while self.clock() < deadline:
+            try:
+                s = self.client.flash_update(bytes([F.STATUS]))
+                self.identity(s, meta, target, True)
+                if s['boot'] == target:
+                    if (s['state'] != 3 or s['tbyb'] != 1 or not s['ready'] or s['error'] or
+                            s['running_build'].hex() != meta['build_id'] or s['version'] != tuple(meta['rom_version'])):
+                        raise UpdateError('Trial identity/health check failed; allow rollback')
+                    self.check_rf_off()
+                    result = self.finalized(meta, target, self.clock()+10)
+                    elapsed = self.clock()-started
+                    self.progress(f"Confirmed slot {target}, build {meta['build_id']}; {elapsed:.1f}s; "
+                                  f"reconciliations {self.recoveries}; RF off")
+                    return result
+                if s['boot'] != old['boot'] or s['state'] not in (2, 3) or s['error']:
+                    raise UpdateError('Activation/rollback state unexpected')
+                if sends < 6:
+                    sends += 1
+                    self.client.flash_update(bytes([F.ACTIVATE]))
+            except TRANSIENT as exc:
+                self.uncertain('ACTIVATE/trial boot', exc)
+            self.sleep(0.05)
+        raise UpdateError('Trial not observed; update not confirmed')
 
 
 def main(argv=None):
-    parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('image',type=Path,nargs='?')
-    parser.add_argument('--device',default='/dev/i2c-1')
-    parser.add_argument('--address',type=lambda s:int(s,0),default=0x62)
-    parser.add_argument('--dry-run',action='store_true',help='Validate locally; no I2C access')
-    parser.add_argument('--yes',action='store_true')
-    parser.add_argument('--resume',action='store_true',help='Explicitly recover the matching previous session; default always writes a fresh image')
-    parser.add_argument('--status',action='store_true',help='Read update/boot status only')
-    parser.add_argument('--abort-session',help='Abort the specified 16-byte hex session instead of uploading')
-    args=parser.parse_args(argv)
-    if args.status and args.dry_run: parser.error('--status accesses I2C; it cannot be combined with --dry-run')
-    if args.status:
-        client=Rp2354Client(args.device,args.address,timeout_ms=1000)
-        try:
-            client.reserve_bus()
-            status=Uploader(client).status()
-            print({k:v.hex() if isinstance(v,bytes) else v for k,v in status.items()})
-        finally: client.close()
-        return
-    if args.abort_session:
-        session=bytes.fromhex(args.abort_session)
-        if len(session)!=16: parser.error('Session requires 16 bytes')
-    else:
-        if args.image is None: parser.error('Image required')
-        data,meta=load_artifact(args.image)
-        print(f"Validated {meta['size']} bytes; ROM {meta['rom_version']}; SHA256 {meta['sha256']}")
-    if args.dry_run:
-        print('No I2C access. Plan: inactive slot only; BEGIN/WRITE/VERIFY/ACTIVATE; checked CONFIRM.')
-        return
-    if not args.yes and input('Daemon must be stopped manually; RF/audio stop during maintenance. Type UPDATE: ')!='UPDATE':
-        raise UpdateError('Cancelled')
-    client=Rp2354Client(args.device,args.address,timeout_ms=1000)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('image', type=Path, nargs='?')
+    parser.add_argument('--device', default='/dev/i2c-1')
+    parser.add_argument('--address', type=lambda s: int(s, 0), default=0x62)
+    parser.add_argument('--dry-run', action='store_true', help='Validate locally; no I2C access')
+    parser.add_argument('--status', action='store_true')
+    parser.add_argument('--log', type=Path, default=Path('rp2354-upload.log'))
+    args = parser.parse_args(argv)
+    logging.basicConfig(filename=args.log, level=logging.WARNING,
+                        format='%(asctime)s %(name)s %(message)s')
+    if args.status and args.dry_run:
+        parser.error('--status requires I2C access')
+    if not args.status:
+        if args.image is None:
+            parser.error('Image required')
+        data, meta = load_artifact(args.image)
+        if args.dry_run:
+            print(f"Validated {len(data)} bytes; ROM {meta['rom_version']}; no I2C access")
+            return
+    client = Rp2354Client(args.device, args.address, timeout_ms=1000)
     try:
         client.reserve_bus()
-        if args.abort_session:
-            Uploader(client).abort(session)
-        else: Uploader(client).run(data,meta,resume=args.resume)
+        uploader = Uploader(client)
+        if args.status:
+            print({k: v.hex() if isinstance(v, bytes) else v for k, v in uploader.status().items()})
+        else:
+            uploader.run(data, meta)
     finally:
-        print(f'I2C errors observed: {client.i2c_errors}; retries/recovery do not imply error-free communication')
+        print(f'I2C errors: {client.i2c_errors}; diagnostics: {args.log}')
         client.close()
 
 
-if __name__=='__main__':
-    try: main()
-    except (ValueError,OSError,UpdateError,p.DependencyUnavailable) as exc:
-        print(f'Update failed: {exc}',file=sys.stderr)
+if __name__ == '__main__':
+    try:
+        main()
+    except (ValueError, OSError, UpdateError, p.DependencyUnavailable, *TRANSIENT, p.RpResponseError) as exc:
+        print(f'Update failed: {exc}', file=sys.stderr)
         sys.exit(1)

@@ -110,10 +110,12 @@ class Rp2354Client:
         stage = 'open'
         try:
             self._open()
-            for attempt in range(2):
+            ota = command == p.Command.FLASH_UPDATE
+            deadline = time.monotonic() + 3
+            for attempt in range(301 if ota else 2):
                 header = received = None
                 stage = 'write'
-                if os.write(self._fd, packet) != len(packet):
+                if (not ota or attempt == 0) and os.write(self._fd, packet) != len(packet):
                     raise p.ProtocolError("Short I2C request write; command outcome is unknown")
                 # Firmware must prepare a response, or BUSY without side effects,
                 # within the command window. Each transaction ends with STOP.
@@ -139,6 +141,11 @@ class Rp2354Client:
                     self.last_error = None
                     return result
                 except p.Busy:
+                    if ota:
+                        if time.monotonic() >= deadline:
+                            raise p.ProtocolError('OTA completion deadline exceeded; reconcile STATUS')
+                        time.sleep(0.01)
+                        continue
                     if self._retain_bus:
                         logger.warning("Controller BUSY command=%s attempt=%s; %s", command.name,
                                        attempt + 1, "not retrying again" if attempt else "retrying once")
@@ -160,7 +167,7 @@ class Rp2354Client:
             self.i2c_errors += 1
             self.last_error = f"Controller I2C {self.device} address {self.address}: {exc}"
             self._close()
-            self._retry_at = time.monotonic() + 0.25
+            self._retry_at = time.monotonic() + (0.02 if command == p.Command.FLASH_UPDATE and self._retain_bus else 0.25)
             error = (exc if isinstance(exc, p.IncompatibleProtocol) else
                      p.MalformedResponse(command, str(exc)) if isinstance(exc, p.ProtocolError) else
                      p.HardwareUnavailable(self.last_error))
@@ -224,4 +231,4 @@ class Rp2354Client:
             self._retry_at = time.monotonic() + 0.25
 
     def flash_update(self, payload: bytes) -> dict:
-        return self._call(p.Command.FLASH_UPDATE, p.GLOBAL, payload, decode=p.parse_flash_status)
+        return self._call(p.Command.FLASH_UPDATE, p.GLOBAL, payload, decode=p.parse_flash_write if payload[0] == p.FlashCommand.WRITE else p.parse_flash_status)
