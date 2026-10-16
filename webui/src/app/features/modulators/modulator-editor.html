@@ -10,7 +10,11 @@
 @if (failed() && error()) {
   <p class="error" role="alert">{{ error() }}</p>
 }
-@if (!loading() && !failed()) {
+@if (!loading() && !channel()) {
+  <p role="status">This transmitter is not available in the current inventory.</p>
+  <button type="button" (click)="cancel()">Back to Modulators</button>
+}
+@if (!loading() && !failed() && channel()) {
   <aside class="runtime" aria-label="Current observations">
     <strong [class.error]="channel()?.runtime?.hardware_tx_state === 'ERROR'"
       >Reported state:

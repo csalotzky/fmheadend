@@ -49,7 +49,9 @@ export class ModulatorEditor implements OnInit {
   readonly rfLevels = rfOutputOptions;
   readonly analogGains = analogGainOptions;
   readonly sources = computed(() => sortSources(this.shared.data()?.sources ?? []));
-  readonly channel = computed(() => this.shared.channels().find((c) => c.id === this.id));
+  channel() {
+    return this.shared.channels().find((c) => c.id === this.id);
+  }
   readonly rds = new RdsProfileForm();
   readonly form = new FormGroup({
     ...this.rds.form.controls,
@@ -89,13 +91,16 @@ export class ModulatorEditor implements OnInit {
     this.failed.set(false);
     this.error.set('');
     this.message.set('');
-    if (!Number.isInteger(this.id) || this.id < 0 || this.id > 7) {
+    if (!Number.isInteger(this.id) || this.id < 0) {
       this.failed.set(true);
-      this.error.set('Select a physical TX from 0 to 7.');
+      this.error.set('Select an available transmitter.');
       this.loading.set(false);
       return;
     }
     try {
+      if (!this.shared.data()) await this.shared.refresh();
+      if (requestedId !== this.id) return;
+      if (!this.channel()) throw new Error('This transmitter is not available in the current inventory.');
       const { config, info } = await firstValueFrom(
         forkJoin({ config: this.api.get(requestedId), info: this.systemApi.info() }),
       );
@@ -204,7 +209,7 @@ export class ModulatorEditor implements OnInit {
     };
   }
   async save() {
-    if (this.saving() || this.loading() || this.failed()) return;
+    if (this.saving() || this.loading() || this.failed() || !this.channel()) return;
     this.error.set('');
     this.message.set('');
     let body: ModulatorDraft;

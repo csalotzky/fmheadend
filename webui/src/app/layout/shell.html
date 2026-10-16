@@ -77,7 +77,11 @@
             <circle cx="12" cy="8" r="1" />
             <path d="m8 21 4-13 4 13M9 17h6M8 4a6 6 0 0 0 0 8m8-8a6 6 0 0 1 0 8M5 1a10 10 0 0 0 0 14m14-14a10 10 0 0 1 0 14" />
           </svg>
-          {{ state.stale() ? '\u2014' : state.activeCount() }} / 8 TX ON
+          {{
+            state.stale() || !state.channels().length ||
+            state.data()?.status?.system?.controller_observation_stale !== false
+              ? '\u2014' : state.activeCount()
+          }} / {{ state.channels().length || '\u2014' }} TX ON
         </span>
         <div class="host-metrics numeric">
           <span class="status-group" title="CPU utilization">
