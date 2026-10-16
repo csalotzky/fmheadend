@@ -38,7 +38,7 @@ class SocketTests(unittest.TestCase):
         deadline = time.monotonic() + 5
         while True:
             try:
-                if status(self.directory)["frames_sent"] > 0:
+                if status(self.directory)["stream_state"] == "WAITING_FOR_CONFIG":
                     break
             except (OSError, AssertionError):
                 pass
@@ -63,6 +63,12 @@ class SocketTests(unittest.TestCase):
         self.clients.append(client)
         return client
 
+    def command(self, command, **fields):
+        return status(self.directory, (json.dumps(dict(command=command, **fields)) + '\n').encode())
+
+    def configure(self, count):
+        self.assertEqual(self.command('set_tx_count', count=count), {'ok': True})
+
     def wait_for(self, predicate):
         deadline = time.monotonic() + 3
         while time.monotonic() < deadline:
@@ -83,6 +89,7 @@ class SocketTests(unittest.TestCase):
         self.assertEqual(len(list(self.directory.glob("pcm*.sock"))), 8)
 
     def test_control_and_silence_counter_frames(self):
+        self.configure(8)
         initial = status(self.directory)
         result = self.wait_for(lambda s: s["frames_sent"] > initial["frames_sent"] + 10)
         self.assertTrue(result["mocked"])
@@ -93,12 +100,14 @@ class SocketTests(unittest.TestCase):
         raw = self.capture.read_bytes()
         self.assertGreater(len(raw), 4100)
         self.assertEqual(len(raw) % 4100, 0)
+        first = struct.unpack_from('<I', raw)[0]
         for index in range(len(raw) // 4100):
             frame = raw[index * 4100:(index + 1) * 4100]
-            self.assertEqual(struct.unpack_from("<I", frame)[0], index)
+            self.assertEqual(struct.unpack_from("<I", frame)[0], first + index)
             self.assertEqual(frame[4:], bytes(4096))
 
     def test_reconnect_and_fragmented_stereo(self):
+        self.configure(8)
         client = self.connect(3)
         client.sendall(b"\x99\x88\x77")
         self.wait_for(lambda s: s["channels"][3]["bytes_received"] == 3)
@@ -138,6 +147,68 @@ class SocketTests(unittest.TestCase):
     def test_missing_spidev_is_not_mocked(self):
         other = subprocess.run([BINARY, "--transport", "spidev", "--spi-device", str(self.directory / "missing")], capture_output=True, timeout=5)
         self.assertNotEqual(other.returncode, 0)
+
+    def test_configuration_lifecycle(self):
+        time.sleep(.03)
+        initial = status(self.directory)
+        self.assertEqual(initial['frames_sent'], 0)
+        self.assertEqual(initial['transport_errors'], 0)
+        self.assertEqual(initial['transport_state'], 'STARTING')
+        self.assertIsNone(initial['tx_count'])
+        self.assertIsNone(initial['spi_frame_bytes'])
+        self.assertIn('error', self.command('resume'))
+        self.assertEqual(self.command('pause'), {'ok': True})
+        for count in (0, 9, -1, True, False, 4.0, '4', None):
+            self.assertIn('error', self.command('set_tx_count', count=count))
+        self.configure(4)
+        before = self.wait_for(lambda s: s['frames_sent'] > 2)
+        self.configure(4)
+        self.assertIn('error', self.command('set_tx_count', count=8))
+        self.assertEqual(self.command('pause'), {'ok': True})
+        paused = status(self.directory)
+        self.assertEqual(paused['stream_state'], 'PAUSED')
+        self.assertGreaterEqual(paused['frames_sent'], before['frames_sent'])
+        self.assertEqual(self.command('pause'), {'ok': True})
+        for count in range(1, 9):
+            self.configure(count)
+            result = status(self.directory)
+            self.assertEqual(result['spi_frame_bytes'], 4 + 512 * count)
+            self.assertEqual(result['stream_state'], 'PAUSED')
+            self.assertEqual(result['frames_sent'], paused['frames_sent'])
+        self.assertEqual(self.command('resume'), {'ok': True})
+        self.assertEqual(self.command('resume'), {'ok': True})
+        self.wait_for(lambda s: s['frames_sent'] > paused['frames_sent'])
+        self.assertEqual(self.command('pause'), {'ok': True})
+        self.assertEqual(len(status(self.directory)['channels']), 8)
+        # tearDown also verifies bounded shutdown from PAUSED.
+
+    def check_prefix(self, count):
+        self.configure(count)
+        for channel in range(8):
+            self.connect(channel).sendall(bytes([channel + 1]) * 4096)
+        self.wait_for(lambda s: all(c['bytes_consumed'] >= 4096 for c in s['channels']))
+        for _ in range(3):
+            self.configure(count)  # Captured counters must remain consecutive.
+        self.assertEqual(self.command('pause'), {'ok': True})
+        final = status(self.directory)
+        self.process.terminate(); self.process.wait(timeout=5)
+        raw = self.capture.read_bytes()
+        size = 4 + 512 * count
+        self.assertEqual(len(raw), final['frames_sent'] * size)
+        first = struct.unpack_from('<I', raw)[0]
+        seen = set()
+        for index, offset in enumerate(range(0, len(raw), size)):
+            self.assertEqual(struct.unpack_from('<I', raw, offset)[0], first + index)
+            for channel in range(count):
+                block = raw[offset + 4 + channel * 512:offset + 4 + (channel + 1) * 512]
+                self.assertLessEqual(set(block), {0, channel + 1})
+                if channel + 1 in block:
+                    seen.add(channel)
+        self.assertEqual(seen, set(range(count)))
+
+    def test_prefix_1(self): self.check_prefix(1)
+    def test_prefix_4(self): self.check_prefix(4)
+    def test_prefix_8(self): self.check_prefix(8)
 
 
 if __name__ == "__main__":
