@@ -24,6 +24,7 @@ export interface ChannelView {
   error: string | null;
   confirmedOff?: boolean;
   observationStale?: boolean;
+  desiredOn?: boolean;
 }
 export function compose(snapshot: Snapshot, previous?: Snapshot): ChannelView[] {
   return Array.from({ length: 8 }, (_, id) => {
@@ -61,6 +62,7 @@ export function compose(snapshot: Snapshot, previous?: Snapshot): ChannelView[] 
       analog,
       pcm,
       error,
+      desiredOn: config?.enabled === true && snapshot.status.system.global_stopped !== true,
       observationStale: snapshot.status.system.controller_observation_stale === true,
       confirmedOff:
         snapshot.status.system.controller_observation_stale !== true &&

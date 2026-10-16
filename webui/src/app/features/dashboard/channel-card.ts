@@ -33,8 +33,9 @@ export class ChannelCard {
   readonly stopping = computed(
     () =>
       ['ON', 'STARTING'].includes(this.commandState() ?? this.channel().runtime?.tx_state ?? '') ||
-      (this.channel().runtime?.tx_state === 'ERROR' && !!this.channel().config?.enabled),
+      (this.commandState() !== 'OFF' && this.channel().desiredOn === true),
   );
+  readonly blocked = computed(() => this.stopping() && this.reportedState() !== 'ON');
   readonly reportedState = computed(() => {
     if (this.stale() || this.channel().observationStale) return 'UNKNOWN';
     const state = this.channel().runtime?.hardware_tx_state;

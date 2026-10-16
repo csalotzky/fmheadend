@@ -2,6 +2,7 @@
   class="channel"
   [class.fault]="reportedState() === 'ERROR'"
   [class.on]="reportedState() === 'ON'"
+  [class.blocked]="blocked()"
 >
   <a
     class="readout"
