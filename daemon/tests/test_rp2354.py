@@ -185,7 +185,7 @@ def test_maximum_rds_payload():
         p.request(p.Command.RDS_PUSH, 0, b'x' * 256)
 
 
-@pytest.mark.parametrize('version,count', [(2, 8), (0, 8), (1, 7), (1, 9)])
+@pytest.mark.parametrize('version,count', [(2, 8), (0, 8), (1, 0), (1, 9)])
 def test_incompatible_handshake_blocks_commands(calls, version, count):
     replies(calls, struct.pack('<H16s16sB', version, b'fw', b'hw', count))
     rp = client()

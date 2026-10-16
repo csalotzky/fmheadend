@@ -46,6 +46,8 @@ class Rp2354Client:
         self._lock = threading.RLock()
         self._retry_at = 0.0
         self.info: dict | None = None
+        self.on_info = None
+        self.before_command = None
         self.i2c_errors = 0
         self.last_error: str | None = None
         self._malformed_reported = False
@@ -182,6 +184,8 @@ class Rp2354Client:
     def get_info(self) -> dict:
         with self._lock:
             self.info = self._exchange(p.Command.GET_INFO, p.GLOBAL, decode=p.parse_info)
+            if self.on_info is not None:
+                self.on_info(dict(self.info))
             return dict(self.info)
 
     def _call(self, command: p.Command, target: int, payload: bytes = b"", *, decode=None):
@@ -190,6 +194,12 @@ class Rp2354Client:
         with self._lock:
             if self.info is None:
                 self.get_info()
+            if target != p.GLOBAL and target >= self.info['modulator_count']:
+                error = p.HardwareUnavailable('Target is outside verified Controller TX count; command not sent')
+                error.outcome = p.Outcome.NOT_SENT
+                raise error
+            if self.before_command is not None:
+                self.before_command(command, target)
             return self._exchange(command, target, payload, decode=decode)
 
     def set_tx_config(self, modulator_id: int, config: TxConfig) -> None:

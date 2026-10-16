@@ -167,14 +167,15 @@ class UnixMuxClient:
                                   discarded_pending_bytes=p.discarded_pending_bytes)
                     for channel, p in self.producers.items()}
 
-    def get_status(self) -> dict:
+    def _request(self, command, **fields) -> dict:
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-                sock.settimeout(0.5)
+                timeout = 0.5 if command == 'get_status' else 2.5
+                sock.settimeout(timeout)
                 sock.connect(str(self.runtime_dir / "mux-control.sock"))
-                sock.sendall(b'{"command":"get_status"}\n')
+                sock.sendall((json.dumps(dict(command=command, **fields)) + '\n').encode())
                 data = bytearray()
-                deadline = time.monotonic() + 0.5
+                deadline = time.monotonic() + timeout
                 while b"\n" not in data:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
@@ -187,6 +188,33 @@ class UnixMuxClient:
                     if len(data) > 16384:
                         raise ValueError("Mux status response exceeds size limit")
             status = json.loads(data)
+            if not isinstance(status, dict) or 'error' in status:
+                raise ValueError(f'Mux rejected {command}: {status}')
+            return status
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise DependencyUnavailable(f"Mux control unavailable: {exc}") from exc
+
+    def _command(self, command, **fields):
+        reply = self._request(command, **fields)
+        if set(reply) != {'ok'} or reply['ok'] is not True:
+            raise DependencyUnavailable(f'Invalid mux acknowledgement for {command}')
+
+    def set_tx_count(self, count):
+        if type(count) is not int or not 1 <= count <= 8:
+            raise ValueError('TX count must be an integer 1..8')
+        self._command('set_tx_count', count=count)
+
+    def pause(self):
+        self._command('pause')
+
+    def resume(self):
+        self._command('resume')
+
+    def get_status(self) -> dict:
+        from .client import validate_stream_status
+        try:
+            status = self._request('get_status')
+            validate_stream_status(status)
             if not isinstance(status, dict) or status.get("state") != "RUNNING" or len(status.get("channels", [])) != 8:
                 raise ValueError("Invalid mux status")
             if [c["id"] for c in status["channels"]] != list(range(8)):

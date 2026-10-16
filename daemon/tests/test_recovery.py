@@ -62,7 +62,7 @@ def test_startup_loss_recovery_order_and_shutdown(tmp_path):
         assert api.get(P+'/status').json()['modulators'][0]['hardware_tx_state'] == 'ON'
         assert api.get(P+'/status').json()['system']['controller_observation_stale']
         rp.available=True;now[0]=6;events.clear();refresh(app)
-        assert events == [('get_status',), ('get_info',)]  # Mock info refresh; no writes.
+        assert events == [('get_status',)]  # No recurring GET_INFO or writes.
         assert services.recovery.ready
         services.recovery.communication_failed(DependencyUnavailable('transport failure'))
         refresh(app)

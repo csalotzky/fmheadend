@@ -38,7 +38,7 @@ class StatusService:
         self.system = SystemStatus(mocked=not self.real_rp)
         self.info = {"fmheadend_version": __version__, "controller_protocol_version": None,
                      "controller_firmware_version": None, "hardware_revision": None,
-                     "modulator_count": 8, "mocked": not self.real_rp}
+                     "modulator_count": None, "controller_capability_stale": True, "mocked": not self.real_rp}
         self.refresh()
 
     def publish(self, *, max_age_s=2.0, configuration_changed=False):
@@ -124,7 +124,10 @@ class StatusService:
             rp_status = self.recovery.observe() if self.recovery else self.rp.get_status()
             self.system.controller_state = rp_status["state"]
             self.system.i2c_errors = rp_status["i2c_errors"]
-            info = (self.rp.info or self.rp.get_info()) if self.real_rp else self.rp.get_info()
+            if self.recovery:
+                info = self.recovery.verified_info
+            else:
+                info = (self.rp.info or self.rp.get_info()) if self.real_rp else self.rp.get_info()
             self.info.update(
                 controller_protocol_version=info["rp_protocol_version"],
                 controller_firmware_version=info["rp_firmware_version"],
@@ -164,8 +167,14 @@ class StatusService:
             if self._observed_at is None:
                 self.system.controller_state = 'UNKNOWN'
             errors.append(str(exc))
+        if self.recovery:
+            if self.recovery.verified_info is not None:
+                self.info['modulator_count'] = self.recovery.verified_info['modulator_count']
+            self.info['controller_capability_stale'] = not self.recovery.capability_current
         try:
             mux_status = self.mux.get_status()
+            if self.recovery:
+                mux_status = self.recovery.reconcile_mux(mux_status)
             self.system.mux_state = mux_status["state"]
             self.system.spi_errors = mux_status["spi_errors"]
             self.system.mux_transport = mux_status.get("transport", "mock")
@@ -174,6 +183,11 @@ class StatusService:
             self.system.mux_late_frames = mux_status.get("late_frames", 0)
             self.system.mux_transport_errors = mux_status.get("transport_errors", 0)
             self.system.mux_mocked = mux_status.get("mocked", True)
+            if mux_status.get('stream_state') != 'STREAMING' or (self.recovery and
+                    self.recovery.verified_info is not None and
+                    mux_status['tx_count'] != self.recovery.verified_info['modulator_count']):
+                self.system.mux_state = 'ERROR'
+                errors.append('Mux is not streaming with the verified Controller TX count')
             if mux_status.get("last_error"):
                 errors.append(mux_status["last_error"])
             if self.system.mux_transport_state == "ERROR":
