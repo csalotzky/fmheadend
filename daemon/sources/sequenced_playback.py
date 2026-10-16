@@ -7,10 +7,10 @@ from collections import deque
 from dataclasses import dataclass
 from threading import Lock
 
-from ..errors import DependencyUnavailable
+from ..errors import SourceUnavailable
 
 
-class SequencedPlaybackError(DependencyUnavailable):
+class SequencedPlaybackError(SourceUnavailable):
     """No selectable item; source policy determines whether refresh can recover."""
 
 

@@ -22,8 +22,8 @@ void audio_samples_mix(uint32_t *out, size_t frames, uint8_t sine_mask,
             for (unsigned lane=0;lane<8;++lane) {
                 uint16_t sample=0;
                 if (sine_mask&(1u<<lane)) sample=(uint16_t)sine[pos];
-                else if (spi && f<128 && (digital_mask&(1u<<lane))) {
-                    const uint8_t *v=spi+4+lane*512+f*4+slot*2;
+                else if (spi && f<FRAMES_PER_PACKET && (digital_mask&(1u<<lane))) {
+                    const uint8_t *v=spi+4+lane*PCM_BLOCK_BYTES+f*4+slot*2;
                     sample=(uint16_t)((unsigned)v[0]|(unsigned)v[1]<<8);
                 }
                 for (unsigned w=0;w<4;++w) {

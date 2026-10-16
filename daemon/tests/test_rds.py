@@ -155,6 +155,11 @@ def test_no_ecc_invented_and_af_cycles_independently():
     assert [g[2] for g in ps[:6]] == [0xe401,0x0203,0x04cd]*2
 
 
+def on_air(r, channels):
+    for i, row in r.manager.statuses.items():
+        row.tx_state = 'ON' if i in channels else 'OFF'
+
+
 @pytest.fixture
 def rig(tmp_path):
     clock=Clock();db=Database(tmp_path/'rds.db');sources=SourceManager(db)
@@ -162,7 +167,7 @@ def rig(tmp_path):
     for i in range(8):
         c=config(rds_rt='Fallback',rds_metadata_to_rt=True,input_source_id=src.id)
         db.save('modulators',c,i)
-    manager=SimpleNamespace(active_sources={i:src.id for i in range(8)},statuses={i:ModulatorStatus(id=i) for i in range(8)})
+    manager=SimpleNamespace(active_sources={i:src.id for i in range(8)},statuses={i:ModulatorStatus(id=i, tx_state='ON') for i in range(8)})
     rp=MockRp2354Client(clock=clock);rt=RadioTextService(db,sources,clock)
     refill=RdsRefill(db,manager,rt,rp,clock)
     yield SimpleNamespace(clock=clock,db=db,sources=sources,src=src,manager=manager,rp=rp,rt=rt,refill=refill)
@@ -242,15 +247,15 @@ def test_lookahead_survives_serialized_status_gap(rig, jitter, old_horizon):
 @pytest.mark.parametrize('boundary', ['stop', 'disable', 'configuration', 'recovery'])
 def test_two_second_queue_discarded_at_lifecycle_boundary(rig, boundary):
     r = rig
-    r.manager.active_sources = {0: r.src.id}
+    on_air(r, {0})
     r.refill.tick()
     assert len(r.rp.rds_fifos[0]) == 23
     c = r.db.get('modulators', 0)
     if boundary == 'stop':
-        r.manager.active_sources.clear()
+        on_air(r, set())
         r.refill.stop(0)
         assert not r.rp.rds_fifos[0]
-        r.manager.active_sources = {0: r.src.id}
+        on_air(r, {0})
     elif boundary == 'disable':
         c.rds_enabled = False
         r.db.save('modulators', c, 0)
@@ -276,7 +281,7 @@ def test_two_second_queue_discarded_at_lifecycle_boundary(rig, boundary):
 
 
 def test_zero_partial_and_maximum_multiple_batches(rig):
-    r=rig;r.manager.active_sources={0:r.src.id};r.rp.rds_capacity=0
+    r=rig;on_air(r, {0});r.rp.rds_capacity=0
     r.refill.tick();assert not r.rp.rds_history
     r.rp.rds_capacity=2;r.clock.advance(.2);r.refill.tick()
     assert r.manager.statuses[0].rds_groups_accepted==2
@@ -287,7 +292,7 @@ def test_zero_partial_and_maximum_multiple_batches(rig):
 
 
 def test_busy_preserves_exact_batch_and_commits_only_on_ack(rig):
-    r=rig;r.manager.active_sources={0:r.src.id}
+    r=rig;on_air(r, {0})
     push=r.rp.push_rds;r.rp.push_rds=Mock(side_effect=Busy(Command.RDS_PUSH,Status.BUSY))
     r.refill.tick();state=r.refill.channels[0]
     pending=state.pending[0];assert state.scheduler.ps_segment==0 and state.scheduler.rt_segment==0
@@ -299,7 +304,7 @@ def test_busy_preserves_exact_batch_and_commits_only_on_ack(rig):
 
 
 def test_ambiguous_failure_clears_before_restart(rig):
-    r=rig;r.manager.active_sources={0:r.src.id};real_push=r.rp.push_rds
+    r=rig;on_air(r, {0});real_push=r.rp.push_rds
     def lost_ack(channel,groups):
         real_push(channel,groups)
         raise DependencyUnavailable('ACK lost; outcome unknown')
@@ -336,7 +341,7 @@ def test_capacity_failure_preserves_config_and_can_retry(rig):
 
 def test_ambiguous_push_clear_and_immediate_full_lookahead(rig):
     r = rig
-    r.manager.active_sources = {0:r.src.id}
+    on_air(r, {0})
     original = r.rp.push_rds
     uncertain = []
     def lost_ack(channel, groups):
@@ -363,7 +368,7 @@ def test_ambiguous_push_clear_and_immediate_full_lookahead(rig):
 
 def test_not_sent_push_keeps_exact_pending_batch_without_clear(rig):
     from fmheadendd.rp2354.protocol import HardwareUnavailable, Outcome
-    r = rig; r.manager.active_sources = {0:r.src.id}
+    r = rig; on_air(r, {0})
     error = HardwareUnavailable('open failed')
     error.command, error.outcome = Command.RDS_PUSH, Outcome.NOT_SENT
     original = r.rp.push_rds
@@ -424,7 +429,7 @@ def test_current_database_and_api_ecc(tmp_path):
 
 
 def test_clear_failure_blocks_new_push_until_success(rig):
-    r=rig;r.manager.active_sources={0:r.src.id};r.refill.tick()
+    r=rig;on_air(r, {0});r.refill.tick()
     clear=r.rp.clear_rds;r.rp.clear_rds=Mock(side_effect=DependencyUnavailable('clear failed'))
     c=r.db.get('modulators',0);c.rds_pi=0xabcd;r.db.save('modulators',c,0)
     accepted=r.manager.statuses[0].rds_groups_accepted
@@ -435,7 +440,7 @@ def test_clear_failure_blocks_new_push_until_success(rig):
 
 
 def test_busy_retry_waits_for_sufficient_fresh_capacity(rig):
-    r=rig;r.manager.active_sources={0:r.src.id};push=r.rp.push_rds
+    r=rig;on_air(r, {0});push=r.rp.push_rds
     r.rp.push_rds=Mock(side_effect=Busy(Command.RDS_PUSH,Status.BUSY));r.refill.tick()
     pending=r.refill.channels[0].pending[0]
     query=r.rp.get_rds_fifo_free;r.rp.get_rds_fifo_free=Mock(return_value=[1]*8)
@@ -480,7 +485,7 @@ def test_app_uses_existing_rds_control_path(tmp_path):
 
 
 def test_rt_change_preserves_ps_duration_and_quota_credits(rig):
-    r=rig;r.manager.active_sources={0:r.src.id}
+    r=rig;on_air(r, {0})
     c=r.db.get('modulators',0);c.rds_ps=[PsEntry(text='ONE',duration_s=2),PsEntry(text='TWO',duration_s=2)]
     r.db.save('modulators',c,0);r.refill.tick()
     expected=deepcopy(r.refill.channels[0].scheduler.allocator)

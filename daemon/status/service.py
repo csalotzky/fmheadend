@@ -6,7 +6,7 @@ from ..errors import DependencyUnavailable, DomainError
 from .. import __version__
 from ..rp2354.linux_client import Rp2354Client
 from ..rp2354.protocol import IncompatibleProtocol, RpResponseError
-from ..models.runtime_status import HeadendStatus, SystemStatus, TxState, WriterPcmStatus
+from ..models.runtime_status import HeadendStatus, SystemStatus, TxState, WriterPcmStatus, InputSourceStatus
 
 
 logger = logging.getLogger(__name__)
@@ -33,6 +33,7 @@ class StatusService:
         self._publication_failed = False
         self._mux_state = None
         self._observed_at = None
+        self._modulator_configs = {}
         self.real_rp = isinstance(rp, Rp2354Client)
         self.system = SystemStatus(mocked=not self.real_rp)
         self.info = {"fmheadend_version": __version__, "controller_protocol_version": None,
@@ -48,12 +49,13 @@ class StatusService:
         """
         source_statuses = {}
         views = {}
+        self._modulator_configs = {c.id: c for c in self.modulators.list()}
         if self.config is not None:
             configs = self.config.list('sources')
             profile_errors = {}  # One generation only; no mutable profile models.
             source_statuses = {s.id: self.sources.status(s.id, source=s,
                 profile_errors=profile_errors).model_copy(deep=True) for s in configs}
-            views = dict(sources=configs, modulators=self.modulators.list(),
+            views = dict(sources=configs, modulators=list(self._modulator_configs.values()),
                          info=dict(self.info), source_statuses=source_statuses)
             now = self.clock()
             if (configuration_changed or self._profile_list_at is None
@@ -150,7 +152,8 @@ class StatusService:
                 row.hardware_last_error = channel["last_error_code"]
                 if row.hardware_tx_state == "ERROR":
                     errors.append(f"Controller TX{row.id}: {row.hardware_last_error}")
-                elif row.hardware_tx_state != ('ON' if self.modulators.desired_on(row.id) else 'OFF'):
+                elif row.hardware_tx_state != ('ON' if (self.recovery.expected_on(row.id) if self.recovery
+                        else self.modulators.desired_on(row.id)) else 'OFF'):
                     errors.append(f"Controller TX{row.id}: observed state differs from desired state")
                 elif row.hardware_tx_state == 'ON' and row.rf_attenuation_db != self.modulators.get(row.id).rf_attenuation_db:
                     errors.append(f"Controller TX{row.id}: observed attenuation differs from desired configuration")
@@ -201,24 +204,34 @@ class StatusService:
             system.controller_observation_stale = True
             system.last_error = str(self.recovery.error)
         system.controller_observation_age_s = None if self._observed_at is None else max(0, self.clock() - self._observed_at)
+        if self.recovery and self.recovery.hardware_error and not self.recovery.error:
+            system.last_error = self.recovery.hardware_error
         system.uptime_s = max(0, self.clock() - self.started)
         rows = []
         source_statuses = {} if source_statuses is None else dict(source_statuses)
         writers = self.mux.pcm_snapshot() if hasattr(self.mux, 'pcm_snapshot') else {}
         for status in self.modulators.statuses.values():
             row = status.model_copy(deep=True)
-            source_id = self.modulators.active_sources.get(row.id)
+            config = self._modulator_configs[row.id]
+            source_id = config.input_source_id if config.audio_mode != 'ANALOG' else None
             if source_id is not None:
                 if source_id not in source_statuses:
-                    source_statuses[source_id] = self.sources.status(source_id)
+                    source_statuses[source_id] = self.sources.statuses.get(source_id, InputSourceStatus(source_id=source_id))
                 source = source_statuses[source_id]
-                row.source_state = source.state.value
+                if not (self.recovery and row.id in self.recovery.audio_pending):
+                    row.source_state = source.state.value
+                    row.source_last_error = source.last_error
+                    row.source_error_scope = source.error_scope
                 if source.pcm is not None:
                     row.pcm_staging = source.pcm.staging
                     row.pcm_consumer = source.pcm.consumers.get(row.id)
             if row.id in writers:
                 row.pcm_writer = WriterPcmStatus(**writers[row.id])
+            if self.modulators.rds and self.modulators.rds.suspended and config.rds_enabled:
+                row.rds_state = 'SUSPENDED'
             rows.append(row)
-        if system.last_error or system.mux_state != "RUNNING" or any(r.tx_state == TxState.ERROR or r.source_state == "ERROR" or r.rds_last_error or r.last_error for r in rows):
+        if system.last_error or system.mux_state != "RUNNING" or any(r.tx_state == TxState.ERROR or
+                (r.source_last_error and r.source_error_scope == 'INTERNAL') or
+                r.rds_last_error or r.last_error for r in rows):
             system.system_state = "DEGRADED"
         return HeadendStatus(system=system, modulators=rows)

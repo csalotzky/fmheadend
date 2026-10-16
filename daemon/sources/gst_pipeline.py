@@ -9,7 +9,7 @@ from urllib.parse import unquote, urlsplit
 import threading
 import time
 
-from ..errors import DependencyUnavailable
+from ..errors import DependencyUnavailable, SourceUnavailable
 from ..models.configuration import SourceType, SourceTestResult, LocalConfig
 from .local_playback import LocalPlayback, LocalPlaybackError
 from .alsa_capture import link_alsa_capture
@@ -25,6 +25,10 @@ log = logging.getLogger(__name__)
 
 class PipelineConfigurationError(DependencyUnavailable):
     """Permanent construction/format failure, not temporary source availability."""
+
+
+class MissingDecoderError(PipelineConfigurationError, SourceUnavailable):
+    """Input format cannot be decoded; retain the permanent retry policy."""
 
 
 def caps_structure(caps, index=0):
@@ -149,6 +153,7 @@ class GstPipeline:
         self._ready = threading.Event()
         self._prepared = threading.Event()
         self.fatal_error = None
+        self._failure = None
         self._finished = threading.Event()
         self._thread = None
         self._lock = threading.Lock()
@@ -166,7 +171,7 @@ class GstPipeline:
         self._snapshot = {"state": "IDLE", "codec": None, "input_sample_rate": None,
                           "input_channels": None, "bitrate_bps": None, "stream_title": None,
                           "artist": None, "title": None, "output_caps": None,
-                          "reconnect_count": 0, "last_error": None}
+                          "reconnect_count": 0, "last_error": None, "error_scope": "SOURCE"}
         self._station_name = None
         self._callback_error = None
         self._last_sample = 0.0
@@ -319,10 +324,10 @@ class GstPipeline:
                 message = self.snapshot()["last_error"] or (
                     "Timed out constructing audio pipeline" if self.reconnect else "Timed out waiting for decoded PCM audio")
                 self.stop()
-                raise DependencyUnavailable(message)
+                raise self._failure or DependencyUnavailable(message)
         if self.fatal_error:
             self.stop()
-            raise DependencyUnavailable(self.fatal_error)
+            raise self._failure or DependencyUnavailable(self.fatal_error)
 
     def stop(self):
         if self.source.type == SourceType.PODCAST:
@@ -669,16 +674,28 @@ class GstPipeline:
 
     def _bus_failure(self, message):
         error, debug = message.parse_error()
+        log.warning('source %s GStreamer error: element=%s domain=%s code=%s message=%s debug=%s',
+                    getattr(self.source, 'id', 'probe'), getattr(message, 'src', None),
+                    getattr(error, 'domain', None), getattr(error, 'code', None), error.message, debug)
         Gst = self.Gst
         if error.matches(Gst.CoreError.quark(), Gst.CoreError.MISSING_PLUGIN) or error.matches(
                 Gst.StreamError.quark(), Gst.StreamError.CODEC_NOT_FOUND):
-            return PipelineConfigurationError(error.message)
+            return MissingDecoderError(error.message)
+        external = any(error.matches(domain.quark(), getattr(error, 'code', -1))
+                       for domain in (getattr(Gst, 'ResourceError', None), Gst.StreamError)
+                       if domain is not None)
         if self.source.type == SourceType.ALSA:
             detail = f"ALSA capture {self.source.config['device']}: {error.message}"
             if self.source.config['device'].startswith('hw:'):
                 detail += ' Raw hw: capture requires a supported 48 kHz mono/stereo format; use plughw: for ALSA conversion.'
-            return DependencyUnavailable(detail)
-        return DependencyUnavailable(error.message)
+            return (SourceUnavailable if external else DependencyUnavailable)(detail)
+        return (SourceUnavailable if external else DependencyUnavailable)(error.message)
+
+    def _missing_plugin_message(self, message):
+        structure = message.get_structure()
+        if structure is not None and structure.get_name() == 'missing-plugin':
+            log.warning('source %s GStreamer missing-plugin: %s',
+                        getattr(self.source, 'id', 'probe'), structure.to_string())
 
     def _attempt(self):
         if self.radio_url is not None:
@@ -694,7 +711,7 @@ class GstPipeline:
                      codec=None, bitrate_bps=None, input_sample_rate=None, input_channels=None, output_caps=None)
         try:
             self._build()
-        except LocalPlaybackError:
+        except SourceUnavailable:
             raise
         except Exception as exc:
             raise PipelineConfigurationError(str(exc)) from exc
@@ -704,11 +721,17 @@ class GstPipeline:
         if state_change == Gst.StateChangeReturn.FAILURE:
             # A failed state change may already have posted a missing-plugin
             # error. Preserve that distinction before accepting a waiting source.
-            message = self._bus.timed_pop_filtered(0, Gst.MessageType.ERROR)
+            message = None
+            for _ in range(32):
+                message = self._bus.timed_pop_filtered(0, Gst.MessageType.ERROR | Gst.MessageType.ELEMENT)
+                if message is None or message.type == Gst.MessageType.ERROR:
+                    break
+                self._missing_plugin_message(message)
+                message = None
             failure = self._bus_failure(message) if message else DependencyUnavailable("GStreamer refused PLAYING state")
             if not isinstance(failure, PipelineConfigurationError):
                 self._prepared.set()
-            if self._local is None:
+            if self._local is None or not isinstance(failure, SourceUnavailable):
                 raise failure
             self._local_resume(failed=True)
         self._prepared.set()
@@ -743,19 +766,21 @@ class GstPipeline:
                 if message.type == Gst.MessageType.ERROR:
                     if self.source.type == SourceType.PODCAST and self._local.stale_error(message.src):
                         continue
-                    if self._local is not None:
+                    failure = self._bus_failure(message)
+                    if self._local is not None and isinstance(failure, SourceUnavailable):
                         log.warning('Sequenced media item failed; skipping (GStreamer error)')
                         self._local_resume(failed=True)
                         started = time.monotonic()
                         break
-                    raise self._bus_failure(message)
+                    raise failure
                 if message.type == Gst.MessageType.EOS:
                     if self._local is not None:
                         self._local_resume(failed=False)
                         started = time.monotonic()
                         break
-                    raise DependencyUnavailable("Source reached end of stream")
+                    raise SourceUnavailable("Source reached end of stream")
                 if message.type == Gst.MessageType.ELEMENT:
+                    self._missing_plugin_message(message)
                     self._peak_message(message)
                     self._station_headers(message)
                 if message.type == Gst.MessageType.TAG and self._local is None:
@@ -770,7 +795,7 @@ class GstPipeline:
                     self._local_resume(failed=True)
                     started = time.monotonic()
                     continue
-                raise DependencyUnavailable("Timed out waiting for audio (source stalled)")
+                raise SourceUnavailable("Timed out waiting for audio (source stalled)")
             for _ in range(16):
                 data = self.staging.pop()
                 if data is None:
@@ -825,11 +850,15 @@ class GstPipeline:
                 try:
                     self._attempt()
                 except Exception as exc:
+                    self._failure = exc if isinstance(exc, DependencyUnavailable) else PipelineConfigurationError(str(exc))
                     trial = self.radio_url.observe()[1] if self.radio_url is not None else None
                     candidate = trial is not None and trial['state'] in ('trying', 'pcm')
                     if (isinstance(exc, (PipelineConfigurationError, LocalPlaybackError)) and not candidate) or not isinstance(exc, DependencyUnavailable):
                         self.fatal_error = str(exc)
-                    self._update(state="ERROR", last_error=str(exc))
+                    self._update(state="ERROR", last_error=str(exc),
+                                 error_scope='SOURCE' if isinstance(exc, SourceUnavailable) else 'INTERNAL')
+                    if not isinstance(exc, SourceUnavailable):
+                        log.exception('source %s internal pipeline failure', getattr(self.source, 'id', 'probe'))
                     if self.source.type == SourceType.HTTP and self.source.config.get('radio_browser_uuid'):
                         log.warning("source %s: HTTP playback failed (%s)", getattr(self.source, "id", "probe"), type(exc).__name__)
                     else:
@@ -859,7 +888,9 @@ class GstPipeline:
                 self._update(reconnect_count=self.snapshot()["reconnect_count"] + 1)
         except Exception as exc:
             self.fatal_error = str(exc)
-            self._update(state="ERROR", last_error=str(exc))
+            self._failure = exc if isinstance(exc, DependencyUnavailable) else PipelineConfigurationError(str(exc))
+            self._update(state="ERROR", last_error=str(exc), error_scope='INTERNAL')
+            log.exception('source %s internal worker failure', getattr(self.source, 'id', 'probe'))
         finally:
             self._finished.set()
 

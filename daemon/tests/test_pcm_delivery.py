@@ -116,7 +116,7 @@ def test_startup_bus_batches_forward_pcm_but_finish_headers_before_ready():
     pipeline._pipeline = SimpleNamespace(set_state=lambda state: 1)
     pipeline._convert = SimpleNamespace(get_static_pad=lambda name: SimpleNamespace(get_current_caps=lambda: None))
     pipeline._build = lambda: pipeline.staging.put(b'1234')
-    messages = iter([SimpleNamespace(type=kinds.ELEMENT) for _ in range(65)] + [None])
+    messages = iter([SimpleNamespace(type=kinds.ELEMENT, get_structure=lambda: None) for _ in range(65)] + [None])
     pipeline._bus = SimpleNamespace(timed_pop=lambda timeout: next(messages))
     seen = []
     def header(message):
@@ -219,8 +219,12 @@ def test_status_exposes_stage_consumer_writer_and_mux_diagnostics_without_io():
     output.publish(b'1234')
     pcm = SourcePcmStatus(staging=PcmQueue().snapshot(), consumers=output.snapshot())
     sources = SimpleNamespace(status=Mock(return_value=InputSourceStatus(source_id=1, state='RUNNING', pcm=pcm)))
+    sources.statuses = {1: sources.status.return_value}
     modulators = SimpleNamespace(global_stopped=False, statuses={i: ModulatorStatus(id=i) for i in range(8)}, active_sources={0: 1, 1: 1},
-        get=lambda channel: SimpleNamespace(audio_mode='DIGITAL', rf_attenuation_db=0), desired_on=lambda channel: False)
+        get=lambda channel: SimpleNamespace(id=channel, audio_mode='DIGITAL', rf_attenuation_db=0,
+            input_source_id=1 if channel < 2 else None, rds_enabled=False),
+        desired_on=lambda channel: False, rds=None)
+    modulators.list = lambda: [modulators.get(i) for i in range(8)]
     mux = MockMuxClient()
     raw = mux.get_status()
     raw.update(late_frames=9, transport_errors=2)
@@ -237,7 +241,7 @@ def test_status_exposes_stage_consumer_writer_and_mux_diagnostics_without_io():
     assert status.modulators[1].pcm_staging.dropped_blocks == 0
     assert status.modulators[0].pcm_writer.stale_disconnects == 1
     assert status.modulators[2].pcm_staging is None
-    sources.status.assert_called_once_with(1)
+    sources.status.assert_not_called()  # Snapshot uses the last collected source observations.
     mux.get_status.assert_not_called()
 
 

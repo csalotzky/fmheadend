@@ -73,7 +73,7 @@ void pio_sm_exec(PIO p,unsigned s,unsigned instruction) { (void)p;(void)s;assert
 void pio_sm_set_enabled(PIO p,unsigned s,bool value)
 {
     (void)s;enabled=value;p->ctrl=value;
-    if(value) { ++starts;fake_pio.fdebug=0;next_complete=now+2666; }
+    if(value) { ++starts;fake_pio.fdebug=0;next_complete=now+(FRAMES_PER_PACKET*1000000u/48000u); }
 }
 void pio_sm_set_pins_with_mask(PIO p,unsigned s,uint32_t value,uint32_t mask)
 { (void)p;(void)s;assert(value==0 && mask==(0x3ffu<<4)); }
@@ -95,7 +95,7 @@ void dma_channel_configure(unsigned ch,const dma_channel_config *c,volatile void
                            const void *read,uint32_t count,bool trigger)
 {
     assert(c->chain==(ch^1) && c->ring==12 && c->dreq==7 && c->size==DMA_SIZE_32);
-    assert(c->read && !c->write && c->priority && !trigger && count==1024);
+    assert(c->read && !c->write && c->priority && !trigger && count==AUDIO_BUFFER_WORDS);
     assert(write==&fake_pio.txf[0] && ((uintptr_t)read&4095)==0);
     read_address[ch]=read;fake_dma.ch[ch].ctrl_trig=fake_dma.ch[ch].al1_ctrl=1;
     fake_dma.ch[ch].transfer_count=count;
@@ -111,7 +111,7 @@ void dma_channel_set_read_addr(unsigned ch,const void *read,bool trigger)
     if(scenario==LATE_REFILL) { busy[ch^1]=false;fake_dma.intr=1u<<(ch^1); }
 }
 void dma_channel_set_trans_count(unsigned ch,uint32_t count,bool trigger)
-{ assert(!trigger && !busy[ch] && count==1024); }
+{ assert(!trigger && !busy[ch] && count==AUDIO_BUFFER_WORDS); }
 uint64_t time_us_64(void) {
     now+=10;
     if(testing_stop && !stop_stuck && fake_dma.abort) {
@@ -143,7 +143,7 @@ void tight_loop_contents(void)
     busy[current]=false;fake_dma.intr|=1u<<current;
     current^=1;busy[current]=true;
     audio_engine_set_sources(1u<<(completions%8),scenario==SPI_NORMAL?255:0);
-    ++completions;next_complete+=2667;
+    ++completions;next_complete+=(FRAMES_PER_PACKET*1000000u+47999u)/48000u;
     if(completions==24) longjmp(done,1);
 }
 void multicore_launch_core1(void (*fn)(void))

@@ -2,7 +2,7 @@
 import logging
 import time
 from .diagnostics import error_scope
-from .errors import DependencyUnavailable, DomainError
+from .errors import DependencyUnavailable, DomainError, SourceUnavailable
 from .models.runtime_status import TxState
 from .rp2354.client import TxConfig
 from .rp2354.protocol import Command, IncompatibleProtocol, Outcome, RpResponseError, execution_outcome, PROTOCOL_VERSION
@@ -21,6 +21,10 @@ class Recovery:
         self.uptime = None
         self.stopping = False
         self.pending = {}  # channel -> next idempotent reconciliation step
+        self.audio_pending = {}  # channel -> next local audio-start attempt
+        self._audio_enabled = {}
+        self._audio_config = {}
+        self.hardware_error = None
         self._startup_step = 0
         self._startup_enabled = {}  # Last positively acknowledged startup state.
         self._startup = [('info', None)] + [('off', i) for i in range(8)]
@@ -69,6 +73,37 @@ class Recovery:
         if isinstance(error, DependencyUnavailable):
             self.communication_failed(error)
 
+    def expected_on(self, channel):
+        # A failed initial audio open must not turn RF on. Runtime input loss
+        # leaves an already enabled transmitter alone (mux supplies silence).
+        return self.modulators.desired_on(channel) and (
+            channel not in self.audio_pending or self._audio_enabled.get(channel, False))
+
+    def defer_audio(self, channel, error, *, configured=None):
+        if channel not in self.audio_pending:
+            self._audio_enabled[channel] = self.modulators.statuses[channel].tx_state == TxState.ON
+        self.audio_pending[channel] = self.clock() + 5.0
+        self._audio_config[channel] = configured
+        row = self.modulators.statuses[channel]
+        row.source_state = 'ERROR'
+        row.source_last_error = str(error)
+        row.source_error_scope = 'SOURCE' if isinstance(error, SourceUnavailable) else 'INTERNAL'
+
+    def _prepare_audio(self, config):
+        try:
+            self.modulators.restore_audio(config)
+        except Exception as exc:
+            # This boundary contains only source/mux work, never RP commands.
+            # Unexpected failures remain visible system faults with traceback.
+            self.defer_audio(config.id, exc, configured=TxConfig.from_modulator(config))
+            if not isinstance(exc, SourceUnavailable):
+                logger.exception('TX%s internal audio startup failure', config.id)
+            return False
+        self.audio_pending.pop(config.id, None)
+        row = self.modulators.statuses[config.id]
+        row.source_last_error, row.source_error_scope = None, 'SOURCE'
+        return True
+
     def _apply(self, step, channel):
         if step == 'info':
             info = self.rp.get_info()
@@ -87,7 +122,10 @@ class Recovery:
         elif step == 'enable':
             enabled = self.modulators.desired_on(channel)
             if enabled:
-                self.modulators.restore_audio(config)
+                if not self._prepare_audio(config):
+                    return
+            else:
+                self.audio_pending.pop(channel, None)
             self.rp.set_tx_enabled(channel, enabled)
             if not self.ready:
                 self._startup_enabled[channel] = enabled
@@ -99,9 +137,30 @@ class Recovery:
             row.last_error = None
 
     def service(self):
-        """Resume only explicitly uncertain TX writes, before normal refill."""
+        """Retry local audio starts and explicitly uncertain TX writes separately."""
         if not self.ready or not self.can_communicate():
             return
+        for channel, retry_at in list(self.audio_pending.items()):
+            if channel in self.pending or self.clock() < retry_at:
+                continue
+            self.audio_pending[channel] = self.clock() + 5.0
+            try:
+                if self.modulators.desired_on(channel):
+                    config = TxConfig.from_modulator(self.modulators.get(channel))
+                    if self._audio_config[channel] == config:
+                        self._apply('enable', channel)
+                    else:
+                        # A failed explicit START may precede configuration;
+                        # edits while waiting also require the normal lifecycle.
+                        self.modulators._start(channel, retry_budget=[0])
+                else:
+                    self.audio_pending.pop(channel, None)
+            except DependencyUnavailable as exc:
+                self.command_failed(channel, Command.SET_TX_ENABLED, exc)
+                self.modulators.statuses[channel].last_error = str(exc)
+            except DomainError:
+                pass  # _start already recorded the precise source/control fault.
+            return  # Bounded retries; healthy RDS/status work runs between them.
         following = {'off': 'config', 'config': 'clear', 'clear': 'enable'}
         for channel in list(self.pending):
             try:
@@ -129,20 +188,27 @@ class Recovery:
             raise self.error or DependencyUnavailable('Controller reconnect backoff')
         try:
             if not self.ready:
-                return self._restore()
+                try:
+                    return self._restore()
+                except (DomainError, ValueError) as exc:
+                    # Local configuration errors must not falsify bus health.
+                    self.hardware_error = f'Internal startup failure: {exc}'
+                    logger.exception('Internal startup failure')
+                    status = self.rp.get_status()
+                    self.error = None
+                    return status
             status = self.rp.get_status()
             # V1 uptime wraps and can be corrupted; a decrease is not proof of reboot.
             # Valid mismatches/faults are reported, not globally replayed.
             self.uptime = status.get('uptime_ms')
             self.error = None
             return status
-        except (DependencyUnavailable, DomainError, ValueError) as exc:
-            error = exc if isinstance(exc, DependencyUnavailable) else DependencyUnavailable(str(exc))
-            self.communication_failed(error)
+        except DependencyUnavailable as exc:
+            self.communication_failed(exc)
             if isinstance(exc, RpResponseError):
                 self.error = exc
                 self.retry_at = self.clock() + .25
-            raise error
+            raise
 
     def _restore(self):
         # Startup only. Keep progress so a bad final read cannot repeat OFF/config.
@@ -152,14 +218,17 @@ class Recovery:
         # A user can change desired state while the final observation is pending.
         # Revisit only targets whose confirmed startup write is now obsolete.
         for channel, enabled in list(self._startup_enabled.items()):
-            if enabled != self.modulators.desired_on(channel):
+            if channel not in self.audio_pending and enabled != self.modulators.desired_on(channel):
                 self._apply('enable', channel)
         observed = self.rp.get_status()
         if observed['state'] != 'OK' or any(
-            c['tx_state'] != ('ON' if self.modulators.desired_on(c['id']) else 'OFF')
+            c['tx_state'] != ('ON' if self.expected_on(c['id']) else 'OFF')
             for c in observed['modulators']
         ):
-            raise DependencyUnavailable('Controller startup read-back does not match desired TX state')
+            self.hardware_error = 'Controller startup read-back does not match expected TX state'
+            self.error = None
+            return observed  # A valid observation is not a communication failure.
+        self.hardware_error = None
         self.ready = True
         self.error = None
         self.uptime = observed.get('uptime_ms')

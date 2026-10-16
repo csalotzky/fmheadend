@@ -3,7 +3,7 @@ import time
 import sqlite3
 from ..diagnostics import error_scope
 from ..regions import HARDWARE_MIN_KHZ, HARDWARE_MAX_KHZ, HARDWARE_STEP_KHZ
-from ..errors import DependencyUnavailable, DomainError
+from ..errors import DependencyUnavailable, DomainError, SourceUnavailable
 from ..models.configuration import ModulatorConfig, RDS_FIELDS
 from ..models.runtime_status import ModulatorStatus, TxState
 from ..rp2354.client import TxConfig
@@ -231,15 +231,23 @@ class ModulatorManager:
                     self.sources.release(source.id, modulator_id)
                 self.active_sources.pop(modulator_id, None)
             rejected = isinstance(exc, RpResponseError) and exc.command == command
-            status.tx_state = TxState.ERROR if command is None or rejected else previous_state
-            status.last_error = self._command_error(command, exc)
+            source_failure = command is None and isinstance(exc, SourceUnavailable)
+            status.tx_state = previous_state if source_failure else (TxState.ERROR if command is None or rejected else previous_state)
+            status.last_error = None if source_failure else self._command_error(command, exc)
             status.last_error_scope = error_scope(exc)
+            if source_failure:
+                status.source_state, status.source_last_error = 'ERROR', str(exc)
+                status.source_error_scope = 'SOURCE'
+                if self.recovery:
+                    self.recovery.defer_audio(modulator_id, exc)
             if self.recovery and command is not None:
                 self.recovery.command_failed(modulator_id, command, exc)
-            raise DomainError(503, "DEPENDENCY_UNAVAILABLE", status.last_error) from exc
+            raise DomainError(503, "DEPENDENCY_UNAVAILABLE", status.last_error or str(exc)) from exc
         status.tx_state = TxState.ON
+        status.source_last_error = None
         if self.recovery:
             self.recovery.pending.pop(modulator_id, None)
+            self.recovery.audio_pending.pop(modulator_id, None)
         status.source_state = None if analog else self.sources.statuses[source.id].state
         logger.info("modulator %s started at %s kHz", modulator_id, config.frequency_khz)
         return status
@@ -271,6 +279,7 @@ class ModulatorManager:
             self.rds.stop(modulator_id)
         if self.recovery:
             self.recovery.pending.pop(modulator_id, None)
+            self.recovery.audio_pending.pop(modulator_id, None)
         cleanup_errors = []
         try:
             self.mux.detach(modulator_id)
@@ -360,3 +369,4 @@ class ModulatorManager:
             except DependencyUnavailable:
                 logger.exception('source cleanup failed for channel %s', channel)
         self.statuses[channel].source_state = None if self.get(channel).audio_mode == 'ANALOG' else 'IDLE'
+        self.statuses[channel].source_last_error = None

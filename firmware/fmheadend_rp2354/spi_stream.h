@@ -1,11 +1,12 @@
 #ifndef FMHEADEND_SPI_STREAM_H
 #define FMHEADEND_SPI_STREAM_H
+#include "firmware_config.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdatomic.h>
-#define SPI_FRAME_BYTES 4100u
-#define SPI_CAPTURE_BYTES 4101u /* One extra byte detects oversize transactions. */
+#define SPI_FRAME_BYTES (4u + TX_COUNT * PCM_BLOCK_BYTES)
+#define SPI_CAPTURE_BYTES (SPI_FRAME_BYTES + 1u) /* One extra byte detects oversize transactions. */
 #define SPI_FRAME_SLOTS 4u /* Three queued/borrowed frames plus one DMA capture. */
 #define SPI_PREFILL 2u
 #define SPI_MAX_AGE_US 20000u

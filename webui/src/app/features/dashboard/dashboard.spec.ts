@@ -26,7 +26,7 @@ describe('Operational display', () => {
   it('presents feeding RDS as Running without changing other states', () => {
     const state = setup(),
       data = sample();
-    const states = ['FEEDING', 'DISABLED', 'ERROR', 'IDLE'] as const;
+    const states = ['FEEDING', 'DISABLED', 'ERROR', 'IDLE', 'SUSPENDED'] as const;
     states.forEach((value, i) => (data.status.modulators[i].rds_state = value));
     state.channels.set(compose(data));
     const fixture = TestBed.createComponent(Dashboard);

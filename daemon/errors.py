@@ -8,3 +8,7 @@
 
 class DependencyUnavailable(Exception):
     """A mockable control or media dependency could not perform an operation."""
+
+
+class SourceUnavailable(DependencyUnavailable):
+    """An external media input/decoder is unavailable, not a system failure."""

@@ -1,6 +1,8 @@
 #ifndef FMHEADEND_BOARD_H
 #define FMHEADEND_BOARD_H
 
+#include "firmware_config.h"
+
 /* Verified PCB mapping: RP GPIO numbers, not package pin numbers. */
 #define AUDIO_SPI_MOSI_PIN 0u
 #define AUDIO_SPI_CS_PIN 1u
@@ -13,7 +15,7 @@
 #define HOST_I2C_SCL_PIN 15u
 #define QN_SDA_PIN 16u
 #define QN_SCL_PIN 17u
-#define QN_COUNT 8u
+#define QN_COUNT TX_COUNT
 /* XTM32026000GT00351001: 26 MHz, CL=10 pF, no external load capacitors.
  * Board-calibrated REG_VGA: RIN[7:6]=01 (20 kohm, unchanged), XCSEL[5:0]=5.
  * See docs/milestone8_3.md, Crystal-load calibration.

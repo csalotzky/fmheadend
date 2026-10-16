@@ -126,7 +126,7 @@ static void cs_irq(uint pin, uint32_t events)
              (dma_hw->ch[rx_dma].ctrl_trig&DMA_CH0_CTRL_TRIG_AHB_ERROR_BITS)!=0;
     uint32_t remaining=dma_hw->ch[rx_dma].transfer_count;
     uint8_t *buffer=spi_stream_capture(&stream);
-    /* RP2350 ABORT forces TRANS_COUNT to zero; 4101-COUNT would invent bytes.
+    /* RP2350 ABORT forces TRANS_COUNT to zero; CAPTURE_BYTES-COUNT would invent bytes.
      * WRITE_ADDR advances only on completed writes. Once ABORT and BUSY clear,
      * its displacement counts every retired byte exactly once, including any
      * in-flight write. Only then may software consume the residual FIFO tail.
@@ -211,10 +211,11 @@ bool spi_audio_init(void)
     dma_channel_configure(rx_dma,&dma,spi_stream_capture(&stream),&rx_pio->rxf[rx_sm],
         dma_encode_transfer_count(SPI_CAPTURE_BYTES),false);
     initialized=true;
-    snprintf(line,sizeof(line),"SPI AUDIO: init OK PIO1 SM=%d DMA=%d MOSI=0 CS=1 SCK=2 MISO=unused; mode0 25MHz; slots=4 queued=3 prefill=2 frame=4100\r\n",rx_sm,rx_dma);
+    snprintf(line,sizeof(line),"SPI AUDIO: init OK PIO1 SM=%d DMA=%d MOSI=0 CS=1 SCK=2 MISO=unused; mode0 25MHz; slots=4 queued=3 prefill=2 frame=%u samples=%u TX=%u\r\n",rx_sm,rx_dma,(unsigned)SPI_FRAME_BYTES,(unsigned)FRAMES_PER_PACKET,(unsigned)TX_COUNT);
     uart_puts(DEBUG_UART,line);
     uart_puts(DEBUG_UART,"SPI RX DIAG: first 5 rejected length/hardware frames; entry -> stopped; details capped until reset\r\n");
-    uart_puts(DEBUG_UART,"SPI RX EOF: retired WRITE_ADDR + FIFO tail; exact 4100 bytes / 32800 bits\r\n");
+    snprintf(line,sizeof(line),"SPI RX EOF: retired WRITE_ADDR + FIFO tail; exact %u bytes / %u bits\r\n",(unsigned)SPI_FRAME_BYTES,(unsigned)(8*SPI_FRAME_BYTES));
+    uart_puts(DEBUG_UART,line);
     return true;
 failed:
     spi_stream_error(&stream,SPI_RECEIVE_ERROR);
@@ -262,7 +263,8 @@ uint32_t spi_audio_error_count(void) { return spi_stream_errors(&stream); }
 static bool rx_diagnostic_line(char *line, size_t capacity)
 {
     if (!first_valid_logged && atomic_load_explicit(&first_valid_ready,memory_order_acquire)) {
-        snprintf(line,capacity,"SPI RX FIRST OK: bytes=4100/4100 bits=32800/32800 dma_bytes=%lu drained=%lu rem_after_abort=%lu\r\n",
+        snprintf(line,capacity,"SPI RX FIRST OK: bytes=%u/%u bits=%u/%u dma_bytes=%lu drained=%lu rem_after_abort=%lu\r\n",
+            (unsigned)SPI_FRAME_BYTES,(unsigned)SPI_FRAME_BYTES,(unsigned)(8*SPI_FRAME_BYTES),(unsigned)(8*SPI_FRAME_BYTES),
             (unsigned long)first_valid.dma_bytes,(unsigned long)first_valid.drained,(unsigned long)first_valid.remaining);
         first_valid_logged=true;
         return true;
@@ -280,8 +282,8 @@ static bool rx_diagnostic_line(char *line, size_t capacity)
     const rx_registers_t *a=&d->entry, *b=&d->stopped;
     unsigned number=rx_diagnostic_read+1;
     if (rx_diagnostic_part==0) {
-        snprintf(line,capacity,"SPI RX BAD #%u: bytes=%lu/4100 bits=%lu/32800 rem=%lu->%lu dma_bytes=%lu drained=%lu abort_ok=%u hw_fault=%u armed=%u active=%u cs=%lu->%lu\r\n",
-            number,(unsigned long)d->bytes,(unsigned long)d->bits,
+        snprintf(line,capacity,"SPI RX BAD #%u: bytes=%lu/%u bits=%lu/%u rem=%lu->%lu dma_bytes=%lu drained=%lu abort_ok=%u hw_fault=%u armed=%u active=%u cs=%lu->%lu\r\n",
+            number,(unsigned long)d->bytes,(unsigned)SPI_FRAME_BYTES,(unsigned long)d->bits,(unsigned)(8*SPI_FRAME_BYTES),
             (unsigned long)a->remaining,(unsigned long)b->remaining,(unsigned long)d->dma_bytes,(unsigned long)d->drained,
             d->aborted,d->fault,d->was_armed,d->was_active,(unsigned long)a->cs,(unsigned long)b->cs);
     } else if (rx_diagnostic_part==1) {

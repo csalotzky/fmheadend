@@ -688,7 +688,7 @@ Példa:
 - `RUNNING`
 - `ERROR`
 
-Egyetlen stream vagy egyetlen modulátor hibája tipikusan `DEGRADED`, nem teljes system `ERROR`.
+A külső médiaforrások elérhetetlensége önmagában nem rontja a rendszer egészségi állapotát: akár minden source hibája mellett is `RUNNING`. A source saját hibája a hozzárendelt TX-nél is látható. `DEGRADED` belső szolgáltatás-, vezérlőkommunikációs, hardvervezérlési vagy mux-hibát jelent. A startup egy hibás bemenet miatt nem blokkolhatja más csatornák indítását, a controller megfigyelését vagy a működő TX-ek statikus RDS-kiszolgálását.
 
 ---
 

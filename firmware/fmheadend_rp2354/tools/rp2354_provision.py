@@ -91,7 +91,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     build = args.build_dir.resolve()
     sdk = Path.home() / '.pico-sdk'
-    factory_path = build / 'factory/fmheadend_rp2354.bin'
+    factory_path = build / 'factory/fmheadend_rp2354_tx8.bin'
     factory, meta = load_artifact(factory_path, factory=True)
     if meta['rom_version'] != [1, 0]:
         raise ValueError('Factory provisioning requires ROM 1.0, non-TBYB')

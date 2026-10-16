@@ -47,6 +47,7 @@ export function compose(snapshot: Snapshot, previous?: Snapshot): ChannelView[] 
     const error =
       (runtime?.last_error_scope !== 'GLOBAL' ? runtime?.last_error : null) ||
       (runtime?.rds_last_error_scope !== 'GLOBAL' ? runtime?.rds_last_error : null) ||
+      runtime?.source_last_error ||
       (runtime?.tx_state === 'ERROR'
         ? runtime.hardware_last_error || 'Hardware/control error'
         : runtime?.source_state === 'ERROR'

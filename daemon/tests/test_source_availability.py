@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 from fmheadendd.app import create_app
 from fmheadendd.config import Settings
-from fmheadendd.errors import DependencyUnavailable
+from fmheadendd.errors import DependencyUnavailable, SourceUnavailable
 from fmheadendd.models.configuration import InputSourceConfig
 from fmheadendd.sources.gst_pipeline import GstPipeline, RetryBackoff
 
@@ -95,12 +95,13 @@ def test_construction_errors_are_not_source_outages(native, failure):
         pipeline.start()
     assert pipeline.fatal_error == str(failure)
     assert pipeline.snapshot()['state'] == 'ERROR'
+    assert pipeline.snapshot()['error_scope'] == 'INTERNAL'
     assert not pipeline._thread.is_alive()
 
 
 @pytest.mark.parametrize('permanent', [False, True])
-def test_failed_playing_distinguishes_unavailable_sender_from_missing_plugin(native, permanent):
-    native.MessageType = SimpleNamespace(ERROR=1)
+def test_failed_playing_distinguishes_unavailable_sender_from_missing_plugin(native, permanent, caplog):
+    native.MessageType = SimpleNamespace(ERROR=1, ELEMENT=2)
     native.CoreError = SimpleNamespace(quark=lambda: 'core', MISSING_PLUGIN=1)
     native.StreamError = SimpleNamespace(quark=lambda: 'stream', CODEC_NOT_FOUND=2)
     error = SimpleNamespace(message='Missing plugin' if permanent else 'Connection refused',
@@ -109,19 +110,61 @@ def test_failed_playing_distinguishes_unavailable_sender_from_missing_plugin(nat
         def _build(self):
             super()._build()
             self._pipeline.set_state = lambda state: -1 if state == native.State.PLAYING else 0
-            self._bus.timed_pop_filtered = lambda timeout, kind: SimpleNamespace(parse_error=lambda: (error, None))
+            structure = SimpleNamespace(get_name=lambda: 'missing-plugin',
+                to_string=lambda: 'missing-plugin, type=decoder, detail=audio/example;')
+            messages = iter([SimpleNamespace(type=2, get_structure=lambda: structure),
+                             SimpleNamespace(type=1, parse_error=lambda: (error, None))])
+            self._bus.timed_pop_filtered = lambda timeout, kind: next(messages)
     pipeline = FailedPlaying(InputSourceConfig(**SOURCES[0]), timeout_s=.2)
     try:
         if permanent:
             with pytest.raises(DependencyUnavailable, match='Missing plugin'):
                 pipeline.start()
             assert pipeline.fatal_error and not pipeline._prepared.is_set()
+            assert 'type=decoder, detail=audio/example' in caplog.text
         else:
             pipeline.start()
             assert pipeline._prepared.is_set() and not pipeline.fatal_error
             assert pipeline._thread.is_alive()
     finally:
         pipeline.stop()
+
+
+def test_local_missing_folder_preserves_external_failure_through_worker(native, tmp_path):
+    from fmheadendd.sources.local_playback import LocalPlayback
+    from fmheadendd.models.configuration import LocalConfig
+    class MissingFolder(NoPcmPipeline):
+        def _build(self):
+            LocalPlayback(LocalConfig(mode='folder', path=str(tmp_path/'missing')), lambda: None)._resolve()
+    pipeline = MissingFolder(InputSourceConfig(**SOURCES[0]), timeout_s=.2)
+    with pytest.raises(SourceUnavailable, match='FOLDER_UNREADABLE'):
+        pipeline.start()
+    assert pipeline.snapshot()['error_scope'] == 'SOURCE'
+    assert not pipeline._thread.is_alive()
+
+
+@pytest.mark.parametrize('domain,external', [('resource', True), ('stream', True), ('core', False)])
+def test_gst_error_provenance_and_debug_are_preserved(native, caplog, domain, external):
+    native.CoreError = SimpleNamespace(quark=lambda: 'core', MISSING_PLUGIN=1)
+    native.StreamError = SimpleNamespace(quark=lambda: 'stream', CODEC_NOT_FOUND=2)
+    native.ResourceError = SimpleNamespace(quark=lambda: 'resource')
+    error = SimpleNamespace(domain=domain, code=99, message='Detailed failure',
+                            matches=lambda d, c: d == domain and c == 99)
+    pipeline = NoPcmPipeline(InputSourceConfig(**SOURCES[0]))
+    pipeline.Gst = native
+    message = SimpleNamespace(src='decoder0', parse_error=lambda: (error, 'caps=audio/test; decoder detail'))
+    failure = pipeline._bus_failure(message)
+    assert isinstance(failure, SourceUnavailable) is external
+    assert f'domain={domain} code=99' in caplog.text
+    assert 'decoder0' in caplog.text and 'caps=audio/test; decoder detail' in caplog.text
+
+
+def test_missing_plugin_element_details_are_logged(native, caplog):
+    pipeline = NoPcmPipeline(InputSourceConfig(**SOURCES[0]))
+    structure = SimpleNamespace(get_name=lambda: 'missing-plugin',
+        to_string=lambda: 'missing-plugin, type=decoder, detail=audio/x-unavailable, name=Example decoder;')
+    pipeline._missing_plugin_message(SimpleNamespace(get_structure=lambda: structure))
+    assert 'type=decoder' in caplog.text and 'audio/x-unavailable' in caplog.text
 
 
 def test_shared_permanent_failure_still_blocks_new_consumer(native, tmp_path):

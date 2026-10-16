@@ -1,4 +1,5 @@
 #include "host_protocol.h"
+#include "firmware_config.h"
 #include <string.h>
 #ifdef FMHEADEND_FLASH_UPDATE
 #include "flash_update.h"
@@ -92,7 +93,7 @@ static uint8_t validate(const host_protocol_t *host)
     if (command < GET_INFO || command > GET_RDS_FIFO_FREE) return HOST_INVALID_COMMAND;
     const bool global = command == GET_INFO || command == GET_STATUS ||
                         command >= RESET_ERROR_COUNTERS;
-    if (global ? target != 0xff : target > 7) return HOST_INVALID_TARGET;
+    if (global ? target != 0xff : target >= TX_COUNT) return HOST_INVALID_TARGET;
     unsigned expected = 0;
     switch (command) {
     case SET_TX_CONFIG: expected = 15; break;
@@ -179,7 +180,7 @@ void host_protocol_stop(host_protocol_t *host, uint32_t uptime_ms)
             host->response[2] = 1;
             memcpy(host->response + 4, HOST_FIRMWARE_VERSION, sizeof(HOST_FIRMWARE_VERSION));
             memcpy(host->response + 20, HOST_HARDWARE_REVISION, sizeof(HOST_HARDWARE_REVISION));
-            host->response[36] = 8;
+            host->response[36] = TX_COUNT;
             break;
         case RDS_PUSH: {
             rds_fifo_t *fifo = &host->rds[event.target];
@@ -201,7 +202,7 @@ void host_protocol_stop(host_protocol_t *host, uint32_t uptime_ms)
         case GET_RDS_FIFO_FREE:
             event.response_length = 16;
             for (unsigned i = 0; i < 8; ++i) {
-                const uint16_t free = rds_fifo_free(&host->rds[i]);
+                const uint16_t free = (i<TX_COUNT ? rds_fifo_free(&host->rds[i]) : 0);
                 host->response[2 + 2*i] = free;
                 host->response[3 + 2*i] = free >> 8;
             }
@@ -272,7 +273,7 @@ void host_protocol_complete_work(host_protocol_t *host, const host_work_t *work)
             /* complete_work runs under the existing core0 IRQ mask. Snapshot
              * transport state here, after the slow QN status reads finish. */
             for (unsigned i = 0; i < 8; ++i) {
-                const uint16_t free = rds_fifo_free(&host->rds[i]);
+                const uint16_t free = (i<TX_COUNT ? rds_fifo_free(&host->rds[i]) : 0);
                 uint8_t *channel = host->response + 2 + 10 + 15*i;
                 channel[11] = free;
                 channel[12] = free >> 8;
