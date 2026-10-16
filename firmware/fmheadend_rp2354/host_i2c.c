@@ -141,7 +141,8 @@ static void host_i2c_irq(void)
     if (flags & I2C_IC_INTR_STAT_R_STOP_DET_BITS) {
         (void)hw->clr_stop_det;
 #ifdef FMHEADEND_FLASH_UPDATE
-        if(update_ack_armed && !host.receiving && host.generation==update_ack_generation &&
+        if(update_ack_armed && !host.receiving && host.response[0]==HOST_OK &&
+           host.response_size==FU_REPLY_SIZE+4 && host.generation==update_ack_generation &&
            host.response_cursor==host.response_size && hw->txflr==0 &&
            !(flags & I2C_IC_INTR_STAT_R_TX_ABRT_BITS)) update_ack_read=true;
         if(host.receiving) { update_ack_read=false; update_ack_armed=false; }
@@ -218,7 +219,7 @@ void host_i2c_poll(void)
         lock=save_and_disable_interrupts();
         host_protocol_complete_work(&host,&work);
 #ifdef FMHEADEND_FLASH_UPDATE
-        update_ack_armed=work.event.command==FU_COMMAND && (work.update_payload[0]==FU_ACTIVATE || work.update_payload[0]==FU_CONFIRM || work.update_payload[0]==FU_ABORT) &&
+        update_ack_armed=work.event.command==FU_COMMAND && (work.update_payload[0]==FU_ACTIVATE || work.update_payload[0]==FU_CONFIRM) &&
             work.event.status==HOST_OK && host.generation==work.generation;
         update_ack_command=work.update_payload[0];
         update_ack_generation=work.generation;

@@ -143,6 +143,22 @@ static bool image(uint32_t off,uint32_t n,bool tbyb,uint16_t major,uint16_t mino
     }
     return false;
 }
+/* Identity is read from the verified binary, never supplied as an upload ID. */
+static bool inspect(uint32_t off,uint32_t n,uint16_t *major,uint16_t *minor,uint8_t *id) {
+    uint8_t data[256+51],magic[16]; bool found=false;
+    for(unsigned j=0;j<16;++j) magic[j]=identity.magic[j];
+    for(uint32_t pos=0;pos<n;pos+=256) {
+        uint32_t len=n-pos<sizeof(data) ? n-pos : sizeof(data);
+        if(!read_flash(off+pos,data,len)) return false;
+        for(unsigned j=0;j<256 && j+52<=len;++j) if(!memcmp(data+j,magic,16)) {
+            if(found) return false;
+            found=true; memcpy(id,data+j+16,16);
+            *major=data[j+48]|(uint16_t)data[j+49]<<8;
+            *minor=data[j+50]|(uint16_t)data[j+51]<<8;
+        }
+    }
+    return found && image_header(off,n,true,*major,*minor)>=0;
+}
 static bool hash(uint32_t off,uint32_t n,bool normalize,uint8_t *out) {
     int flag=-1;
     if(normalize) {
@@ -188,6 +204,6 @@ static bool reboot(uint32_t off) {
 }
 void flash_update_platform_init(bool ready) {
     initialized=ready;
-    static const fu_ops_t ops={environment,maintenance,read_flash,erase_flash,program_flash,hash,image,buy,reboot};
+    static const fu_ops_t ops={environment,maintenance,read_flash,erase_flash,program_flash,hash,image,inspect,buy,reboot};
     flash_update_init(&ops);
 }

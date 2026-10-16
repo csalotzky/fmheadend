@@ -118,7 +118,7 @@ unsigned host_response_wait_ms(uint8_t command)
 {
     switch (command) {
 #ifdef FMHEADEND_FLASH_UPDATE
-    case FU_COMMAND: return 2000;
+    case FU_COMMAND: return 2;
 #endif
     case SET_TX_CONFIG: return 1000;
     case GET_STATUS: return 850;
@@ -150,6 +150,7 @@ void host_protocol_stop(host_protocol_t *host, uint32_t uptime_ms)
     if (!host->receiving) return;
     /* Validate integrity before dispatch or any command side effect. */
     const bool frame_ok = valid_frame(host);
+    host->update_reply_deferred=false;
     cancel_pending(host); /* New complete request abandons unstarted work. */
     ++host->generation;
     host_log_event_t event = {0};
@@ -219,6 +220,9 @@ void host_protocol_stop(host_protocol_t *host, uint32_t uptime_ms)
      * or reports INTERNAL_ERROR (unknown outcome) if execution already began.
      */
     reply(host, host->pending ? HOST_INTERNAL_ERROR : event.status, event.response_length);
+#ifdef FMHEADEND_FLASH_UPDATE
+    if(host->pending && event.command==FU_COMMAND) reply(host,HOST_BUSY,0);
+#endif
     host->request_size = 0;
     host->receiving = host->malformed = false;
 }
@@ -235,7 +239,7 @@ void host_protocol_run_work(host_protocol_t *host, host_work_t *work, uint32_t u
 #ifdef FMHEADEND_FLASH_UPDATE
     if(e->command==FU_COMMAND) {
         e->status=flash_update_execute(work->update_payload,e->length,work->result);
-        e->response_length=e->status==HOST_OK ? FU_REPLY_SIZE : 0;
+        e->response_length=e->status==HOST_OK ? (work->update_payload[0]==FU_WRITE ? FU_WRITE_REPLY_SIZE : FU_REPLY_SIZE) : 0;
         return;
     }
     if(flash_update_maintenance() && e->command!=GET_STATUS) {
@@ -254,6 +258,14 @@ void host_protocol_run_work(host_protocol_t *host, host_work_t *work, uint32_t u
 void host_protocol_complete_work(host_protocol_t *host, const host_work_t *work)
 {
     host->running=false;
+#ifdef FMHEADEND_FLASH_UPDATE
+    /* Keep a partially read BUSY frame immutable across the two READs. The
+     * completed reply replaces it only at the next response boundary. */
+    if(work->event.command==FU_COMMAND && host->generation==work->generation &&
+       host->response_cursor>0 && host->response_cursor<host->response_size) {
+        host->work=*work; host->update_reply_deferred=true; return;
+    }
+#endif
     if (host->generation==work->generation) {
         memcpy(host->response+2,work->result,work->event.response_length);
         if (work->event.command == GET_STATUS && work->event.status == HOST_OK) {
@@ -278,6 +290,16 @@ uint8_t host_protocol_read(host_protocol_t *host)
         host->malformed = true;
         host_protocol_stop(host, 0);
     }
+#ifdef FMHEADEND_FLASH_UPDATE
+    if(host->update_reply_deferred && host->response_cursor>=host->response_size) {
+        host->update_reply_deferred=false;
+        host_protocol_complete_work(host,&host->work);
+    }
+    bool update_wait=(host->pending || host->running) && host->work.event.command==FU_COMMAND;
+    if(update_wait) {
+        if(host->response_cursor>=host->response_size) reply(host,HOST_BUSY,0);
+    } else
+#endif
     if (host->pending) {
         cancel_pending(host);
         ++host->generation;

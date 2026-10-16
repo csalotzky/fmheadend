@@ -410,133 +410,55 @@ or open device nodes. Hardware info is cached through the status service.
 
 ## Extension: factory A/B firmware update (FLASH_UPDATE, 0xF0)
 
-This section adds one command; commands 0x01..0x0B, V1 CRC16, addressing,
-request framing and response framing above are unchanged. Target MUST be 0xFF.
-The physical bus remains the Pi-configured 50 kHz. The slave does not set it.
-The existing two-stage read is mandatory: read two header bytes, STOP, read
-exactly payload-length + two CRC bytes, STOP. The response cursor survives the
-first STOP. Flash operations execute in foreground, never in the I2C ISR.
+Global target 0xFF; unchanged V1 CRC16 framing and two-stage READ. OTA format 2
+is incompatible with the previous OTA payloads. Non-OTA commands are unchanged.
+All integers are little-endian; image offsets are relative to the inactive slot.
 
-All offsets below are relative to the payload; all multibyte integers are
-unsigned little-endian. Session IDs and hashes are opaque byte arrays (UUID
-bytes, not UUID integer byte swapping). Payload maximum remains 255 bytes.
-SHA-256 covers exactly the original native .bin, excluding final flash padding
-and excluding its JSON manifest. Format 1 denotes this project's validated
-unsigned ARM-S native SDK XIP IMAGE_DEF + VERSION + TBYB artifact, not a new
-container format. See [firmware update guide](rp2354-firmware-update.md).
-
-### Requests
-
-| Subcommand | Value | Payload bytes | Fields after subcommand byte 0 |
-|---|---|---|---|
-| BEGIN | 0x01 | 74 | session[16] @1; image_size:u32 @17; SHA256[32] @21; build_id[16] @53; ROM major:u16 @69; ROM minor:u16 @71; format:u8=1 @73 |
-| WRITE | 0x02 | 22+N | session[16] @1; image offset:u32 @17; N:u8 @21; data[N] @22 |
-| STATUS | 0x03 | 1 | none |
-| VERIFY | 0x04 | 17 | session[16] @1 |
-| ACTIVATE | 0x05 | 17 | session[16] @1 |
-| CONFIRM | 0x06 | 17 | session[16] @1 |
-| ABORT | 0x07 | 17 | session[16] @1 |
-
-WRITE uses N=128 except the last block (1..128). New offsets are contiguous,
-128-byte aligned and equal to accepted_offset. An entirely repeated identical
-block is idempotent; different data or partial overlaps are rejected. The
-receiver checks the existing request CRC before queuing any operation.
-Image sizes are 512..983040 bytes. ROM versions must increase lexicographically
-(major, minor); same-version replacement and downgrade are rejected.
-
-Every successful subcommand returns the same 128-byte status payload below.
-Errors use existing V1 status codes and an empty payload (still CRC protected):
-INVALID_COMMAND for an unknown subcommand, INVALID_TARGET for non-global target,
-INVALID_ARGUMENT for session/layout/state/image/offset rejection, INTERNAL_ERROR
-for flash/ROM/quiescence failure; existing CRC and BUSY handling is unchanged.
-STATUS exposes the last detailed update error. A rejected frame may not reach
-the update state machine and therefore need not change its detailed error.
-
-### Status/ACK payload (128 bytes)
-
-| Offset | Size | Meaning |
+| Subcommand | Code | Payload including subcommand |
 |---|---|---|
-| 0 | 1 | format=1 |
-| 1 | 1 | update state (table below) |
-| 2 | 1 | actual running ROM partition: 0=A, 1=B, 255=unknown |
-| 3 | 1 | session target partition: 0/1/255 |
-| 4 | 1 | ROM BUY_PENDING: 0=no pending trial, 1=pending, 255=unknown |
-| 5 | 1 | last update error (table below) |
-| 6 | 1 | maintenance requested (RF/audio remain off until reset) |
-| 7 | 1 | essential MCU/audio initialization succeeded |
-| 8 | 4 | accepted_offset: bytes accepted in RAM |
-| 12 | 4 | committed_offset: image bytes programmed and readback-verified |
-| 16 | 4 | image_size |
-| 20 | 16 | session ID |
-| 36 | 32 | expected original image SHA-256 |
-| 68 | 16 | expected image build ID |
-| 84 | 16 | running build ID |
-| 100 | 2 | running ROM image major |
-| 102 | 2 | running ROM image minor |
-| 104 | 16 | running textual firmware version, ASCII, NUL padded |
-| 120 | 4 | slot capacity: 983040 |
-| 124 | 2 | maximum WRITE data: 128 |
-| 126 | 1 | inactive partition: 0/1/255 |
-| 127 | 1 | reserved, zero |
+| BEGIN | 1 | size:u32, SHA256[32] (37 bytes total) |
+| WRITE | 2 | offset:u32, data[1..250] |
+| STATUS | 3 | no arguments |
+| VERIFY | 4 | no arguments |
+| ACTIVATE | 5 | no arguments |
+| CONFIRM | 6 | no arguments |
 
-States: 0 IDLE, 1 RECEIVING, 2 VERIFIED, 3 ACTIVATING, 4 CONFIRMED,
-5 INTERRUPTED, 6 FAILED, 7 ABORTED. VERIFIED is the positive VERIFY result;
-ACTIVATING records the verified image before requesting a trial boot.
-The target may equal the boot partition after activation; inactive always
-means the other partition. No pending trial by itself does NOT prove confirmation.
-A matching CONFIRMED session and running identity are also required.
+There is no upload identifier or ABORT. BEGIN always starts at zero and replaces
+incomplete work, but refuses pending trial/uncertain finalization. WRITE offsets
+are contiguous; an already accepted identical block may be acknowledged again.
+The receiver assembles 256-byte flash pages independently of packet boundaries.
 
-Errors: 0 none, 1 layout, 2 argument, 3 session, 4 offset, 5 flash,
-6 SHA256/verification, 7 image, 8 state, 9 quiescence, 10 ROM.
+Successful WRITE returns 9 bytes: format:u8=2, accepted:u32, committed:u32.
+Other successful OTA commands return this 112-byte STATUS:
 
-### Timing, durability and recovery
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 1 | format = 2 |
+| 1 | 1 | state: IDLE=0, RECEIVING=1, VERIFIED=2, ACTIVATING=3, CONFIRMED=4, INTERRUPTED=5, FAILED=6 |
+| 2..7 | 6 | boot slot, target slot, TBYB pending, error, maintenance, ready |
+| 8,12,16 | 4 each | accepted offset, committed offset, image size |
+| 20 | 32 | expected SHA256 |
+| 52 | 16 | image build ID (obtained during VERIFY) |
+| 68 | 16 | running build ID |
+| 84 | 4 | running ROM major:u16, minor:u16 |
+| 88 | 16 | running firmware version, NUL padded |
+| 104 | 4 | slot capacity = 0xF0000 |
+| 108 | 2 | maximum WRITE data = 250 |
+| 110 | 1 | inactive slot |
+| 111 | 1 | reserved zero |
 
-The host waits after request STOP before beginning its header read:
-BEGIN 2000 ms, WRITE 500 ms, STATUS 20 ms, VERIFY 2000 ms, ACTIVATE 2000 ms,
-CONFIRM 2000 ms, ABORT 2000 ms. These are conservative software completion
-windows, not physical flash guarantees. A premature read can return BUSY under
-the existing V1 rules. Physical worst-case times require board validation.
-Never issue another command concurrently; the CLI holds the existing advisory
-I2C-device lock for its entire lifetime, including uncertain-response recovery.
+Unavailable slot/TBYB values are 255. Error codes: 0 none, 1 layout, 2 argument,
+4 offset, 5 flash, 6 hash, 7 image, 8 state, 9 quiescence, 10 ROM.
+Outer errors have no payload. Every response, including BUSY, carries CRC16.
+For OTA only, BUSY is a completion poll: read again after 10 ms, without writing
+a new request. The client starts reading after 2 ms and bounds this wait at
+3 seconds. Non-OTA BUSY/retry behavior is unchanged. A new complete request
+abandons the previous response; after an uncertain mutation use STATUS first.
 
-A WRITE ACK can acknowledge 128 accepted bytes but zero committed bytes. The
-256-byte page is programmed only when full, or at the final tail (0xFF padding).
-Committed advances only after full page readback comparison, excluding padding.
-A lost ACK requires STATUS reconciliation before any resend. A matching BEGIN
-in a live session does not erase progress. Progress within RECEIVING is not
-journalled per page: after reset STATUS reports INTERRUPTED, accepted=committed=0,
-and BEGIN safely restarts the inactive image. Never resume using a remembered
-host offset across a reset. VERIFIED/ACTIVATING identity is durably journalled.
-
-The two metadata sectors alternate; each record has a data page and a separate
-seal page with matching sequence and CRC32. Data is read back before the seal;
-the previous valid record is retained until the replacement is sealed. Neither
-an unsealed record nor RAM-only progress authorizes ACTIVATE or CONFIRM.
-
-ACTIVATE re-verifies the image and persists ACTIVATING before replying. Reboot
-is armed for that specific response generation and occurs only after all response
-bytes, including CRC, have been consumed and the final read STOP has arrived.
-Header-only reads do not reboot. Lost/partial ACTIVATE replies can leave the
-old firmware running; inspect STATUS, do not assume activation.
-
-After trial boot the application does not automatically buy the image. The Pi
-must validate GET_INFO, GET_STATUS, protocol/version/build, actual target slot,
-session/hash and initialization status before CONFIRM. CONFIRM rechecks the
-image and session and invokes the ROM explicit-buy operation. After buying, the
-ROM-cleared TBYB bit is normalized only for comparison with the original upload
-hash; all other bytes must match. An uncertain CONFIRM response is reconciled
-with STATUS. If the trial is never confirmed, the ROM watchdog/normal boot
-selection returns to the previous bought image. See the guide for limits and
-initial provisioning; this protocol does not configure transmitter hardware.
-
-Successful CONFIRM seals CONFIRMED and then uses the same complete-response /
-CRC / final-STOP reboot gate as ACTIVATE, with a NORMAL ROM reboot. ABORT also
-uses that gate and a NORMAL reboot. A failed BEGIN keeps the attempted session
-in RAM: if quiescence never completed, ABORT can cancel it without any flash
-write, then reboot. Otherwise ABORT persists ABORTED first. Reboot initializes
-RF OFF; maintenance is never released in a partially stopped hardware state.
-These lifecycle rules do not add fields or alter framing, split READ, command
-IDs or bus speed. After an uncertain reply, STATUS must establish identity
-before replaying CONFIRM/ABORT. The uploader verifies the actual normal boot
-(identity, finalized state, no maintenance, initialization and RF OFF), not
-just an ACK or the absence of BUY_PENDING. See the [recovery lifecycle](rp2354-firmware-update.md#update-maintenance-and-confirmation).
+After reset, incomplete writes require BEGIN, never a remembered host offset.
+VERIFY hashes the complete flash image and checks native IMAGE_DEF/identity.
+ACTIVATE/CONFIRM use the existing native ROM TBYB lifecycle. Reboots require a
+complete successful ACK including CRC and final STOP; partial BUSY reads cannot
+release the reboot gate. CONFIRM checks buy success and durable finalization;
+the host verifies normal boot and RF OFF, not merely the disappearance of TBYB.
+See the [update lifecycle](rp2354-firmware-update.md#update-maintenance-and-confirmation).

@@ -50,6 +50,7 @@ typedef struct {
     rds_fifo_t rds[8]; /* Core0 only; see rds_fifo.h ownership contract. */
     rds_tx_t rds_tx; /* Foreground only; IRQ only changes the FIFO/epoch. */
     bool pending, running;
+    bool update_reply_deferred;
     uint32_t generation;
     host_work_t work;
 } host_protocol_t;

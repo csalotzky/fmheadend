@@ -10,11 +10,19 @@ int main(void) {
     const uint8_t body[]={FU_COMMAND,255,1,FU_STATUS};
     test_receive(&host,body,sizeof(body));host_protocol_stop(&host,0);
     assert(host.pending);assert(host_protocol_take_work(&host,&work));
+    /* Early split READ preserves work; completing between reads must not
+     * splice an OK payload into the BUSY frame. */
+    assert(host_protocol_read(&host)==HOST_BUSY);assert(host_protocol_read(&host)==0);
     host_protocol_run_work(&host,&work,0);host_protocol_complete_work(&host,&work);
-    test_response_crc(&host);assert(host_protocol_read(&host)==0);assert(host_protocol_read(&host)==128);
+    assert(host.update_reply_deferred);
+    host_protocol_read(&host);host_protocol_read(&host);
+    assert(host_protocol_read(&host)==HOST_OK);assert(!host.update_reply_deferred);
+    host.response_cursor=0;
+    host_protocol_run_work(&host,&work,0);host_protocol_complete_work(&host,&work);
+    test_response_crc(&host);assert(host_protocol_read(&host)==0);assert(host_protocol_read(&host)==FU_REPLY_SIZE);
     host_protocol_stop(&host,0);assert(host.response_cursor==2);
-    for(unsigned i=2;i<132;++i)assert(host_protocol_read(&host)==host.response[i]);
-    host_protocol_stop(&host,0);assert(host.response_cursor==132);
+    for(unsigned i=2;i<FU_REPLY_SIZE+4;++i)assert(host_protocol_read(&host)==host.response[i]);
+    host_protocol_stop(&host,0);assert(host.response_cursor==FU_REPLY_SIZE+4);
     /* CRC failure cannot enqueue or execute update work. */
     test_receive(&host,body,sizeof(body));host.request[4]^=1;host_protocol_stop(&host,0);
     assert(!host.pending && host.response[0]==HOST_INVALID_ARGUMENT);test_response_crc(&host);

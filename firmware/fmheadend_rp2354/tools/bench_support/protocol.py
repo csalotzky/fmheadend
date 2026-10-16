@@ -107,7 +107,7 @@ TX_CONFIG = struct.Struct("<IHBBBBBhBB")
 CHANNEL_STATUS = struct.Struct("<BhIIHBB")
 RESPONSE_SIZES = {command: 0 for command in Command}
 RESPONSE_SIZES.update({Command.GET_INFO: INFO.size, Command.GET_STATUS: GLOBAL_STATUS.size + 8 * CHANNEL_STATUS.size,
-                       Command.QN_READ_REGISTER: 1, Command.GET_RDS_FIFO_FREE: 16, Command.FLASH_UPDATE: 128})
+                       Command.QN_READ_REGISTER: 1, Command.GET_RDS_FIFO_FREE: 16, Command.FLASH_UPDATE: 112})
 
 
 def uint(value: int, bits: int, name: str) -> int:
@@ -163,6 +163,8 @@ def response_header(command: Command, data: bytes) -> tuple[Status, int]:
     except ValueError as exc:
         raise ProtocolError(f"Unknown Controller status: {data[0]}") from exc
     expected = RESPONSE_SIZES[command] if status == Status.OK else 0
+    if command == Command.FLASH_UPDATE and status == Status.OK and data[1] == 9:
+        expected = 9
     if data[1] != expected:
         raise ProtocolError(f"{command.name} response length {data[1]}, expected {expected}")
     return status, expected
@@ -301,15 +303,13 @@ class FlashCommand(IntEnum):
     VERIFY = 4
     ACTIVATE = 5
     CONFIRM = 6
-    ABORT = 7
 
 
-# Foreground erase/program windows; no flash operation occurs while reading ACK.
-FLASH_WAIT_MS = {FlashCommand.BEGIN: 2000, FlashCommand.WRITE: 500,
-                 FlashCommand.STATUS: 20, FlashCommand.VERIFY: 2000,
-                 FlashCommand.ACTIVATE: 2000, FlashCommand.CONFIRM: 2000,
-                 FlashCommand.ABORT: 2000}
-RESPONSE_WAIT_MS[Command.FLASH_UPDATE] = 2000
+# First read after foreground dispatch. Further reads poll the immutable BUSY
+# frame every 10 ms, with a bounded deadline; flash completion publishes the ACK.
+FLASH_WAIT_MS = {command: 2 for command in FlashCommand}
+RESPONSE_WAIT_MS[Command.FLASH_UPDATE] = 2
+FLASH_CHUNK = 250
 
 
 def validate_flash_payload(payload):
@@ -317,31 +317,39 @@ def validate_flash_payload(payload):
         raise ValueError('Missing FLASH_UPDATE subcommand')
     sub = FlashCommand(payload[0])
     if sub == FlashCommand.BEGIN:
-        if len(payload) != 74 or payload[73] != 1:
-            raise ValueError('BEGIN requires the native XIP artifact format 1')
-        size = struct.unpack_from('<I', payload, 17)[0]
-        if not 512 <= size <= 0xf0000:
-            raise ValueError('Image exceeds the application slot or is too small')
+        if len(payload) != 37:
+            raise ValueError('BEGIN requires size and SHA256 (OTA format 2)')
+        if not 512 <= struct.unpack_from('<I', payload, 1)[0] <= 0xf0000:
+            raise ValueError('Invalid image size')
     elif sub == FlashCommand.WRITE:
-        if len(payload) < 23 or not 1 <= payload[21] <= 128 or len(payload) != 22 + payload[21]:
-            raise ValueError('WRITE requires 1..128 bytes')
-    elif len(payload) != (1 if sub == FlashCommand.STATUS else 17):
+        if not 6 <= len(payload) <= 255:
+            raise ValueError('WRITE requires offset and 1..250 bytes')
+    elif len(payload) != 1:
         raise ValueError('Invalid FLASH_UPDATE payload length')
 
 
+def parse_flash_write(data):
+    if len(data) != 9 or data[0] != 2:
+        raise ProtocolError('Invalid OTA format 2 WRITE acknowledgement')
+    accepted, committed = struct.unpack_from('<II', data, 1)
+    if committed > accepted or accepted > 0xf0000:
+        raise ProtocolError('Invalid WRITE offsets')
+    return dict(accepted=accepted, committed=committed)
+
+
 def parse_flash_status(data):
-    if (len(data) != 128 or data[0] != 1 or data[1] > 7 or data[4] not in (0, 1, 255) or
-            any(data[i] not in (0, 1, 255) for i in (2, 3, 126)) or
-            data[5] > 10 or data[6] > 1 or data[7] > 1 or data[127]):
-        raise ProtocolError('Invalid FLASH_UPDATE status')
+    if (len(data) != 112 or data[0] != 2 or data[1] > 6 or data[4] not in (0, 1, 255) or
+            any(data[i] not in (0, 1, 255) for i in (2, 3, 110)) or
+            data[5] > 10 or data[6] > 1 or data[7] > 1 or data[111]):
+        raise IncompatibleProtocol('Expected session-free OTA format 2 status')
     accepted, committed, size = struct.unpack_from('<III', data, 8)
     if committed > accepted or accepted > size or size > 0xf0000:
         raise ProtocolError('Invalid FLASH_UPDATE offsets')
     return dict(state=data[1], boot=data[2], target=data[3], tbyb=data[4], error=data[5],
                 maintenance=bool(data[6]), ready=bool(data[7]), accepted=accepted,
-                committed=committed, size=size, session=data[20:36], sha256=data[36:68],
-                build=data[68:84], running_build=data[84:100],
-                version=struct.unpack_from('<HH', data, 100),
-                firmware_version=_text(data[104:120], 'firmware_version'),
-                capacity=struct.unpack_from('<I',data,120)[0],
-                chunk=struct.unpack_from('<H',data,124)[0], inactive=data[126])
+                committed=committed, size=size, sha256=data[20:52],
+                build=data[52:68], running_build=data[68:84],
+                version=struct.unpack_from('<HH', data, 84),
+                firmware_version=_text(data[88:104], 'firmware_version'),
+                capacity=struct.unpack_from('<I',data,104)[0],
+                chunk=struct.unpack_from('<H',data,108)[0], inactive=data[110])

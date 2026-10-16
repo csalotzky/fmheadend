@@ -8,17 +8,18 @@
 #define FU_SLOT_B 0xf4000u
 #define FU_META_A 0x1fe000u
 #define FU_META_B 0x1ff000u
-#define FU_REPLY_SIZE 128u
-#define FU_CHUNK 128u
-#define FU_BEGIN_SIZE 74u
-#define FU_FORMAT 1u
+#define FU_REPLY_SIZE 112u
+#define FU_WRITE_REPLY_SIZE 9u
+#define FU_CHUNK 250u
+#define FU_BEGIN_SIZE 37u
+#define FU_FORMAT 2u
 /* Internal reboot callback sentinel, never a wire offset. */
 #define FU_NORMAL_REBOOT UINT32_MAX
 #define FU_COMMAND 0xf0u
-enum { FU_BEGIN=1, FU_WRITE, FU_STATUS, FU_VERIFY, FU_ACTIVATE, FU_CONFIRM, FU_ABORT };
+enum { FU_BEGIN=1, FU_WRITE, FU_STATUS, FU_VERIFY, FU_ACTIVATE, FU_CONFIRM };
 enum { FU_IDLE, FU_RECEIVING, FU_VERIFIED, FU_ACTIVATING, FU_CONFIRMED,
-       FU_INTERRUPTED, FU_FAILED, FU_ABORTED };
-enum { FU_E_NONE, FU_E_LAYOUT, FU_E_ARGUMENT, FU_E_SESSION, FU_E_OFFSET,
+       FU_INTERRUPTED, FU_FAILED };
+enum { FU_E_NONE, FU_E_LAYOUT, FU_E_ARGUMENT, FU_E_OFFSET=4,
        FU_E_FLASH, FU_E_HASH, FU_E_IMAGE, FU_E_STATE, FU_E_QUIESCE, FU_E_ROM };
 typedef struct {
     uint8_t boot, tbyb;
@@ -36,6 +37,7 @@ typedef struct {
     bool (*program)(uint32_t, const uint8_t *);
     bool (*hash)(uint32_t, uint32_t, bool, uint8_t *);
     bool (*image)(uint32_t, uint32_t, bool, uint16_t, uint16_t, const uint8_t *);
+    bool (*inspect)(uint32_t, uint32_t, uint16_t *, uint16_t *, uint8_t *);
     bool (*buy)(void);
     bool (*reboot)(uint32_t);
 } fu_ops_t;
