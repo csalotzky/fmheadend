@@ -17,8 +17,22 @@ public:
     Server& operator=(const Server&) = delete;
     void run(const volatile std::sig_atomic_t& interrupted);
 private:
+    friend struct ServerTest;
     using Clock = std::chrono::steady_clock;
-    struct ControlPeer { int fd; std::string input, output; std::size_t sent = 0; Clock::time_point deadline; };
+    enum class Command { SetCount, Pause, Resume };
+    enum class StreamState { Waiting, Paused, Streaming };
+    struct ControlPeer { int fd; std::string input, output; std::size_t sent = 0; Clock::time_point deadline; bool waiting = false; };
+    // Protected by status_mutex_. Only the pump changes applied count/state.
+    // Keep completed requests until their owner collects the result or disconnects.
+    struct Pending {
+        int owner = -1;
+        Command command = Command::Pause;
+        std::size_t count = 0;
+        Clock::time_point deadline{};
+        const char* result = nullptr;
+    } pending_;
+    StreamState stream_state_ = StreamState::Waiting;
+    std::size_t tx_count_ = 0;
     std::string directory_;
     Transport& transport_;
     std::array<Channel, channels> inputs_;
@@ -38,5 +52,8 @@ private:
     void pump();
     void drop_producer(std::size_t channel);
     std::string status_json() const;
+    const char* submit(int owner, Command command, std::size_t count, Clock::time_point deadline);
+    void cancel(int owner);
+    void apply_pending(); // Pump only, with status_mutex_ held, between transfers.
 };
 } // namespace muxd

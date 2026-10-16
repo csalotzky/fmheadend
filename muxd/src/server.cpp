@@ -37,6 +37,9 @@ std::string quote(const std::string& text) {
     }
     return result + '"';
 }
+constexpr const char* success = "{\"ok\":true}\n";
+constexpr const char* state_error = "{\"error\":\"INVALID_STATE\",\"message\":\"Configure before resume; pause before changing TX count\"}\n";
+constexpr const char* timeout_error = "{\"error\":\"CONTROL_TIMEOUT\",\"message\":\"Command expired without application\"}\n";
 }
 Server::Server(std::string directory, Transport& transport, std::size_t ring_capacity)
     : directory_(std::move(directory)), transport_(transport),
@@ -87,27 +90,68 @@ void Server::drop_producer(std::size_t channel) {
     close_fd(producers_[channel]);
     inputs_[channel].disconnect();
 }
+const char* Server::submit(int owner, Command command, std::size_t count, Clock::time_point deadline) {
+    std::lock_guard<std::mutex> lock(status_mutex_);
+    if (pending_.owner != -1)
+        return "{\"error\":\"CONTROL_BUSY\"}\n";
+    if (command == Command::SetCount && (count < 1 || count > channels))
+        return "{\"error\":\"INVALID_COUNT\"}\n";
+    if ((command == Command::Resume && tx_count_ == 0) ||
+        (command == Command::SetCount && stream_state_ == StreamState::Streaming && count != tx_count_))
+        return state_error;
+    if ((command == Command::SetCount && count == tx_count_) ||
+        (command == Command::Resume && stream_state_ == StreamState::Streaming) ||
+        (command == Command::Pause && stream_state_ != StreamState::Streaming))
+        return success;
+    pending_ = {owner, command, count, deadline, nullptr};
+    return nullptr;
+}
+void Server::cancel(int owner) {
+    std::lock_guard<std::mutex> lock(status_mutex_);
+    if (pending_.owner == owner) pending_ = {};
+}
+void Server::apply_pending() {
+    if (pending_.owner == -1 || pending_.result) return;
+    if (Clock::now() >= pending_.deadline) { pending_.result = timeout_error; return; }
+    switch (pending_.command) {
+    case Command::SetCount:
+        tx_count_ = pending_.count;
+        if (stream_state_ == StreamState::Waiting) stream_state_ = StreamState::Streaming;
+        break;
+    case Command::Pause: stream_state_ = StreamState::Paused; break;
+    case Command::Resume: stream_state_ = StreamState::Streaming; break;
+    }
+    pending_.result = success;
+}
 void Server::pump() {
     FrameBuilder builder;
     auto deadline = Clock::now();
-    // Carry fractional nanoseconds: exactly 128/48000 seconds per frame.
+    // Carry fractional nanoseconds without changing the PCM frame cadence.
     std::uint64_t remainder = 0;
     while (!stopping_) {
         Frame frame = builder.next(inputs_);
+        std::size_t bytes = 0;
+        {
+            std::lock_guard<std::mutex> lock(status_mutex_);
+            apply_pending();
+            if (stream_state_ == StreamState::Streaming) bytes = spi_frame_bytes(tx_count_);
+        }
         bool ok = true;
         std::string error;
-        try { transport_.send(frame); }
+        try { if (bytes) transport_.send(frame, bytes); }
         catch (const std::exception& exc) { ok = false; error = exc.what(); }
         {
             std::lock_guard<std::mutex> lock(status_mutex_);
             ++frames_built_;
-            if (ok) ++frames_sent_; else ++transport_errors_;
-            transport_ok_ = ok;
-            last_error_ = std::move(error);
+            if (bytes) {
+                if (ok) ++frames_sent_; else ++transport_errors_;
+                transport_ok_ = ok;
+                last_error_ = std::move(error);
+            }
         }
-        remainder += 128000000000ULL;
-        deadline += std::chrono::nanoseconds(remainder / 48000);
-        remainder %= 48000;
+        remainder += samples_per_frame * 1000000000ULL;
+        deadline += std::chrono::nanoseconds(remainder / sample_rate);
+        remainder %= sample_rate;
         const auto now = Clock::now();
         if (deadline < now) {
             // Do not burst old frames after a scheduling/transport stall.
@@ -124,7 +168,11 @@ std::string Server::status_json() const {
         std::lock_guard<std::mutex> lock(status_mutex_);
         out << "{\"state\":\"RUNNING\",\"transport\":" << quote(transport_.mocked() ? "mock" : "spidev")
             << ",\"mocked\":" << (transport_.mocked() ? "true" : "false")
-            << ",\"transport_state\":" << quote(transport_ok_ ? "RUNNING" : frames_built_ ? "ERROR" : "STARTING")
+            << ",\"transport_state\":" << quote(transport_ok_ ? "RUNNING" : frames_sent_ + transport_errors_ ? "ERROR" : "STARTING")
+            << ",\"tx_count\":" << (tx_count_ ? std::to_string(tx_count_) : "null")
+            << ",\"spi_frame_bytes\":" << (tx_count_ ? std::to_string(spi_frame_bytes(tx_count_)) : "null")
+            << ",\"stream_state\":" << quote(stream_state_ == StreamState::Waiting ? "WAITING_FOR_CONFIG" :
+                stream_state_ == StreamState::Paused ? "PAUSED" : "STREAMING")
             << ",\"spi_ok\":" << (transport_.mocked() ? "null" : transport_ok_ ? "true" : "false")
             << ",\"frames_sent\":" << frames_sent_ << ",\"frames_built\":" << frames_built_
             << ",\"transport_errors\":" << transport_errors_
@@ -146,7 +194,9 @@ std::string Server::status_json() const {
 void Server::run(const volatile std::sig_atomic_t& interrupted) {
     setup();
     audio_ = std::thread(&Server::pump, this);
-    const std::regex request(R"(^\s*\{\s*"command"\s*:\s*"get_status"\s*\}\s*$)");
+    const std::regex request(R"re(^\s*\{\s*"command"\s*:\s*"(get_status|pause|resume)"\s*\}\s*$)re");
+    const std::regex set_count(R"re(^\s*\{\s*"command"\s*:\s*"set_tx_count"\s*,\s*"count"\s*:\s*([1-8])\s*\}\s*$)re");
+    const std::regex count_first(R"re(^\s*\{\s*"count"\s*:\s*([1-8])\s*,\s*"command"\s*:\s*"set_tx_count"\s*\}\s*$)re");
     while (!interrupted) {
         std::vector<pollfd> fds;
         fds.reserve(17 + peers_.size());
@@ -184,8 +234,22 @@ void Server::run(const volatile std::sig_atomic_t& interrupted) {
         }
         for (std::size_t i = 0; i != peer_count; ++i) {
             auto& peer = peers_[i];
-            if (Clock::now() >= peer.deadline) { close_fd(peer.fd); continue; }
+            if (peer.waiting) {
+                std::lock_guard<std::mutex> lock(status_mutex_);
+                if (pending_.owner == peer.fd && pending_.result) {
+                    peer.output = pending_.result;
+                    pending_ = {};
+                    peer.waiting = false;
+                    // Application has completed; allow a bounded reply-delivery window.
+                    peer.deadline = Clock::now() + std::chrono::seconds(2);
+                }
+            }
+            if (Clock::now() >= peer.deadline) { cancel(peer.fd); close_fd(peer.fd); continue; }
             const auto events = fds[17 + i].revents;
+            if (peer.waiting) {
+                if (events & (POLLIN | POLLHUP | POLLERR)) { cancel(peer.fd); close_fd(peer.fd); }
+                continue;
+            }
             if (peer.output.empty() && (events & (POLLIN | POLLHUP | POLLERR))) {
                 char data[1024];
                 const auto count = ::recv(peer.fd, data, sizeof(data), 0);
@@ -193,8 +257,18 @@ void Server::run(const volatile std::sig_atomic_t& interrupted) {
                 peer.input.append(data, static_cast<std::size_t>(count));
                 if (peer.input.size() > 1024) { close_fd(peer.fd); continue; }
                 if (peer.input.find('\n') != std::string::npos) {
-                    peer.output = std::regex_match(peer.input, request) ? status_json() :
-                        "{\"error\":\"INVALID_COMMAND\",\"message\":\"Expected get_status command\"}\n";
+                    std::smatch match;
+                    if (std::regex_match(peer.input, match, request)) {
+                        const auto command = match[1].str();
+                        if (command == "get_status") peer.output = status_json();
+                        else {
+                            const auto result = submit(peer.fd, command == "pause" ? Command::Pause : Command::Resume, 0, peer.deadline);
+                            if (result) peer.output = result; else peer.waiting = true;
+                        }
+                    } else if (std::regex_match(peer.input, match, set_count) || std::regex_match(peer.input, match, count_first)) {
+                        const auto result = submit(peer.fd, Command::SetCount, match[1].str()[0] - '0', peer.deadline);
+                        if (result) peer.output = result; else peer.waiting = true;
+                    } else peer.output = "{\"error\":\"INVALID_COMMAND\",\"message\":\"Expected get_status, pause, resume or set_tx_count with integer count 1..8\"}\n";
                 }
             } else if (!peer.output.empty() && (events & (POLLOUT | POLLHUP | POLLERR))) {
                 const auto count = ::send(peer.fd, peer.output.data() + peer.sent, peer.output.size() - peer.sent, MSG_NOSIGNAL);
@@ -211,6 +285,10 @@ void Server::run(const volatile std::sig_atomic_t& interrupted) {
                 else peers_.push_back({incoming, {}, {}, 0, Clock::now() + std::chrono::seconds(2)});
             }
         }
+    }
+    {
+        std::lock_guard<std::mutex> lock(status_mutex_);
+        pending_ = {};
     }
     stopping_ = true;
 }
