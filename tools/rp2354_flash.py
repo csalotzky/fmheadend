@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Fresh, bounded-retry V1 I2C OTA upload; no daemon or bus configuration changes."""
 import argparse
+import errno
 import logging
 import struct
 import sys
@@ -22,11 +23,36 @@ class Uploader:
     def __init__(self, client, clock=time.monotonic, sleep=time.sleep, progress=print):
         self.client, self.clock, self.sleep, self.progress = client, clock, sleep, progress
         self.recoveries = 0
+        self.reboot_nacks = 0
+        self.reboot_timeouts = 0
+        self._reboot_deadline = 0
+        self._pending_reboot_nacks = 0
+        self._last_counted_error = 0
+
+    def reboot_window(self, deadline=0, *, verified=False):
+        # Reclassify only after the expected boot is actually observed. Failed
+        # or timed-out boots leave their ENXIO events in the client's error total.
+        if verified:
+            self.reboot_nacks += self._pending_reboot_nacks
+        self._pending_reboot_nacks = 0
+        self._reboot_deadline = deadline
+
+    @property
+    def i2c_errors(self):
+        return self.client.i2c_errors - self.reboot_nacks + self.reboot_timeouts
 
     def uncertain(self, operation, exc):
         if isinstance(exc, p.IncompatibleProtocol):
             raise exc
         self.recoveries += 1
+        count = getattr(self.client, 'i2c_errors', 0)
+        cause = exc.__cause__
+        if (count > self._last_counted_error and self.clock() < self._reboot_deadline and
+                isinstance(cause, OSError) and cause.errno == errno.ENXIO and
+                getattr(exc, 'stage', None) in ('write', 'header', 'payload')):
+            self._pending_reboot_nacks += 1
+            log.warning('%s: ENXIO during acknowledged reboot; awaiting boot verification', operation)
+        self._last_counted_error = count
         log.warning('%s uncertain: %s; reconciling/retrying', operation, exc)
         self.sleep(max(0.02, getattr(self.client, 'retry_delay', 0)))
 
@@ -69,14 +95,20 @@ class Uploader:
                 if s['state'] == 6 or s['error'] not in (0, 5):
                     raise UpdateError('Finalization failed; no success assumed')
                 if s['state'] == 4 and s['tbyb'] == 0 and not s['maintenance'] and not s['error']:
+                    self.reboot_window(verified=True)
                     self.check_rf_off()
                     return s
+                self.reboot_window()
                 if s['state'] in (3, 4) and sends < 6:
                     sends += 1
-                    self.client.flash_update(bytes([F.CONFIRM]))
+                    ack = self.client.flash_update(bytes([F.CONFIRM]))
+                    if ack['state'] == 4 and ack['tbyb'] == 0 and ack['maintenance'] and not ack['error']:
+                        self.reboot_window(deadline)
             except TRANSIENT as exc:
                 self.uncertain('CONFIRM/normal boot', exc)
             self.sleep(0.05)
+        self.reboot_timeouts += 1
+        self.reboot_window()
         raise UpdateError('Finalized normal firmware not observed before deadline')
 
     def run(self, data, meta):
@@ -175,6 +207,7 @@ class Uploader:
                     if (s['state'] != 3 or s['tbyb'] != 1 or not s['ready'] or s['error'] or
                             s['running_build'].hex() != meta['build_id'] or s['version'] != tuple(meta['rom_version'])):
                         raise UpdateError('Trial identity/health check failed; allow rollback')
+                    self.reboot_window(verified=True)
                     self.check_rf_off()
                     result = self.finalized(meta, target, self.clock()+10)
                     elapsed = self.clock()-started
@@ -183,12 +216,17 @@ class Uploader:
                     return result
                 if s['boot'] != old['boot'] or s['state'] not in (2, 3) or s['error']:
                     raise UpdateError('Activation/rollback state unexpected')
+                self.reboot_window()
                 if sends < 6:
                     sends += 1
-                    self.client.flash_update(bytes([F.ACTIVATE]))
+                    ack = self.client.flash_update(bytes([F.ACTIVATE]))
+                    if ack['state'] == 3 and not ack['error']:
+                        self.reboot_window(deadline)
             except TRANSIENT as exc:
                 self.uncertain('ACTIVATE/trial boot', exc)
             self.sleep(0.05)
+        self.reboot_timeouts += 1
+        self.reboot_window()
         raise UpdateError('Trial not observed; update not confirmed')
 
 
@@ -213,15 +251,16 @@ def main(argv=None):
             print(f"Validated {len(data)} bytes; ROM {meta['rom_version']}; no I2C access")
             return
     client = Rp2354Client(args.device, args.address, timeout_ms=1000)
+    uploader = Uploader(client)
     try:
         client.reserve_bus()
-        uploader = Uploader(client)
         if args.status:
             print({k: v.hex() if isinstance(v, bytes) else v for k, v in uploader.status().items()})
         else:
             uploader.run(data, meta)
     finally:
-        print(f'I2C errors: {client.i2c_errors}; diagnostics: {args.log}')
+        print(f'I2C errors: {uploader.i2c_errors}')
+        print(f'Reboot NACKs: {uploader.reboot_nacks}; diagnostics: {args.log}')
         client.close()
 
 
