@@ -16,6 +16,9 @@
 .channel.fault {
   border-top-color: var(--error);
 }
+.channel.blocked {
+  border-top-color: var(--warning);
+}
 .readout {
   display: block;
   padding: 12px;
