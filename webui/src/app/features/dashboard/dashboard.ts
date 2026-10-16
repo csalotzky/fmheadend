@@ -27,6 +27,8 @@ import { ChannelCard } from './channel-card';
           [feedback]="state.actionFeedback()[channel.id] || ''"
           (operate)="state.operate(channel.id, $event)"
         />
+      } @empty {
+        <p role="status">Transmitter inventory unavailable.</p>
       }
     </div>`,
   styles: `

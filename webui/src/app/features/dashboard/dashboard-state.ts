@@ -27,8 +27,8 @@ export interface ChannelView {
   desiredOn?: boolean;
 }
 export function compose(snapshot: Snapshot, previous?: Snapshot): ChannelView[] {
-  return Array.from({ length: 8 }, (_, id) => {
-    const config = snapshot.modulators.find((m) => m.id === id);
+  return snapshot.modulators.map((config) => {
+    const id = config.id;
     const runtime = snapshot.status.modulators.find((m) => m.id === id);
     const source = snapshot.sources.find((s) => s.id === config?.input_source_id);
     const prior = previous?.status.modulators.find((m) => m.id === id);
@@ -81,16 +81,7 @@ export function compose(snapshot: Snapshot, previous?: Snapshot): ChannelView[] 
 export class DashboardState {
   private api = inject(HeadendApi);
   readonly data = signal<Snapshot | null>(null);
-  readonly channels = signal<ChannelView[]>(
-    Array.from({ length: 8 }, (_, id) => ({
-      id,
-      sourceName: '\u2014',
-      analog: false,
-      canStart: false,
-      pcm: 'Unknown',
-      error: null,
-    })),
-  );
+  readonly channels = signal<ChannelView[]>([]);
   readonly stale = signal(true);
   readonly loading = signal(true);
   readonly updated = signal<Date | null>(null);
@@ -127,7 +118,7 @@ export class DashboardState {
   readonly failures = signal<{ id: number; message: string }[]>([]);
   readonly activeCount = computed(
     () =>
-      this.channels().filter((c) => (this.commandStates()[c.id] ?? c.runtime?.tx_state) === 'ON')
+      this.channels().filter((c) => c.runtime?.hardware_tx_state === 'ON')
         .length,
   );
   private polling?: Subscription;
@@ -179,16 +170,6 @@ export class DashboardState {
     this.inFlight = firstValueFrom(this.api.snapshot().pipe(takeUntil(this.cancelled)))
       .then((snapshot) => {
         if (this.closed || generation !== this.snapshotGeneration) return;
-        // Reject incomplete channel inventories instead of displaying fake healthy cards.
-        for (const rows of [snapshot.modulators, snapshot.status.modulators]) {
-          if (
-            rows.length !== 8 ||
-            new Set(rows.map((r) => r.id)).size !== 8 ||
-            rows.some((r) => r.id < 0 || r.id > 7)
-          ) {
-            throw new Error('Invalid physical channel inventory');
-          }
-        }
         this.confirmObservations(snapshot, requestedAt);
         this.channels.set(compose(snapshot, this.data() ?? undefined));
         this.data.set(snapshot);
@@ -397,7 +378,7 @@ export class DashboardState {
       if (generation === this.messageGeneration)
         this.notice.set(
           `${action === 'start' ? 'START' : 'STOP ALL'}: ${accepted} accepted, ${failed.length} failed or unconfirmed.` +
-            (action === 'start' && eligible.length < 8
+            (action === 'start' && eligible.length < this.channels().length
               ? ' Skipped disabled or unconfigured channels.'
               : ''),
         );

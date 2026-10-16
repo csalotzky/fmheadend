@@ -11,7 +11,7 @@ import { mhz } from './values';
       <div>
         <h1>Modulators</h1>
         <p class="list-intro">
-          Eight physical transmitters. Select a channel to configure RF, Audio and RDS.
+          {{ state.channels().length || '\u2014' }} physical transmitters. Select a channel to configure RF, Audio and RDS.
         </p>
       </div>
     </div>
