@@ -39,9 +39,8 @@ def test_startup_loss_recovery_order_and_shutdown(tmp_path):
     app=create_app(Settings(path),rp=rp,clock=lambda:now[0])
     with TestClient(app) as api:
         assert api.get(P+'/status').json()['system']['system_state']=='DEGRADED'
-        assert api.get(P+'/modulators/0').json()['enabled']
-        assert api.get(P+'/status').json()['modulators'][0]['hardware_tx_state'] is None
-        assert api.get(P+'/status').json()['modulators'][0]['source_state'] is None
+        assert api.get(P+'/modulators/0').status_code == 503
+        assert api.get(P+'/status').json()['modulators'] == []
         events.clear();refresh(app)
         assert not events  # Backoff: no bus traffic.
         rp.available=True;now[0]=3;refresh(app)
@@ -90,14 +89,21 @@ def test_failed_restore_never_claims_healthy(tmp_path,failure):
     with TestClient(app) as api:
         status=api.get(P+'/status').json()
         assert status['system']['system_state']=='DEGRADED'
-        assert status['modulators'][0]['hardware_tx_state'] == ('OFF' if failure == 'readback' else None)
+        if failure == 'incompatible':
+            assert status['modulators'] == []
+        else:
+            assert status['modulators'][0]['hardware_tx_state'] == ('OFF' if failure == 'readback' else None)
         assert app.state.services.rp is rp
         assert app.state.services.rds.suspended
-        assert status['modulators'][0]['rds_state'] == 'SUSPENDED'
-        assert status['modulators'][1]['rds_state'] == 'DISABLED'
+        if failure != 'incompatible':
+            assert status['modulators'][0]['rds_state'] == 'SUSPENDED'
+            assert status['modulators'][1]['rds_state'] == 'DISABLED'
         assert not rp.rds_history
         if failure!='readback': assert not any(rp.enabled)
-        assert api.get(P+'/modulators/0').json()['enabled']
+        if failure != 'incompatible':
+            assert api.get(P+'/modulators/0').json()['enabled']
+        else:
+            assert api.get(P+'/modulators/0').status_code == 503
 
 
 def test_mux_loss_does_not_reconfigure_rp(tmp_path):

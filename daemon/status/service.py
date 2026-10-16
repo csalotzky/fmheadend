@@ -55,7 +55,7 @@ class StatusService:
             profile_errors = {}  # One generation only; no mutable profile models.
             source_statuses = {s.id: self.sources.status(s.id, source=s,
                 profile_errors=profile_errors).model_copy(deep=True) for s in configs}
-            views = dict(sources=configs, modulators=list(self._modulator_configs.values()),
+            views = dict(sources=configs, modulators=[self._modulator_configs[i] for i in self.modulators.physical_ids],
                          info=dict(self.info), source_statuses=source_statuses)
             now = self.clock()
             if (configuration_changed or self._profile_list_at is None
@@ -144,6 +144,8 @@ class StatusService:
                 if rp_status["state"] != "OK":
                     errors.append("Controller hardware: " + (rp_status.get("last_error_code") or rp_status["state"]))
             for channel in rp_status["modulators"]:
+                if channel['id'] not in self.modulators.physical_ids:
+                    continue
                 row = self.modulators.statuses[channel["id"]]
                 row.hardware_tx_state = channel["tx_state"]
                 row.tx_state = TxState(channel["tx_state"])
@@ -225,6 +227,8 @@ class StatusService:
         source_statuses = {} if source_statuses is None else dict(source_statuses)
         writers = self.mux.pcm_snapshot() if hasattr(self.mux, 'pcm_snapshot') else {}
         for status in self.modulators.statuses.values():
+            if status.id not in self.modulators.physical_ids:
+                continue
             row = status.model_copy(deep=True)
             config = self._modulator_configs[row.id]
             source_id = config.input_source_id if config.audio_mode != 'ANALOG' else None

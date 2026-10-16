@@ -216,6 +216,10 @@ def services(tmp_path):
     rp, mux = MockRp2354Client(), MockMuxClient()
     sources = SourceManager(db)
     manager = ModulatorManager(db, sources, rp, mux, Settings())
+    from fmheadendd.recovery import Recovery
+    from unittest.mock import Mock
+    manager.recovery = Recovery(manager, Mock())
+    manager.recovery.observe()
     try:
         yield db, rp, mux, sources, manager
     finally:

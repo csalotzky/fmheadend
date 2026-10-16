@@ -218,6 +218,18 @@ class Database:
     def get_system(self):
         return SystemConfig.model_validate_json(self.connection.execute("SELECT data FROM system_config WHERE id = 1").fetchone()[0])
 
+    def disable_absent_modulators(self, count):
+        """Verified hardware capacity only; preserve raw JSON and profile ownership."""
+        if type(count) is not int or not 1 <= count <= 8:
+            raise ValueError('Physical TX count must be 1..8')
+        with self.connection:
+            for row in self.connection.execute('SELECT id, data FROM modulators WHERE id >= ?', (count,)).fetchall():
+                data = json.loads(row['data'])
+                if data.get('enabled') is not False:
+                    data['enabled'] = False
+                    self.connection.execute('UPDATE modulators SET data = ? WHERE id = ?',
+                                            (json.dumps(data), row['id']))
+
     def save_system(self, config):
         with self.connection:
             self.connection.execute("UPDATE system_config SET data = ? WHERE id = 1", (config.model_dump_json(),))

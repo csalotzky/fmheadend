@@ -65,12 +65,15 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
             mux_client = mux or (mux_factory(sources) if mux_factory else MockMuxClient())
             modulators = ModulatorManager(database, sources, rp_client, mux_client, settings)
             rt = RadioTextService(database, sources, clock)
+            rt.validate_target = modulators.require_available
             rds = RdsRefill(database, modulators, rt, rp_client, clock)
+            rds.channel_available = lambda channel: channel in modulators.physical_ids
             modulators.rds = rds
             recovery = Recovery(modulators, rds, clock)
             modulators.recovery = recovery
             rds.on_failure = recovery.communication_failed
-            rds.can_communicate = recovery.can_communicate
+            rds.can_communicate = lambda: (recovery.can_communicate() and recovery.availability_ready
+                                          and not recovery.capability_transition)
             rds.channel_ready = lambda channel: channel not in recovery.pending
             rds.suspended = True
             config = ConfigurationService(database, sources, modulators)
