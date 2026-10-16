@@ -1,9 +1,10 @@
 """Scoped recovery on the existing control worker; reconnect is not a reset."""
 import logging
 import time
+import sqlite3
 from .diagnostics import error_scope
 from .errors import DependencyUnavailable, DomainError, SourceUnavailable
-from .models.runtime_status import TxState
+from .models.runtime_status import TxState, ModulatorStatus
 from .rp2354.client import TxConfig
 from .rp2354.protocol import Command, IncompatibleProtocol, Outcome, RpResponseError, execution_outcome, PROTOCOL_VERSION
 from .rp2354.linux_client import Rp2354Client
@@ -28,6 +29,7 @@ class Recovery:
         self._audio_config = {}
         self.hardware_error = None
         self.verified_info = None
+        self.availability_ready = False
         self.capability_transition = False
         self.mux_retry_at = 0.0
         if isinstance(self.rp, Rp2354Client):
@@ -35,33 +37,59 @@ class Recovery:
             self.rp.before_command = self._guard_command
         self._startup_step = 0
         self._startup_enabled = {}  # Last positively acknowledged startup state.
-        self._startup = [('info', None)] + [('off', i) for i in range(8)]
-        for i in range(8):
-            self._startup.extend([('config', i), ('clear', i)])
-        self._startup.extend(('enable', i) for i in range(8))
+        self._startup = []  # Construct only after a verified GET_INFO.
 
     def _record_info(self, info):
         count = info.get('modulator_count')
         if info.get('rp_protocol_version') != PROTOCOL_VERSION or type(count) is not int or not 1 <= count <= 8:
             raise IncompatibleProtocol('Unsupported Controller protocol version or modulator count')
-        if self.verified_info is not None and self.verified_info['modulator_count'] != count:
+        previous = self.verified_info['modulator_count'] if self.verified_info else None
+        if previous is not None and previous != count:
             self.capability_transition = True
         self.verified_info = dict(info)
-        if count < 8:
-            # Phase 3 owns application/RDS availability. Until then, no TX replay.
+        self.availability_ready = False
+        # Drop only unfinished work for absent hardware; retain completed progress.
+        self._startup = [(step, channel) for step, channel in self._startup[self._startup_step:]
+                         if channel < count]
+        self._startup_step = 0
+        added = range(count) if previous is None else range(previous, count)
+        self._startup.extend(('off', channel) for channel in added)
+        for channel in added:
+            self._startup.extend([('config', channel), ('clear', channel)])
+        self._startup.extend(('enable', channel) for channel in added)
+        if self._startup:
             self.ready = False
-            self.rds.suspend()
-            self.hardware_error = 'TX application lifecycle for fewer than 8 channels requires Phase 3'
+        cleanup_pending = False
+        for channel in range(count, 8):
+            for pending in (self.pending, self.audio_pending, self._audio_enabled,
+                            self._audio_config, self._startup_enabled):
+                pending.pop(channel, None)
+            self.rds.reset_channel(channel)
+            self.rds.radiotext.overrides.pop(channel, None)
+            cleanup_pending |= not self.modulators.release_audio(channel)
+            self.modulators.statuses[channel] = ModulatorStatus(id=channel)
+        try:
+            self.modulators.database.disable_absent_modulators(count)
+        except sqlite3.Error as exc:
+            error = DependencyUnavailable(f'Physical TX availability could not be persisted: {exc}')
+            error.outcome = Outcome.NOT_SENT
+            raise error from exc
+        if cleanup_pending:
+            error = DependencyUnavailable('Removed TX audio cleanup pending')
+            error.outcome = Outcome.NOT_SENT
+            raise error
+        self.availability_ready = True
 
     @property
     def capability_current(self):
-        return (self.verified_info is not None and self.error is None and
+        return (self.verified_info is not None and self.availability_ready and self.error is None and
                 (not isinstance(self.rp, Rp2354Client) or self.rp.info == self.verified_info))
 
     def _guard_command(self, command, target):
         # Also runs after the client's implicit reconnect handshake, before I/O.
-        if target != 0xff and (self.capability_transition or self.verified_info is None or self.verified_info['modulator_count'] < 8):
-            error = DependencyUnavailable('TX command blocked: capability coordination or Phase 3 availability support required; not sent')
+        if target != 0xff and (self.capability_transition or not self.availability_ready or
+                              self.verified_info is None or target >= self.verified_info['modulator_count']):
+            error = DependencyUnavailable('TX command blocked: unavailable target or capability coordination pending; not sent')
             error.outcome = Outcome.NOT_SENT
             raise error
 
@@ -127,7 +155,7 @@ class Recovery:
             self.retry_at = self.clock() + max(.25, getattr(self.rp, 'retry_delay', 0.0))
 
     def require_ready(self):
-        if not self.ready or self.stopping:
+        if not self.ready or self.stopping or not self.availability_ready or self.capability_transition:
             raise DomainError(503, 'DEPENDENCY_UNAVAILABLE', str(self.error or 'Controller stopping'))
 
     def boundary(self, channel):
@@ -136,6 +164,8 @@ class Recovery:
         self.rds.reset_channel(channel)
 
     def command_failed(self, channel, command, error):
+        if channel not in self.modulators.physical_ids:
+            return  # A reconnect may have removed the target during this command.
         certainty = execution_outcome(error, command)
         if certainty == Outcome.AMBIGUOUS:
             if command == Command.SET_TX_CONFIG:
@@ -213,7 +243,7 @@ class Recovery:
 
     def service(self):
         """Retry local audio starts and explicitly uncertain TX writes separately."""
-        if not self.ready or not self.can_communicate():
+        if not self.ready or not self.availability_ready or self.capability_transition or not self.can_communicate():
             return
         for channel, retry_at in list(self.audio_pending.items()):
             if channel in self.pending or self.clock() < retry_at:
@@ -264,10 +294,8 @@ class Recovery:
         try:
             if self.verified_info is None or (isinstance(self.rp, Rp2354Client) and self.rp.info is None):
                 self._record_info(self.rp.get_info())
-            if self.verified_info['modulator_count'] < 8:
-                status = self.rp.get_status()
-                self.error = None
-                return status
+            elif not self.availability_ready:
+                self._record_info(self.verified_info)
             if self.capability_transition:
                 status = self.rp.get_status()
                 self.error = None
@@ -297,8 +325,6 @@ class Recovery:
 
     def _restore(self):
         # Startup only. Keep progress so a bad final read cannot repeat OFF/config.
-        if self._startup_step == 0 and self.verified_info is not None:
-            self._startup_step = 1  # observe() already negotiated this session.
         while self._startup_step < len(self._startup):
             self._apply(*self._startup[self._startup_step])
             self._startup_step += 1
@@ -310,7 +336,7 @@ class Recovery:
         observed = self.rp.get_status()
         if observed['state'] != 'OK' or any(
             c['tx_state'] != ('ON' if self.expected_on(c['id']) else 'OFF')
-            for c in observed['modulators']
+            for c in observed['modulators'] if c['id'] in self.modulators.physical_ids
         ):
             self.hardware_error = 'Controller startup read-back does not match expected TX state'
             self.error = None
@@ -329,7 +355,7 @@ class Recovery:
         logger.info('fmheadendd shutdown: disabling RF; preserving desired configuration')
         # Explicit OFF pass, no recovery loop; never claim OFF after a failed ACK.
         count = self.verified_info['modulator_count'] if self.verified_info else 0
-        for channel in range(count if count == 8 else 0):
+        for channel in range(count):
             try:
                 self.rp.set_tx_enabled(channel, False)
             except DependencyUnavailable as exc:

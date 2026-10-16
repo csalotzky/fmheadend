@@ -10,6 +10,9 @@ from fmheadendd.mux.unix_client import UnixMuxClient
 from fmheadendd.rp2354 import protocol as p
 from fmheadendd.rp2354.client import MockRp2354Client
 from fmheadendd.rp2354.linux_client import Rp2354Client
+from fmheadendd.database import Database
+from fmheadendd.modulators.manager import ModulatorManager
+from fmheadendd.config import Settings
 
 
 def info(count):
@@ -20,7 +23,9 @@ def setup(count=4, mux=None, rp=None):
     mux = mux or MockMuxClient()
     rp = rp or MockRp2354Client()
     now = [0.0]
-    recovery = Recovery(SimpleNamespace(rp=rp, mux=mux), Mock(), lambda: now[0])
+    manager = ModulatorManager(Database(':memory:'), Mock(), rp, mux, Settings())
+    recovery = Recovery(manager, Mock(), lambda: now[0])
+    manager.recovery = recovery
     if count is not None:
         recovery._record_info(info(count))
         recovery.error = None
@@ -128,7 +133,7 @@ def test_implicit_handshake_cannot_bypass_backend_guard():
     recovery, _, _ = setup(None, rp=rp)
     rp._exchange = Mock(return_value=info(4))
     with pytest.raises(DependencyUnavailable):
-        rp.set_tx_enabled(2, True)
+        rp.set_tx_enabled(7, True)
     assert [c.args[0] for c in rp._exchange.call_args_list] == [p.Command.GET_INFO]
     assert recovery.verified_info == info(4)
     assert not recovery.ready
@@ -138,7 +143,7 @@ def test_implicit_handshake_cannot_bypass_backend_guard():
     rp._exchange.assert_not_called()
 
 
-def test_small_startup_is_observation_only():
+def test_small_startup_targets_only_physical_channels():
     rp = MockRp2354Client()
     rp.get_info = Mock(return_value=info(3))
     rp.set_tx_enabled = Mock()
@@ -149,10 +154,9 @@ def test_small_startup_is_observation_only():
     recovery.observe()
     recovery.service()
     rp.get_info.assert_called_once()
-    rp.set_tx_enabled.assert_not_called()
-    rp.set_tx_config.assert_not_called()
-    rp.clear_rds.assert_not_called()
-    assert not recovery.ready
+    assert {c.args[0] for c in rp.set_tx_enabled.call_args_list} == {0, 1, 2}
+    assert {c.args[0] for c in rp.clear_rds.call_args_list} == {0, 1, 2}
+    assert recovery.ready
     assert recovery.reconcile_mux(mux.get_status())['tx_count'] == 3
 
 
@@ -179,7 +183,7 @@ def test_reopened_session_coordinates_before_targeted_command(previous, current)
         mux.set_tx_count.assert_not_called()
 
 
-def test_small_board_does_not_change_saved_configuration(tmp_path):
+def test_small_board_only_disables_absent_saved_configuration(tmp_path):
     from fastapi.testclient import TestClient
     from fmheadendd.app import create_app
     from fmheadendd.config import Settings
@@ -188,7 +192,7 @@ def test_small_board_does_not_change_saved_configuration(tmp_path):
     db = Database(path)
     old = db.get('modulators', 7)
     db.save('modulators', old.model_copy(update={'enabled': True}), 7)
-    before = list(db.connection.iterdump())
+    before = db.get('modulators', 7).model_dump()
     db.close()
     rp = MockRp2354Client()
     original = rp.get_info()
@@ -197,9 +201,9 @@ def test_small_board_does_not_change_saved_configuration(tmp_path):
     app = create_app(Settings(path), rp=rp)
     with TestClient(app):
         assert app.state.services.info['modulator_count'] == 4
-        assert not app.state.services.recovery.ready
+        assert app.state.services.recovery.ready
         assert app.state.services.mux.tx_count == 4
-    rp.set_tx_enabled.assert_not_called()
+    assert all(c.args[0] < 4 for c in rp.set_tx_enabled.call_args_list)
     db = Database(path)
-    assert list(db.connection.iterdump()) == before
+    assert db.get('modulators', 7).model_dump() == before | {'enabled': False}
     db.close()

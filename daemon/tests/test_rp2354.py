@@ -302,8 +302,7 @@ def test_http_stays_available_when_real_i2c_fails(calls, tmp_path):
         assert status['system']['controller_observation_stale']
         assert status['system']['system_state'] == 'DEGRADED'
         assert status['system']['mocked'] is False
-        assert status['modulators'][0]['hardware_tx_state'] is None
-        assert status['modulators'][0]['rf_attenuation_db'] is None
+        assert status['modulators'] == []
         info = api.get('/api/v1/system/info').json()
         assert info['controller_firmware_version'] is None and info['mocked'] is False
 
@@ -417,6 +416,10 @@ def test_config_encoding_failure_releases_source(tmp_path):
         sources = SourceManager(db)
         rp = client()
         manager = ModulatorManager(db, sources, rp, MockMuxClient(), Settings(tmp_path / 'range.db'))
+        from fmheadendd.recovery import Recovery
+        manager.recovery = Recovery(manager, Mock())
+        manager.recovery._record_info(p.parse_info(INFO))
+        manager.recovery.ready = True
         manager.update(0, ModulatorPatch(input_source_id=source.id, frequency_khz=98100, rf_attenuation_db=None))
         with pytest.raises(DomainError, match='rf_attenuation_db'):
             manager.start(0)

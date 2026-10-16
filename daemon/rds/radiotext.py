@@ -9,14 +9,19 @@ class RadioTextService:
     def __init__(self, database, sources, clock=time.monotonic):
         self.database, self.sources, self.clock = database, sources, clock
         self.overrides: dict[int, tuple[str, float | None]] = {}
+        self.validate_target = None
 
     def set(self, modulator_id, override):
+        if self.validate_target:
+            self.validate_target(modulator_id)
         self.database.get("modulators", modulator_id)
         expiry = None if override.ttl_s is None else self.clock() + override.ttl_s
         self.overrides[modulator_id] = (override.text, expiry)
         return self.effective(modulator_id)
 
     def clear(self, modulator_id):
+        if self.validate_target:
+            self.validate_target(modulator_id)
         self.database.get("modulators", modulator_id)
         self.overrides.pop(modulator_id, None)
 
@@ -34,6 +39,8 @@ class RadioTextService:
         Supplied models are read only and are never retained by this service.
         """
         if config is None:
+            if self.validate_target:
+                self.validate_target(modulator_id)
             config = self.database.get("modulators", modulator_id)
         self.expire()
         if modulator_id in self.overrides:

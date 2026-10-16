@@ -10,6 +10,7 @@ from ..modulators.manager import ModulatorManager
 from ..mux.client import MockMuxClient
 from ..rp2354.client import MockRp2354Client
 from ..sources.manager import SourceManager
+from ..recovery import Recovery
 from .radiotext import RadioTextService
 from .refill import RdsRefill
 
@@ -26,6 +27,8 @@ def run() -> dict:
             rt = RadioTextService(db, sources, clock)
             refill = RdsRefill(db, manager, rt, rp, clock)
             manager.rds = refill
+            manager.recovery = Recovery(manager, refill, clock)
+            manager.recovery.observe()
             manager.update(0, ModulatorPatch(audio_mode="ANALOG", frequency_khz=98100,
                 rf_attenuation_db=6.0, rds_enabled=True, rds_pi=0x1234, rds_ecc=0xe0,
                 rds_pty=10, rds_tp=True, rds_ps=[{'text':'RADIO FM','duration_s':5}],

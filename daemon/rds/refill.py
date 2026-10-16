@@ -33,6 +33,7 @@ class RdsRefill:
         self.on_failure = None
         self.can_communicate = lambda: True
         self.channel_ready = lambda channel: True
+        self.channel_available = lambda channel: True
         self.transport_retry_at = 0.0
 
     def suspend(self):
@@ -49,6 +50,9 @@ class RdsRefill:
 
     def profile_changed(self, channel):
         """Request the existing target-local content boundary, without RF commands."""
+        if not self.channel_available(channel):
+            self.reset_channel(channel)
+            return
         state = self.channels[channel]
         state.signature = None
         if state.active:
@@ -90,6 +94,9 @@ class RdsRefill:
             self._clear(channel)
 
     def _clear(self, channel):
+        if not self.channel_available(channel):
+            self.reset_channel(channel)
+            return False
         state = self.channels[channel]
         try:
             self.rp.clear_rds(channel)
@@ -116,6 +123,9 @@ class RdsRefill:
             if self.suspended or not self._transport_ready():
                 return
             channel = config.id
+            if not self.channel_available(channel):
+                self.reset_channel(channel)
+                continue
             if not self.channel_ready(channel):
                 continue
             state = self.channels[channel]
@@ -164,6 +174,8 @@ class RdsRefill:
                 row.rds_last_error, row.rds_state = str(exc), 'UNKNOWN'
             return
         for channel in ready:
+            if not self.channel_available(channel):
+                continue
             if self.suspended or not self._transport_ready():
                 return
             state = self.channels[channel]

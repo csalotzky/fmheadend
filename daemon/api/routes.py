@@ -163,7 +163,7 @@ def stop_all(request: Request):
 @router.get("/modulators/{id}", response_model=Modulator, tags=["modulators"])
 @control_route
 def get_modulator(id: int, request: Request):
-    return request.app.state.services.modulators.get(id)
+    return request.app.state.services.modulators.public_get(id)
 
 
 @router.patch("/modulators/{id}", response_model=Modulator, tags=["modulators"])

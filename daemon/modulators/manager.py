@@ -30,6 +30,23 @@ class ModulatorManager:
     def get(self, modulator_id):
         return self.database.get("modulators", modulator_id)
 
+    @property
+    def physical_ids(self):
+        info = self.recovery.verified_info if self.recovery else None
+        return range(info['modulator_count'] if info else 0)
+
+    def require_available(self, modulator_id):
+        if self.recovery is None or self.recovery.verified_info is None:
+            raise DomainError(503, 'DEPENDENCY_UNAVAILABLE', 'Controller TX count has not been verified')
+        if modulator_id not in self.physical_ids:
+            raise DomainError(404, 'NOT_FOUND', f'Physical TX{modulator_id} is unavailable')
+        if not self.recovery.availability_ready:
+            raise DomainError(503, 'DEPENDENCY_UNAVAILABLE', 'Controller availability synchronization pending')
+
+    def public_get(self, modulator_id):
+        self.require_available(modulator_id)
+        return self.get(modulator_id)
+
     def validate(self, config):
         if config.frequency_khz is None:
             if config.enabled:
@@ -61,7 +78,8 @@ class ModulatorManager:
     def apply_rds_profiles(self, channels):
         if self.rds:
             for channel in channels:
-                self.rds.profile_changed(channel)
+                if channel in self.physical_ids:
+                    self.rds.profile_changed(channel)
             self.rds.tick()
 
     def _rds_only(self, old, config, patch):
@@ -73,6 +91,7 @@ class ModulatorManager:
         return old.model_dump(exclude=ignored) == config.model_dump(exclude=ignored)
 
     def update(self, modulator_id, patch):
+        self.require_available(modulator_id)
         old = self.get(modulator_id)
         config = self._edited_config(modulator_id, patch)
         if self._rds_only(old, config, patch):
@@ -89,6 +108,7 @@ class ModulatorManager:
 
     def save_and_resume(self, modulator_id, patch):
         """One control-executor operation; temporary OFF never changes desired enabled."""
+        self.require_available(modulator_id)
         config = self._edited_config(modulator_id, patch)  # Validate before RF action.
         if self._rds_only(self.get(modulator_id), config, patch):
             saved = self.update(modulator_id, patch)
@@ -133,6 +153,7 @@ class ModulatorManager:
         return result
 
     def start(self, modulator_id):
+        self.require_available(modulator_id)
         current = self.get(modulator_id)
         config = ModulatorConfig.model_validate(current.model_dump(exclude={"id", "timestamp", "rds_override_profile_id"}) | {"enabled": True})
         self.validate(config)
@@ -190,6 +211,7 @@ class ModulatorManager:
         return str(exc)
 
     def _start(self, modulator_id, retry_budget=None):
+        self.require_available(modulator_id)
         retry_budget = [1] if retry_budget is None else retry_budget
         if self.recovery:
             self.recovery.require_ready()
@@ -253,12 +275,14 @@ class ModulatorManager:
         return status
 
     def stop(self, modulator_id):
+        self.require_available(modulator_id)
         current = self.get(modulator_id)
         config = ModulatorConfig.model_validate(current.model_dump(exclude={"id", "timestamp", "rds_override_profile_id"}) | {"enabled": False})
         self.database.save("modulators", config, modulator_id)
         return self._stop(modulator_id)
 
     def _stop(self, modulator_id, retry_budget=None):
+        self.require_available(modulator_id)
         retry_budget = [1] if retry_budget is None else retry_budget
         if self.recovery:
             self.recovery.require_ready()
@@ -303,9 +327,11 @@ class ModulatorManager:
         return status
 
     def desired_on(self, channel):
-        return self.get(channel).enabled and channel not in self.bulk_stopped
+        return channel in self.physical_ids and self.get(channel).enabled and channel not in self.bulk_stopped
 
     def all(self, start):
+        if start:
+            self.require_available(0)
         # Persist accepted global intent before changing holds or issuing commands.
         # Per-TX enabled settings remain the existing resume selection.
         config = self.database.get_system().model_copy(update={"global_stopped": not start})
@@ -320,7 +346,9 @@ class ModulatorManager:
         if not start:
             # Recovery, including startup, must not undo STOP ALL.
             self.bulk_stopped.update(range(8))
-        for modulator_id in range(8):
+        for modulator_id in self.physical_ids:
+            if modulator_id not in self.physical_ids:
+                continue  # An implicit handshake may have reduced capacity in this loop.
             try:
                 config = self.get(modulator_id)
                 if start:
@@ -339,7 +367,7 @@ class ModulatorManager:
 
     def shutdown(self):
         # Shutdown changes actual state only, preserving the desired boot state.
-        for modulator_id in range(8):
+        for modulator_id in self.physical_ids:
             try:
                 self._stop(modulator_id, [0])
             except DomainError:
@@ -347,6 +375,7 @@ class ModulatorManager:
 
 
     def restore_audio(self, config):
+        self.require_available(config.id)
         if config.audio_mode == "ANALOG":
             self.release_audio(config.id)
             self.statuses[config.id].source_state = None
@@ -362,11 +391,14 @@ class ModulatorManager:
 
     def release_audio(self, channel):
         self.mux.detach(channel)
-        source = self.active_sources.pop(channel, None)
+        source = self.active_sources.get(channel)
         if source is not None:
             try:
                 self.sources.release(source, channel)
-            except DependencyUnavailable:
+            except (DependencyUnavailable, OSError):
                 logger.exception('source cleanup failed for channel %s', channel)
+                return False  # Retain ownership so capacity cleanup can retry safely.
+            self.active_sources.pop(channel, None)
         self.statuses[channel].source_state = None if self.get(channel).audio_mode == 'ANALOG' else 'IDLE'
         self.statuses[channel].source_last_error = None
+        return True
