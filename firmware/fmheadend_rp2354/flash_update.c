@@ -113,7 +113,9 @@ uint8_t flash_update_execute(const uint8_t *p,size_t n,uint8_t *r) {
             return fail(FU_E_ARGUMENT);
         uint32_t version=(uint32_t)p[69]|(uint32_t)p[70]<<8|(uint32_t)p[71]<<16|(uint32_t)p[72]<<24;
         uint16_t new_major=version&65535u,new_minor=version>>16;
-        if(env.tbyb!=0 || !env.ready || (new_major<env.major || (new_major==env.major && new_minor<=env.minor)))
+        /* ROM flash-update selection permits equal/older versions. At buy it
+         * erases the other IMAGE_DEF if needed for subsequent normal boot. */
+        if(env.tbyb!=0 || !env.ready)
             return fail(FU_E_STATE);
         if(!memcmp(session,p+1,16) && state!=FU_IDLE && state!=FU_ABORTED) {
             if(size!=get32(p+17) || memcmp(digest,p+21,32) || memcmp(build,p+53,16) || major!=new_major || minor!=new_minor)

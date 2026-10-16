@@ -13,7 +13,7 @@ import pytest
 
 PICOTOOL = os.environ.get('PICOTOOL')
 pytestmark = pytest.mark.skipif(not PICOTOOL, reason='Set PICOTOOL for offline partition generation tests')
-TABLE = Path(__file__).resolve().parents[2] / 'firmware/fmheadend_rp2354/partitions.json'
+TABLE = Path(__file__).resolve().parents[1] / 'partitions.json'
 
 
 @pytest.mark.parametrize('b_id',[0,1])

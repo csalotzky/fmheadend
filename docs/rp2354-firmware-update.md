@@ -1,10 +1,8 @@
 # RP2354 factory A/B firmware update
 
-This is the initial implementation for the 2 MiB FMHeadend board, Pico SDK
-2.3.1, ARM Secure XIP images. Local builds and fake-transport/state-machine
-checks are available; actual board operation, timing, rollback and power-cut
-behaviour have NOT been physically validated. Do not treat a successful build
-as hardware qualification. No hardware was accessed during implementation.
+This workflow targets the 2 MiB FMHeadend RP2354 board, Pico SDK 2.3.1 and
+ARM Secure XIP images. See [the workflow validation record](rp2354-workflow-validation.md)
+for the precise distinction between build, simulated and hardware results.
 
 ## Physical flash layout
 
@@ -36,82 +34,93 @@ linker addresses dynamically, relocate code itself or select the boot image.
 
 Use Pico SDK 2.3.1, its ARM toolchain, CMake/Ninja, Python >=3.11 and picotool
 2.3.1. SDK/toolchain discovery follows the project's existing CMake setup.
-From the repository root (shell line continuations may differ):
+Open `firmware/fmheadend_rp2354` as the Pico project folder in VS Code.
+**Compile / Compile Project** configures and builds both variants, without any
+device access. From the repository root the identical operation is:
 
-```sh
-cmake -S firmware/fmheadend_rp2354 -B firmware/fmheadend_rp2354/build/factory -G Ninja -DFMHEADEND_FACTORY_IMAGE=ON -DFMHEADEND_IMAGE_MAJOR=1 -DFMHEADEND_IMAGE_MINOR=0
-cmake --build firmware/fmheadend_rp2354/build/factory
-cmake -S firmware/fmheadend_rp2354 -B firmware/fmheadend_rp2354/build/ota -G Ninja -DFMHEADEND_FACTORY_IMAGE=OFF -DFMHEADEND_IMAGE_MAJOR=1 -DFMHEADEND_IMAGE_MINOR=1
-cmake --build firmware/fmheadend_rp2354/build/ota
-picotool partition create firmware/fmheadend_rp2354/partitions.json firmware/fmheadend_rp2354/build/partitions.bin
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File firmware/fmheadend_rp2354/tools/rp2354_build.ps1
 ```
 
-Each firmware build also produces `partitions.bin` without accessing hardware.
-It produces `fmheadend_rp2354.bin` and its adjacent
-`fmheadend_rp2354.bin.json` manifest. The post-build validator checks the native
-IMAGE_DEF, version, TBYB flag, vector addresses, block-loop structure, embedded
-build identity and size. The manifest records these and the complete SHA-256.
-It is generated from the actual .bin, not independently maintained metadata.
-The uploader requires both files. It rejects factory (non-TBYB) images and
-unsupported metadata layouts. ELF/UF2 are not uploader inputs. In particular,
-do not blindly program a generated ELF at its runtime origin or a default SDK
-UF2: the SDK may include an absolute compatibility block outside this 2 MiB
-layout. Use the explicit .bin provisioning below.
+Outputs relative to the firmware project folder:
 
-OTA builds set `PICO_CRT0_IMAGE_TYPE_TBYB=1`; the initial factory build sets 0.
-ROM versions are separate unsigned 16-bit major/minor values, not the GET_INFO
-text version. Increase the ROM tuple for every update (1.0 factory, 1.1 first
-update, 1.2 next, etc.). Downgrades and equal-version updates are deliberately
-unsupported; this also avoids the ROM's downgrade-related other-image erase.
-The embedded 16-byte build identity derives from source and build settings.
+```text
+build/
+  factory/fmheadend_rp2354.bin
+  factory/fmheadend_rp2354.bin.json
+  ota/fmheadend_rp2354.bin
+  ota/fmheadend_rp2354.bin.json
+  partitions.bin
+```
+
+One CMake configuration builds two executables from the same source list, with
+separate SDK objects and generated headers. Factory uses
+`FMHEADEND_FACTORY_IMAGE=ON`, ROM 1.0, TBYB=0; OTA uses OFF, ROM 1.1, TBYB=1.
+These are target-local settings, not two independent cache configurations.
+The source/build-settings fingerprint gives each variant its own build ID.
+Manifest validation runs on every build, but unchanged content is not rewritten.
+Missing or stale manifests are regenerated from the checked binary. Missing
+binary byproducts trigger relinking. The partition binary has its own build rule.
+No separate artifacts directory is used.
+
+The validator checks IMAGE_DEF, ROM version, TBYB, vectors, block loop, embedded
+identity and size; SHA-256 covers the complete binary. The uploader requires the
+matching `.bin.json`. It rejects factory images and unsupported formats.
+ELF/UF2 are for inspection/debug symbols, not direct provisioning at their native
+0x10000000 runtime origin: doing so overwrites the partition table.
+
+ROM versions are separate u16 major/minor values, not the GET_INFO text version.
+Equal and older versions are supported by native FLASH_UPDATE boot selection.
+Normally A wins a version tie. At explicit buy, the ROM erases the other image's
+first sector if that image would otherwise win normal boot: for A→B this includes
+equal versions; for B→A only a strictly newer old B needs erasure. Before buy the
+old bought slot remains the rollback candidate. After buy this is a committed
+replacement, not a guarantee of retaining both old/new images indefinitely.
+See the official [A4 boot selection](https://github.com/raspberrypi/pico-bootrom-rp2350/blob/A4/src/main/arm/varm_flash_boot.c)
+and [buy implementation](https://github.com/raspberrypi/pico-bootrom-rp2350/blob/A4/src/main/arm/varm_launch_image.c).
+An unvalidated trial is never bought just to force a version change.
 
 Only the emitted unsigned ARM-S native XIP two-block format is supported.
 Signed images, OTP anti-rollback, extra IMAGE_DEF blocks, load maps and a changed
 partition layout require a separate design; do not bypass validation. SHA-256
 and CRC detect corruption, not malicious firmware: use trusted local artifacts.
 
-## First provisioning: manual, destructive maintenance procedure
+## Factory provisioning: SWD, destructive
 
-The current flat firmware without this updater/partition table cannot bootstrap
-this change over I2C. The initial installation necessarily replaces that layout
-and has no A/B rollback protection. Keep a known-good old image and recovery
-access. Stop normal operation yourself, keep RF off, use stable power, confirm
-the board really has 2 MiB, and make a flash backup with your programmer first.
-None of these hardware commands was executed by the implementation agent.
+Use the extension's **Flash Pico Project (SWD)** button, or VS Code task
+**Flash RP2354 Factory (SWD)**. Both run the same script. Extension 0.23.0
+looks up the task named `Flash`; our task delegates to the named provisioning
+task. The installed extension is not patched. Compile uses the project task
+(`raspberry-pi-pico.useCmakeTools=false`) so it always builds both images and
+validates their manifests; CMake/Ninja and extension SDK discovery remain intact.
 
-USB BOOTSEL example using picotool 2.3.1, after manually entering BOOTSEL:
+The task builds first, validates the factory manifest and regenerates a temporary
+partition binary for comparison, then starts SWD without interactive confirmation.
+Agent-initiated hardware testing still requires BOOTSEL coordination with the
+user; user-invoked Flash tasks do not. There are no automatic SWD reconnect loops.
 
-```sh
-picotool erase -r 0x10000000 0x10200000
-picotool load --ignore-partitions -v firmware/fmheadend_rp2354/build/partitions.bin -t bin -o 0x10000000
-picotool reboot -u
-picotool partition info
-picotool load --ignore-partitions -v firmware/fmheadend_rp2354/build/factory/fmheadend_rp2354.bin -t bin -o 0x10004000
-picotool reboot
-```
+OpenOCD identifies the RP2350-family chip and autodetects the flash; any size other
+than 2 MiB fails before erase. It halts both cores, erases sectors 0–511, writes
+the table at 0x10000000 and factory at 0x10004000. Python compares a complete
+2 MiB readback from the uncached, untranslated 0x1c000000 alias against both input
+files plus erased bytes everywhere else, including B and the journal. No target
+CRC algorithm is used. Logs/readback are `build/provision-openocd.log` and
+`build/provision-readback.bin`. Do not run other flashing tools concurrently.
 
-Check the printed partition bounds before loading the factory image. B and both
-journal sectors must initially be erased. The image in A is the non-TBYB 1.0
-factory build; installing only a TBYB image without a previously bought image
-is NOT a valid initial provisioning procedure. USB availability on the assembled
-board and the programmer's actual flash-offset behaviour need manual validation.
+Only after verification does the script request normal reset. If OpenOCD cannot
+acknowledge that reset, the task reports failure with **flash contents verified,
+normal reset unconfirmed**. Release BOOTSEL, reset manually and check `--status`;
+do not erase again just because the post-write reset failed. This occurred on
+the test board; the subsequent normal factory boot was verified over I²C.
 
-For SWD, use an RP2350-capable programmer with both cores halted and physical
-flash access: erase the 2 MiB device, write/verify partitions.bin at physical
-0x000000 and the factory .bin at physical 0x004000, leave B/journal erased, then
-perform a normal ROM boot. Do not flash the application ELF at 0x10000000:
-that is its translated runtime address and would overwrite the table. Exact
-SWD adapter configuration depends on your programmer and is not supplied as an
-unverified generic command. Recovery can repeat this provisioning, or restore
-your complete old-layout backup (which removes updater support).
-
-After first boot, use CLI --status and GET_INFO to verify partition A, no pending
-TBYB and successful initialization. First test A-to-B and then B-to-A with
-successively higher ROM versions before relying on unattended recovery.
+Direct `Run Project` flat loading is deliberately blocked; the supplied Cortex
+Debug configurations attach without loading. Inspect the active slot/build before
+choosing debug symbols. Never restore a default `program ELF` Flash task for this
+partitioned image. Rescue/reset tasks do not perform provisioning.
 
 ## Raspberry Pi CLI
 
-Copy the repository's `tools/rp2354_flash.py`, `tools/rp2354_artifact.py`,
+Copy the repository's `tools/rp2354_flash.py`, `firmware/fmheadend_rp2354/tools/rp2354_artifact.py`,
 `daemon/errors.py`, `daemon/__init__.py`, `daemon/rp2354/__init__.py`,
 `daemon/rp2354/protocol.py` and `daemon/rp2354/linux_client.py` preserving their
 relative paths, plus the .bin and .bin.json. A source checkout is simplest.
@@ -138,7 +147,7 @@ with the daemon. A stale inactive session can be explicitly abandoned with
 
 ## Update, maintenance and confirmation
 
-BEGIN validates ROM layout and increasing version, latches maintenance, holds
+BEGIN validates ROM layout and image parameters, latches maintenance, holds
 all transmitter reset pins low, stops SPI/I2S DMA and PIO on core1 and verifies
 all DMA is idle. Core1 then remains parked with the SDK flash-lockout IRQ enabled.
 Quiescence failure prevents flash writes and leaves maintenance requested.
@@ -213,9 +222,12 @@ RAM-only failed-BEGIN cancellation need not survive as a journal record.
 If the full ACK/STOP happened but its result was lost on the host, polling finds
 the normal boot. If the response was only partly read, matching STATUS permits
 a bounded replay of CONFIRM/ABORT to obtain a new full ACK/STOP. CONFIRM never
-buys twice. Re-running the same artifact after the uploader exits also recovers
-an already bought, matching ACTIVATING/CONFIRMED image; unrelated artifacts or
-pending trials do not enter this recovery path. An interrupted pre-buy trial
+buys twice. Explicit `--resume` with the same artifact recovers
+an already bought, matching ACTIVATING/CONFIRMED image. A normal invocation
+always creates a fresh session and writes the requested image, even if its build
+ID and ROM version already match. `--resume` also reuses a matching RECEIVING,
+VERIFIED or INTERRUPTED session; a reset-interrupted write restarts from zero.
+Unrelated artifacts or pending trials do not enter the bought-image recovery path. An interrupted pre-buy trial
 still relies on the ROM watchdog/rollback. A confirmed journal after reboot is
 idempotent and does not cause a reboot loop. There is no unattended timeout
 that reboots before a successful response has been fully read.
@@ -245,8 +257,8 @@ check actual SDK symbols, native binary structure and version/TBYB metadata.
 See [the targeted source review and regression results](rp2354-ota-review.md)
 for the boot_info, partition-ID and XIP contracts, including their limits.
 
-Still required on your board: initial USB/SWD provisioning, actual QMI mapping
-and flash readback in both slots, I2C ACK/STOP-before-reboot on the physical bus,
+Remaining qualification beyond the recorded workflow tests: physical
+I2C ACK/STOP timing and signal integrity on the bus,
 worst-case erase/boot/confirm timing within TBYB, DMA/IRQ lockout, A/B updates,
 failed/no-I2C boot, absent Pi confirmation, and power interruption at erase,
 page, metadata/seal, ACTIVATE and explicit buy. Never power-cut test your only

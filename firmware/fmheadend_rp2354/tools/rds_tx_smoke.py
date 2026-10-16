@@ -9,10 +9,10 @@ from pathlib import Path
 import sys
 import time
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-from daemon.rp2354.client import TxConfig
-from daemon.rp2354.linux_client import Rp2354Client
-from daemon.rds.encoder import group_0a
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from bench_support.client import TxConfig
+from bench_support.linux_client import Rp2354Client
+from bench_support.encoder import group_0a
 
 
 def exercise(rp, tx, *, pre_tx_rds_settle_ms=0, post_tx_settle_ms=0,

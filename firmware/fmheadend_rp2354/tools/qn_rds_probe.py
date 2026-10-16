@@ -9,10 +9,10 @@ from pathlib import Path
 import sys
 import time
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-from daemon.rds.encoder import group_0a
-from daemon.rp2354.client import TxConfig
-from daemon.rp2354.linux_client import Rp2354Client
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from bench_support.encoder import group_0a
+from bench_support.client import TxConfig
+from bench_support.linux_client import Rp2354Client
 
 SYSTEM1, SYSTEM2, I2S, GAIN_TXPLT = 0x00, 0x01, 0x07, 0x0F
 RDSD0, STATUS2 = 0x10, 0x1B

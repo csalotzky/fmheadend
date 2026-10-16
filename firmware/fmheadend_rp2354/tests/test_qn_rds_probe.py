@@ -7,8 +7,8 @@ import sys
 import types
 import unittest
 
-ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools"))
 
 
 class Config:
@@ -17,13 +17,13 @@ class Config:
 
 
 for name, values in {
-    "daemon.rp2354.client": {"TxConfig": Config},
-    "daemon.rp2354.linux_client": {"Rp2354Client": None},
+    "bench_support.client": {"TxConfig": Config},
+    "bench_support.linux_client": {"Rp2354Client": None},
 }.items():
     fake = types.ModuleType(name)
     fake.__dict__.update(values)
     sys.modules[name] = fake
-spec = importlib.util.spec_from_file_location("probe", ROOT / "firmware/fmheadend_rp2354/tools/qn_rds_probe.py")
+spec = importlib.util.spec_from_file_location("probe", ROOT / "tools/qn_rds_probe.py")
 probe = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(probe)
 

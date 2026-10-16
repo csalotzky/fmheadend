@@ -10,9 +10,9 @@ class Config:
     def __init__(self, **kw):
         self.__dict__.update(kw)
 
-client_module = types.ModuleType("daemon.rp2354.client")
+client_module = types.ModuleType("bench_support.client")
 client_module.TxConfig = Config
-linux_module = types.ModuleType("daemon.rp2354.linux_client")
+linux_module = types.ModuleType("bench_support.linux_client")
 linux_module.Rp2354Client = None
 sys.modules[client_module.__name__] = client_module
 sys.modules[linux_module.__name__] = linux_module

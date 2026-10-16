@@ -2,10 +2,10 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Pico Debug (Cortex-Debug)",
+            "name": "Pico Attach (no flash) (Cortex-Debug)",
             "cwd": "${userHome}/.pico-sdk/openocd/0.12.0+dev/scripts",
             "executable": "${command:raspberry-pi-pico.launchTargetPath}",
-            "request": "launch",
+            "request": "attach",
             "type": "cortex-debug",
             "servertype": "openocd",
             "serverpath": "${userHome}/.pico-sdk/openocd/0.12.0+dev/openocd.exe",
@@ -20,22 +20,15 @@
                 "target/${command:raspberry-pi-pico.getTarget}.cfg"
             ],
             "svdFile": "${userHome}/.pico-sdk/sdk/2.3.1/src/${command:raspberry-pi-pico.getChip}/hardware_regs/${command:raspberry-pi-pico.getChipUppercase}.svd",
-            "runToEntryPoint": "main",
-            // Fix for no_flash binaries, where monitor reset halt doesn't do what is expected
-            // Also works fine for flash binaries
-            "overrideLaunchCommands": [
-                "monitor reset init",
-                "load \"${command:raspberry-pi-pico.launchTargetPath}\""
-            ],
             "openOCDLaunchCommands": [
                 "adapter speed 1000"
             ]
         },
         {
-            "name": "Pico Debug (Cortex-Debug with external OpenOCD)",
+            "name": "Pico Attach (no flash) (Cortex-Debug with external OpenOCD)",
             "cwd": "${workspaceRoot}",
             "executable": "${command:raspberry-pi-pico.launchTargetPath}",
-            "request": "launch",
+            "request": "attach",
             "type": "cortex-debug",
             "servertype": "external",
             "gdbTarget": "localhost:3333",
@@ -45,14 +38,7 @@
                 "set debug-file-directory /debug"
             ],
             "device": "${command:raspberry-pi-pico.getChipUppercase}",
-            "svdFile": "${userHome}/.pico-sdk/sdk/2.3.1/src/${command:raspberry-pi-pico.getChip}/hardware_regs/${command:raspberry-pi-pico.getChipUppercase}.svd",
-            "runToEntryPoint": "main",
-            // Fix for no_flash binaries, where monitor reset halt doesn't do what is expected
-            // Also works fine for flash binaries
-            "overrideLaunchCommands": [
-                "monitor reset init",
-                "load \"${command:raspberry-pi-pico.launchTargetPath}\""
-            ]
+            "svdFile": "${userHome}/.pico-sdk/sdk/2.3.1/src/${command:raspberry-pi-pico.getChip}/hardware_regs/${command:raspberry-pi-pico.getChipUppercase}.svd"
         }
     ]
 }

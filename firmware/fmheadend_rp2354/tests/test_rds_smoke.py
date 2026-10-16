@@ -45,7 +45,7 @@ class Client:
         self.calls.append("close")
 
 
-fake = types.ModuleType("daemon.rp2354.linux_client")
+fake = types.ModuleType("bench_support.linux_client")
 fake.Rp2354Client = Client
 sys.modules[fake.__name__] = fake
 spec = importlib.util.spec_from_file_location("rds_smoke", Path(__file__).parents[1] / "tools/rds_smoke.py")

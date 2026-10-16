@@ -4,7 +4,7 @@ import struct
 from types import SimpleNamespace
 from unittest.mock import Mock
 import pytest
-from tools.rp2354_artifact import inspect_image, load_artifact
+from firmware.fmheadend_rp2354.tools.rp2354_artifact import inspect_image, load_artifact
 from tools.rp2354_flash import Uploader, UpdateError, main, F
 from daemon.rp2354 import protocol as p
 from daemon.rp2354 import linux_client as linux
@@ -53,6 +53,8 @@ class Fake:
                 raise p.HardwareUnavailable('reset')
         elif sub==F.VERIFY:
             assert hashlib.sha256(self.data).digest()==self.s['sha256'];self.s['state']=2
+            if self.lost=='verify':
+                self.lost=None;raise p.ProtocolError('lost VERIFY ACK')
         elif sub==F.ACTIVATE:
             answer=dict(self.s,state=3)
             self.s.update(state=3)
@@ -87,7 +89,7 @@ def runner(fake):
     return Uploader(fake,clock=lambda:now[0],sleep=sleep,progress=lambda s:None)
 
 
-@pytest.mark.parametrize('lost',[None,'before','after','confirm','confirm_partial'])
+@pytest.mark.parametrize('lost',[None,'before','after','verify','confirm','confirm_partial'])
 @pytest.mark.parametrize('boot',[0,1])
 def test_upload_and_reconcile(lost,boot):
     data,meta=artifact();fake=Fake(lost,boot=boot)
@@ -160,7 +162,7 @@ def test_restart_uploader_after_buy(maintenance,state):
     fake.s.update(state=state,boot=1,inactive=0,target=1,tbyb=0,version=(1,1),size=len(data),
         session=b's'*16,sha256=bytes.fromhex(meta['sha256']),build=bytes.fromhex(meta['build_id']),
         running_build=bytes.fromhex(meta['build_id']),maintenance=maintenance)
-    result=runner(fake).run(data,meta)
+    result=runner(fake).run(data,meta,resume=True)
     assert result['state']==4 and not result['maintenance']
     assert F.BEGIN not in fake.calls and F.ACTIVATE not in fake.calls
     assert fake.calls.count(F.CONFIRM)==int(maintenance)
@@ -170,8 +172,38 @@ def test_restart_uploader_does_not_recover_different_hash():
     data,meta=artifact();fake=Fake()
     fake.s.update(state=4,boot=1,inactive=0,target=1,tbyb=0,version=(1,1),size=len(data),
         build=bytes.fromhex(meta['build_id']),running_build=bytes.fromhex(meta['build_id']),maintenance=True)
-    with pytest.raises(UpdateError,match='mismatch'):runner(fake).run(data,meta)
+    with pytest.raises(UpdateError,match='mismatch'):runner(fake).run(data,meta,resume=True)
     assert F.CONFIRM not in fake.calls
+
+
+@pytest.mark.parametrize('boot',[0,1])
+@pytest.mark.parametrize('old_version',[(1,1),(2,0)])
+def test_equal_or_older_version_really_writes_inactive_slot(boot,old_version):
+    data,meta=artifact();fake=Fake(boot=boot)
+    fake.s.update(version=old_version,running_build=bytes.fromhex(meta['build_id']),
+                  state=4,target=boot)
+    result=runner(fake).run(data,meta)
+    assert fake.data==data and F.BEGIN in fake.calls and F.WRITE in fake.calls
+    assert result['boot']==boot^1 and result['state']==4
+
+
+def test_resume_without_existing_session_does_not_write():
+    fake=Fake()
+    with pytest.raises(UpdateError,match='No matching'):
+        runner(fake).run(*artifact(),resume=True)
+    assert F.BEGIN not in fake.calls
+
+
+@pytest.mark.parametrize('boot',[0,1])
+def test_resume_activation_intent_does_not_rewrite(boot):
+    data,meta=artifact();fake=Fake(boot=boot)
+    fake.s.update(state=3,target=boot^1,maintenance=True,session=b's'*16,
+                  size=len(data),accepted=len(data),committed=len(data),
+                  sha256=bytes.fromhex(meta['sha256']),build=bytes.fromhex(meta['build_id']))
+    result=runner(fake).run(data,meta,resume=True)
+    assert result['state']==4 and result['boot']==boot^1
+    assert F.BEGIN not in fake.calls and F.WRITE not in fake.calls
+    assert fake.calls.count(F.ACTIVATE)==1
 
 
 @pytest.mark.parametrize('mode',['bad_boot','rollback'])

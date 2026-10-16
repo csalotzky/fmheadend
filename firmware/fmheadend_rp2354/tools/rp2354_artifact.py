@@ -34,10 +34,10 @@ def inspect_image(data, *, factory=False):
         firmware_version=data[marker+32:marker+48].split(b'\0',1)[0].decode('ascii'),rom_version=[major,minor])
 
 
-def load_artifact(path):
+def load_artifact(path, *, factory=False):
     path=Path(path)
     data=path.read_bytes()
-    actual=inspect_image(data)
+    actual=inspect_image(data, factory=factory)
     if json.loads(Path(str(path)+'.json').read_text())!=actual:
         raise ValueError('Stale or inconsistent .bin.json manifest; rebuild')
     return data,actual
@@ -54,7 +54,12 @@ def main():
     m=inspect_image(args.image.read_bytes(),factory=args.factory=='1')
     if m['build_id']!=args.build_id or m['rom_version']!=[args.major,args.minor]:
         raise ValueError('Binary differs from build inputs')
-    Path(str(args.image)+'.json').write_text(json.dumps(m,indent=2)+'\n')
+    manifest=Path(str(args.image)+'.json')
+    content=json.dumps(m,indent=2)+'\n'
+    if not manifest.exists() or manifest.read_text()!=content:
+        temporary=manifest.with_suffix('.json.tmp')
+        temporary.write_text(content)
+        temporary.replace(manifest)
     print(f"Validated {m['size']} bytes; SHA256 {m['sha256']}")
 
 

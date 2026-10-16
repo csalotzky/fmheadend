@@ -8,8 +8,8 @@ import sys
 import time
 
 # Reuse the authoritative wire codec without loading the Linux daemon/services.
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-from daemon.rp2354 import protocol as p
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from bench_support import protocol as p
 
 
 def main():
