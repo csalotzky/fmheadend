@@ -230,7 +230,7 @@ describe('Sources management', () => {
     expect(source.contains(actions)).toBe(false);
     expect(audio.contains(actions)).toBe(false);
     expect(rds.contains(actions)).toBe(false);
-    expect(actions.textContent).toContain(
+    expect(actions.textContent).not.toContain(
       'Testing does not save changes or prove RF transmission.',
     );
   });
