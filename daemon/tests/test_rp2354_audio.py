@@ -9,8 +9,8 @@ from fmheadendd.models.configuration import ModulatorConfig
 from fmheadendd.rp2354.client import TxConfig, MockRp2354Client
 from fmheadendd.rp2354 import protocol as p
 
-DEFAULTS = dict(gain_mode="AUTO", analog_gain_db=0.0, digital_trim_db=0, soft_clipping=False)
-MANUAL = dict(gain_mode="MANUAL", analog_gain_db=-1.5, digital_trim_db=1, soft_clipping=True)
+DEFAULTS = dict(gain_mode="AUTO", analog_gain_db=0.0, soft_clipping=False)
+MANUAL = dict(gain_mode="MANUAL", analog_gain_db=-1.5, soft_clipping=True)
 
 
 def config(**changes):
@@ -22,19 +22,18 @@ def config(**changes):
 @pytest.mark.parametrize("gain,encoded", [(0.0, "0000"), (6.0, "3c00"), (-1.5, "f1ff"),
                                          (-3276.8, "0080"), (3276.7, "ff7f")])
 def test_exact_config(mode, code, gain, encoded):
-    body = p.tx_config(config(gain_mode=mode, analog_gain_db=gain, digital_trim_db=1, soft_clipping=True))
-    expected = bytes.fromhex("347f01003c0001320101") + bytes([code]) + bytes.fromhex(encoded) + b"\x01\x01"
+    body = p.tx_config(config(gain_mode=mode, analog_gain_db=gain, soft_clipping=True))
+    expected = bytes.fromhex("347f01003c0001320101") + bytes([code]) + bytes.fromhex(encoded) + b"\x00\x01"
     assert body == expected and len(body) == 15
     packet = b"\x02\x07\x0f" + expected
     assert p.request(p.Command.SET_TX_CONFIG, 7, body) == packet + p.crc16(packet).to_bytes(2, "little")
-    assert struct.unpack("<IHBBBBBhBB", body) == (98100, 60, 1, 50, 1, 1, code, int(gain * 10), 1, 1)
+    assert struct.unpack("<IHBBBBBhBB", body) == (98100, 60, 1, 50, 1, 1, code, int(gain * 10), 0, 1)
 
 
 @pytest.mark.parametrize("field,value", [("gain_mode", "invalid"), ("gain_mode", 0),
     ("analog_gain_db", 0.15), ("analog_gain_db", 3276.8), ("analog_gain_db", -3276.9),
     ("analog_gain_db", float("nan")), ("analog_gain_db", True),
-    ("digital_trim_db", 2), ("digital_trim_db", -1), ("digital_trim_db", True),
-    ("digital_trim_db", 0.5), ("soft_clipping", 1)])
+    ("soft_clipping", 1)])
 def test_validation_at_model_and_wire_boundary(field, value):
     with pytest.raises(ValidationError):
         ModulatorConfig(**{field: value})
@@ -96,6 +95,8 @@ def test_api_reconnect_preserves_config_and_stale_saturation(tmp_path, settings)
         prefix = "/api/v1"
         assert api.get(prefix + "/system/info").json()["controller_protocol_version"] == 1
         original = api.get(prefix + "/modulators/0").json()
+        assert "digital_trim_db" not in original
+        assert api.patch(prefix + "/modulators/0", json={"digital_trim_db": 1}).status_code == 422
         assert {key:original[key] for key in DEFAULTS} == DEFAULTS
         body = dict(audio_mode="ANALOG", frequency_khz=98100, rf_attenuation_db=6.0, rds_enabled=True, **settings)
         result = api.patch(prefix + "/modulators/0", json=body)

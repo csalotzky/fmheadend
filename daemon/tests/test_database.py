@@ -39,6 +39,7 @@ def test_fresh_schema_and_model_defaults(tmp_path):
             assert actual.rds_override_profile.rds_rt_enabled is False
             assert actual.rds_follow_source is False
             raw = json.loads(db.connection.execute('SELECT data FROM modulators WHERE id=?', (tx,)).fetchone()[0])
+            assert 'digital_trim_db' not in raw
             assert 'rds_pi' not in raw and 'rds_ps' not in raw and 'rds_override_profile' not in raw
         assert db.connection.execute('SELECT count(*) FROM rds_profiles').fetchone()[0] == 8
         assert db.connection.execute("PRAGMA foreign_key_check").fetchall() == []
@@ -57,7 +58,7 @@ def test_current_configuration_reopens_without_writes(tmp_path):
     db.save("modulators", ModulatorConfig(
         enabled=True, input_source_id=source.id, frequency_khz=98100,
         rf_attenuation_db=7.5, gain_mode="MANUAL", analog_gain_db=-1.5,
-        digital_trim_db=1, soft_clipping=True, stereo=False, preemphasis_us=75,
+        soft_clipping=True, stereo=False, preemphasis_us=75,
         rds_enabled=True, rds_pi=0x1234, rds_ecc=224, rds_af_khz=[101100],
         rds_ps=[PsEntry(text="STATION", duration_s=9), PsEntry(text="SECOND")],
         rds_pty=10, rds_tp=True, rds_rt="Saved text", rds_metadata_to_rt=True), 3)

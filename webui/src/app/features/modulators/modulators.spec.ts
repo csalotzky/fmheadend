@@ -155,15 +155,13 @@ describe('Modulator configuration', () => {
     c.af.at(0).setValue('98.1');
     expect(c.draft().rds_override_profile!.rds_af_khz).toEqual([98100, 107900]);
   });
-  it('uses the concise source, RF and digital gain wording', async () => {
+  it('uses concise RF wording without a digital gain control', async () => {
     const f = await editor();
     const el = f.nativeElement as HTMLElement;
     expect(el.textContent).not.toContain('One source may feed multiple transmitters.');
     expect(el.textContent).toContain('Relative to maximum output.');
     expect(el.textContent).not.toContain('Absolute output calibration');
-    const gain = el.querySelector('[formControlName="digital_trim_db"]') as HTMLSelectElement;
-    expect(gain.closest('label')?.textContent).toContain('Digital gain');
-    expect(Array.from(gain.options).map((o) => o.textContent?.trim())).toEqual(['0 dB', '+1 dB']);
+    expect(el.querySelector('[formControlName="digital_trim_db"]')).toBeNull();
   });
   it('renders eight fixed IDs, summaries, runtime state and edit destinations', () => {
     const f = TestBed.createComponent(ModulatorsList);
@@ -559,34 +557,62 @@ describe('Modulator configuration', () => {
     c.form.controls.audio_mode.setValue('DIGITAL');
     c.changeMode();
     expect(c.form.controls.input_source_id.value).toBeNull();
-    expect(() => c.draft()).toThrow('Select a digital source');
+    expect(() => c.draft()).toThrow('Select a source for FMheadend audio');
     c.form.controls.input_source_id.setValue(1);
     expect(c.draft().input_source_id).toBe(1); // Existing TXs may share it.
+  });
+  it.each([
+    ['DIGITAL', 'AUTO'],
+    ['DIGITAL', 'MANUAL'],
+    ['ANALOG', 'AUTO'],
+    ['ANALOG', 'MANUAL'],
+  ] as const)('keeps Audio controls compact for %s / %s', async (audio_mode, gain_mode) => {
+    const f = await editor({ audio_mode, gain_mode });
+    const el = f.nativeElement as HTMLElement;
+    const input = el.querySelector('[formControlName="audio_mode"]') as HTMLSelectElement;
+    expect(Array.from(input.options).map((o) => o.textContent?.trim())).toEqual([
+      'FMheadend audio',
+      'External line input',
+    ]);
+    expect(el.querySelector('[formControlName="input_source_id"]') !== null).toBe(
+      audio_mode === 'DIGITAL',
+    );
+    expect(el.querySelector('[formControlName="digital_trim_db"]')).toBeNull();
+    const analog = el.querySelector(
+      '[formControlName="analog_gain_db"]',
+    ) as HTMLSelectElement | null;
+    expect(analog !== null).toBe(audio_mode === 'ANALOG');
+    if (analog) {
+      expect(analog.disabled).toBe(gain_mode === 'AUTO');
+      expect(el.textContent).toContain("Uses TX 0's dedicated analog audio input.");
+    }
+    const clipping = el.querySelector('[formControlName="soft_clipping"]') as HTMLSelectElement;
+    expect(clipping.disabled).toBe(false);
+    expect(clipping.closest('label')?.classList.contains('full-width')).toBe(
+      audio_mode === 'ANALOG',
+    );
   });
   it('retains manual values under AUTO and soft clipping stays independent', async () => {
     const f = await editor({
         audio_mode: 'ANALOG',
         input_source_id: null,
         analog_gain_db: 6,
-        digital_trim_db: 1,
       }),
       c = f.componentInstance;
     expect(c.form.controls.analog_gain_db.disabled).toBe(true);
-    expect(c.form.controls.digital_trim_db.disabled).toBe(true);
     expect(f.nativeElement.querySelector('[formControlName="analog_gain_db"]')).not.toBeNull();
     c.form.controls.soft_clipping.setValue(true);
-    expect(c.draft()).toMatchObject({ analog_gain_db: 6, digital_trim_db: 1, soft_clipping: true });
+    expect(c.draft()).toMatchObject({ analog_gain_db: 6, soft_clipping: true });
     c.form.controls.gain_mode.setValue('MANUAL');
     c.syncGain();
     expect(c.form.controls.analog_gain_db.enabled).toBe(true);
-    expect(c.form.controls.digital_trim_db.enabled).toBe(true);
     c.form.controls.audio_mode.setValue('DIGITAL');
     c.changeMode();
     f.detectChanges();
     expect(f.nativeElement.querySelector('[formControlName="analog_gain_db"]')).toBeNull();
-    expect(
-      f.nativeElement.querySelector('[formControlName="digital_trim_db"]').options,
-    ).toHaveLength(2);
+    expect(f.nativeElement.querySelector('[formControlName="digital_trim_db"]')).toBeNull();
+    c.form.controls.input_source_id.setValue(1);
+    expect(c.draft()).not.toHaveProperty('digital_trim_db');
   });
   it.each([true, false, null])(
     'displays current analog saturation %s honestly',

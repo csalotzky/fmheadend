@@ -64,7 +64,6 @@ export class ModulatorEditor implements OnInit {
     input_source_id: new FormControl<number | null>(null),
     gain_mode: new FormControl<Modulator['gain_mode']>('AUTO', { nonNullable: true }),
     analog_gain_db: text('0'),
-    digital_trim_db: new FormControl<0 | 1>(0, { nonNullable: true }),
     soft_clipping: flag(),
     rds_enabled: flag(),
   });
@@ -156,7 +155,6 @@ export class ModulatorEditor implements OnInit {
   syncGain() {
     const manual = this.form.controls.gain_mode.value === 'MANUAL';
     const controls = this.form.controls;
-    controls.digital_trim_db[manual ? 'enable' : 'disable']({ emitEvent: false });
     controls.analog_gain_db[
       manual && controls.audio_mode.value === 'ANALOG' ? 'enable' : 'disable'
     ]({ emitEvent: false });
@@ -191,7 +189,7 @@ export class ModulatorEditor implements OnInit {
     if (!rfOutputOptions.some((o) => o.value === v.rf_attenuation_db))
       throw new Error('Select RF output.');
     if (v.audio_mode === 'DIGITAL' && v.input_source_id === null)
-      throw new Error('Select a digital source, or choose Analog input.');
+      throw new Error('Select a source for FMheadend audio, or choose External line input.');
     return {
       frequency_khz: v.frequency_khz,
       rf_attenuation_db: v.rf_attenuation_db,
@@ -201,7 +199,6 @@ export class ModulatorEditor implements OnInit {
       input_source_id: v.audio_mode === 'ANALOG' ? null : v.input_source_id,
       gain_mode: v.gain_mode,
       analog_gain_db: decimal(v.analog_gain_db, 'Analog gain', -3276.8, 3276.7)!,
-      digital_trim_db: v.digital_trim_db,
       soft_clipping: v.soft_clipping,
       rds_enabled: v.rds_enabled,
       rds_follow_source: v.rds_follow_source,

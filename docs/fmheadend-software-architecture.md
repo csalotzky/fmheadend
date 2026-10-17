@@ -455,7 +455,6 @@ A `Modulator` a nyolc fizikai QN egyikét reprezentálja. Az `id` **fizikai azon
 | `rf_attenuation_db` | nullable number | Relative attenuation 0..22.5 dB in 1.5 dB steps; null until selected |
 | `gain_mode` | AUTO / MANUAL | Default AUTO; QN AGC owns both gains in AUTO |
 | `analog_gain_db` | number | Default 0.0 dB; signed tenths, final hardware representability checked by RP |
-| `digital_trim_db` | 0 / 1 | Default 0; manual QN digital trim in dB |
 | `soft_clipping` | boolean | Default false; independent QN soft clipping enable |
 | `rds_enabled` | bool | Physical QN RDS enable, Modulator-owned |
 | `rds_follow_source` | bool | Follow Source content or Custom override; default false |
@@ -1055,18 +1054,19 @@ Payload logikai mezői:
 - `preemphasis_us`;
 - `audio_mode` = `DIGITAL` / `ANALOG`;
 - `rds_enabled`;
-- `gain_mode`, `analog_gain_db`, `digital_trim_db`, `soft_clipping`.
+- `gain_mode`, `analog_gain_db`, `soft_clipping`.
 
 A művelet **nem kapcsolja automatikusan ON állapotba a TX-et**.
 
 Pre-release protocol V1 extends SET_TX_CONFIG to 15 bytes and GET_STATUS to 130 bytes.
 The exact layouts and QN mapping contract live only in [RP protocol](rp2354-protocol.md).
-AUTO ignores the persisted manual gains; MANUAL applies them through TXAGC_GVGA
-(board-fixed RIN mapping in RP firmware) and TXAGC_GDB. Soft clipping maps to
+AUTO ignores manual gain values; MANUAL applies analog gain through TXAGC_GVGA
+(board-fixed RIN mapping in RP firmware). The unchanged V1 digital-trim byte is
+always sent as zero (0 dB); it is not a configurable or persisted field. Soft clipping maps to
 TX_SFTCLPEN independently. Linux validates only finite signed-tenths wire range,
 not a guessed RIN-specific range, and exposes no raw gain register codes.
 
-Fresh Modulators use AUTO / 0.0 dB / 0 dB / false model defaults. No RIN is chosen.
+Fresh Modulators use AUTO / 0.0 dB analog gain / false soft clipping model defaults. No RIN is chosen.
 Startup and recovery replay these fields through the same full TxConfig path,
 before RDS synchronization and TX enable. Future firmware must advertise version 1 and implement the current expanded layouts. No M7B2 gain UI is part of this prerequisite.
 

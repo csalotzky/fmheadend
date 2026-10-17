@@ -19,7 +19,6 @@ export function sample(): Snapshot {
       audio_mode: 'DIGITAL',
       gain_mode: 'AUTO',
       analog_gain_db: 0,
-      digital_trim_db: 0,
       soft_clipping: false,
       enabled: id === 0,
       input_source_id: 1,
