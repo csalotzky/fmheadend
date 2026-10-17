@@ -13,19 +13,15 @@ import { DspFields } from './dsp-fields';
 import { validSettings } from './dsp-number';
 import { errorMessage } from '../../core/api/headend-api';
 @Component({
-  host: { class: 'page-content editor-narrow' },
+  host: { class: 'page-content editor-page' },
   selector: 'app-profile-editor',
   imports: [ReactiveFormsModule, FormsModule, DspFields],
-  styleUrl: '../sources/sources.css',
+  styleUrl: '../../shared/editor-layout.css',
   styles: `
-    details.stage {
-      border: 1px solid #36404c;
-      padding: 0.8rem;
-      margin: 0.6rem 0;
-    }
     summary {
       cursor: pointer;
       font-weight: 600;
+      margin-bottom: 12px;
     }
     .plugin-doc {
       display: inline-block;
@@ -39,7 +35,9 @@ import { errorMessage } from '../../core/api/headend-api';
     }
   `,
   template: `
-    <h1>{{ path === undefined ? 'Add Audio Profile' : 'Edit Audio Profile' }}</h1>
+    <div class="page-header">
+      <h1>{{ path === undefined ? 'Add Audio Profile' : 'Edit Audio Profile' }}</h1>
+    </div>
     @if (failed()) {
       <p role="alert" class="error">{{ error() }}</p>
     }
@@ -49,10 +47,14 @@ import { errorMessage } from '../../core/api/headend-api';
     @if (!loading() && !failed() && document && description) {
       <form [formGroup]="form" (ngSubmit)="save()">
         <fieldset [disabled]="saving() || readOnly()">
-          <label>Name<input formControlName="name" required maxlength="200" /></label>
-          <label>Description<textarea formControlName="description" rows="2"></textarea></label>
+          <section class="editor-panel" aria-label="Profile details">
+            <div class="fields">
+              <label>Name<input formControlName="name" required maxlength="200" /></label>
+              <label>Description<textarea formControlName="description" rows="2"></textarea></label>
+            </div>
+          </section>
           @for (stage of description.stages; track stage.key; let index = $index) {
-            <details class="stage" open>
+            <details class="stage editor-panel" open>
               <summary>{{ index + 1 }}. {{ stage.label }}</summary>
               @if (description.helpers?.[stage.key]) {
                 <p class="muted">{{ description.helpers[stage.key] }}</p>

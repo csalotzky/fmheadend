@@ -414,7 +414,7 @@ describe('Podcast source configuration', () => {
     const actions = el(f).querySelector('.feed-actions')!;
     expect(actions.firstElementChild).toBe(button(f, '+ Add feed'));
     expect(actions.lastElementChild).toBe(tests[0]);
-    expect(el(f).querySelector('.source-editor-actions')!.contains(tests[0])).toBe(false);
+    expect(el(f).querySelector('.editor-actions')!.contains(tests[0])).toBe(false);
     expect(el(f).querySelector('[aria-labelledby="source-heading"]')!.contains(tests[0])).toBe(
       true,
     );

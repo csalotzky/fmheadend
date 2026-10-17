@@ -1,0 +1,77 @@
+/* Shared editor primitives; import into editor and embedded form components. */
+a {
+  color: var(--text);
+}
+h2 {
+  font-size: 17px;
+  margin: 0 0 18px;
+}
+.editor-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 18px;
+  margin: 0 0 12px;
+  min-width: 0;
+}
+fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.fields + .fields {
+  margin-top: 16px;
+}
+.fields > *,
+label {
+  min-width: 0;
+}
+label {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+input,
+select,
+textarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  margin-top: 7px;
+  padding: 9px;
+  background: var(--background);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font: 14px var(--sans);
+}
+input[type='checkbox'] {
+  width: auto;
+}
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--warning);
+  outline-offset: 2px;
+}
+small {
+  display: block;
+  line-height: 1.5;
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 620px) {
+  .fields {
+    grid-template-columns: 1fr;
+  }
+  .editor-panel {
+    padding: 14px;
+  }
+}

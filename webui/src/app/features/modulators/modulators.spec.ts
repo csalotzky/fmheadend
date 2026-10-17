@@ -240,7 +240,7 @@ describe('Modulator configuration', () => {
         (el) => (el as HTMLElement).textContent,
       ),
     ).toEqual(['RF', 'Audio', 'RDS']);
-    expect(f.nativeElement.classList.contains('editor-wide')).toBe(true);
+    expect(f.nativeElement.classList.contains('editor-page')).toBe(true);
     expect(f.nativeElement.querySelector('.editor-actions')).not.toBeNull();
     expect(f.componentInstance.form.controls.frequency_khz.value).toBe(91600);
     expect(f.componentInstance.form.pristine).toBe(true);
@@ -717,7 +717,7 @@ describe('Modulator configuration', () => {
     expect(f.componentInstance.form.controls.frequency_khz.value).toBe(
       sample().modulators[1].frequency_khz,
     );
-    expect(f.nativeElement.querySelector('h1').textContent).toBe('TX 1');
+    expect(f.nativeElement.querySelector('h1').textContent).toBe('Edit Modulator (TX 1)');
   });
   it('background refresh never replaces dirty form fields', async () => {
     const f = await editor(),

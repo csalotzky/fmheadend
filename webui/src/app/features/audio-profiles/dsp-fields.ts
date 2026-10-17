@@ -6,6 +6,7 @@ import { DspSchema } from './profile-api';
 /** Profile-only controls; edit the existing object so hidden keys survive. */
 @Component({
   selector: 'app-dsp-fields',
+  styleUrl: '../../shared/editor-layout.css',
   imports: [FormsModule, DspNumber],
   template: `
     <div class="fields">
@@ -111,19 +112,6 @@ import { DspSchema } from './profile-api';
     }
   `,
   styles: `
-    .fields {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-      gap: 0.7rem;
-    }
-    label {
-      display: flex;
-      flex-direction: column;
-      gap: 0.3rem;
-    }
-    small {
-      color: var(--muted);
-    }
     details {
       border: 1px solid #36404c;
       padding: 0.6rem;

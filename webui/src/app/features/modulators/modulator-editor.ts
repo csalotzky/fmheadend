@@ -23,7 +23,7 @@ import { decimal, rfOutputOptions, analogGainOptions } from './values';
 const text = (value = '') => new FormControl(value, { nonNullable: true });
 const flag = (value = false) => new FormControl(value, { nonNullable: true });
 @Component({
-  host: { class: 'page-content editor-wide' },
+  host: { class: 'page-content editor-page' },
   selector: 'app-modulator-editor',
   imports: [ReactiveFormsModule, RdsProfileEditor],
   templateUrl: './modulator-editor.html',
