@@ -211,17 +211,21 @@ bool spi_audio_init(void)
     dma_channel_configure(rx_dma,&dma,spi_stream_capture(&stream),&rx_pio->rxf[rx_sm],
         dma_encode_transfer_count(SPI_CAPTURE_BYTES),false);
     initialized=true;
+#if DEBUG_UART_ENABLED
     snprintf(line,sizeof(line),"SPI AUDIO: init OK PIO1 SM=%d DMA=%d MOSI=0 CS=1 SCK=2 MISO=unused; mode0 25MHz; slots=4 queued=3 prefill=2 frame=%u samples=%u TX=%u\r\n",rx_sm,rx_dma,(unsigned)SPI_FRAME_BYTES,(unsigned)FRAMES_PER_PACKET,(unsigned)TX_COUNT);
     uart_puts(DEBUG_UART,line);
     uart_puts(DEBUG_UART,"SPI RX DIAG: first 5 rejected length/hardware frames; entry -> stopped; details capped until reset\r\n");
     snprintf(line,sizeof(line),"SPI RX EOF: retired WRITE_ADDR + FIFO tail; exact %u bytes / %u bits\r\n",(unsigned)SPI_FRAME_BYTES,(unsigned)(8*SPI_FRAME_BYTES));
     uart_puts(DEBUG_UART,line);
+#endif
     return true;
 failed:
     spi_stream_error(&stream,SPI_RECEIVE_ERROR);
+#if DEBUG_UART_ENABLED
     snprintf(line,sizeof(line),"SPI AUDIO: INIT FAILED stage=%s rc=%d sys_hz=%lu SM=%d offset=%d DMA=%d; DIGITAL silence\r\n",
         stage,result,(unsigned long)clock_get_hz(clk_sys),rx_sm,rx_offset,rx_dma);
     uart_puts(DEBUG_UART,line);
+#endif
     if (rx_dma>=0) dma_channel_unclaim(rx_dma);
     if (rx_offset>=0) pio_remove_program(rx_pio,&spi_audio_program,rx_offset);
     if (rx_sm>=0) pio_sm_unclaim(rx_pio,rx_sm);

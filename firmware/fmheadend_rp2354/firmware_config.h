@@ -1,6 +1,13 @@
 #ifndef FMHEADEND_FIRMWARE_CONFIG_H
 #define FMHEADEND_FIRMWARE_CONFIG_H
 /* Hardware population is contiguous from TX0. Storage/output lanes stay eight. */
+#define FMHEADEND_FIRMWARE_VERSION "1.0.0"
+#ifndef DEBUG_UART_ENABLED
+#define DEBUG_UART_ENABLED 0
+#endif
+#if DEBUG_UART_ENABLED != 0 && DEBUG_UART_ENABLED != 1
+#error "DEBUG_UART_ENABLED must be 0 or 1"
+#endif
 #ifndef TX_COUNT
 #define TX_COUNT 8
 #endif

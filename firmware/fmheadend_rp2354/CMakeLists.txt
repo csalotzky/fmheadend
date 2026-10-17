@@ -48,6 +48,14 @@ endif()
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 pico_init_picotool()
 
+option(DEBUG_UART_ENABLED "Enable debug UART on GPIO28/29" OFF)
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/firmware_config.h" version_definition
+    REGEX "^#define FMHEADEND_FIRMWARE_VERSION ")
+string(REGEX MATCH "[0-9]+[.][0-9]+[.][0-9]+" firmware_version "${version_definition}")
+if(NOT firmware_version)
+    message(FATAL_ERROR "Missing firmware version in firmware_config.h")
+endif()
+
 set(FRAMES_PER_PACKET "128" CACHE STRING "Stereo frames per SPI packet (1..128)")
 if(NOT FRAMES_PER_PACKET MATCHES "^[1-9][0-9]*$" OR FRAMES_PER_PACKET GREATER 128)
     message(FATAL_ERROR "FRAMES_PER_PACKET must be 1..128")

@@ -2,7 +2,7 @@ set(image_dir "${CMAKE_CURRENT_BINARY_DIR}")
 file(MAKE_DIRECTORY "${image_dir}")
 file(GLOB build_sources CONFIGURE_DEPENDS "${firmware_dir}/*.c" "${firmware_dir}/*.h" "${firmware_dir}/*.pio")
 list(APPEND build_sources "${firmware_dir}/CMakeLists.txt" "${CMAKE_CURRENT_LIST_FILE}")
-set(build_fingerprint "${sdkVersion}/${toolchainVersion}/${FMHEADEND_IMAGE_MAJOR}.${FMHEADEND_IMAGE_MINOR}/${FMHEADEND_FACTORY_IMAGE}/${HOST_ADDRESS_VALUE}/${TX_COUNT}/${FRAMES_PER_PACKET}")
+set(build_fingerprint "${sdkVersion}/${toolchainVersion}/${FMHEADEND_IMAGE_MAJOR}.${FMHEADEND_IMAGE_MINOR}/${FMHEADEND_FACTORY_IMAGE}/${HOST_ADDRESS_VALUE}/${TX_COUNT}/${FRAMES_PER_PACKET}/${DEBUG_UART_ENABLED}")
 foreach(src IN LISTS build_sources)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${src}")
     file(SHA256 "${src}" source_hash)
@@ -30,11 +30,12 @@ add_executable(${target}
         )
 
 pico_set_program_name(${target} "fmheadend_rp2354")
-pico_set_program_version(${target} "0.8.6b")
+pico_set_program_version(${target} "${firmware_version}")
 pico_generate_pio_header(${target} ${firmware_dir}/i2s_audio.pio)
 pico_generate_pio_header(${target} ${firmware_dir}/spi_audio.pio)
 target_compile_definitions(${target} PRIVATE
         TX_COUNT=${TX_COUNT} FRAMES_PER_PACKET=${FRAMES_PER_PACKET}
+        DEBUG_UART_ENABLED=$<BOOL:${DEBUG_UART_ENABLED}>
         FMHEADEND_HOST_I2C_ADDRESS=${HOST_ADDRESS_VALUE}
         FMHEADEND_FLASH_UPDATE=1 PICO_FLASH_ASSERT_ON_UNSAFE=0 PICO_STACK_SIZE=0x1000 PICO_CORE1_STACK_SIZE=0x800
         PICO_CRT0_IMAGE_TYPE_TBYB=$<IF:$<BOOL:${FMHEADEND_FACTORY_IMAGE}>,0,1>

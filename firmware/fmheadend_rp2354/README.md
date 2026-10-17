@@ -43,6 +43,15 @@ The unmodified host supports only TX8/128. Other populations need matching host
 SPI lengths and GET_INFO support; smaller packets also need matching send cadence.
 No hardware timing qualification is implied for small packet sizes.
 
+`DEBUG_UART_ENABLED` defaults to OFF (`firmware_config.h` and the CMake option).
+Enable diagnostics for all variants with `cmake -S . -B build -DDEBUG_UART_ENABLED=ON`,
+then use the normal Compile operation; use OFF to disable again. OFF leaves GPIO28
+as an input without pulls and emits no UART logs. Do not enable it on a board
+where GPIO28 is shorted to SWCLK. Stdio UART/USB remain disabled in both modes.
+`FMHEADEND_FIRMWARE_VERSION` in `firmware_config.h` is the sole application version
+source for GET_INFO, the optional banner, Pico metadata and OTA manifests.
+PCB revision, protocol identifiers and ROM image versions are independent.
+
 Factory: ROM 1.0, non-TBYB. OTA: ROM 1.1, TBYB. Manifests contain the embedded
 build ID, ROM version, image size, TBYB and complete SHA-256. Source/build settings
 determine the build ID. A copied CMake cache is automatically reconfigured for

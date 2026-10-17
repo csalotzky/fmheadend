@@ -8,7 +8,8 @@
 #include "rds_fifo.h"
 #include "rds_tx.h"
 
-#define HOST_FIRMWARE_VERSION "0.8.6b"
+#include "firmware_config.h"
+#define HOST_FIRMWARE_VERSION FMHEADEND_FIRMWARE_VERSION
 #define HOST_HARDWARE_REVISION "PCB1.0"
 #define HOST_REQUEST_MAX 260u
 #define HOST_RESPONSE_MAX 134u

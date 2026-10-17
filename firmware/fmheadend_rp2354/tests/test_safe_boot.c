@@ -18,7 +18,8 @@ static bool tx_stuck, all_missing, initialized, led_values[5];
 static char log_text[4096];
 static jmp_buf idle_done;
 static uint64_t now_us;
-static bool host_started;
+static bool host_started, debug_pulls_disabled;
+void gpio_disable_pulls(unsigned pin) { assert(pin==28); debug_pulls_disabled=true; }
 bool spi_audio_init(void) { return true; }
 void flash_update_platform_init(bool ready) { assert(ready && initialized && !host_started); }
 bool audio_engine_init(void)
@@ -59,6 +60,7 @@ void gpio_put(unsigned pin, bool value)
 }
 void gpio_set_function(unsigned pin, unsigned function)
 {
+    assert(DEBUG_UART_ENABLED);
     assert((pin == 28 || pin == 29) && function == GPIO_FUNC_UART);
 }
 void sleep_ms(uint32_t ms)
@@ -78,19 +80,23 @@ void host_i2c_poll(void) { assert(host_started); }
 bool host_i2c_led(uint64_t now) { (void)now; return boot_hardware_fault && idle_ticks % 2 == 0; }
 void uart_init(unsigned uart, unsigned baud)
 {
+    assert(DEBUG_UART_ENABLED);
     assert(uart == uart0 && baud == 115200);
     for (unsigned i = 18; i <= 25; ++i) assert(output[i] && !latch[i]);
 }
 void uart_set_hw_flow(unsigned uart, bool cts, bool rts)
 {
+    assert(DEBUG_UART_ENABLED);
     assert(uart == uart0 && !cts && !rts);
 }
 void uart_set_format(unsigned uart, unsigned bits, unsigned stop, unsigned parity)
 {
+    assert(DEBUG_UART_ENABLED);
     assert(uart == uart0 && bits == 8 && stop == 1 && parity == UART_PARITY_NONE);
 }
 void uart_puts(unsigned uart, const char *text)
 {
+    assert(DEBUG_UART_ENABLED);
     assert(uart == uart0 && strlen(log_text) + strlen(text) < sizeof(log_text));
     strcat(log_text, text);
 }
@@ -155,6 +161,7 @@ static void run(int bad, int fail, int invalid_cid, bool stuck, bool missing)
     idle_ticks = 0;
     now_us = 0;
     host_started = false;
+    debug_pulls_disabled = false;
     bad_index = bad;
     fail_operation = fail;
     invalid_cid_operation = invalid_cid;
@@ -176,11 +183,16 @@ static void run(int bad, int fail, int invalid_cid, bool stuck, bool missing)
             assert(vga[i] == 0x45);
             snprintf(expected, sizeof(expected), "QN%u @ 0x%02X: CID2=0x11 OK, RF OFF", i, 0x21 + i);
         } else snprintf(expected, sizeof(expected), "QN%u target 0x%02X: FAIL", i, 0x21 + i);
-        assert(strstr(log_text, expected));
+        if (DEBUG_UART_ENABLED) assert(strstr(log_text, expected));
     }
-    assert(strstr(log_text, missing ? "BOOT: 0/8 ready; RF OFF; HARDWARE FAULT" :
+    if (DEBUG_UART_ENABLED) {
+        assert(strstr(log_text, FMHEADEND_FIRMWARE_VERSION));
+        assert(strstr(log_text, missing ? "BOOT: 0/8 ready; RF OFF; HARDWARE FAULT" :
                   fault ? "BOOT: 7/8 ready; RF OFF; HARDWARE FAULT" :
                           "BOOT: 8/8 ready; RF OFF; IDLE"));
+    } else {
+        assert(!log_text[0] && !output[28] && debug_pulls_disabled);
+    }
 }
 
 int main(void)
@@ -193,7 +205,7 @@ int main(void)
         run(index, -1, -1, true, false);
         vga_mismatch = true;
         run(index, -1, -1, false, false);
-        assert(strstr(log_text, "crystal load verification"));
+        if (DEBUG_UART_ENABLED) assert(strstr(log_text, "crystal load verification"));
         vga_mismatch = false;
     }
     run(-1, -1, -1, false, true);

@@ -11,6 +11,7 @@ void gpio_init(unsigned pin);
 void gpio_put(unsigned pin, bool value);
 void gpio_set_dir(unsigned pin, bool output);
 void gpio_pull_up(unsigned pin);
+void gpio_disable_pulls(unsigned pin);
 bool gpio_get(unsigned pin);
 void gpio_set_function(unsigned pin, unsigned function);
 void sleep_us(uint64_t us);
