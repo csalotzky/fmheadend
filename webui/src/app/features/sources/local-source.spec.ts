@@ -69,9 +69,14 @@ describe('Local media source configuration', () => {
     f.detectChanges();
     expect(path.title).toBe('/custom/media');
   });
-  it.each(['folder', 'playlist'])(
-    'shows only %s discovery counts and clears them on input changes',
-    async (mode) => {
+  it.each([
+    ['folder', 1, '1 supported audio file found'],
+    ['folder', 3, '3 supported audio files found'],
+    ['playlist', 1, '1 playlist entry found'],
+    ['playlist', 42, '42 playlist entries found'],
+  ] as const)(
+    'shows %s count %s and clears it on input changes',
+    async (mode, count, text) => {
       const f = editor(),
         c = f.componentInstance;
       c.config.controls['mode'].setValue(mode);
@@ -81,20 +86,40 @@ describe('Local media source configuration', () => {
         ok: true,
         mocked: false,
         message: 'Discovery only; audio decoding was not tested.',
-        [mode === 'folder' ? 'local_file_count' : 'playlist_entry_count']: 3,
+        [mode === 'folder' ? 'local_file_count' : 'playlist_entry_count']: count,
       });
       await p;
       f.detectChanges();
       const panel = f.nativeElement.querySelector('.source-test');
-      expect(panel.textContent).toContain(
-        mode === 'folder' ? '3 supported audio files found' : '3 playlist entries',
-      );
+      expect(panel.textContent).toContain(text);
+      expect(panel.textContent).not.toContain('Discovery only');
       expect(panel.querySelector('.audio-summary')).toBeNull();
       expect(f.nativeElement.querySelector('.editor-actions').textContent).not.toContain('Test');
       c.config.controls['recursive'].setValue(true);
       expect(c.result()).toBeNull();
     },
   );
+  it.each(['folder', 'playlist'])('keeps %s selects together before the full-width path', (mode) => {
+    const f = editor();
+    f.componentInstance.config.controls['mode'].setValue(mode);
+    f.detectChanges();
+    const path = f.nativeElement.querySelector('.local-path-panel') as HTMLElement;
+    const fields = path.parentElement!;
+    expect(fields.classList.contains('fields')).toBe(true);
+    expect(fields.children[0].querySelector('#source-mode')).toBeTruthy();
+    expect(fields.children[1].querySelector('#source-order')).toBeTruthy();
+    expect(fields.children[2]).toBe(path);
+  });
+  it('retains Local failure messages', () => {
+    const f = editor();
+    f.componentInstance.result.set({
+      ok: false, mocked: false, local_file_count: 0,
+      message: 'No supported audio files found.', codec: null, sample_rate: null,
+      channels: null, output_caps: null, stream_title: null,
+    });
+    f.detectChanges();
+    expect(f.nativeElement.querySelector('.source-test').textContent).toContain('No supported audio files found.');
+  });
   it('keeps Recursive with Folder path controls and hides it for Playlist mode', () => {
     const f = editor(),
       c = f.componentInstance;
