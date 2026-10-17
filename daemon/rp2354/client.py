@@ -11,7 +11,6 @@ from ..models.configuration import Model, Modulator
 class TxConfig(Model):
     gain_mode: Literal["AUTO", "MANUAL"] = "AUTO"
     analog_gain_db: float = Field(default=0.0, ge=-3276.8, le=3276.7, multiple_of=0.1, strict=True)
-    digital_trim_db: int = Field(default=0, ge=0, le=1, strict=True)
     soft_clipping: bool = Field(default=False, strict=True)
     frequency_khz: int
     rf_attenuation_db: float | None = Field(default=None, ge=0, le=22.5, multiple_of=1.5, strict=True)
@@ -22,7 +21,7 @@ class TxConfig(Model):
 
     @classmethod
     def from_modulator(cls, modulator: Modulator):
-        return cls(**modulator.model_dump(include={"frequency_khz", "rf_attenuation_db", "stereo", "preemphasis_us", "rds_enabled", "audio_mode", "gain_mode", "analog_gain_db", "digital_trim_db", "soft_clipping"}))
+        return cls(**modulator.model_dump(include={"frequency_khz", "rf_attenuation_db", "stereo", "preemphasis_us", "rds_enabled", "audio_mode", "gain_mode", "analog_gain_db", "soft_clipping"}))
 
 
 class Rp2354Client(Protocol):

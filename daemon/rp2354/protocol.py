@@ -217,10 +217,10 @@ def tx_config(config) -> bytes:
         raise ValueError("audio_mode must be DIGITAL, ANALOG or SINE")
     if config.gain_mode not in ("AUTO", "MANUAL"):
         raise ValueError("gain_mode must be AUTO or MANUAL")
-    trim = uint(config.digital_trim_db, 1, "digital_trim_db")
+    # V1 retains its digital-trim byte; manual digital gain is always 0 dB.
     return TX_CONFIG.pack(frequency, level, boolean(config.stereo, "stereo"),
         config.preemphasis_us, {"DIGITAL": 0, "ANALOG": 1, "SINE": 2}[config.audio_mode], boolean(config.rds_enabled, "rds_enabled"),
-        int(config.gain_mode == "MANUAL"), analog_gain_x10(config.analog_gain_db), trim,
+        int(config.gain_mode == "MANUAL"), analog_gain_x10(config.analog_gain_db), 0,
         boolean(config.soft_clipping, "soft_clipping"))
 
 

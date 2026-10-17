@@ -105,8 +105,8 @@
         <div class="fields">
           <label
             >Audio input<select formControlName="audio_mode" (change)="changeMode()">
-              <option value="DIGITAL">Digital source</option>
-              <option value="ANALOG">Analog input</option>
+              <option value="DIGITAL">FMheadend audio</option>
+              <option value="ANALOG">External line input</option>
             </select></label
           >
           @if (form.controls.audio_mode.value === 'DIGITAL') {
@@ -124,13 +124,13 @@
               </select></label
             >
           } @else {
-            <p class="muted">Uses TX {{ id }}'s dedicated analog input jack.</p>
+            <p class="muted">Uses TX {{ id }}'s dedicated analog audio input.</p>
           }
           <label
             >Gain control<select formControlName="gain_mode" (change)="syncGain()">
               <option value="AUTO">Automatic</option>
               <option value="MANUAL">Manual</option></select
-            ><small>Automatic gain control overrides the stored manual gains.</small></label
+            ><small>Automatic gain control overrides the stored manual analog gain.</small></label
           >
           @if (form.controls.audio_mode.value === 'ANALOG') {
             <label
@@ -141,13 +141,7 @@
               </select></label
             >
           }
-          <label
-            >Digital gain<select formControlName="digital_trim_db">
-              <option [ngValue]="0">0 dB</option>
-              <option [ngValue]="1">+1 dB</option>
-            </select></label
-          >
-          <label
+          <label [class.full-width]="form.controls.audio_mode.value === 'ANALOG'"
             >Soft clipping<select formControlName="soft_clipping">
               <option [ngValue]="false">Off</option>
               <option [ngValue]="true">On</option>

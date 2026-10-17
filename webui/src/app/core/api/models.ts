@@ -15,7 +15,6 @@ export interface RdsProfile {
 export interface Modulator extends RdsProfile {
   gain_mode: 'AUTO' | 'MANUAL';
   analog_gain_db: number;
-  digital_trim_db: 0 | 1;
   soft_clipping: boolean;
   audio_mode: 'DIGITAL' | 'ANALOG';
   id: number;
