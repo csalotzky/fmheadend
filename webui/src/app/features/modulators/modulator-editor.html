@@ -53,10 +53,6 @@
       <span>Digital audio: {{ shared.stale() ? 'Unavailable' : channel()?.pcm }}</span>
     }
   </aside>
-  <p class="muted">
-    RDS-only changes keep RF and audio running. Hardware changes stop only this TX, save, then
-    resume it. A stopped TX stays stopped, including after STOP ALL.
-  </p>
   <form [formGroup]="form" (ngSubmit)="save()">
     <fieldset [disabled]="saving()">
       <section class="editor-panel" aria-labelledby="rf-heading">
@@ -187,7 +183,10 @@
       <button type="submit" [disabled]="saving() || form.invalid">
         {{ saving() ? 'Saving…' : 'Save' }}</button
       ><button type="button" (click)="cancel()" [disabled]="saving()">Cancel</button
-      ><span class="muted">{{ form.dirty ? 'Unsaved changes' : 'No unsaved changes' }}</span>
+      >
+      @if (form.dirty) {
+        <span class="muted">Unsaved changes</span>
+      }
     </div>
   </form>
 }

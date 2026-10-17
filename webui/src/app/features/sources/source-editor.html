@@ -352,7 +352,6 @@
       {{ saving() ? 'Saving...' : 'Save' }}
     </button>
     <button type="button" routerLink="/sources" [disabled]="saving() || testing()">Cancel</button>
-    <span class="muted source-action-info">Testing does not save changes or prove RF transmission.</span>
     @if (form.controls.type.value !== 'HTTP' && form.controls.type.value !== 'PODCAST') {
     <button type="button" (click)="test()" [disabled]="testing() || saving()">
       {{ testing() ? 'Testing...' : 'Test unsaved configuration' }}

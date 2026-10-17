@@ -241,6 +241,8 @@ describe('Modulator configuration', () => {
       ),
     ).toEqual(['RF', 'Audio', 'RDS']);
     expect(f.nativeElement.classList.contains('editor-page')).toBe(true);
+    expect(f.nativeElement.textContent).not.toContain('RDS-only changes keep RF');
+    expect(f.nativeElement.textContent).not.toContain('No unsaved changes');
     expect(f.nativeElement.querySelector('.editor-actions')).not.toBeNull();
     expect(f.componentInstance.form.controls.frequency_khz.value).toBe(91600);
     expect(f.componentInstance.form.pristine).toBe(true);
