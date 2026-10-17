@@ -63,12 +63,16 @@ typedef struct {
 static audio_snapshot_t fault_snapshot;
 static atomic_bool snapshot_ready;
 static unsigned completed_buffers; /* core 1 only */
+#if DEBUG_UART_ENABLED
 static void audio_log(const char *format, ...)
 {
     char line[256]; va_list args;
     va_start(args,format); vsnprintf(line,sizeof(line),format,args); va_end(args);
     uart_puts(DEBUG_UART,line);
 }
+#else
+#define audio_log(...) ((void)0)
+#endif
 static const char *stage_name(unsigned value)
 {
     static const char *const names[]={"clock", "SM claim", "program load", "DMA claim",

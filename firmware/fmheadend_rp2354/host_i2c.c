@@ -39,6 +39,7 @@ static atomic_bool abrt_snapshot_valid;
 static bool abrt_snapshot_printed;
 static char log_line[512];
 static size_t log_size, log_cursor;
+#if DEBUG_UART_ENABLED
 static void log_append(const char *text)
 {
     size_t n=strlen(text);
@@ -79,6 +80,7 @@ static void log_abort_snapshot(void)
     log_append("\r\n");
     abrt_snapshot_printed=true;
 }
+#endif
 bool host_i2c_led(uint64_t now_us) { return qn_control_led(&host.qn,now_us); }
 
 /* Own the IRQ so RX FIFO is drained BEFORE committing a STOP. The SDK's slave
@@ -194,10 +196,12 @@ void host_i2c_init(uint8_t ready_mask)
                     I2C_IC_INTR_MASK_M_STOP_DET_BITS;
     irq_set_enabled(I2C1_IRQ, true);
     hw->enable = 1;
+#if DEBUG_UART_ENABLED
     char line[128];
-    snprintf(line, sizeof(line), "HOST I2C1: SDA=GPIO%u SCL=GPIO%u address=0x%02X; V1 M8.3 QN CONTROL; RF OFF\r\n",
+    snprintf(line, sizeof(line), "HOST I2C1: SDA=GPIO%u SCL=GPIO%u address=0x%02X; V1 QN CONTROL; RF OFF\r\n",
              HOST_I2C_SDA_PIN, HOST_I2C_SCL_PIN, FMHEADEND_HOST_I2C_ADDRESS);
     uart_puts(DEBUG_UART, line);
+#endif
 }
 
 void host_i2c_poll(void)
@@ -237,6 +241,7 @@ void host_i2c_poll(void)
     if(!flash_update_maintenance())
 #endif
     rds_tx_service(&host.rds_tx,&host.qn,host.rds);
+#if DEBUG_UART_ENABLED
     log_drain();
     if (log_cursor<log_size) return;
     log_cursor=log_size=0;
@@ -245,12 +250,14 @@ void host_i2c_poll(void)
         log_drain();
         return;
     }
+#endif
     host_log_event_t event;
     const uint32_t saved = save_and_disable_interrupts();
     const bool have_event = host_protocol_pop_log(&host, &event);
     const uint32_t busy_count = host.log_busy_count;
     host.log_busy_count = 0;
     restore_interrupts(saved);
+#if DEBUG_UART_ENABLED
     char line[320];
     if (busy_count) {
         snprintf(line, sizeof(line), "HOST LOG: %lu log events omitted (bounded UART queue)\r\n",
@@ -291,4 +298,5 @@ void host_i2c_poll(void)
              host_status_name(event.status), event.response_length);
     log_append(line);
     log_drain();
+#endif
 }
