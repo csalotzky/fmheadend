@@ -42,6 +42,7 @@ export function validSettings(
 /** Slider gestures quantize; precise entry and loading never do. Values remain in profile units. */
 @Component({
   selector: 'app-dsp-number',
+  styleUrl: '../../shared/editor-layout.css',
   imports: [FormsModule],
   template: `
     <label [for]="id">{{ label() }}</label>

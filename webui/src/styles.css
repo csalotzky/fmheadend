@@ -126,11 +126,8 @@ a.button-link {
   max-width: var(--page-width, 1200px);
   margin-inline: auto;
 }
-.editor-narrow {
+.editor-page {
   --page-width: 850px;
-}
-.editor-wide {
-  --page-width: 1120px;
 }
 .page-header {
   display: flex;

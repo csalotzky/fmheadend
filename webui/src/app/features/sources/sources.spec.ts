@@ -188,7 +188,8 @@ describe('Sources management', () => {
     const f = editor();
     const el = f.nativeElement as HTMLElement;
     expect(el.classList.contains('page-content')).toBe(true);
-    expect(el.classList.contains('editor-narrow')).toBe(true);
+    expect(el.classList.contains('editor-page')).toBe(true);
+    expect(el.querySelector('.page-header h1')?.textContent).toBe('Add Source');
     expect(el.textContent).not.toContain('Back to Sources');
     expect(
       Array.from(el.querySelectorAll('.editor-actions button')).map((b) => b.textContent?.trim()),
@@ -203,7 +204,7 @@ describe('Sources management', () => {
     c.form.controls.type.setValue('HTTP');
     c.changeType();
     f.detectChanges();
-    const panels = f.nativeElement.querySelectorAll('.source-editor-panel');
+    const panels = f.nativeElement.querySelectorAll('.editor-panel');
     expect(panels).toHaveLength(3);
     const source = panels[0] as HTMLElement;
     const audio = panels[1] as HTMLElement;
@@ -225,7 +226,7 @@ describe('Sources management', () => {
     c.form.controls.processor_mode.setValue('builtin');
     f.detectChanges();
     expect(audio.querySelector('[formControlName="audio_profile_path"]')).toBeTruthy();
-    const actions = f.nativeElement.querySelector('.source-editor-actions') as HTMLElement;
+    const actions = f.nativeElement.querySelector('.editor-actions') as HTMLElement;
     expect(source.contains(actions)).toBe(false);
     expect(audio.contains(actions)).toBe(false);
     expect(rds.contains(actions)).toBe(false);

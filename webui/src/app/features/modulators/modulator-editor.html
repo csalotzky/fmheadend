@@ -1,5 +1,5 @@
 <div class="page-header">
-  <h1>TX {{ id }}</h1>
+  <h1>Edit Modulator (TX {{ id }})</h1>
 </div>
 @if (shared.stale()) {
   <p class="warning" role="status">Backend status unavailable. Last observations may be stale.</p>
@@ -59,7 +59,7 @@
   </p>
   <form [formGroup]="form" (ngSubmit)="save()">
     <fieldset [disabled]="saving()">
-      <section aria-labelledby="rf-heading">
+      <section class="editor-panel" aria-labelledby="rf-heading">
         <h2 id="rf-heading">RF</h2>
         @if (outsidePlan) {
           <p class="warning">
@@ -100,7 +100,7 @@
           >
         </div>
       </section>
-      <section aria-labelledby="audio-heading">
+      <section class="editor-panel" aria-labelledby="audio-heading">
         <h2 id="audio-heading">Audio</h2>
         <div class="fields">
           <label
@@ -150,7 +150,7 @@
           >
         </div>
       </section>
-      <section aria-labelledby="rds-heading">
+      <section class="editor-panel" aria-labelledby="rds-heading">
         <h2 id="rds-heading">RDS</h2>
         <label class="check"
           ><input type="checkbox" formControlName="rds_enabled" />RDS enabled</label

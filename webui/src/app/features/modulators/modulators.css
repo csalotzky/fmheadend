@@ -1,66 +1,13 @@
-a {
-  color: var(--text);
-}
+@import '../../shared/editor-layout.css';
 
-h2 {
-  font-size: 17px;
-  margin: 0 0 18px;
-}
 h3 {
   font-size: 14px;
   margin: 24px 0 10px;
-}
-section {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  padding: 18px;
-  margin-bottom: 12px;
-}
-fieldset {
-  border: 0;
-  padding: 0;
-  margin: 0;
-  min-width: 0;
-}
-.fields {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px;
-}
-label {
-  display: block;
-  font-size: 12px;
-  color: var(--muted);
-}
-input,
-select,
-textarea {
-  display: block;
-  box-sizing: border-box;
-  width: 100%;
-  margin-top: 7px;
-  padding: 9px;
-  background: var(--background);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  font: 14px var(--sans);
 }
 input:disabled,
 select:disabled,
 fieldset:disabled {
   opacity: 0.65;
-}
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible {
-  outline: 2px solid var(--warning);
-  outline-offset: 2px;
-}
-small {
-  display: block;
-  line-height: 1.5;
-  margin-top: 5px;
 }
 .check {
   display: flex;
@@ -117,14 +64,6 @@ small {
 @media (max-width: 850px) {
   .ps-fields {
     grid-template-columns: 1fr 130px;
-  }
-}
-@media (max-width: 600px) {
-  .fields {
-    grid-template-columns: 1fr;
-  }
-  section {
-    padding: 14px;
   }
 }
 

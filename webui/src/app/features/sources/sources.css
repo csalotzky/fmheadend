@@ -1,6 +1,5 @@
-a {
-  color: var(--text);
-}
+@import '../../shared/editor-layout.css';
+
 .action-link {
   border: 1px solid var(--border);
   padding: 9px 12px;
@@ -14,66 +13,6 @@ a {
   margin: 8px 0 0;
 }
 
-form {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  padding: 20px;
-}
-.source-editor-form {
-  padding: 0;
-  background: transparent;
-  border: 0;
-}
-.source-editor-panel {
-  padding: 18px;
-  margin-bottom: 12px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-}
-.source-editor-panel h2 {
-  margin: 0 0 18px;
-  font-size: 17px;
-}
-fieldset {
-  border: 0;
-  padding: 0;
-  margin: 0 0 20px;
-  min-width: 0;
-}
-.fields {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-  margin-bottom: 16px;
-}
-label {
-  display: block;
-  color: var(--muted);
-  font-size: 12px;
-}
-input,
-select,
-textarea {
-  display: block;
-  width: 100%;
-  margin-top: 7px;
-  padding: 9px;
-  background: var(--background);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  font: 14px var(--sans);
-}
-input[type='checkbox'] {
-  width: auto;
-}
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible,
-summary:focus-visible {
-  outline: 2px solid var(--warning);
-  outline-offset: 2px;
-}
 input.ng-invalid.ng-touched {
   border-color: var(--error);
 }
@@ -83,17 +22,6 @@ details {
 summary {
   cursor: pointer;
   margin-bottom: 12px;
-}
-@media (max-width: 620px) {
-  .fields {
-    grid-template-columns: 1fr;
-  }
-  form {
-    padding: 12px;
-  }
-  .source-editor-form {
-    padding: 0;
-  }
 }
 
 .stream-row {
@@ -279,16 +207,10 @@ summary {
   flex: 0 0 auto;
   gap: var(--space-2);
 }
-.source-editor-actions {
-  margin-top: var(--space-3);
-}
 .source-action-info {
   margin-right: auto;
 }
 @media (max-width: 620px) {
-  .source-editor-panel {
-    padding: 14px;
-  }
   .local-path-control-group {
     grid-template-columns: auto minmax(0, 1fr);
   }

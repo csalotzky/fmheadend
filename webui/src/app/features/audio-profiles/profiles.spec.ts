@@ -343,6 +343,19 @@ describe('File Audio Profiles', () => {
       expect(reopened.nativeElement.textContent).toContain('Add crossover / band');
     });
   }
+  it.each([true, false])(
+    'uses the shared editor layout and title (existing=%s)',
+    async (existing) => {
+      const f = await editor(existing);
+      expect(f.nativeElement.classList.contains('editor-page')).toBe(true);
+      expect(f.nativeElement.querySelector('.page-header h1').textContent).toBe(
+        existing ? 'Edit Audio Profile' : 'Add Audio Profile',
+      );
+      expect(f.nativeElement.querySelector('section.editor-panel')).not.toBeNull();
+      expect(f.nativeElement.querySelector('details.stage.editor-panel')).not.toBeNull();
+      expect(f.nativeElement.querySelector('.editor-actions')).not.toBeNull();
+    },
+  );
   it('loads, edits and saves description with dirty-state tracking', async () => {
     const f = await editor(),
       c = f.componentInstance;
