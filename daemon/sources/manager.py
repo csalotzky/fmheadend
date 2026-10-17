@@ -304,6 +304,21 @@ class SourceManager:
             pipeline.output.detach(modulator_id)
 
     def test(self, source: InputSourceConfig):
+        if source.type == 'LOCAL':
+            from ..models.configuration import LocalConfig
+            from .local_media import resolve_media
+            config = LocalConfig.model_validate(source.config)
+            folder = config.mode == 'folder'
+            count_field = 'local_file_count' if folder else 'playlist_entry_count'
+            try:
+                count = len(resolve_media(config.to_core()))
+            except DomainError as exc:
+                message = (('No supported audio files found.' if folder else 'Playlist contains no entries.')
+                           if exc.error == 'NO_PLAYABLE_TRACKS' else f'{exc.error}: {exc.message}')
+                return SourceTestResult(ok=False, mocked=False, message=message,
+                                        **({count_field: 0} if exc.error == 'NO_PLAYABLE_TRACKS' else {}))
+            return SourceTestResult(mocked=False, **{count_field: count},
+                                    message='Discovery only; audio decoding was not tested.')
         if source.processor_mode == 'stereotool':
             return SourceTestResult(ok=False, mocked=getattr(self.pipeline_factory, 'mocked', True),
                                     message='Stereo Tool processing is not implemented')

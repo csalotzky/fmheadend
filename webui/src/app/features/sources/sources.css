@@ -207,9 +207,8 @@ summary {
   flex: 0 0 auto;
   gap: var(--space-2);
 }
-/* Keep the optional test action right-aligned after Save / Cancel. */
-.editor-actions > button:nth-of-type(3) {
-  margin-left: auto;
+.source-test {
+  margin-top: var(--space-3);
 }
 @media (max-width: 620px) {
   .local-path-control-group {

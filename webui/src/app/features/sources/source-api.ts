@@ -57,6 +57,8 @@ export interface PodcastProbe {
   feeds: PodcastFeedProbe[];
 }
 export interface SourceTest {
+  local_file_count?: number | null;
+  playlist_entry_count?: number | null;
   podcast?: PodcastProbe | null;
   input_bitrate_bps?: number | null;
   station_name?: string | null;

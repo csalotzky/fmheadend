@@ -112,6 +112,7 @@
               {{ testing() ? 'Testing...' : 'Test stream' }}
             </button>
           </div>
+          <app-source-test-result [result]="result()" [testing]="testing()" [error]="testError()" />
           @if (radioUuid.value) {
           <div id="radio-linked" class="radio-link-status">
             <span>Radio Browser linked</span><span aria-hidden="true">&middot;</span>
@@ -160,6 +161,14 @@
         }
         }
       </div>
+      @if (form.controls.type.value !== 'HTTP' && form.controls.type.value !== 'PODCAST') {
+      <div class="source-test">
+        <button type="button" (click)="test()" [disabled]="testing() || saving()">
+          {{ testing() ? 'Testing...' : 'Test source' }}
+        </button>
+        <app-source-test-result [result]="result()" [testing]="testing()" [error]="testError()" />
+      </div>
+      }
       @if (form.controls.type.value === 'PODCAST') {
       <div class="podcast-config" [formGroup]="podcast">
         <div id="podcast-feeds-label" class="podcast-label">Feeds</div>
@@ -234,7 +243,7 @@
             {{ testing() ? 'Testing...' : 'Test feeds' }}
           </button>
         </div>
-        <app-source-test-result [result]="result()" [feeds]="testedFeeds()" [showFeeds]="false" />
+        <app-source-test-result [result]="result()" [testing]="testing()" [error]="testError()" [feeds]="testedFeeds()" [showFeeds]="false" />
         <div class="fields podcast-settings">
           <label>Schedule mode<select formControlName="schedule_mode" aria-describedby="podcast-mode-help">
               <option value="RANDOM">Random</option>
@@ -352,15 +361,7 @@
       {{ saving() ? 'Saving...' : 'Save' }}
     </button>
     <button type="button" routerLink="/sources" [disabled]="saving() || testing()">Cancel</button>
-    @if (form.controls.type.value !== 'HTTP' && form.controls.type.value !== 'PODCAST') {
-    <button type="button" (click)="test()" [disabled]="testing() || saving()">
-      {{ testing() ? 'Testing...' : 'Test unsaved configuration' }}
-    </button>
-    }
   </div>
-  @if (form.controls.type.value !== 'PODCAST') {
-  <app-source-test-result [result]="result()" />
-  }
 </form>
 @if (form.controls.type.value === 'HTTP') {
 <app-radio-browser-picker (chosen)="useRadioStation($event)" />

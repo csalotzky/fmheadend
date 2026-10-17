@@ -497,14 +497,10 @@ describe('Podcast source configuration', () => {
     expect(summary).toContain('2 / 2');
     expect(summary).toContain('8 discovered');
     type(f, input(f, 'Feed 1 URL'), 'https://changed.example/rss');
-    expect(el(f).querySelectorAll('.feed-result')).toHaveLength(1);
-    expect(
-      el(f).querySelectorAll('.feed-card')[1].querySelector('.feed-result')!.textContent,
-    ).toContain('OK: 3 discovered / 3 eligible');
+    expect(el(f).querySelectorAll('.feed-result')).toHaveLength(0);
+    expect(el(f).querySelector('app-source-test-result')!.textContent!.trim()).toBe('');
     (el(f).querySelectorAll('.feed-remove')[0] as HTMLButtonElement).click();
     f.detectChanges();
-    expect(el(f).querySelector('.feed-result')!.textContent).toContain(
-      'OK: 3 discovered / 3 eligible',
-    );
+    expect(el(f).querySelector('.feed-result')).toBeNull();
   });
 });

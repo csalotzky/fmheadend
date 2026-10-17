@@ -246,6 +246,11 @@ describe('Sources management', () => {
     expect(labels.some((label) => label?.includes('Stream URL'))).toBe(type === 'HTTP');
     expect(labels.some((label) => label?.includes('ALSA capture device'))).toBe(type === 'ALSA');
     expect(labels.some((label) => label?.includes('Port'))).toBe(['UDP', 'RTP'].includes(type));
+    expect(el.querySelector('.editor-actions')?.textContent).not.toContain('Test');
+    expect(el.querySelector('.editor-panel app-source-test-result')).toBeTruthy();
+    if (type !== 'HTTP') {
+      expect(el.querySelector('.source-test button')?.textContent?.trim()).toBe('Test source');
+    }
   });
   it.each([
     [
@@ -294,6 +299,7 @@ describe('Sources management', () => {
     await f.whenStable();
     f.detectChanges();
     expect(el.querySelector('app-source-test-result')?.textContent).toContain('Test successful');
+    expect(row.nextElementSibling?.tagName).toBe('APP-SOURCE-TEST-RESULT');
     expect(button.disabled).toBe(false);
   });
   it('has no duplicate User agent field and preserves the advanced property', () => {
@@ -490,6 +496,37 @@ describe('Sources management', () => {
     f.detectChanges();
     expect(f.nativeElement.textContent).toContain('Test failed');
     expect(f.nativeElement.textContent).toContain('Connection refused');
+  });
+  it('shows testing and transport errors beside the source and invalidates them on edits', async () => {
+    const f = editor(),
+      c = f.componentInstance;
+    fill(c);
+    const p = c.test();
+    f.detectChanges();
+    expect(
+      f.nativeElement.querySelector('.http-url-field app-source-test-result').textContent,
+    ).toContain('Testing...');
+    http
+      .expectOne('/api/v1/sources/test')
+      .flush({ detail: 'Probe unavailable' }, { status: 503, statusText: 'Unavailable' });
+    await p;
+    f.detectChanges();
+    expect(f.nativeElement.querySelector('.http-url-field [role="alert"]')).toBeTruthy();
+    expect(c.error()).toBe('');
+    c.config.controls['uri'].setValue('https://changed.example/live');
+    expect(c.testError()).toBe('');
+  });
+  it('invalidates audio results on processing changes and discards outdated replies', async () => {
+    const c = editor().componentInstance;
+    fill(c);
+    c.result.set(result);
+    c.form.controls.input_gain_db.setValue(-3);
+    expect(c.result()).toBeNull();
+    const p = c.test();
+    c.config.controls['uri'].setValue('https://changed.example/live');
+    http.expectOne('/api/v1/sources/test').flush(result);
+    await p;
+    expect(c.result()).toBeNull();
   });
   it('protects dirty navigation but permits pristine navigation', () => {
     const c = editor().componentInstance;
@@ -714,7 +751,7 @@ describe('Input bitrate result', () => {
     expect(text).toContain('Station: Station FM');
     expect(text).toContain('audio/mpeg');
     expect(text).toContain('44100 Hz');
-    expect(text).toContain('2 channels');
+    expect(text).toContain('Channels2');
     expect(text).toContain('audio/x-raw');
   });
   it.each([null, undefined, 0])('omits unavailable bitrate %s', (value) => {
