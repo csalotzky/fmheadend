@@ -69,6 +69,32 @@ describe('Local media source configuration', () => {
     f.detectChanges();
     expect(path.title).toBe('/custom/media');
   });
+  it.each(['folder', 'playlist'])(
+    'shows only %s discovery counts and clears them on input changes',
+    async (mode) => {
+      const f = editor(),
+        c = f.componentInstance;
+      c.config.controls['mode'].setValue(mode);
+      c.config.controls['path'].setValue(mode === 'folder' ? '/media/music' : '/media/list.m3u');
+      const p = c.test();
+      http.expectOne('/api/v1/sources/test').flush({
+        ok: true,
+        mocked: false,
+        message: 'Discovery only; audio decoding was not tested.',
+        [mode === 'folder' ? 'local_file_count' : 'playlist_entry_count']: 3,
+      });
+      await p;
+      f.detectChanges();
+      const panel = f.nativeElement.querySelector('.source-test');
+      expect(panel.textContent).toContain(
+        mode === 'folder' ? '3 supported audio files found' : '3 playlist entries',
+      );
+      expect(panel.querySelector('.audio-summary')).toBeNull();
+      expect(f.nativeElement.querySelector('.editor-actions').textContent).not.toContain('Test');
+      c.config.controls['recursive'].setValue(true);
+      expect(c.result()).toBeNull();
+    },
+  );
   it('keeps Recursive with Folder path controls and hides it for Playlist mode', () => {
     const f = editor(),
       c = f.componentInstance;

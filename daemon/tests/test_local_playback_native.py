@@ -169,7 +169,9 @@ def test_native_shared_consumers_restart_and_active_probe(tmp_path):
         manager.acquire(source.id,1)
         assert manager.pipelines[source.id] is p
         assert manager.test(source).ok and manager.pipelines[source.id] is p
-        assert manager.status(source.id).stream_title == manager.test(source).stream_title == 'a'
+        assert manager.status(source.id).stream_title == 'a'
+        assert manager.test(source).local_file_count == 2
+        assert manager.test(source).stream_title is None
         p.output.clear()
         end=time.monotonic()+2
         left=right=None

@@ -297,6 +297,8 @@ class PodcastProbe(Model):
 
 
 class SourceTestResult(Model):
+    local_file_count: int | None = Field(default=None, ge=0)
+    playlist_entry_count: int | None = Field(default=None, ge=0)
     podcast: PodcastProbe | None = None
     input_bitrate_bps: int | None = Field(default=None, gt=0)
     station_name: str | None = None

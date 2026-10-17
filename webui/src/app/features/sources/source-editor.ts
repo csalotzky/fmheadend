@@ -15,9 +15,15 @@ import {
   inject,
   signal,
 } from '@angular/core';
-import { FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
+import {
+  AbstractControl,
+  FormControl,
+  FormGroup,
+  ReactiveFormsModule,
+  Validators,
+} from '@angular/forms';
 import { ActivatedRoute, CanDeactivateFn, RouterLink } from '@angular/router';
-import { firstValueFrom } from 'rxjs';
+import { firstValueFrom, Subscription } from 'rxjs';
 import {
   AlsaCaptureDevice,
   SourceApi,
@@ -72,6 +78,8 @@ export class SourceEditor implements OnInit, OnDestroy {
   private radioGeneration = 0;
   ngOnDestroy() {
     ++this.radioGeneration;
+    this.testInputs.unsubscribe();
+    this.testConfigInputs.unsubscribe();
   }
   private invalidateRadioRefresh() {
     ++this.radioGeneration;
@@ -213,6 +221,15 @@ export class SourceEditor implements OnInit, OnDestroy {
   readonly loadFailed = signal(false);
   readonly saving = signal(false);
   readonly testing = signal(false);
+  readonly testError = signal('');
+  private testInputs = new Subscription();
+  private testConfigInputs = new Subscription();
+  private testRevision = 0;
+  private invalidateTest() {
+    ++this.testRevision;
+    this.result.set(null);
+    this.testError.set('');
+  }
   readonly error = signal('');
   readonly message = signal('');
   readonly result = signal<SourceTest | null>(null);
@@ -305,6 +322,16 @@ export class SourceEditor implements OnInit, OnDestroy {
   }
   constructor() {
     this.rebuild('HTTP');
+    const testControls: AbstractControl[] = [
+      this.form.controls.type,
+      this.form.controls.processor_mode,
+      this.form.controls.audio_profile_path,
+      this.form.controls.input_gain_db,
+      this.form.controls.gst_options,
+    ];
+    for (const control of testControls) {
+      this.testInputs.add(control.valueChanges.subscribe(() => this.invalidateTest()));
+    }
   }
   async ngOnInit() {
     void firstValueFrom(this.api.profiles())
@@ -339,6 +366,9 @@ export class SourceEditor implements OnInit, OnDestroy {
     }
   }
   rebuild(type: SourceType, values: Record<string, unknown> = {}) {
+    this.testConfigInputs.unsubscribe();
+    this.testConfigInputs = new Subscription();
+    this.invalidateTest();
     this.invalidateRadioRefresh();
     this.radioUuid.reset(
       type === 'HTTP' && typeof values['radio_browser_uuid'] === 'string'
@@ -362,6 +392,8 @@ export class SourceEditor implements OnInit, OnDestroy {
       void this.refreshAlsa();
     }
     this.podcast = buildPodcastForm(type === 'PODCAST' ? values : {});
+    this.testConfigInputs.add(this.config.valueChanges.subscribe(() => this.invalidateTest()));
+    this.testConfigInputs.add(this.podcast.valueChanges.subscribe(() => this.invalidateTest()));
     this.testedFeeds.set([]);
   }
   visibleFields() {
@@ -714,12 +746,14 @@ export class SourceEditor implements OnInit, OnDestroy {
     const body = this.draft(true);
     if (!body) return;
     this.testing.set(true);
-    this.result.set(null);
+    this.invalidateTest();
+    const revision = this.testRevision;
     this.testedFeeds.set(
       body.type === 'PODCAST' ? (body.config['feeds'] as { url: string }[]).map((f) => f.url) : [],
     );
     try {
       const result = await firstValueFrom(this.api.test(body));
+      if (revision !== this.testRevision) return;
       this.result.set(result);
       if (
         body.type === 'HTTP' &&
@@ -731,7 +765,7 @@ export class SourceEditor implements OnInit, OnDestroy {
         this.form.controls.name.markAsDirty();
       }
     } catch (e) {
-      this.error.set(errorMessage(e));
+      if (revision === this.testRevision) this.testError.set(errorMessage(e));
     } finally {
       this.testing.set(false);
     }

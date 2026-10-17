@@ -4,71 +4,93 @@ import { feedErrorText, feedStatus } from './podcast-form';
 
 @Component({
   selector: 'app-source-test-result',
-  template: ` @if (result(); as r) {
-    @if (r.podcast; as p) {
-      <div
-        role="status"
-        [class.error]="podcastLevel(r) === 'error'"
-        [class.warning]="podcastLevel(r) === 'warning'"
-      >
-        <strong>{{ podcastTitle(r) }}</strong>
-        <dl class="podcast-summary">
-          <dt>Feeds</dt>
-          <dd>{{ p.feeds_succeeded }} / {{ p.feeds_attempted }}</dd>
-          <dt>Episodes</dt>
-          <dd>{{ p.discovered_episodes }} discovered</dd>
-          <dt>Eligible</dt>
-          <dd>{{ p.eligible_episodes }}</dd>
-        </dl>
-        @if (showFeeds()) {
-          <ul class="podcast-feeds">
-            @for (feed of p.feeds; track $index) {
-              <li>
-                <span class="feed-name" [attr.title]="feedLabel($index)"
-                  >{{ feed.title || feedLabel($index) }}
-                  @if (feed.title && feeds()[$index]) {
-                    <small class="muted"> {{ feeds()[$index] }}</small>
-                  }
-                </span>
-                <span>{{ feed.error ? errorText(feed.error) : status(feed) }}</span>
-              </li>
-            }
-          </ul>
-        }
+  template: ` @if (testing()) {
+      <div role="status" class="test-result">Testing...</div>
+    } @else if (error()) {
+      <div role="alert" class="test-result error">
+        <strong>Test failed</strong>
+        <p>{{ error() }}</p>
       </div>
-    } @else {
-      <div role="status" [class.error]="!r.ok">
-        <strong
-          >{{ r.ok ? 'Test successful' : 'Test failed'
-          }}{{ r.mocked ? ' (mock probe)' : '' }}</strong
+    } @else if (result(); as r) {
+      @if (r.podcast; as p) {
+        <div
+          class="test-result"
+          role="status"
+          [class.error]="podcastLevel(r) === 'error'"
+          [class.warning]="podcastLevel(r) === 'warning'"
         >
-        @if (r.ok && r.station_name) {
-          <p>
-            <strong>Station: {{ r.station_name }}</strong>
-          </p>
-        }
-        <p>{{ r.message }}</p>
-        @if (r.codec) {
-          <span>{{ r.codec }} </span>
-        }
-        @if (r.sample_rate) {
-          <span>{{ r.sample_rate }} Hz </span>
-        }
-        @if (r.channels) {
-          <span>{{ r.channels }} channels </span>
-        }
-        @if (r.ok && bitrate(r.input_bitrate_bps); as rate) {
-          <p>Bitrate: ~{{ rate }} kb/s</p>
-        }
-        @if (r.output_caps) {
-          <p>{{ r.output_caps }}</p>
-        }
-        @if (r.stream_title) {
-          <p>{{ r.stream_title }}</p>
-        }
-      </div>
-    }
-  }`,
+          <strong>{{ podcastTitle(r) }}</strong>
+          <dl class="podcast-summary">
+            <dt>Feeds</dt>
+            <dd>{{ p.feeds_succeeded }} / {{ p.feeds_attempted }}</dd>
+            <dt>Episodes</dt>
+            <dd>{{ p.discovered_episodes }} discovered</dd>
+            <dt>Eligible</dt>
+            <dd>{{ p.eligible_episodes }}</dd>
+          </dl>
+          @if (showFeeds()) {
+            <ul class="podcast-feeds">
+              @for (feed of p.feeds; track $index) {
+                <li>
+                  <span class="feed-name" [attr.title]="feedLabel($index)"
+                    >{{ feed.title || feedLabel($index) }}
+                    @if (feed.title && feeds()[$index]) {
+                      <small class="muted"> {{ feeds()[$index] }}</small>
+                    }
+                  </span>
+                  <span>{{ feed.error ? errorText(feed.error) : status(feed) }}</span>
+                </li>
+              }
+            </ul>
+          }
+        </div>
+      } @else {
+        <div role="status" class="test-result" [class.error]="!r.ok">
+          <strong
+            >{{ r.ok ? 'Test successful' : 'Test failed'
+            }}{{ r.mocked ? ' (mock probe)' : '' }}</strong
+          >
+          @if (r.ok && r.station_name) {
+            <p>
+              <strong>Station: {{ r.station_name }}</strong>
+            </p>
+          }
+          <p>{{ r.message }}</p>
+          @if (r.local_file_count != null) {
+            <p>{{ r.local_file_count }} supported audio files found</p>
+          } @else if (r.playlist_entry_count != null) {
+            <p>{{ r.playlist_entry_count }} playlist entries</p>
+          } @else {
+            <dl class="audio-summary">
+              @if (r.codec) {
+                <dt>Codec</dt>
+                <dd>{{ r.codec }}</dd>
+              }
+              @if (r.sample_rate) {
+                <dt>Sample rate</dt>
+                <dd>{{ r.sample_rate }} Hz</dd>
+              }
+              @if (r.channels) {
+                <dt>Channels</dt>
+                <dd>{{ r.channels }}</dd>
+              }
+            </dl>
+            @if (r.ok && bitrate(r.input_bitrate_bps); as rate) {
+              <p>Bitrate: ~{{ rate }} kb/s</p>
+            }
+            @if (r.output_caps) {
+              <details>
+                <summary>Technical details</summary>
+                <p>{{ r.output_caps }}</p>
+              </details>
+            }
+            @if (r.stream_title) {
+              <p>{{ r.stream_title }}</p>
+            }
+          }
+        </div>
+      }
+    }`,
   styles: `
     :host {
       display: block;
@@ -77,9 +99,17 @@ import { feedErrorText, feedStatus } from './podcast-form';
     p {
       margin: 6px 0;
     }
-    .podcast-summary {
+    .test-result {
+      margin-top: var(--space-2);
+      padding: var(--space-3);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+    }
+    .podcast-summary,
+    .audio-summary {
       display: grid;
-      grid-template-columns: max-content 1fr;
+      grid-template-columns: max-content minmax(0, 1fr);
       gap: 2px 16px;
       margin: 6px 0;
     }
@@ -93,6 +123,7 @@ import { feedErrorText, feedStatus } from './podcast-form';
     }
     .podcast-feeds li {
       display: flex;
+      flex-wrap: wrap;
       gap: 12px;
       justify-content: space-between;
     }
@@ -105,6 +136,8 @@ import { feedErrorText, feedStatus } from './podcast-form';
   `,
 })
 export class TestResult {
+  readonly testing = input(false);
+  readonly error = input('');
   readonly result = input<SourceTest | null>(null);
   readonly feeds = input<string[]>([]);
   readonly showFeeds = input(true);

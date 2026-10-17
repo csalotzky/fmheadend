@@ -1,5 +1,6 @@
-"""Local configuration/API persistence only; no resolver or media playback."""
+"""Local configuration persistence and discovery-only probes; no media playback."""
 import json
+import sqlite3
 from unittest.mock import Mock
 
 import pytest
@@ -135,10 +136,59 @@ def test_core_conversion_reuses_enums_without_filesystem_access(tmp_path):
     assert source.config['path'] == path
 
 
-def test_local_probe_uses_existing_mock_contract(api):
-    result = api.post(P+'/test', json=body())
-    assert result.status_code == 200 and result.json()['ok'] is True
-    assert result.json()['mocked'] is True
-    saved = api.post(P, json=body()).json()
-    result = api.post(P+f"/{saved['id']}/test")
-    assert result.status_code == 200 and result.json()['mocked'] is True
+@pytest.mark.parametrize('mode,recursive,count', [
+    ('folder', False, 0), ('folder', False, 1), ('folder', False, 2),
+    ('folder', True, 3), ('playlist', False, 0), ('playlist', False, 3),
+])
+def test_local_probe_counts_without_playback_or_persistence(tmp_path, mode, recursive, count):
+    factory = Mock(side_effect=AssertionError('pipeline construction'))
+    factory.mocked = False
+    factory.__name__ = 'NoPlaybackFactory'
+    media = tmp_path / 'media'
+    media.mkdir()
+    if mode == 'folder':
+        for name in ['a.MP3', 'b.wav'][:min(count, 2)]:
+            (media / name).write_bytes(b'not decodable audio')
+        (media / 'ignored.txt').write_text('ignored')
+        (media / '.hidden.mp3').write_text('ignored')
+        (media / 'sub').mkdir()
+        (media / 'sub' / 'c.flac').write_text('candidate')
+        path = media
+    else:
+        path = media / 'test.m3u'
+        path.write_text('#EXTM3U\n' + ('missing.mp3\nmissing.mp3\nhttps://invalid.example/a\n' if count else ''))
+    before_files = {p: p.read_bytes() for p in media.rglob('*') if p.is_file()}
+    with TestClient(create_app(Settings(tmp_path / 'local.db'), pipeline_factory=factory)) as api:
+        draft = body(mode=mode, path=str(path), recursive=recursive)
+        saved = api.post(P, json=draft).json()
+        with sqlite3.connect(tmp_path / 'local.db') as snapshot:
+            before = '\n'.join(snapshot.iterdump())
+        for response in (api.post(P+'/test', json=draft), api.post(P+f"/{saved['id']}/test")):
+            assert response.status_code == 200
+            result = response.json()
+            assert result['ok'] == bool(count) and result['mocked'] is False
+            assert result['local_file_count' if mode == 'folder' else 'playlist_entry_count'] == count
+            assert result['codec'] is None and result['output_caps'] is None
+            if not count:
+                assert result['message'] == ('No supported audio files found.' if mode == 'folder'
+                                             else 'Playlist contains no entries.')
+        with sqlite3.connect(tmp_path / 'local.db') as snapshot:
+            assert '\n'.join(snapshot.iterdump()) == before
+        assert not api.app.state.services.sources.pipelines
+    assert {p: p.read_bytes() for p in before_files} == before_files
+    factory.assert_not_called()
+
+
+@pytest.mark.parametrize('mode,contents,code', [
+    ('folder', None, 'FOLDER_UNREADABLE'),
+    ('playlist', None, 'PLAYLIST_UNREADABLE'),
+    ('playlist', 'ftp://example.org/a.mp3', 'INVALID_PLAYLIST_ENTRY'),
+])
+def test_local_probe_resolution_errors(tmp_path, mode, contents, code):
+    from fmheadendd.sources.manager import SourceManager
+    path = tmp_path / 'missing.m3u'
+    if contents is not None:
+        path.write_text(contents)
+    result = SourceManager(None).test(InputSourceConfig.model_validate(body(mode=mode, path=str(path))))
+    assert not result.ok and not result.mocked
+    assert code in result.message
