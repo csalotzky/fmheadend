@@ -127,7 +127,7 @@ def main(argv=None):
         verify_readback(readback_path.read_bytes(), partitions, factory)
         print('Byte-exact full-flash verification passed; both images match and all other bytes are erased')
         try:
-            ocd.command('reset run')
+            ocd.command('cold_reset')
         except (OSError, RuntimeError) as exc:
             raise RuntimeError('Full flash contents VERIFIED, but automatic normal reset was not acknowledged. '
                                'Release BOOTSEL, perform a manual normal reset and check I2C STATUS. '
