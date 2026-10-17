@@ -100,7 +100,7 @@ header {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.08em;
 }
 .dependencies {
@@ -149,7 +149,7 @@ header {
   justify-content: space-between;
   padding: 9px 24px;
   color: var(--muted);
-  font: 10px var(--mono);
+  font: 12px var(--mono);
   border-bottom: 1px solid var(--border);
 }
 main {
@@ -216,7 +216,7 @@ ul.banner {
   }
   .dependencies {
     flex-wrap: wrap;
-    font-size: 11px;
+    font-size: 12px;
   }
   .connection-line {
     padding: 10px 16px;

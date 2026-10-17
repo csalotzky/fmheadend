@@ -2,10 +2,10 @@
 
 :root {
   color-scheme: dark;
-  --background: #101418;
-  --nav: #14191e;
-  --surface: #1b2127;
-  --hover: #222a32;
+  --background: #151c24;
+  --nav: #19222c;
+  --surface: #222d39;
+  --hover: #2b3948;
   --text: #e7ecef;
   --muted: #9faab5;
   --border: #333d47;
@@ -33,7 +33,7 @@ body {
 }
 button,
 a.button-link {
-  font: 600 11px var(--sans);
+  font: 600 12px var(--sans);
   letter-spacing: 0.03em;
   color: var(--text);
   background: #2b3640;
