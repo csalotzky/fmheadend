@@ -31,17 +31,17 @@ export const fields: Record<SourceType, Field[]> = {
       optionLabels: { playlist: 'Playlist', folder: 'Folder' },
     },
     {
-      key: 'path',
-      label: 'Server path',
-      required: true,
-    },
-    {
       key: 'order',
       label: 'Playback order',
       required: true,
       defaultValue: 'sequential',
       options: ['sequential', 'random'] satisfies LocalSourceConfig['order'][],
       optionLabels: { sequential: 'Sequential', random: 'Random' },
+    },
+    {
+      key: 'path',
+      label: 'Server path',
+      required: true,
     },
     { key: 'recursive', label: 'Recursive', checkbox: true, defaultValue: false },
   ],

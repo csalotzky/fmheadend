@@ -55,11 +55,13 @@ import { feedErrorText, feedStatus } from './podcast-form';
               <strong>Station: {{ r.station_name }}</strong>
             </p>
           }
-          <p>{{ r.message }}</p>
+          @if (!r.ok || (r.local_file_count == null && r.playlist_entry_count == null)) {
+            <p>{{ r.message }}</p>
+          }
           @if (r.local_file_count != null) {
-            <p>{{ r.local_file_count }} supported audio files found</p>
+            <p>{{ r.local_file_count }} supported audio {{ r.local_file_count === 1 ? 'file' : 'files' }} found</p>
           } @else if (r.playlist_entry_count != null) {
-            <p>{{ r.playlist_entry_count }} playlist entries</p>
+            <p>{{ r.playlist_entry_count }} playlist {{ r.playlist_entry_count === 1 ? 'entry' : 'entries' }} found</p>
           } @else {
             <dl class="audio-summary">
               @if (r.codec) {

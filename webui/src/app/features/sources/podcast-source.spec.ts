@@ -437,7 +437,10 @@ describe('Podcast source configuration', () => {
     const results = el(f).querySelectorAll('app-source-test-result');
     expect(results).toHaveLength(1);
     expect(actions.nextElementSibling).toBe(results[0]);
-    expect(results[0].nextElementSibling?.classList.contains('podcast-settings')).toBe(true);
+    const heading = results[0].nextElementSibling!;
+    expect(heading.tagName).toBe('H3');
+    expect(heading.textContent).toBe('Playback scheduling');
+    expect(heading.nextElementSibling?.classList.contains('podcast-settings')).toBe(true);
   });
 
   it('keeps saved source types unchanged on round trip', async () => {
