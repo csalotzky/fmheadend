@@ -588,9 +588,24 @@ describe('Modulator configuration', () => {
     }
     const clipping = el.querySelector('[formControlName="soft_clipping"]') as HTMLSelectElement;
     expect(clipping.disabled).toBe(false);
-    expect(clipping.closest('label')?.classList.contains('full-width')).toBe(
-      audio_mode === 'ANALOG',
-    );
+    const fields = input.closest('.fields')!;
+    expect(
+      Array.from(fields.querySelectorAll('select')).map((select) =>
+        select.getAttribute('formControlName'),
+      ),
+    ).toEqual([
+      'audio_mode',
+      audio_mode === 'ANALOG' ? 'analog_gain_db' : 'input_source_id',
+      'gain_mode',
+      'soft_clipping',
+    ]);
+    expect(fields.children).toHaveLength(4);
+    const helper = input.closest('label')?.querySelector('small');
+    if (audio_mode === 'ANALOG') {
+      expect(helper?.textContent).toBe("Uses TX 0's dedicated analog audio input.");
+    } else {
+      expect(helper).toBeNull();
+    }
   });
   it('retains manual values under AUTO and soft clipping stays independent', async () => {
     const f = await editor({
