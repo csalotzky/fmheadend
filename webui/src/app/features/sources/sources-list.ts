@@ -36,6 +36,13 @@ export class SourcesList {
   readonly shared = inject(DashboardState);
   private api = inject(SourceApi);
   readonly sources = computed(() => sortSources(this.shared.data()?.sources ?? []));
+  readonly groups = computed(() => [
+    ['HTTP', 'HTTP'], ['LOCAL', 'Local media'], ['PODCAST', 'Podcast'],
+    ['UDP', 'UDP'], ['RTP', 'RTP'], ['ALSA', 'ALSA'],
+  ].map(([type, label]) => ({
+    type, label,
+    sources: this.sources().filter((source) => source.type === type),
+  })).filter((group) => group.sources.length));
   readonly runtime = signal<Record<number, SourceRuntime | null>>({});
   readonly pending = signal<Set<number>>(new Set());
   readonly pendingLabel = signal<Record<number, string>>({});

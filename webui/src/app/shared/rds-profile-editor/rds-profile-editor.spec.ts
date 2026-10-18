@@ -28,6 +28,21 @@ const profile: RdsProfile = {
 };
 
 describe('Owned RDS editors', () => {
+  it('defaults new Source RadioText to metadata and PAD without dirtying the draft', () => {
+    setup();
+    const c = TestBed.createComponent(SourceEditor).componentInstance;
+    expect(c.rds.form.controls.rds_metadata_to_rt.value).toBe(true);
+    expect(c.rds.form.controls.rds_rt_termination.value).toBe('PAD');
+    expect(c.rds.form.pristine).toBe(true);
+  });
+  it('retains saved Source RadioText choices', async () => {
+    setup({ ...profile, rds_metadata_to_rt: false, rds_rt_termination: 'CR' }, true);
+    const f = TestBed.createComponent(SourceEditor);
+    f.detectChanges();
+    await f.whenStable();
+    expect(f.componentInstance.rds.form.controls.rds_metadata_to_rt.value).toBe(false);
+    expect(f.componentInstance.rds.form.controls.rds_rt_termination.value).toBe('CR');
+  });
   afterEach(() => vi.restoreAllMocks());
   function setup(sourceProfile: RdsProfile | null = null, edit = false) {
     const data = sample();

@@ -327,7 +327,11 @@ describe('Dashboard API composition and operations', () => {
     await settle();
     expect(state.commandStates()[1]).toBeUndefined();
     expect(state.actionFeedback()[1]).toContain('Controller observation confirms ON');
-    await vi.advanceTimersByTimeAsync(4999);
+    await vi.advanceTimersByTimeAsync(2999);
+    expect(state.actionFeedback()[1]).toContain('Controller observation confirms ON');
+    await vi.advanceTimersByTimeAsync(1001);
+    expect(state.actionFeedback()[1]).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(999);
     http.expectNone('/api/v1/status');
     await vi.advanceTimersByTimeAsync(1);
     respond(observed(true));

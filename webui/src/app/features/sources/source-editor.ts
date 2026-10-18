@@ -321,6 +321,9 @@ export class SourceEditor implements OnInit, OnDestroy {
     this.feeds.markAsDirty();
   }
   constructor() {
+    if (this.id === undefined) {
+      this.rds.form.patchValue({ rds_metadata_to_rt: true, rds_rt_termination: 'PAD' });
+    }
     this.rebuild('HTTP');
     const testControls: AbstractControl[] = [
       this.form.controls.type,

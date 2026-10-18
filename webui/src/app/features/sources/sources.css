@@ -1,5 +1,16 @@
 @import '../../shared/editor-layout.css';
 
+:host {
+  --rt-min-height: 54px;
+}
+.source-group {
+  margin-top: var(--space-4);
+}
+.source-group > summary {
+  font-weight: 600;
+  margin-bottom: var(--space-3);
+}
+
 .action-link {
   border: 1px solid var(--border);
   padding: 9px 12px;

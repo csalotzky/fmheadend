@@ -108,6 +108,7 @@ export class DashboardState {
   readonly pendingAction = signal<'start' | 'stop' | null>(null);
   readonly commandStates = signal<Record<number, 'ON' | 'OFF'>>({});
   readonly actionFeedback = signal<Record<number, string>>({});
+  private readonly feedbackExpiry = new Map<number, number>();
   private confirmations = new Map<
     number,
     {
@@ -124,6 +125,7 @@ export class DashboardState {
   readonly profileNames = signal<Record<string, string>>({});
   private messageGeneration = 0;
   clearMessages() {
+    this.feedbackExpiry.clear();
     this.messageGeneration++;
     this.notice.set('');
     this.failures.set([]);
@@ -158,6 +160,7 @@ export class DashboardState {
         .subscribe();
   }
   stop() {
+    this.feedbackExpiry.clear();
     this.closed = true;
     this.polling?.unsubscribe();
     this.polling = undefined;
@@ -223,6 +226,16 @@ export class DashboardState {
     return [...this.confirmations.values()].some((c) => c.deadline > Date.now());
   }
   private expireConfirmations() {
+    for (const [id, deadline] of this.feedbackExpiry) {
+      if (Date.now() >= deadline) {
+        this.feedbackExpiry.delete(id);
+        this.actionFeedback.update((feedback) => {
+          const next = { ...feedback };
+          delete next[id];
+          return next;
+        });
+      }
+    }
     for (const [id, c] of this.confirmations) {
       if (!c.expired && Date.now() >= c.deadline) {
         c.expired = true;
@@ -259,15 +272,18 @@ export class DashboardState {
         delete next[id];
         return next;
       });
-      if (c.messageGeneration === this.messageGeneration)
+      if (c.messageGeneration === this.messageGeneration) {
         this.actionFeedback.update((v) => ({
           ...v,
           [id]: `Controller observation confirms ${c.state}.`,
         }));
+        this.feedbackExpiry.set(id, Date.now() + 3000);
+      }
     }
   }
   async operate(id: number, action: 'start' | 'stop') {
     if (this.closed || this.busy() !== null) return;
+    this.feedbackExpiry.delete(id);
     const generation = this.messageGeneration;
     this.busy.set(id);
     this.pendingAction.set(action);
@@ -350,6 +366,7 @@ export class DashboardState {
   }
   async all(action: 'start' | 'stop') {
     if (this.closed || this.busy() !== null) return;
+    this.feedbackExpiry.clear();
     const generation = this.messageGeneration;
     // Match the backend's skip rules; dependency validation remains backend-owned.
     const eligible = this.channels().filter(
