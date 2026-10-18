@@ -31,6 +31,14 @@ export const ptyLabels = [
   'Folk Music',
   'Documentary',
 ];
+// US RBDS programme types; diagnostic codes 30/31 are intentionally not selectable.
+export const rbdsPtyLabels = [
+  'None', 'News', 'Information', 'Sports', 'Talk', 'Rock', 'Classic Rock',
+  'Adult Hits', 'Soft Rock', 'Top 40', 'Country', 'Oldies', 'Soft', 'Nostalgia',
+  'Jazz', 'Classical', 'Rhythm and Blues', 'Soft Rhythm and Blues', 'Language',
+  'Religious Music', 'Religious Talk', 'Personality', 'Public', 'College',
+  'Unassigned', 'Unassigned', 'Unassigned', 'Unassigned', 'Unassigned', 'Weather',
+];
 export function mhz(khz: number | null): string {
   if (khz === null) return '';
   return `${Math.floor(khz / 1000)}.${String(khz % 1000).padStart(3, '0')}`

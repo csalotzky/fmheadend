@@ -15,7 +15,7 @@
             Existing diagnostic value — choose a programme type to change
           </option>
         }
-        @for (label of labels; track $index) {
+        @for (label of labels(); track $index) {
           <option [ngValue]="$index">{{ $index }} · {{ label }}</option>
         }
       </select></label

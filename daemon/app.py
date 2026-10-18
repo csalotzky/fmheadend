@@ -54,7 +54,7 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
         control = ControlExecutor()
         app.state.control = control
         def initialize():
-            database = Database(settings.database_path)
+            database = Database(settings.database_path, initial_preemphasis_us=75 if settings.region == 2 else 50)
             profile_files = AudioProfileFiles(settings.audio_profiles_default_dir, settings.audio_profiles_custom_dir,
                 is_referenced=lambda path: any(s.audio_profile_id == path for s in database.list('sources')),
                 is_system_default=lambda path: database.get_system().default_audio_profile_id == path)
@@ -279,7 +279,7 @@ def main():
                         media_browser_roots=tuple(args.media_browser_root),
                         audio_telemetry_socket=args.audio_telemetry_socket,
                         audio_telemetry_hz=args.audio_telemetry_hz)
-    database = Database(args.database)
+    database = Database(args.database, initial_preemphasis_us=75 if settings.region == 2 else 50)
     try:
         config = database.get_system()
     finally:

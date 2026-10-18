@@ -13,6 +13,9 @@ import { sample } from '../../features/dashboard/test-fixtures';
 import { SystemApi } from '../../core/api/system-api';
 import { systemInfo } from '../../features/system/test-fixtures';
 import { InputSource, RdsProfile } from '../../core/api/models';
+import { RdsProfileEditor } from './rds-profile-editor';
+import { RdsProfileForm } from './rds-profile-form';
+import { ptyLabels, rbdsPtyLabels } from '../../features/modulators/values';
 
 const profile: RdsProfile = {
   rds_pi: 0x1234,
@@ -26,6 +29,37 @@ const profile: RdsProfile = {
   rds_rt_termination: 'PAD',
   rds_metadata_to_rt: true,
 };
+
+describe('Regional PTY presentation', () => {
+  for (const region of [0, 1, 2, 3]) {
+    for (const code of [10, 30, 31]) {
+      it(`uses region ${region} labels without changing stored PTY ${code}`, () => {
+        TestBed.configureTestingModule({ providers: [
+          { provide: SystemApi, useValue: { info: () => of({
+            ...systemInfo, frequency_plan: { ...systemInfo.frequency_plan, region },
+          }) } },
+        ] });
+        const f = TestBed.createComponent(RdsProfileEditor);
+        const model = new RdsProfileForm();
+        model.load({ ...profile, rds_pty: code });
+        f.componentRef.setInput('model', model);
+        f.detectChanges();
+        const options = Array.from(f.nativeElement.querySelectorAll(
+          'select[formControlName="rds_pty"] option:not([disabled])',
+        )) as HTMLOptionElement[];
+        const labels = region === 2 ? rbdsPtyLabels : ptyLabels;
+        expect(options.map(o => o.textContent?.trim())).toEqual(
+          labels.map((label, i) => `${i} · ${label}`),
+        );
+        expect(options).toHaveLength(30);
+        expect(labels[5]).toBe(region === 2 ? 'Rock' : 'Education');
+        expect(labels[29]).toBe(region === 2 ? 'Weather' : 'Documentary');
+        expect(model.draft().rds_pty).toBe(code);
+        expect(model.form.pristine).toBe(true);
+      });
+    }
+  }
+});
 
 describe('Owned RDS editors', () => {
   it('defaults new Source RadioText to metadata and PAD without dirtying the draft', () => {

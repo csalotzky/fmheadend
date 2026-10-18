@@ -20,7 +20,7 @@ RECORDS = {"sources": InputSource, "modulators": Modulator}
 
 
 class Database:
-    def __init__(self, path):
+    def __init__(self, path, *, initial_preemphasis_us=50):
         if str(path) != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.connection = sqlite3.connect(str(path))
@@ -28,12 +28,12 @@ class Database:
         self.connection.execute("PRAGMA foreign_keys = ON")
         self.connection.execute("PRAGMA busy_timeout = 5000")
         try:
-            self._initialize()
+            self._initialize(initial_preemphasis_us)
         except Exception:
             self.close()
             raise
 
-    def _initialize(self):
+    def _initialize(self, initial_preemphasis_us):
         version = self.connection.execute("PRAGMA user_version").fetchone()[0]
         if version not in (0, SCHEMA_VERSION):
             raise RuntimeError(f"Unsupported database schema {version}; database left untouched.")
@@ -48,7 +48,7 @@ class Database:
                 for modulator_id in range(8):
                     profile = RdsProfileConfig(rds_pi=0xFFF0 + modulator_id, rds_ps=[PsEntry(text=f"TX {modulator_id}")], rds_rt="", rds_rt_enabled=False)
                     profile_id = self._write_profile(None, profile)
-                    config = ModulatorConfig()
+                    config = ModulatorConfig(preemphasis_us=initial_preemphasis_us)
                     data = config.model_dump(mode="json", exclude=RDS_FIELDS | {"rds_override_profile"}) | {"timestamp": utcnow().isoformat()}
                     self.connection.execute("INSERT INTO modulators VALUES (?, NULL, ?, ?)", (modulator_id, profile_id, json.dumps(data)))
                 self.connection.execute("INSERT INTO system_config VALUES (1, ?)", (SystemConfig().model_dump_json(),))

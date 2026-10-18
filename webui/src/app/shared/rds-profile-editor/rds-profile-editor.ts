@@ -1,7 +1,9 @@
-import { Component, Input, ChangeDetectionStrategy } from '@angular/core';
+import { Component, Input, ChangeDetectionStrategy, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { SystemApi } from '../../core/api/system-api';
 import { ReactiveFormsModule } from '@angular/forms';
 import { RdsProfileForm } from './rds-profile-form';
-import { ptyLabels, afOptions, mhz, textLength } from '../../features/modulators/values';
+import { ptyLabels, rbdsPtyLabels, afOptions, mhz, textLength } from '../../features/modulators/values';
 @Component({
   changeDetection: ChangeDetectionStrategy.Eager,
   selector: 'app-rds-profile-editor',
@@ -11,7 +13,13 @@ import { ptyLabels, afOptions, mhz, textLength } from '../../features/modulators
 })
 export class RdsProfileEditor {
   @Input({ required: true }) model!: RdsProfileForm;
-  readonly labels = ptyLabels;
+  readonly labels = signal(ptyLabels);
+  constructor() {
+    inject(SystemApi).info().pipe(takeUntilDestroyed()).subscribe({
+      next: (info) => this.labels.set(info.frequency_plan.region === 2 ? rbdsPtyLabels : ptyLabels),
+      error: () => {}, // Keep the existing labels if system information is unavailable.
+    });
+  }
   readonly alternatives = afOptions;
   readonly mhz = mhz;
   readonly textLength = textLength;
