@@ -249,7 +249,7 @@ Az `InputSource` egy újrahasznosítható logikai audioforrás. Nem tartalmaz FM
 | `name` | string | igen | Emberi név, pl. `KEXP` |
 | `type` | enum | igen | `HTTP`, `UDP`, `RTP`, `ALSA`, `LOCAL`, `PODCAST` |
 | `config` | JSON object | igen | Type-specifikus config |
-| `processor_mode` / `input_gain_db` / `audio_profile_path` | mode / dB / relative path | yes | Source processing selection; see 6.2 |
+| `use_default_audio_profile` / `input_gain_db` / `audio_profile_id` | boolean / dB / relative path | yes | Dynamic system default or explicit profile; see 6.2 |
 | `rds_profile_id` | nullable FK | Optional owned default RdsProfile; no physical enable |
 | `gst_options` | JSON object | igen | Haladó GStreamer property override-ok; default `{}` |
 | `timestamp` | datetime | igen | Utolsó mentés/módosítás időpontja |
@@ -407,11 +407,13 @@ are Git-tracked/read-only; custom profiles live in persistent application data.
 See [file Audio Profiles](audio-profile-files.md) for paths, schema, REST API,
 direct schema-1 creation and audio restart/error semantics.
 
-Sources persist `processor_mode` (`bypass`, `builtin`, `stereotool`), Source Gain
-`input_gain_db`, and a single stable relative `audio_profile_path`. Bypass requires
-null path and still applies Source Gain. Built-in loads/validates its selected JSON:
-Source decode -> Source Gain -> fixed twelve-stage Built-in DSP ->
-fixed PCM output. Stereo Tool is explicitly unavailable, with no silent fallback.
+Sources persist `use_default_audio_profile` (new Sources: true), Source Gain
+`input_gain_db`, and `audio_profile_id` (a stable relative file path, null when
+following the system default). SystemConfig persists `default_audio_profile_id`,
+initially `default/basic_filtering.json` (HPF+LPF). The effective profile is resolved
+dynamically; default changes do not rewrite Sources. `default/bypass.json` is a
+normal selectable profile with filtering/dynamics off and unity profile gains.
+Source decode -> Source Gain -> fixed twelve-stage DSP -> fixed PCM output.
 
 JSON schema-1 profiles require `name` and a non-optional string `description` alongside
 the complete `stages` object. The schema version remains 1. Profiles use the current twelve-stage order with no compatibility exceptions. Selected implementation
@@ -422,7 +424,9 @@ Saving a custom profile validates required plugins, atomically persists, then
 rebuilds active Sources using it on the existing serialized control executor.
 Shared source consumers retain their PCM output object; RF, RDS, desired states and
 STOP ALL holds are untouched. Partial save/apply failures are returned explicitly.
-Referenced custom files cannot be deleted; default files can only be cloned.
+Changing the system default reuses the same restart operation for active inheriting
+Sources only. Fixed-profile and idle Sources are untouched. Referenced custom files,
+including the system default, cannot be deleted; factory files can only be cloned.
 
 ### V1 processing elv
 

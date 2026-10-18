@@ -83,21 +83,21 @@ def start(api, sid, tx):
 def test_source_roundtrip_shared_profile_and_reference_guard(api):
     profile = api.post(BASE + 'custom', json=document()).json()
     path = profile['path']
-    ids = [source(api, processor_mode='builtin', input_gain_db=gain, audio_profile_path=path) for gain in (-3, -6)]
+    ids = [source(api, use_default_audio_profile=False, input_gain_db=gain, audio_profile_id=path) for gain in (-3, -6)]
     for sid, gain in zip(ids, (-3, -6)):
         row = api.get(f'/api/v1/sources/{sid}').json()
-        assert row['audio_profile_path'] == path and row['input_gain_db'] == gain
-        assert 'audio_profile_id' not in row
+        assert row['audio_profile_id'] == path and row['input_gain_db'] == gain
+        assert row['use_default_audio_profile'] is False and 'processor_mode' not in row
     assert api.delete(BASE + path).status_code == 409
     for sid in ids:
-        assert api.patch(f'/api/v1/sources/{sid}', json={'processor_mode': 'bypass', 'audio_profile_path': None}).status_code == 200
+        assert api.patch(f'/api/v1/sources/{sid}', json={'use_default_audio_profile': True, 'audio_profile_id': None}).status_code == 200
     assert api.delete(BASE + path).status_code == 204
 
 
 def test_save_restarts_shared_audio_only_and_preserves_pcm_identity(api):
     path = api.post(BASE + 'custom', json=document()).json()['path']
-    a = source(api, processor_mode='builtin', audio_profile_path=path, input_gain_db=-6)
-    b = source(api, processor_mode='builtin', audio_profile_path=path)
+    a = source(api, use_default_audio_profile=False, audio_profile_id=path, input_gain_db=-6)
+    b = source(api, use_default_audio_profile=False, audio_profile_id=path)
     unrelated = source(api)
     for tx, sid in enumerate((a, a, b, unrelated)): start(api, sid, tx)
     services = api.app.state.services
@@ -133,7 +133,7 @@ def test_save_restarts_shared_audio_only_and_preserves_pcm_identity(api):
 @pytest.mark.parametrize('failure', ['start', 'stop'])
 def test_saved_but_restart_failed_keeps_file_and_ownership(api, failure):
     path = api.post(BASE + 'custom', json=document()).json()['path']
-    sid = source(api, processor_mode='builtin', audio_profile_path=path)
+    sid = source(api, use_default_audio_profile=False, audio_profile_id=path)
     start(api, sid, 0)
     manager = api.app.state.services.sources
     old = manager.pipelines[sid]
@@ -163,27 +163,25 @@ def test_plugin_preflight_precedes_save(api, monkeypatch):
     assert api.get(BASE + path).json()['name'] == 'Test filters'
 
 
-def test_missing_invalid_stereotool_fail_closed(api):
-    assert api.post('/api/v1/sources', json={**SOURCE, 'processor_mode': 'builtin', 'audio_profile_path': 'custom/missing.json'}).status_code == 404
+def test_missing_invalid_profile_fail_closed_and_bypass_preserves_gain(api):
+    assert api.post('/api/v1/sources', json={**SOURCE, 'use_default_audio_profile': False, 'audio_profile_id': 'custom/missing.json'}).status_code == 404
     path = api.post(BASE + 'custom', json=document()).json()['path']
-    sid = source(api, processor_mode='builtin', audio_profile_path=path)
+    sid = source(api, use_default_audio_profile=False, audio_profile_id=path)
     api.patch('/api/v1/modulators/0', json={'input_source_id': sid, 'frequency_khz': 98100})
     api.app.state.services.profile_files._path(path).write_text('{bad')
     assert api.post('/api/v1/modulators/0/start').status_code == 503
     assert not api.app.state.services.sources.consumers
-    stereo = source(api, processor_mode='stereotool', audio_profile_path='custom/test.sts')
-    api.patch('/api/v1/modulators/1', json={'input_source_id': stereo, 'frequency_khz': 98300})
-    response = api.post('/api/v1/modulators/1/start')
-    assert response.status_code == 503 and 'not implemented' in response.json()['message']
-    bypass = source(api, input_gain_db=-9)
+    assert api.post('/api/v1/sources', json={**SOURCE, 'processor_mode': 'bypass'}).status_code == 422
+    bypass = source(api, input_gain_db=-9, use_default_audio_profile=False, audio_profile_id='default/bypass.json')
     start(api, bypass, 2)
-    assert api.app.state.services.sources.pipelines[bypass].profile is None
+    stages = api.app.state.services.sources.pipelines[bypass].profile.stages
+    assert all(s.selected == 'OFF' for k, s in stages.items() if k not in ('input_gain', 'master_gain', 'output_trim'))
     assert api.app.state.services.sources.pipelines[bypass].source.input_gain_db == -9
 
 
 def test_invalid_running_profile_reports_source_only(api):
     path = api.post(BASE + 'custom', json=document()).json()['path']
-    a = source(api, processor_mode='builtin', audio_profile_path=path)
+    a = source(api, use_default_audio_profile=False, audio_profile_id=path)
     b = source(api)
     start(api, a, 0); start(api, b, 1)
     api.app.state.services.profile_files._path(path).unlink()
@@ -209,7 +207,7 @@ def test_actual_gst_builder_gains_and_json_stages(tmp_path, builtin):
     saved = files.create(doc)
     db = Database(':memory:')
     source = db.save('sources', InputSourceConfig(**SOURCE, input_gain_db=-6,
-        processor_mode='builtin' if builtin else 'bypass', audio_profile_path=saved.path if builtin else None))
+        use_default_audio_profile=False, audio_profile_id=saved.path if builtin else 'default/bypass.json'))
     manager = SourceManager(db, GstPipeline, files)
     pipeline = manager._new_pipeline(source)
     class Element:
@@ -224,7 +222,7 @@ def test_actual_gst_builder_gains_and_json_stages(tmp_path, builtin):
     pipeline._link = lambda *args: links.append(args)
     pipeline._build()
     gains = [el.props['volume'] for el in elements if el.factory == 'volume']
-    assert gains == pytest.approx([10 ** (-6/20)] + ([10 ** (-3/20), 1, 1] if builtin else []))
+    assert gains == pytest.approx([10 ** (-6/20)] + ([10 ** (-3/20), 1, 1] if builtin else [1, 1, 1]))
     if builtin:
         assert next(e for e in elements if e.factory == 'audiocheblimit').props['cutoff'] == 80
         assert [e.factory for e in links[0]][3:7] == ['level', 'volume', 'volume', 'audiocheblimit']
@@ -323,6 +321,80 @@ def test_source_invalid_edit_does_not_save_or_replace_audio(api):
     assert response.status_code == 422
     assert api.app.state.services.sources.pipelines[sid] is old and old.running
     assert api.get(f'/api/v1/sources/{sid}').json()['config']['uri'] == SOURCE['config']['uri']
+
+
+def test_dynamic_default_reuses_shared_restart_without_rewriting_sources(api):
+    import sqlite3
+    path = api.post(BASE + 'custom', json=document()).json()['path']
+    inherited, another, idle = source(api), source(api), source(api)
+    fixed = source(api, use_default_audio_profile=False, audio_profile_id='default/basic_filtering.json')
+    for tx, sid in enumerate((inherited, inherited, another, fixed)):
+        start(api, sid, tx)
+    manager = api.app.state.services.sources
+    before = dict(manager.pipelines)
+    records = api.get('/api/v1/sources').json()
+    assert records[0]['use_default_audio_profile'] is True
+    assert records[0]['audio_profile_id'] is None
+    assert api.get('/api/v1/system/config').json()['default_audio_profile_id'] == 'default/basic_filtering.json'
+    restart = Mock(wraps=manager._restart_audio)
+    manager._restart_audio = restart
+    response = api.patch('/api/v1/system/config', json={'default_audio_profile_id': path})
+    assert response.status_code == 200 and response.json()['applied']
+    assert restart.call_count == 2
+    for sid in (inherited, another):
+        assert manager.pipelines[sid] is not before[sid]
+        assert manager.pipelines[sid].output is before[sid].output
+        assert manager.pipelines[sid].audio_profile_id == path
+    assert manager.consumers[inherited] == {0, 1}
+    assert manager.pipelines[fixed] is before[fixed]
+    assert idle not in manager.pipelines
+    assert api.get('/api/v1/sources').json() == records
+    db_path = api.app.state.control.executor.submit(
+        lambda: manager.database.connection.execute('PRAGMA database_list').fetchone()[2]).result()
+    with sqlite3.connect(db_path) as db:
+        assert db.execute("SELECT json_extract(data, '$.default_audio_profile_id') FROM system_config").fetchone()[0] == path
+    assert next(p for p in api.get(BASE.rstrip('/')).json() if p['path'] == path)['is_system_default']
+    assert api.delete(BASE + path).status_code == 409
+    restart.reset_mock()
+    assert api.patch('/api/v1/system/config', json={'default_audio_profile_id': path}).json()['applied']
+    restart.assert_not_called()
+    assert api.put(BASE + path, json={**document(), 'name': 'Edited default'}).json()['applied']
+    assert restart.call_count == 2
+    assert manager.pipelines[inherited].profile.name == 'Edited default'
+    assert manager.pipelines[fixed] is before[fixed]
+    api.post('/api/v1/modulators/stop-all')
+    restart.reset_mock()
+    assert api.patch('/api/v1/system/config', json={'default_audio_profile_id': 'default/bypass.json'}).json()['applied']
+    restart.assert_not_called()
+    assert not manager.pipelines
+
+
+def test_default_validation_and_failed_restart_are_not_false_success(api):
+    sid = source(api)
+    start(api, sid, 0)
+    manager = api.app.state.services.sources
+    old = manager.pipelines[sid]
+    before = api.get('/api/v1/system/config').json()
+    assert api.patch('/api/v1/system/config', json={'default_audio_profile_id': 'custom/missing.json'}).status_code == 404
+    assert api.get('/api/v1/system/config').json() == before
+    old.fail_stop = True
+    try:
+        for _ in range(2):
+            result = api.patch('/api/v1/system/config', json={'default_audio_profile_id': 'default/bypass.json'}).json()
+            assert not result['applied'] and str(sid) in result['restart_errors']
+            assert result['default_audio_profile_id'] == 'default/bypass.json'
+            assert manager.pipelines[sid] is old
+    finally:
+        old.fail_stop = False
+    assert api.patch('/api/v1/system/config', json={'default_audio_profile_id': 'default/bypass.json'}).json()['applied']
+
+
+def test_default_reference_is_protected_even_without_sources(api):
+    path = api.post(BASE + 'custom', json=document()).json()['path']
+    assert api.patch('/api/v1/system/config', json={'default_audio_profile_id': path}).json()['applied']
+    assert api.delete(BASE + path).status_code == 409
+    assert api.patch('/api/v1/system/config', json={'default_audio_profile_id': 'default/basic_filtering.json'}).json()['applied']
+    assert api.delete(BASE + path).status_code == 204
 
 
 @pytest.mark.parametrize('weighting', [0,50,75])

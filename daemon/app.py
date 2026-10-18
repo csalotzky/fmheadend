@@ -56,7 +56,8 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
         def initialize():
             database = Database(settings.database_path)
             profile_files = AudioProfileFiles(settings.audio_profiles_default_dir, settings.audio_profiles_custom_dir,
-                is_referenced=lambda path: any(s.audio_profile_path == path for s in database.list('sources')))
+                is_referenced=lambda path: any(s.audio_profile_id == path for s in database.list('sources')),
+                is_system_default=lambda path: database.get_system().default_audio_profile_id == path)
             sources = SourceManager(database, pipeline_factory, profile_files, clock=clock,
                 pcm_staging_buffer_ms=settings.pcm_staging_buffer_ms,
                 pcm_staging_max_age_ms=settings.pcm_staging_max_age_ms,

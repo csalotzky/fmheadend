@@ -34,10 +34,12 @@ import { AudioProfile, ProfileApi } from './profile-api';
             ><strong class="list-primary">{{ profile.name }}</strong></a
           >
           <p class="list-secondary">{{ profile.path }}</p>
+          @if (profile.is_system_default) { <strong class="list-secondary">System default</strong> }
         </div>
         <p class="list-description">{{ profile.description }}</p>
         <div class="list-status muted">Used by {{ usedBy(profile.path) }} sources</div>
         <div class="actions list-actions">
+          <button type="button" [disabled]="deleting() !== null || profile.is_system_default" (click)="setDefault(profile)">Set as default</button>
           @if (profile.kind === 'default') {
             <a
               class="button-link"
@@ -55,7 +57,7 @@ import { AudioProfile, ProfileApi } from './profile-api';
             >
             <button
               type="button"
-              [disabled]="deleting() !== null || usedBy(profile.path) > 0"
+              [disabled]="deleting() !== null || profile.is_system_default || usedBy(profile.path) > 0"
               (click)="remove(profile)"
             >
               Delete
@@ -100,7 +102,24 @@ export class ProfilesList implements OnInit {
     }
   }
   usedBy(path: string) {
-    return this.sources().filter((s) => s.audio_profile_path === path).length;
+    return this.sources().filter((s) => s.use_default_audio_profile
+      ? this.profiles().some((p) => p.path === path && p.is_system_default)
+      : s.audio_profile_id === path).length;
+  }
+  async setDefault(profile: AudioProfile) {
+    if (this.deleting() !== null || profile.is_system_default) return;
+    this.deleting.set(profile.path);
+    this.error.set('');
+    try {
+      const result = await firstValueFrom(this.api.setDefault(profile.path));
+      await this.load();
+      if (!result.applied) this.error.set('Default saved; audio restart failed: ' +
+        Object.entries(result.restart_errors).map(([id, error]) => `Source ${id}: ${error}`).join('; '));
+    } catch (e) {
+      this.error.set(errorMessage(e));
+    } finally {
+      this.deleting.set(null);
+    }
   }
   async clone(profile: AudioProfile) {
     if (this.deleting() !== null) return;
@@ -117,7 +136,7 @@ export class ProfilesList implements OnInit {
     }
   }
   async remove(profile: AudioProfile) {
-    if (profile.kind === 'default' || this.usedBy(profile.path)) return;
+    if (profile.kind === 'default' || profile.is_system_default || this.usedBy(profile.path)) return;
     if (this.deleting() !== null || !window.confirm(`Delete audio profile "${profile.name}"?`))
       return;
     this.deleting.set(profile.path);

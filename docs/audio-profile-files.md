@@ -1,10 +1,12 @@
 # File Audio Profiles: integrated storage, API and audio runtime
 
-Sources select `processor_mode` (`bypass`, `builtin`, `stereotool`), independent
-`input_gain_db` (default 0, maximum +20 dB), and `audio_profile_path`.
-Bypass requires null path and applies Source Gain only. Built-in requires a valid
-shared JSON file and applies Source Gain -> Profile Input Gain -> the fixed modular chain. Stereo Tool is modeled but explicitly rejected on start/test; the UI
-shows it disabled/coming soon. There is no silent processing fallback.
+Sources select `use_default_audio_profile` (default true), independent
+`input_gain_db` (default 0, maximum +20 dB), and `audio_profile_id`.
+Following the system default requires a null source profile ID. Otherwise the ID
+is a valid `default/...json` or `custom/...json` path. SystemConfig stores
+`default_audio_profile_id`, initially `default/basic_filtering.json` (HPF+LPF).
+`default/bypass.json` is a normal profile with filters/dynamics off and unity gains.
+Source Gain and PCM conversion still apply. There is no silent processing fallback.
 
 The existing Audio Profiles and Source pages use file paths end to end. SQLite
 stores Sources and their path references, not AudioProfile entities. Numeric-ID
@@ -32,9 +34,8 @@ sudo install -d -o fmheadend -g fmheadend -m 0750 /var/lib/fmheadend/audio-profi
 These commands were not executed by this task. The daemon never writes defaults.
 The existing systemd StateDirectory owns `/var/lib/fmheadend`; custom storage is
 created lazily if absent. Missing default storage is an explicit storage error,
-not a silent empty/default fallback. Bypass Sources do not access profile storage.
-File API calls and Built-in Source validation/start/status load the selected files;
-Built-in Sources fail explicitly if their selected file is missing.
+not a silent empty/default fallback. All Source validation/start/status paths load
+the effective profile file, including Bypass. Missing selections fail explicitly.
 
 Development example (from the checkout):
 
@@ -96,7 +97,15 @@ Reads are bounded to 64 KiB. Listing fails explicitly on invalid files instead o
 silently hiding them or substituting DSP defaults. Invalid custom files can be
 repaired by a valid full PUT or deleted.
 
-Deletion checks every persisted Source path, including stopped Sources. Referenced custom profiles return 409; references are never reassigned automatically.
+Deletion checks every explicit Source reference (including stopped Sources) and
+the system default. Referenced custom profiles return 409.
+
+`PATCH /api/v1/system/config` with `default_audio_profile_id` validates the file and
+plugins before saving the reference. It then uses the existing audio restart for
+active inheriting Sources only, once per shared Source; idle and fixed-profile
+Sources are untouched. The response includes `applied` and `restart_errors`.
+Profile summaries expose `is_system_default`. Editing that profile's contents also
+restarts inheritors through the same existing profile-save path.
 
 ## Save and audio lifecycle
 
@@ -137,9 +146,18 @@ parameter mutation is implemented.
 
 Fresh databases directly create the current Sources/Modulators/SystemConfig layout
 as version 1, including the fixed-modulator triggers and Source ID sequence.
-There are no profile rows or Source profile foreign keys. Source mode, gain and
-stable file path remain in Source JSON. Unsupported versions and incorrect structures
+There are no profile rows or Source profile foreign keys. Source inheritance, gain and
+explicit file reference remain in Source JSON. Unsupported versions and incorrect structures
 fail explicitly without conversion. There is no runtime migration machinery.
+
+Existing development databases require manual JSON edits before use: remove
+`processor_mode` and `audio_profile_path` from each `sources.data`; add
+`use_default_audio_profile` and `audio_profile_id`. To preserve an explicit DSP
+selection use false and its former path; for former Bypass use false and
+`default/bypass.json`. To opt into inheritance use true and null. Add
+`default_audio_profile_id: "default/basic_filtering.json"` to `system_config.data`.
+Preserve every other field and row. No conversion, database reset, or schema-version
+change is performed by the application.
 
 ## Validation and limitations
 

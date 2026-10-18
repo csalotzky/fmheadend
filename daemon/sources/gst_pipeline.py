@@ -124,12 +124,6 @@ class GstPipeline:
                  pcm_consumer_buffer_ms=DEFAULT_CONSUMER_BUFFER_MS,
                  pcm_staging_max_age_ms=DEFAULT_STAGING_MAX_AGE_MS,
                  podcast_database_path=None, podcast_runtime_factory=None):
-        if source.processor_mode == 'stereotool':
-            raise DependencyUnavailable('Stereo Tool processing is not implemented')
-        if source.processor_mode == 'builtin' and profile is None:
-            raise DependencyUnavailable('Built-in DSP requires its validated profile')
-        if source.processor_mode == 'bypass' and profile is not None:
-            raise DependencyUnavailable('Bypass must not load a processing profile')
         self._local = None
         self._podcast_database_path = podcast_database_path
         self._podcast_runtime_factory = podcast_runtime_factory

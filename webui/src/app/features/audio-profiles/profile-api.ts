@@ -61,6 +61,7 @@ export interface ProfileDraft {
   stages: Record<string, DspStage>;
 }
 export interface AudioProfile {
+  is_system_default?: boolean;
   name: string;
   description: string;
   path: string;
@@ -82,6 +83,11 @@ export class ProfileApi {
   private http = inject(HttpClient);
   list() {
     return this.http.get<AudioProfile[]>(base).pipe(timeout(15000));
+  }
+  setDefault(path: string) {
+    return this.http.patch<{ default_audio_profile_id: string; applied: boolean; restart_errors: Record<string, string> }>(
+      '/api/v1/system/config', { default_audio_profile_id: path },
+    ).pipe(timeout(300000));
   }
   dsp() {
     return this.http.get<DspDescription>(base + '/dsp').pipe(timeout(15000));

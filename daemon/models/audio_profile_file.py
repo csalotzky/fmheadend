@@ -51,6 +51,7 @@ class CloneProfileFile(Model):
 
 
 class ProfileFileSummary(Model):
+    is_system_default: bool = False
     name: str
     description: str
     path: str

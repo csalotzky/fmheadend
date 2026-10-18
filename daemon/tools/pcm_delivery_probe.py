@@ -45,7 +45,7 @@ def main():
         try:
             for builtin in (False, True):
                 source = InputSourceConfig(name='Probe', type='HTTP', config={'uri': f'http://127.0.0.1:{server.server_port}/test.mp3'},
-                    processor_mode='builtin' if builtin else 'bypass', audio_profile_path='custom/probe.json' if builtin else None)
+                    use_default_audio_profile=False, audio_profile_id='custom/probe.json' if builtin else 'default/bypass.json')
                 pipeline = GstPipeline(source, profile=profile if builtin else None, reconnect=False)
                 pipeline.output.attach(0)
                 sizes, arrivals, delays, pending = Counter(), [], [], {}

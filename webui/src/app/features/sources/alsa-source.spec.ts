@@ -51,8 +51,8 @@ describe('ALSA Source editor', () => {
       .flush({
         ...sample().sources[0],
         type: 'ALSA',
-        processor_mode: 'bypass',
-        audio_profile_path: null,
+        use_default_audio_profile: true,
+        audio_profile_id: null,
         config: { device: pcm, channel_selection: 'stereo' },
       });
     // Let the saved Source construct its config and start discovery.

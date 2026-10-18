@@ -109,7 +109,7 @@ def test_default_and_list(store):
     assert item.profile.stages['input_gain'].implementations['VOLUME']['gain_db'] == 0
     assert item.profile.stages['lpf'].implementations['CHEBYSHEV'] == dict(cutoff_hz=16000, poles=14, ripple_db=0, type=1)
     assert [x.model_dump() for x in store.list()] == [
-        {'path': 'default/test_filters.json', 'name': 'Test filters', 'kind': 'default', 'description': document()['description']}]
+        {'path': 'default/test_filters.json', 'name': 'Test filters', 'kind': 'default', 'description': document()['description'], 'is_system_default': False}]
 
 
 @pytest.mark.parametrize('weighting', [0, 50, 75])
@@ -342,7 +342,7 @@ def test_loader_preserves_result_normalization_and_validation_contract(store):
         for key, (_, choices) in reversed(list(STAGES.items()))})
     path = store.roots['default'] / 'all.json'
     path.write_text(json.dumps(data), encoding='utf-8')
-    expected = ProfileFileResult(description="Test profile", name=data['name'], path='default/all.json', kind='default',
+    expected = ProfileFileResult(description="Test profile", name=data['name'], path='default/all.json', kind='default', is_system_default=False,
                                 profile=store.validate(copy.deepcopy(data)))
     once = store.validate(copy.deepcopy(data))
     # The second pass is not redundant for default-filled settings: default
@@ -397,6 +397,8 @@ def test_external_mutated_or_constructed_profile_is_not_trusted_by_result_model(
 
 def test_tracked_profiles_contain_fm_peak_defaults():
     for path in DEFAULT.parent.glob('*.json'):
+        if path.name == 'bypass.json':
+            continue  # No limiter/clipper settings in the processing-free profile.
         data = json.loads(path.read_text(encoding='utf-8'))
         limiter = data['stages']['limiter']['implementations']['FM_HEADEND_LIMITER']
         clipper = data['stages']['clipper']['implementations']['FM_HEADEND_CLIPPER']

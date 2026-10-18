@@ -295,29 +295,23 @@
     <section class="editor-panel" aria-labelledby="audio-processing-heading">
       <h2 id="audio-processing-heading">Audio processing</h2>
       <div class="fields">
-        <label>Processor<select formControlName="processor_mode" (change)="changeProcessor()">
-            <option value="bypass">Bypass</option>
-            <option value="builtin">Built-in DSP</option>
-            <option value="stereotool" disabled>Stereo Tool (coming soon)</option>
-          </select></label>
-        <label>Source Gain (dB)<input type="number" step="any" max="20" formControlName="input_gain_db" /></label>
-      </div>
-      @if (form.controls.processor_mode.value === 'builtin') {
-      <label>Audio Profile<select formControlName="audio_profile_path">
-          <option [ngValue]="null">Select a profile</option>
+      <label>Audio Profile<select formControlName="audio_profile_id">
+          <option [ngValue]="null">System default ({{ defaultProfileName() }})</option>
           @for (profile of profileOptions(); track profile.path) {
           <option [ngValue]="profile.path">{{ profile.label }}</option>
           }
           @if (missingProfile()) {
-          <option [ngValue]="form.controls.audio_profile_path.value">
+          <option [ngValue]="form.controls.audio_profile_id.value">
             Current profile (unavailable)
           </option>
           }
-        </select></label>
+        </select>
       @if (selectedProfile(); as profile) {
       <small class="muted">{{ profile.description }}</small>
       }
-      }
+      </label>
+        <label>Source Gain (dB)<input type="number" step="any" max="20" formControlName="input_gain_db" /></label>
+      </div>
       @if (profileError()) {
       <p class="warning">Audio profiles unavailable: {{ profileError() }}</p>
       }

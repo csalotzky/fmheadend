@@ -287,7 +287,7 @@ describe('File Audio Profiles', () => {
     http.expectOne(base).flush(rows);
     http
       .expectOne('/api/v1/sources')
-      .flush(referenced ? [{ audio_profile_path: profile.path }] : []);
+      .flush(referenced ? [{ audio_profile_id: profile.path }] : []);
     await f.whenStable();
     f.detectChanges();
     return f;
@@ -304,6 +304,29 @@ describe('File Audio Profiles', () => {
     f.detectChanges();
     return f;
   }
+  it('sets system default immediately and shows inherited use and deletion protection', async () => {
+    const f = await list();
+    const confirm = vi.spyOn(window, 'confirm');
+    const pending = f.componentInstance.setDefault(profile);
+    const request = http.expectOne('/api/v1/system/config');
+    expect(request.request.method).toBe('PATCH');
+    expect(request.request.body).toEqual({ default_audio_profile_id: profile.path });
+    request.flush({ default_audio_profile_id: profile.path, applied: true, restart_errors: {} });
+    await Promise.resolve();
+    http.expectOne(base).flush([factory, { ...profile, is_system_default: true }]);
+    http.expectOne('/api/v1/sources').flush([{ use_default_audio_profile: true, audio_profile_id: null }]);
+    await pending;
+    f.detectChanges();
+    expect(f.componentInstance.usedBy(profile.path)).toBe(1);
+    expect(f.nativeElement.textContent).toContain('System default');
+    const row = f.nativeElement.querySelector('[data-profile-kind="custom"]');
+    expect(Array.from(row.querySelectorAll('button') as NodeListOf<HTMLButtonElement>)
+      .find((button) => button.textContent?.trim() === 'Delete')?.disabled).toBe(true);
+    await f.componentInstance.remove({ ...profile, is_system_default: true });
+    expect(confirm).not.toHaveBeenCalled();
+    confirm.mockRestore();
+    http.expectNone((request) => request.method === 'DELETE');
+  });
   for (const implementation of ['LSP_MULTIBAND_GATE', 'LSP_MULTIBAND_EXPANDER']) {
     it(`edits, switches, saves and reloads ${implementation} with the shared crossover/band editor`, async () => {
       const f = await editor(),
@@ -427,8 +450,8 @@ describe('File Audio Profiles', () => {
         ),
       ).toBe(false);
     }
-    expect(rows[0].querySelectorAll('button')).toHaveLength(1);
-    expect(rows[0].querySelector('button').textContent).toContain('Clone');
+    expect([...rows[0].querySelectorAll('button')].map((button: HTMLButtonElement) => button.textContent?.trim()))
+      .toEqual(['Set as default', 'Clone']);
     expect(rows[0].querySelector('.list-actions a').textContent).toContain('View');
     expect(rows[0].textContent).toContain(factory.description);
     expect(rows[1].textContent).toContain(profile.description);

@@ -25,9 +25,9 @@ export interface SourceDraft {
   name: string;
   type: SourceType;
   config: Record<string, Json>;
-  processor_mode: 'bypass' | 'builtin' | 'stereotool';
+  use_default_audio_profile: boolean;
   input_gain_db: number;
-  audio_profile_path: string | null;
+  audio_profile_id: string | null;
   gst_options: Record<string, Record<string, Json>>;
 }
 export interface SourceRuntime {
@@ -72,6 +72,7 @@ export interface SourceTest {
   message: string;
 }
 export interface Profile {
+  is_system_default?: boolean;
   description: string;
   path: string;
   kind: 'default' | 'custom';

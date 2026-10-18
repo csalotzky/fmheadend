@@ -53,7 +53,7 @@ def test_current_configuration_reopens_without_writes(tmp_path):
     db = Database(path)
     source = db.save("sources", InputSourceConfig(
         name="Station", type="HTTP", config={"uri": "https://example.org/live"},
-        processor_mode='builtin', input_gain_db=-3, audio_profile_path='default/basic.json',
+        use_default_audio_profile=False, input_gain_db=-3, audio_profile_id='default/basic.json',
         gst_options={"source": {"user-agent": "Station/2"}}))
     db.save("modulators", ModulatorConfig(
         enabled=True, input_source_id=source.id, frequency_khz=98100,

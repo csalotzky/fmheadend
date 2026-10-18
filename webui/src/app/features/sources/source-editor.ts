@@ -294,12 +294,11 @@ export class SourceEditor implements OnInit, OnDestroy {
       validators: [Validators.required, Validators.maxLength(200), Validators.pattern(/\S/)],
     }),
     type: new FormControl<SourceType>('HTTP', { nonNullable: true }),
-    processor_mode: new FormControl<SourceDraft['processor_mode']>('bypass', { nonNullable: true }),
     input_gain_db: new FormControl(0, {
       nonNullable: true,
       validators: [Validators.required, Validators.max(20)],
     }),
-    audio_profile_path: new FormControl<string | null>(null),
+    audio_profile_id: new FormControl<string | null>(null),
     gst_options: new FormControl('', { nonNullable: true }),
   });
   config = new FormGroup<Record<string, FormControl<string | boolean>>>({});
@@ -327,8 +326,7 @@ export class SourceEditor implements OnInit, OnDestroy {
     this.rebuild('HTTP');
     const testControls: AbstractControl[] = [
       this.form.controls.type,
-      this.form.controls.processor_mode,
-      this.form.controls.audio_profile_path,
+      this.form.controls.audio_profile_id,
       this.form.controls.input_gain_db,
       this.form.controls.gst_options,
     ];
@@ -349,8 +347,7 @@ export class SourceEditor implements OnInit, OnDestroy {
       this.form.setValue({
         name: source.name,
         type: source.type,
-        audio_profile_path: source.audio_profile_path,
-        processor_mode: source.processor_mode,
+        audio_profile_id: source.use_default_audio_profile ? null : source.audio_profile_id,
         input_gain_db: source.input_gain_db,
         gst_options: Object.keys(source.gst_options).length
           ? JSON.stringify(source.gst_options, null, 2)
@@ -420,17 +417,17 @@ export class SourceEditor implements OnInit, OnDestroy {
     this.result.set(null);
     this.closeBrowser();
   }
-  changeProcessor() {
-    this.form.controls.audio_profile_path.setValue(null);
-    this.form.markAsDirty();
+  defaultProfileName() {
+    return this.profiles().find((p) => p.is_system_default)?.name ?? 'unavailable';
   }
   selectedProfile() {
     return this.profiles().find(
-      (profile) => profile.path === this.form.controls.audio_profile_path.value,
+      (profile) => this.form.controls.audio_profile_id.value === null
+        ? profile.is_system_default : profile.path === this.form.controls.audio_profile_id.value,
     );
   }
   missingProfile() {
-    const id = this.form.controls.audio_profile_path.value;
+    const id = this.form.controls.audio_profile_id.value;
     return id !== null && !this.profiles().some((profile) => profile.path === id);
   }
   localMode(): LocalSourceConfig['mode'] {
@@ -574,12 +571,8 @@ export class SourceEditor implements OnInit, OnDestroy {
       return null;
     }
     const v = this.form.getRawValue();
-    if (v.processor_mode === 'stereotool') {
-      this.error.set('Stereo Tool is not available yet.');
-      return null;
-    }
-    if (v.processor_mode === 'builtin' && (!v.audio_profile_path || this.missingProfile())) {
-      this.error.set('Select an available Built-in Audio Profile.');
+    if (this.missingProfile()) {
+      this.error.set('Select an available Audio Profile.');
       return null;
     }
     const config: Record<string, Json> = {};
@@ -685,9 +678,9 @@ export class SourceEditor implements OnInit, OnDestroy {
       rds_profile: rdsProfile,
       name: blankHttpName ? 'HTTP stream probe' : v.name,
       type: v.type,
-      processor_mode: v.processor_mode,
+      use_default_audio_profile: v.audio_profile_id === null,
       input_gain_db: v.input_gain_db,
-      audio_profile_path: v.processor_mode === 'bypass' ? null : v.audio_profile_path,
+      audio_profile_id: v.audio_profile_id,
       config,
       gst_options: options,
     };

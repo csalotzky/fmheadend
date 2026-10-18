@@ -6,6 +6,7 @@ import socket
 import threading
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -13,6 +14,7 @@ import pytest
 
 from fmheadendd.app import argument_parser
 from fmheadendd.audio_telemetry import AudioTelemetry
+from fmheadendd.audio_profile_files import AudioProfileFiles
 from fmheadendd.config import Settings
 from fmheadendd.control import ControlExecutor
 from fmheadendd.models.audio_profile_file import AudioProfileFile
@@ -41,9 +43,15 @@ class Element:
 
 
 def pipeline():
-    p = GstPipeline(InputSourceConfig(name='station', type='HTTP', config={'uri': 'http://localhost/test'}))
+    p = GstPipeline(InputSourceConfig(name='station', type='HTTP', config={'uri': 'http://localhost/test'},
+        use_default_audio_profile=False, audio_profile_id='default/bypass.json'))
+    p.audio_profile_id = 'default/bypass.json'
     p._pipeline = Mock()
     return p
+
+
+def profile_files():
+    return AudioProfileFiles(Path(__file__).resolve().parents[2] / 'audio-profiles/default', 'unused-custom')
 
 
 def test_settings_cli_disabled_and_rate_bounds():
@@ -171,7 +179,7 @@ def test_agc_enable_restore_only_on_worker_and_null_invalidation(monkeypatch):
 
 
 def test_manager_current_wrapper_consumers_and_new_source_request():
-    manager = SourceManager(Mock(), pipeline_factory=GstPipeline)
+    manager = SourceManager(Mock(), pipeline_factory=GstPipeline, profile_files=profile_files())
     first = pipeline()
     manager.pipelines[3] = first
     manager.consumers[3] = {7, 2}
@@ -353,7 +361,8 @@ def test_emit_deadline_excludes_work_and_does_not_catch_up(monkeypatch):
 
 def test_registry_snapshot_replacement_release_and_failed_stop():
     source = InputSource(id=3, timestamp=datetime.now(timezone.utc), name='source',
-                         type='HTTP', config={'uri': 'http://localhost/test'})
+                         type='HTTP', config={'uri': 'http://localhost/test'},
+                         use_default_audio_profile=False, audio_profile_id='default/bypass.json')
     database = Mock()
     database.get.return_value = source
     manager = None
@@ -378,7 +387,7 @@ def test_registry_snapshot_replacement_release_and_failed_stop():
                 reading.set()
                 assert finish_read.wait(2)
             return dict(telemetry_available=False, generation=1)
-    manager = SourceManager(database, pipeline_factory=Pipeline)
+    manager = SourceManager(database, pipeline_factory=Pipeline, profile_files=profile_files())
     manager.acquire(3, 7)
     manager.acquire(3, 2)
     old = manager.pipelines[3]
@@ -494,7 +503,7 @@ def test_close_owns_connected_client_and_is_bounded(tmp_path, race):
 
 
 def test_terminal_disable_fences_queued_enables_and_unpublished_wrapper():
-    manager = SourceManager(Mock(), pipeline_factory=GstPipeline)
+    manager = SourceManager(Mock(), pipeline_factory=GstPipeline, profile_files=profile_files())
     manager.set_telemetry(True)
     pending = manager._new_pipeline(pipeline().source)
     assert pending._telemetry_request[0]

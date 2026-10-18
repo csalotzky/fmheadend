@@ -214,7 +214,8 @@ describe('Operational display', () => {
   it('shows profile names only for digital sources with a profile', () => {
     const state = setup();
     const data = sample();
-    data.sources[0].audio_profile_path = 'custom/studio.json';
+    data.sources[0].audio_profile_id = 'custom/studio.json';
+    data.sources[0].use_default_audio_profile = false;
     data.modulators[1].audio_mode = 'ANALOG';
     state.channels.set(compose(data));
     state.profileNames.set({ 'custom/studio.json': 'Studio processing' });

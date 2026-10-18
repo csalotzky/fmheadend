@@ -172,22 +172,20 @@ class InputSourceConfig(Model):
     name: Name
     type: SourceType
     config: JsonObject
-    processor_mode: Literal['bypass', 'builtin', 'stereotool'] = 'bypass'
+    use_default_audio_profile: bool = True
     input_gain_db: float = Field(default=0, le=20)
-    audio_profile_path: str | None = None
+    audio_profile_id: str | None = None
     gst_options: dict[str, JsonObject] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_config(self):
         import re
-        if self.processor_mode == 'bypass' and self.audio_profile_path is not None:
-            raise ValueError('Bypass requires audio_profile_path=null')
-        if self.processor_mode == 'builtin' and (self.audio_profile_path is None or not re.fullmatch(
-                r'(default|custom)/[a-zA-Z0-9_-]+\.json', self.audio_profile_path)):
-            raise ValueError('Built-in DSP requires a default/custom JSON profile path')
-        if self.processor_mode == 'stereotool' and self.audio_profile_path is not None and not re.fullmatch(
-                r'(default|custom)/[a-zA-Z0-9_-]+\.sts', self.audio_profile_path):
-            raise ValueError('Stereo Tool presets must be relative default/custom .sts paths')
+        if self.use_default_audio_profile:
+            if self.audio_profile_id is not None:
+                raise ValueError('System default requires audio_profile_id=null')
+        elif self.audio_profile_id is None or not re.fullmatch(
+                r'(default|custom)/[a-zA-Z0-9_-]+\.json', self.audio_profile_id):
+            raise ValueError('Select a default/custom JSON audio profile')
         self.config = SOURCE_CONFIGS[self.type].model_validate(self.config).model_dump(mode="json")
         if set(self.gst_options) - {"source", "queue", "resample"}:
             raise ValueError("gst_options supports source, queue and resample property maps")
@@ -239,6 +237,8 @@ class Modulator(ModulatorConfig):
 
 
 class SystemConfig(Model):
+    default_audio_profile_id: str = Field(default='default/basic_filtering.json',
+        pattern=r'^(default|custom)/[a-zA-Z0-9_-]+\.json$')
     global_stopped: bool = False
     spi_device: Name = "/dev/spidev0.0"
     spi_clock_hz: int = Field(default=25000000, gt=0)
@@ -248,6 +248,11 @@ class SystemConfig(Model):
     web_listen_address: Name = "0.0.0.0"
     web_port: Port = 8080
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+
+
+class SystemSaveResult(SystemConfig):
+    applied: bool
+    restart_errors: dict[int, str]
 
 
 def patch_model(name, model, *, exclude=()):

@@ -261,8 +261,8 @@ def test_publication_loads_shared_dsp_profile_once_per_due_generation(tmp_path):
     with TestClient(app) as api:
         for tx in range(4):
             sid = api.post(P+'/sources', json={'name': f'Feed {tx}', 'type': 'HTTP',
-                'config': {'uri': 'http://localhost/live'}, 'processor_mode': 'builtin',
-                'audio_profile_path': 'default/light_normal.json'}).json()['id']
+                'config': {'uri': 'http://localhost/live'}, 'use_default_audio_profile': False,
+                'audio_profile_id': 'default/light_normal.json'}).json()['id']
             assert api.patch(f'{P}/modulators/{tx}', json={
                 'input_source_id': sid, 'frequency_khz': 98100}).status_code == 200
             assert api.post(f'{P}/modulators/{tx}/start').status_code == 200

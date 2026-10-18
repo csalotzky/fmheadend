@@ -27,8 +27,8 @@ def profile(trim=0):
 
 def pipeline(builtin=False, gain=0, trim=0, **kwargs):
     source = InputSourceConfig(name='Peak test', type='UDP', input_gain_db=gain,
-        processor_mode='builtin' if builtin else 'bypass',
-        audio_profile_path='custom/peak-test.json' if builtin else None,
+        use_default_audio_profile=False,
+        audio_profile_id='custom/peak-test.json' if builtin else 'default/bypass.json',
         config=dict(host='127.0.0.1', port=kwargs.pop('port', 12345), format='S16LE', sample_rate=48000, channels=2))
     return GstPipeline(source, profile=profile(trim) if builtin else None, **kwargs)
 
