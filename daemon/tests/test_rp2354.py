@@ -16,7 +16,7 @@ from fmheadendd.rp2354 import protocol as p
 from fmheadendd.rp2354 import linux_client as linux
 from fmheadendd.rp2354.client import MockRp2354Client, TxConfig
 
-INFO = struct.pack('<H16s16sB', 1, b'0.1.0', b'rp2354-tx-v1', 8)
+INFO = struct.pack('<H16s16sBIII', 1, b'0.1.0', b'rp2354-qn8x-v1', 8, 76000, 108000, 50)
 CONFIG = TxConfig(frequency_khz=98100, rf_attenuation_db=6.0, stereo=True, preemphasis_us=50,
                   audio_mode='DIGITAL', rds_enabled=False)
 
@@ -89,9 +89,9 @@ def test_get_info_and_linux_setup(calls):
     replies(calls, INFO)
     rp = client()
     assert rp.get_info() == {'rp_protocol_version': 1, 'rp_firmware_version': '0.1.0',
-                              'hardware_target': 'rp2354-tx-v1', 'modulator_count': 8}
+                              'hardware_target': 'rp2354-qn8x-v1', 'modulator_count': 8, 'frequency_min_khz': 76000, 'frequency_max_khz': 108000, 'frequency_step_khz': 50}
     assert packets(calls) == [b'\x01\xff\x00']
-    assert [call.args[1] for call in calls[0].read.call_args_list] == [2, 37]
+    assert [call.args[1] for call in calls[0].read.call_args_list] == [2, 49]
     calls[1].ioctl.assert_any_call(42, linux.I2C_SLAVE, 0x42)
     calls[1].ioctl.assert_any_call(42, linux.I2C_TIMEOUT, 20)
     calls[1].ioctl.assert_any_call(42, linux.I2C_RETRIES, 0)
@@ -188,7 +188,7 @@ def test_maximum_rds_payload():
 
 @pytest.mark.parametrize('version,count', [(2, 8), (0, 8), (1, 0), (1, 9)])
 def test_incompatible_handshake_blocks_commands(calls, version, count):
-    replies(calls, struct.pack('<H16s16sB', version, b'fw', b'hw', count))
+    replies(calls, struct.pack('<H16s16sBIII', version, b'fw', b'hw', count, 76000, 108000, 50))
     rp = client()
     with pytest.raises(p.IncompatibleProtocol):
         rp.set_tx_enabled(0, True)
@@ -199,7 +199,34 @@ def test_incompatible_handshake_blocks_commands(calls, version, count):
 @pytest.mark.parametrize('text', [b'x' * 16, b'\0' * 16, b'x\0y' + b'\0' * 13, b'\xff' + b'\0' * 15, b'\n' + b'\0' * 15])
 def test_invalid_info_strings(text):
     with pytest.raises(p.ProtocolError):
-        p.parse_info(struct.pack('<H16s16sB', 1, text, b'hw', 8))
+        p.parse_info(struct.pack('<H16s16sBIII', 1, text, b'hw', 8, 76000, 108000, 50))
+
+
+@pytest.mark.parametrize('limits', [(0,108000,50), (76000,0,50), (76000,108000,0),
+                                   (108000,76000,50), (76000,108001,50)])
+def test_invalid_frequency_capabilities_block_handshake(calls, limits):
+    replies(calls, p.INFO.pack(1, b'1.0.0', b'rp2354-qn8x-v1', 8, *limits))
+    rp = client()
+    with pytest.raises(p.IncompatibleProtocol):
+        rp.set_tx_enabled(0, True)
+    assert rp.info is None
+    assert packets(calls) == [b'\x01\xff\x00']
+
+
+def test_old_info_payload_is_rejected():
+    with pytest.raises(p.ProtocolError):
+        p.parse_info(INFO[:35])
+
+
+def test_reopened_session_checks_config_against_new_capabilities(calls):
+    replies(calls, INFO, p.INFO.pack(1, b'1.0.0', b'new-hardware', 8, 65025, 75025, 100))
+    rp = client()
+    rp.get_info()
+    rp._close()
+    with pytest.raises(ValueError, match='65025..75025'):
+        rp.set_tx_config(0, CONFIG)  # 98100 belonged to the previous controller.
+    assert rp.info['frequency_min_khz'] == 65025
+    assert packets(calls) == [b'\x01\xff\x00'] * 2
 
 
 @pytest.mark.parametrize('offset,value', [(0, 2), (9, 7), (10, 3), (23, 7)])
@@ -217,7 +244,7 @@ def test_status_hardware_errors():
 
 
 def test_busy_is_bounded_and_safe_to_retry(calls):
-    calls[0].read.side_effect = reads(b'\0\x23', INFO) + reads(b'\x04\0') * 2
+    calls[0].read.side_effect = reads(b'\0\x2f', INFO) + reads(b'\x04\0') * 2
     rp = client()
     with pytest.raises(p.Busy):
         rp.set_tx_enabled(0, True)
@@ -226,7 +253,7 @@ def test_busy_is_bounded_and_safe_to_retry(calls):
 
 
 def test_busy_then_success(calls):
-    calls[0].read.side_effect = reads(b'\x04\0') + reads(b'\0\x23', INFO)
+    calls[0].read.side_effect = reads(b'\x04\0') + reads(b'\0\x2f', INFO)
     assert client().get_info()['rp_protocol_version'] == 1
     assert len(packets(calls)) == 2
 
@@ -331,12 +358,12 @@ def test_native_status_reaches_existing_api(calls, tmp_path):
         assert status['modulators'][1]['underruns'] == 0  # Separate mux count.
         assert api.get('/api/v1/system/info').json()['controller_firmware_version'] == '0.1.0'
         info = api.get('/api/v1/system/info').json()
-        assert info['hardware_target'] == 'rp2354-tx-v1'
+        assert info['hardware_target'] == 'rp2354-qn8x-v1'
         assert 'hardware_revision' not in info
 
 @pytest.mark.parametrize('code', [1, 2, 3, 5, 6])
 def test_client_maps_protocol_failure_without_retry(calls, code):
-    calls[0].read.side_effect = reads(b'\0\x23', INFO) + reads(bytes((code, 0)))
+    calls[0].read.side_effect = reads(b'\0\x2f', INFO) + reads(bytes((code, 0)))
     rp = client()
     with pytest.raises(p.ERROR_TYPES[p.Status(code)]):
         rp.clear_rds(0)
@@ -353,7 +380,7 @@ def test_raw_request_rejects_invalid_enum(command, payload):
 
 @pytest.mark.parametrize('read_payload', [INFO[:-1], INFO + b'x'])
 def test_client_rejects_truncated_or_oversized_payload(calls, read_payload):
-    calls[0].read.side_effect = [b'\0\x23', read_payload]
+    calls[0].read.side_effect = [b'\0\x2f', read_payload]
     rp = client()
     with pytest.raises(p.ProtocolError): rp.get_info()
     assert rp.info is None
@@ -396,8 +423,8 @@ def test_invalid_register_args_before_io(calls, value):
 
 
 def test_api_incompatible_protocol_does_not_enable_or_crash(calls, tmp_path):
-    incompatible = struct.pack('<H16s16sB', 2, b'fw', b'hw', 8)
-    calls[0].read.side_effect = lambda fd, size: b'\0\x23' if size == 2 else frame(b'\0\x23' + incompatible)[2:]
+    incompatible = struct.pack('<H16s16sBIII', 2, b'fw', b'hw', 8, 76000, 108000, 50)
+    calls[0].read.side_effect = lambda fd, size: b'\0\x2f' if size == 2 else frame(b'\0\x2f' + incompatible)[2:]
     rp = client()
     with TestClient(create_app(Settings(tmp_path / 'unsupported.db'), rp=rp)) as api:
         assert api.get('/docs').status_code == 200
@@ -419,6 +446,7 @@ def test_config_encoding_failure_releases_source(tmp_path):
     try:
         source = db.save('sources', InputSourceConfig(name='test', type='HTTP', config={'uri':'https://example.org/live'}))
         sources = SourceManager(db)
+        sources.profile_files = Mock()
         rp = client()
         manager = ModulatorManager(db, sources, rp, MockMuxClient(), Settings(tmp_path / 'range.db'))
         from fmheadendd.recovery import Recovery
@@ -510,7 +538,7 @@ def test_m83_command_waits_and_two_read_cursor(calls):
     rp.set_tx_enabled(0, True)
     rp.get_status()
     assert [c.args[0] for c in linux.time.sleep.call_args_list] == [0.002, 0.1, 1.0, 0.15, 0.85]
-    assert [c.args[1] for c in calls[0].read.call_args_list] == [2, 37, 2, 3, 2, 2, 2, 2, 2, 132]
+    assert [c.args[1] for c in calls[0].read.call_args_list] == [2, 49, 2, 3, 2, 2, 2, 2, 2, 132]
 
 
 def test_m83_sine_is_enum_only_and_invalid_modes_rejected():
@@ -709,7 +737,7 @@ def test_read_failures_and_observations_never_trigger_global_restore(calls, runn
         wire.faults = [(p.Command.GET_STATUS, b'\x80\x82', b'')]
         if failure == 'sustained': wire.faults *= 2
         if failure == 'reset': wire.uptime = 1
-        if failure == 'incompatible': wire.info = p.INFO.pack(2, b'bad', b'hw', 8)
+        if failure == 'incompatible': wire.info = p.INFO.pack(2, b'bad', b'hw', 8, 76000, 108000, 50)
         if failure == 'mismatch': wire.enabled[3] = False
         if failure == 'attenuation':
             mismatched = bytearray(snapshot()); mismatched[11:13] = b'\x3c\0'

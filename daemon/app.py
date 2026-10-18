@@ -81,8 +81,7 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
             status = StatusService(modulators, sources, rp_client, mux_client, clock, recovery,
                                    config=config, profile_files=profile_files, radiotext=rt)
             filesystem = FilesystemBrowser(settings.media_browser_roots)
-            status.info.update(frequency_plan=PLANS[settings.region].as_dict(),
-                               database_schema_version=SCHEMA_VERSION,
+            status.info.update(database_schema_version=SCHEMA_VERSION,
                                media_backend="MOCK" if getattr(pipeline_factory, "mocked", True) else "GStreamer")
             status.publish()
             return SimpleNamespace(

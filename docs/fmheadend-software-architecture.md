@@ -2248,11 +2248,16 @@ A `fmheadend` Linux architektúra szándékosan két processzre oszlik: a Python
 
 ## V1 System and deployment (M7B5)
 
-`--region` selects only the Modulator editor frequency plan, default 1. The
-single authoritative plan table is `daemon/regions.py`; `/api/v1/system/info`
-exposes it alongside real backend/media/schema/Controller identity information.
-Hardware tuning validation is independently 76000..108000 kHz, 50 kHz raster.
-Region never changes other settings or stored frequencies. AF remains independent.
+`--region` selects the Modulator editor frequency plan, default 1. Regional
+presets are defined in `daemon/regions.py`; Expert uses the frequency range and
+minimum-anchored raster reported by Controller GET_INFO. `/api/v1/system/info`
+exposes the effective plan and `frequency_min_khz`, `frequency_max_khz`,
+`frequency_step_khz` (null before successful negotiation). Hardware validation
+uses these verified capabilities, retaining the last verified values through
+temporary communication failures; no default hardware capabilities are invented.
+Region never rewrites stored frequencies. US uses RBDS labels and 75 µs initial
+pre-emphasis in a new database; other regions use RDS labels and 50 µs.
+Existing configurations and AF remain independent.
 
 System is a read-only diagnostics page using existing status snapshots. Production
 Angular assets may be served by fmheadendd with `--webui-dir`; API 404s remain API

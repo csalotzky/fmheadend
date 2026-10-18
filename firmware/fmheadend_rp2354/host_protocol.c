@@ -175,12 +175,16 @@ void host_protocol_stop(host_protocol_t *host, uint32_t uptime_ms)
             break;
 #endif
         case GET_INFO:
-            event.response_length = 35;
-            memset(host->response + 2, 0, 35);
+            event.response_length = 47;
+            memset(host->response + 2, 0, 47);
             host->response[2] = 1;
             memcpy(host->response + 4, HOST_FIRMWARE_VERSION, sizeof(HOST_FIRMWARE_VERSION));
             memcpy(host->response + 20, HOST_HARDWARE_TARGET, sizeof(HOST_HARDWARE_TARGET));
             host->response[36] = TX_COUNT;
+            const uint32_t frequencies[] = {76000, 108000, 50};
+            for (unsigned field=0; field<3; ++field)
+                for (unsigned byte=0; byte<4; ++byte)
+                    host->response[37+4*field+byte] = (uint8_t)(frequencies[field] >> (8*byte));
             break;
         case RDS_PUSH: {
             rds_fifo_t *fifo = &host->rds[event.target];

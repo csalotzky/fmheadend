@@ -6,7 +6,7 @@ from .diagnostics import error_scope
 from .errors import DependencyUnavailable, DomainError, SourceUnavailable
 from .models.runtime_status import TxState, ModulatorStatus
 from .rp2354.client import TxConfig
-from .rp2354.protocol import Command, IncompatibleProtocol, Outcome, RpResponseError, execution_outcome, PROTOCOL_VERSION
+from .rp2354.protocol import Command, IncompatibleProtocol, Outcome, RpResponseError, execution_outcome, PROTOCOL_VERSION, frequency_capabilities
 from .rp2354.linux_client import Rp2354Client
 from .mux.client import validate_stream_status
 
@@ -40,6 +40,7 @@ class Recovery:
         self._startup = []  # Construct only after a verified GET_INFO.
 
     def _record_info(self, info):
+        frequency_capabilities(info)
         count = info.get('modulator_count')
         if info.get('rp_protocol_version') != PROTOCOL_VERSION or type(count) is not int or not 1 <= count <= 8:
             raise IncompatibleProtocol('Unsupported Controller protocol version or modulator count')

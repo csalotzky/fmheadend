@@ -4,9 +4,9 @@ import { timeout } from 'rxjs';
 export interface FrequencyPlan {
   region: number;
   region_name: string;
-  fm_min_khz: number;
-  fm_max_khz: number;
-  fm_step_khz: number;
+  fm_min_khz: number | null;
+  fm_max_khz: number | null;
+  fm_step_khz: number | null;
 }
 export interface SystemInfo {
   fmheadend_version: string;
@@ -16,6 +16,9 @@ export interface SystemInfo {
   modulator_count: number;
   mocked: boolean;
   frequency_plan: FrequencyPlan;
+  frequency_min_khz: number | null;
+  frequency_max_khz: number | null;
+  frequency_step_khz: number | null;
   database_schema_version: number;
   media_backend: string;
 }
@@ -32,10 +35,12 @@ export function frequencyLabel(khz: number): string {
   return `${Math.floor(khz / 1000)}.${fraction || '0'} MHz`;
 }
 export function planOptions(plan: FrequencyPlan) {
+  if (plan.fm_min_khz === null || plan.fm_max_khz === null || plan.fm_step_khz === null) return [];
+  const { fm_min_khz: minimum, fm_max_khz: maximum, fm_step_khz: step } = plan;
   return Array.from(
-    { length: Math.floor((plan.fm_max_khz - plan.fm_min_khz) / plan.fm_step_khz) + 1 },
+    { length: Math.floor((maximum - minimum) / step) + 1 },
     (_, i) => {
-      const value = plan.fm_min_khz + i * plan.fm_step_khz;
+      const value = minimum + i * step;
       return { value, label: frequencyLabel(value) };
     },
   );

@@ -200,6 +200,8 @@ class Rp2354Client:
                 raise error
             if self.before_command is not None:
                 self.before_command(command, target)
+            if command == p.Command.SET_TX_CONFIG:
+                p.validate_frequency(p.TX_CONFIG.unpack(payload)[0], self.info)
             return self._exchange(command, target, payload, decode=decode)
 
     def set_tx_config(self, modulator_id: int, config: TxConfig) -> None:
