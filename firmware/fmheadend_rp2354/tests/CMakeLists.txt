@@ -61,6 +61,14 @@ target_include_directories(test_flash_ack PRIVATE . ..)
 target_compile_definitions(test_flash_ack PRIVATE FMHEADEND_FLASH_UPDATE=1 FMHEADEND_HOST_I2C_ADDRESS=0x62 TEST_ADAPTER_CLOCK=1)
 add_test(NAME test_flash_ack COMMAND test_flash_ack)
 
+foreach(target test_flash_wire test_flash_ack)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(${target} PRIVATE -UNDEBUG)
+    elseif(MSVC)
+        target_compile_options(${target} PRIVATE /UNDEBUG)
+    endif()
+endforeach()
+
 # Population endpoints/intermediate variants, including non-power-of-two packets.
 foreach(spec 1_128 4_128 8_128 1_64 4_64 8_64 4_48 1_1)
     string(REPLACE "_" ";" dimensions ${spec})

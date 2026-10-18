@@ -169,8 +169,10 @@ static void cs_irq(uint pin, uint32_t events)
 }
 bool spi_audio_init(void)
 {
+#if DEBUG_UART_ENABLED
     char line[192];
     const char *stage="clock";
+#endif
     int result=0;
     spi_stream_init(&stream);
     atomic_init(&rx_diagnostic_count,0);
@@ -180,12 +182,16 @@ bool spi_audio_init(void)
     /* Static PIO WAIT GPIO operands are the verified board pins. */
     _Static_assert(AUDIO_SPI_MOSI_PIN==0 && AUDIO_SPI_CS_PIN==1 && AUDIO_SPI_SCK_PIN==2,"SPI PIO pins");
     if (clock_get_hz(clk_sys)<150000000) goto failed;
+#if DEBUG_UART_ENABLED
     stage="PIO/SM claim";
+#endif
     rx_sm=pio_claim_unused_sm(rx_pio,false);
     if (rx_sm<0 || !pio_can_add_program(rx_pio,&spi_audio_program)) goto failed;
     rx_offset=pio_add_program(rx_pio,&spi_audio_program);
     if (rx_offset<0) goto failed;
+#if DEBUG_UART_ENABLED
     stage="DMA claim";
+#endif
     rx_dma=dma_claim_unused_channel(false);
     if (rx_dma<0) goto failed;
     for (unsigned pin=0;pin<=3;++pin) {
@@ -198,7 +204,9 @@ bool spi_audio_init(void)
     sm_config_set_in_shift(&cfg,false,true,8); /* MSB first byte in low 8 bits. */
     sm_config_set_fifo_join(&cfg,PIO_FIFO_JOIN_RX);
     sm_config_set_clkdiv_int_frac8(&cfg,1,0);
+#if DEBUG_UART_ENABLED
     stage="SM configure";
+#endif
     result=pio_sm_init(rx_pio,rx_sm,rx_offset,&cfg);
     if (result) goto failed;
     stall_mask=1u<<(PIO_FDEBUG_RXSTALL_LSB+rx_sm);

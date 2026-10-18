@@ -130,8 +130,8 @@ int main(void)
     for (unsigned i = 18 + sizeof(HOST_HARDWARE_TARGET); i < 34; ++i) assert(!payload[i]);
     assert(payload[34] == 8);
     for (unsigned i = 2; i < 47; ++i) assert(host_protocol_read(&host) == payload[i]);
-    assert(host_protocol_read(&host) == host.response[37]);
-    assert(host_protocol_read(&host) == host.response[38]);
+    assert(host_protocol_read(&host) == host.response[49]);
+    assert(host_protocol_read(&host) == host.response[50]);
     host_protocol_stop(&host, 999);
     for (unsigned i = 0; i < 300; ++i) assert(host_protocol_read(&host) == 0xff);
     request(info, sizeof(info), HOST_OK); /* Abandon previous response. */
