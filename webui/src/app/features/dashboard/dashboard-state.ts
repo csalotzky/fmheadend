@@ -85,6 +85,20 @@ export class DashboardState {
   readonly stale = signal(true);
   readonly loading = signal(true);
   readonly updated = signal<Date | null>(null);
+  private readonly now = signal(Date.now());
+  private readonly lastResponseAt = signal(Date.now());
+  private readonly httpFailed = signal(false);
+  readonly backendUnavailable = computed(
+    () => this.httpFailed() && this.now() - this.lastResponseAt() >= 15000,
+  );
+  readonly observationAge = computed(() => {
+    const system = this.data()?.status.system;
+    if (!system) return 0;
+    const ages = [system.snapshot_age_s, system.controller_observation_age_s]
+      .filter((age): age is number => typeof age === 'number' && Number.isFinite(age) && age >= 0);
+    // Server observations do not age locally between normal polling requests.
+    return Math.floor(Math.max(0, ...ages));
+  });
   readonly busy = signal<number | 'start-all' | 'stop-all' | null>(null);
   readonly notice = signal('');
   readonly bulkPendingIds = signal<number[]>([]);
@@ -116,6 +130,7 @@ export class DashboardState {
     this.actionFeedback.set({});
   }
   readonly failures = signal<{ id: number; message: string }[]>([]);
+  readonly lastValidActiveCount = signal<number | null>(null);
   readonly activeCount = computed(
     () =>
       this.channels().filter((c) => c.runtime?.hardware_tx_state === 'ON')
@@ -128,11 +143,15 @@ export class DashboardState {
 
   start() {
     this.closed = false;
+    if (!this.updated()) this.lastResponseAt.set(Date.now());
     this.nextRefreshAt = 0;
     if (!this.polling)
       this.polling = timer(0, 1000)
         .pipe(
-          tap(() => this.expireConfirmations()),
+          tap(() => {
+            this.now.set(Date.now());
+            this.expireConfirmations();
+          }),
           filter(() => this.busy() === null && Date.now() >= this.nextRefreshAt),
           exhaustMap(() => this.refresh()),
         )
@@ -167,16 +186,30 @@ export class DashboardState {
     if (this.inFlight) return this.inFlight;
     const generation = this.snapshotGeneration;
     const requestedAt = Date.now();
-    this.inFlight = firstValueFrom(this.api.snapshot().pipe(takeUntil(this.cancelled)))
+    let statusReceived = false;
+    this.inFlight = firstValueFrom(this.api.snapshot(() => {
+        statusReceived = true;
+        if (!this.closed) {
+          this.lastResponseAt.set(Date.now());
+          this.httpFailed.set(false);
+        }
+      }).pipe(takeUntil(this.cancelled)))
       .then((snapshot) => {
         if (this.closed || generation !== this.snapshotGeneration) return;
         this.confirmObservations(snapshot, requestedAt);
         this.channels.set(compose(snapshot, this.data() ?? undefined));
+        if (snapshot.status.system.snapshot_stale !== true &&
+            snapshot.status.system.controller_observation_stale === false &&
+            this.channels().length > 0 && this.channels().every((channel) =>
+              channel.runtime?.hardware_tx_state === 'ON' || channel.runtime?.hardware_tx_state === 'OFF')) {
+          this.lastValidActiveCount.set(this.activeCount());
+        }
         this.data.set(snapshot);
         this.stale.set(snapshot.status.system.snapshot_stale === true);
         this.updated.set(new Date());
       })
       .catch(() => {
+        if (!this.closed && !statusReceived) this.httpFailed.set(true);
         if (!this.closed && generation === this.snapshotGeneration) this.stale.set(true);
       })
       .finally(() => {

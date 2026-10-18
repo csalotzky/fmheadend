@@ -1,14 +1,14 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
-import { forkJoin, timeout } from 'rxjs';
+import { forkJoin, tap, timeout } from 'rxjs';
 import { HeadendStatus, InputSource, LifecycleResult, Modulator, ModulatorStatus } from './models';
 
 @Injectable({ providedIn: 'root' })
 export class HeadendApi {
   private http = inject(HttpClient);
-  snapshot() {
+  snapshot(onStatusReceived?: () => void) {
     return forkJoin({
-      status: this.http.get<HeadendStatus>('/api/v1/status'),
+      status: this.http.get<HeadendStatus>('/api/v1/status').pipe(tap(() => onStatusReceived?.())),
       modulators: this.http.get<Modulator[]>('/api/v1/modulators'),
       sources: this.http.get<InputSource[]>('/api/v1/sources'),
     }).pipe(timeout(15000));

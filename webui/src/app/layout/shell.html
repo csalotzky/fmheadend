@@ -38,25 +38,30 @@
     </button>
     <div class="global-state">
       <strong
-        [class.warning]="state.stale() || state.data()?.status?.system?.system_state !== 'RUNNING'"
+        [class.warning]="state.backendUnavailable() || state.data()?.status?.system?.system_state !== 'RUNNING'"
         >
         <svg class="status-icon system-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"
-          [class.healthy]="!state.loading() && !state.stale() && state.data()?.status?.system?.system_state === 'RUNNING'">
+          [class.healthy]="!state.loading() && !state.backendUnavailable() && state.data()?.status?.system?.system_state === 'RUNNING'">
           <circle cx="12" cy="12" r="9" />
-          @if (!state.loading() && !state.stale() && state.data()?.status?.system?.system_state === 'RUNNING') {
+          @if (!state.loading() && !state.backendUnavailable() && state.data()?.status?.system?.system_state === 'RUNNING') {
             <path d="m8 12 3 3 5-6" />
           } @else {
             <path d="M12 7v6m0 3h.01" />
           }
         </svg>
         {{
-          state.loading()
-            ? 'CONNECTING'
-            : state.stale()
-              ? 'BACKEND UNAVAILABLE'
+          state.backendUnavailable()
+            ? 'BACKEND UNAVAILABLE'
+            : !state.data()
+              ? 'CONNECTING'
               : state.data()?.status?.system?.system_state
-        }}</strong
-      >
+        }}
+      @if (!state.backendUnavailable() && state.data() && state.observationAge() >= 5) {
+        <span class="status-delay" [class.warning]="state.observationAge() > 30">
+          Status {{ state.observationAge() > 30 ? 'outdated' : 'delayed' }} ({{ state.observationAge() }} s)
+        </span>
+      }
+      </strong>
       <div class="dependencies">
         <span class="status-group">
           <svg class="status-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -64,24 +69,20 @@
             <path d="M7 3v5h5v5h9M3 16h5v5M16 3v4" />
             <circle cx="12" cy="8" r="1" />
           </svg>
-          Controller <b>{{ state.stale() ? 'Unknown' : state.data()?.status?.system?.controller_state }}</b>
+          Controller <b>{{ state.backendUnavailable() ? 'Unknown' : state.data()?.status?.system?.controller_state }}</b>
         </span>
         <span class="status-group">
           <svg class="status-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
             <path d="M3 10v4m4-7v10m5-14v18m5-14v10m4-7v4" />
           </svg>
-          MUX <b>{{ state.stale() ? 'Unknown' : state.data()?.status?.system?.mux_state }}</b>
+          MUX <b>{{ state.backendUnavailable() ? 'Unknown' : state.data()?.status?.system?.mux_state }}</b>
         </span>
         <span class="status-group numeric">
           <svg class="status-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
             <circle cx="12" cy="8" r="1" />
             <path d="m8 21 4-13 4 13M9 17h6M8 4a6 6 0 0 0 0 8m8-8a6 6 0 0 1 0 8M5 1a10 10 0 0 0 0 14m14-14a10 10 0 0 1 0 14" />
           </svg>
-          {{
-            state.stale() || !state.channels().length ||
-            state.data()?.status?.system?.controller_observation_stale !== false
-              ? '\u2014' : state.activeCount()
-          }} / {{ state.channels().length || '\u2014' }} TX ON
+          <b>{{ state.lastValidActiveCount() ?? '\u2014' }} / {{ state.channels().length || '\u2014' }}</b> TX ON
         </span>
         <div class="host-metrics numeric">
           <span class="status-group" title="CPU utilization">
