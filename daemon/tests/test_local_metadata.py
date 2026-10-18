@@ -1,4 +1,5 @@
 ﻿"""LOCAL produces the ordinary source metadata; no extra RT selector or status."""
+from fmheadendd.tests.profile_support import profile_store
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -85,7 +86,7 @@ def test_source_status_and_existing_radiotext_selection(tmp_path):
     db=Database(tmp_path/'metadata.db')
     p=pipeline(tmp_path)
     source=db.save('sources',p.source)
-    sources=SourceManager(db)
+    sources=SourceManager(db, profile_files=profile_store(tmp_path))
     sources.pipelines[source.id]=p
     for tx in (0,1):
         saved=db.get('modulators',tx)

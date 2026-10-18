@@ -1,9 +1,9 @@
 """Configuration is separate from lifecycle for every PATCH client."""
+from fmheadendd.tests.profile_support import profile_settings
 from unittest.mock import Mock
 import pytest
 from fastapi.testclient import TestClient
 from fmheadendd.app import create_app
-from fmheadendd.config import Settings
 from fmheadendd.errors import DependencyUnavailable
 from fmheadendd.rp2354.protocol import QnError, Command, Status
 import sqlite3
@@ -11,7 +11,7 @@ import sqlite3
 
 @pytest.mark.parametrize('mode',['DIGITAL','ANALOG'])
 def test_active_patch_is_atomic_and_stop_edit_start_is_explicit(tmp_path,mode):
-    app=create_app(Settings(tmp_path/'config.db'))
+    app=create_app(profile_settings(tmp_path/'config.db'))
     with TestClient(app) as api:
         p='/api/v1/modulators/0'
         source=api.post('/api/v1/sources',json={'name':'Shared','type':'HTTP','config':{'uri':'http://example.org/live'}}).json()
@@ -43,12 +43,14 @@ def test_active_patch_is_atomic_and_stop_edit_start_is_explicit(tmp_path,mode):
 
 @pytest.fixture
 def running(tmp_path):
-    app = create_app(Settings(tmp_path/'save.db'), clock=lambda: 0.)
+    app = create_app(profile_settings(tmp_path/'save.db'), clock=lambda: 0.)
     with TestClient(app) as api:
         sid = api.post('/api/v1/sources', json={'name':'Shared', 'type':'HTTP', 'config':{'uri':'http://example.org/live'}}).json()['id']
         for tx in (0, 1):
             assert api.patch(f'/api/v1/modulators/{tx}', json={'input_source_id':sid,'frequency_khz':98100,'rds_enabled':True}).status_code == 200
             assert api.post(f'/api/v1/modulators/{tx}/start').status_code == 200
+        # Complete initial RDS clears before recording save-and-resume operations.
+        app.state.control.executor.submit(app.state.services.rds.tick).result()
         yield api, app.state.services, sid
 
 

@@ -1,3 +1,4 @@
+from fmheadendd.tests.profile_support import profile_settings
 import asyncio
 import json
 from uuid import UUID
@@ -6,7 +7,6 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 from fmheadendd.app import create_app
-from fmheadendd.config import Settings
 from fmheadendd.errors import DomainError
 from fmheadendd.radio_browser import RadioBrowserClient, playable_url, discover_servers, MAX_BYTES
 
@@ -25,7 +25,7 @@ def make_client(handler):
 
 
 def test_http_uuid_round_trip_and_independent_unlink(tmp_path):
-    with TestClient(create_app(Settings(tmp_path/'rb.db'))) as api:
+    with TestClient(create_app(profile_settings(tmp_path/'rb.db'))) as api:
         body = dict(name='Radio', type='HTTP', config=dict(uri=ROW['url'], radio_browser_uuid=UUID_TEXT))
         created = api.post('/api/v1/sources', json=body)
         assert created.status_code == 201
@@ -42,7 +42,7 @@ def test_http_uuid_round_trip_and_independent_unlink(tmp_path):
         for bad in ('bad-id', '', 123):
             assert api.patch(path, json={'config': {'radio_browser_uuid': bad}}).status_code == 422
         assert api.get(path).json()['config']['radio_browser_uuid'] == UUID_TEXT
-    with TestClient(create_app(Settings(tmp_path/'rb.db'))) as api:
+    with TestClient(create_app(profile_settings(tmp_path/'rb.db'))) as api:
         assert api.get(path).json()['config']['uri'] == body['config']['uri']
         assert api.get(path).json()['config']['radio_browser_uuid'] == UUID_TEXT
         assert api.delete(path).status_code == 204
@@ -59,7 +59,7 @@ def test_directory_endpoints_are_read_only_and_normalized(tmp_path):
         if '/countrycodes' in request.url.path:
             return httpx.Response(200, json=[dict(name='AT', stationcount='14')])
         return httpx.Response(200, json=[ROW])
-    with TestClient(create_app(Settings(tmp_path/'rb.db'), radio_browser_client=make_client(handler))) as api:
+    with TestClient(create_app(profile_settings(tmp_path/'rb.db'), radio_browser_client=make_client(handler))) as api:
         before = api.get('/api/v1/sources').json()
         result = api.get('/api/v1/radio-browser/stations/search', params=dict(name='Radio', countrycode='at', tag='jazz', offset=5, limit=10, server='https://evil.test'))
         assert result.status_code == 200 and result.headers['cache-control'] == 'no-store'
@@ -84,7 +84,7 @@ def test_directory_endpoints_are_read_only_and_normalized(tmp_path):
 
 def test_empty_results_and_broken_filter(tmp_path):
     rows = []
-    with TestClient(create_app(Settings(tmp_path/'rb.db'), radio_browser_client=make_client(lambda r:httpx.Response(200,json=rows)))) as api:
+    with TestClient(create_app(profile_settings(tmp_path/'rb.db'), radio_browser_client=make_client(lambda r:httpx.Response(200,json=rows)))) as api:
         assert api.get('/api/v1/radio-browser/stations/search').json()['stations'] == []
         assert api.get('/api/v1/radio-browser/stations/'+UUID_TEXT).status_code == 404
         rows.append(ROW | {'lastcheckok':0, 'hls':1})

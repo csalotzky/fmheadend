@@ -1,3 +1,4 @@
+from fmheadendd.tests.profile_support import profile_store
 import asyncio
 import sqlite3
 from types import SimpleNamespace
@@ -46,7 +47,7 @@ def rig(tmp_path):
     source=db.save('sources',InputSourceConfig(name='Original name',type='HTTP',
         config=dict(uri=OLD,radio_browser_uuid=UUID_TEXT),input_gain_db=-3))
     clock=[0.0]
-    manager=SourceManager(db,pipeline_factory=FakePipeline,clock=lambda:clock[0])
+    manager=SourceManager(db,profile_files=profile_store(tmp_path),pipeline_factory=FakePipeline,clock=lambda:clock[0])
     manager.acquire(source.id,0)
     manager.acquire(source.id,1)
     yield SimpleNamespace(db=db,source=source,manager=manager,clock=clock,

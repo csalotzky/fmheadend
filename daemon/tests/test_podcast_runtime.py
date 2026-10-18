@@ -1,4 +1,5 @@
 """Source policy/callback lifecycle with injected I/O and time; no real waits."""
+from fmheadendd.tests.profile_support import profile_store
 from datetime import datetime, timezone, timedelta
 from threading import Event, Thread, Barrier
 from types import SimpleNamespace
@@ -246,7 +247,7 @@ def event(p, kind, **values):
     p._local_event(None,info)
 
 
-def test_rss_metadata_first_pcm_technical_tags_and_existing_rds(rt):
+def test_rss_metadata_first_pcm_technical_tags_and_existing_rds(rt, tmp_path):
     rt.p.io_step(rt.history); rt.p.initial()
     p=gst_metadata(rt)
     event(p,'start')
@@ -265,7 +266,7 @@ def test_rss_metadata_first_pcm_technical_tags_and_existing_rds(rt):
     assert p.snapshot()['stream_title']==first
     rt.p.pcm(4); p._publish_local_metadata()
     assert p.snapshot()['title']==rt.p.active.context.title != expected.title
-    sources=SourceManager(rt.db); sources.pipelines[rt.source.id]=p
+    sources=SourceManager(rt.db, profile_files=profile_store(tmp_path)); sources.pipelines[rt.source.id]=p
     for tx in (0,1):
         m=rt.db.get('modulators',tx)
         rt.db.save('modulators',m.model_copy(update=dict(input_source_id=rt.source.id,
@@ -336,7 +337,7 @@ def test_coherent_selection_while_refresh_is_blocked(rt):
     assert rt.p.active is active
 
 
-def test_shared_manager_one_accounting_owner_and_restart_history(rt):
+def test_shared_manager_one_accounting_owner_and_restart_history(rt, tmp_path):
     from fmheadendd.sources.output import PcmOutput
     constructed=[]
     class Pipeline:
@@ -353,7 +354,7 @@ def test_shared_manager_one_accounting_owner_and_restart_history(rt):
         def stop(self):
             self.policy._flush_marks(rt.history);self.policy.close()
         def snapshot(self):return dict(state='RUNNING')
-    manager=SourceManager(rt.db,pipeline_factory=Pipeline)
+    manager=SourceManager(rt.db,profile_files=profile_store(tmp_path),pipeline_factory=Pipeline)
     try:
         manager.acquire(rt.source.id,0);manager.acquire(rt.source.id,1)
         assert len(constructed)==1

@@ -1,3 +1,4 @@
+from fmheadendd.tests.profile_support import profile_store
 import threading
 import time
 from types import SimpleNamespace
@@ -139,7 +140,7 @@ class FakeRealPipeline:
 def services(tmp_path):
     FakeRealPipeline.instances = []
     db = Database(tmp_path / "media.db")
-    sources = SourceManager(db, FakeRealPipeline)
+    sources = SourceManager(db, FakeRealPipeline, profile_files=profile_store(tmp_path))
     rp = MockRp2354Client()
     manager = ModulatorManager(db, sources, rp, MockMuxClient(), Settings())
     from fmheadendd.recovery import Recovery

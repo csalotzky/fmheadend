@@ -1,4 +1,5 @@
 """Local configuration persistence and discovery-only probes; no media playback."""
+from fmheadendd.tests.profile_support import profile_settings
 import json
 import sqlite3
 from unittest.mock import Mock
@@ -7,7 +8,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from fmheadendd.app import create_app
-from fmheadendd.config import Settings
 from fmheadendd.database import Database, SCHEMA_VERSION
 from fmheadendd.models.configuration import InputSourceConfig, LocalConfig
 from fmheadendd.sources.local_media import LocalMediaMode, PlaybackOrder, FolderResolver, M3uResolver
@@ -28,7 +28,7 @@ def api(tmp_path, monkeypatch):
     factory = Mock(side_effect=AssertionError('pipeline construction'))
     factory.mocked = True
     factory.__name__ = "NoPlaybackFactory"
-    with TestClient(create_app(Settings(tmp_path / 'local.db'), pipeline_factory=factory)) as client:
+    with TestClient(create_app(profile_settings(tmp_path / 'local.db'), pipeline_factory=factory)) as client:
         yield client
     factory.assert_not_called()
 
@@ -93,7 +93,7 @@ def test_invalid_creation_and_update_are_rejected(api, config):
 def test_restart_and_database_reload_preserve_config_only(tmp_path, mode):
     path = tmp_path / 'restart.db'
     config = dict(mode=mode, path='/mnt/offline/symlink-name', order='random', recursive=True)
-    with TestClient(create_app(Settings(path))) as api:
+    with TestClient(create_app(profile_settings(path))) as api:
         saved = api.post(P, json=body(**config)).json()
     db = Database(path)
     try:
@@ -104,7 +104,7 @@ def test_restart_and_database_reload_preserve_config_only(tmp_path, mode):
         assert set(raw) == set(saved) - {'id', 'rds_profile', 'rds_profile_id'}
     finally:
         db.close()
-    with TestClient(create_app(Settings(path))) as api:
+    with TestClient(create_app(profile_settings(path))) as api:
         assert api.get(P).json() == [saved]
         assert not api.app.state.services.sources.pipelines
 
@@ -158,7 +158,7 @@ def test_local_probe_counts_without_playback_or_persistence(tmp_path, mode, recu
         path = media / 'test.m3u'
         path.write_text('#EXTM3U\n' + ('missing.mp3\nmissing.mp3\nhttps://invalid.example/a\n' if count else ''))
     before_files = {p: p.read_bytes() for p in media.rglob('*') if p.is_file()}
-    with TestClient(create_app(Settings(tmp_path / 'local.db'), pipeline_factory=factory)) as api:
+    with TestClient(create_app(profile_settings(tmp_path / 'local.db'), pipeline_factory=factory)) as api:
         draft = body(mode=mode, path=str(path), recursive=recursive)
         saved = api.post(P, json=draft).json()
         with sqlite3.connect(tmp_path / 'local.db') as snapshot:

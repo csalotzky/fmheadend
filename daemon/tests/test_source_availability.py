@@ -1,4 +1,5 @@
 """No live sender is required for control; native construction is still required."""
+from fmheadendd.tests.profile_support import profile_settings
 import threading
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -6,7 +7,6 @@ from unittest.mock import Mock
 import pytest
 from fastapi.testclient import TestClient
 from fmheadendd.app import create_app
-from fmheadendd.config import Settings
 from fmheadendd.errors import DependencyUnavailable, SourceUnavailable
 from fmheadendd.models.configuration import InputSourceConfig
 from fmheadendd.sources.gst_pipeline import GstPipeline, RetryBackoff
@@ -35,7 +35,7 @@ class NoPcmPipeline(GstPipeline):
 
 @pytest.mark.parametrize('body', SOURCES)
 def test_offline_source_save_shared_start_resume_and_stop(native, tmp_path, body):
-    with TestClient(create_app(Settings(tmp_path/'db'), pipeline_factory=NoPcmPipeline)) as api:
+    with TestClient(create_app(profile_settings(tmp_path/'db'), pipeline_factory=NoPcmPipeline)) as api:
         root = '/api/v1'
         sid = api.post(root+'/sources', json=body).json()['id']
         services = api.app.state.services
@@ -168,7 +168,7 @@ def test_missing_plugin_element_details_are_logged(native, caplog):
 
 
 def test_shared_permanent_failure_still_blocks_new_consumer(native, tmp_path):
-    with TestClient(create_app(Settings(tmp_path/'db'), pipeline_factory=NoPcmPipeline)) as api:
+    with TestClient(create_app(profile_settings(tmp_path/'db'), pipeline_factory=NoPcmPipeline)) as api:
         root = '/api/v1'
         sid = api.post(root+'/sources', json=SOURCES[0]).json()['id']
         for tx in (0, 1):
@@ -224,7 +224,7 @@ def test_reconnect_before_first_pcm_and_late_audio(native, monkeypatch):
 
 @pytest.mark.parametrize('body', SOURCES)
 def test_unavailable_source_preserves_desired_on_across_restart(native, tmp_path, body):
-    settings = Settings(tmp_path / 'restart.db')
+    settings = profile_settings(tmp_path / 'restart.db')
     with TestClient(create_app(settings, pipeline_factory=NoPcmPipeline)) as api:
         sid = api.post('/api/v1/sources', json=body).json()['id']
         assert api.patch('/api/v1/modulators/0', json={

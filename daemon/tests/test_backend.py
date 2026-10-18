@@ -1,3 +1,4 @@
+from fmheadendd.tests.profile_support import profile_settings, profile_store
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 
@@ -22,7 +23,7 @@ HTTP = {"name": "Radio", "type": "HTTP", "config": {"uri": "https://example.org/
 
 @pytest.fixture
 def client(tmp_path):
-    with TestClient(create_app(Settings(tmp_path / "headend.db"))) as client:
+    with TestClient(create_app(profile_settings(tmp_path / "headend.db"))) as client:
         yield client
 
 
@@ -171,7 +172,7 @@ def test_start_stop_status_active_edit_and_bulk(client):
 
 
 def test_restart_persistence_and_runtime_reset(tmp_path):
-    settings = Settings(tmp_path / "persistent.db")
+    settings = profile_settings(tmp_path / "persistent.db")
     with TestClient(create_app(settings)) as client:
         sid = source(client)
         assign(client, 3, sid, frequency_khz=98100, rds_rt="Fallback")
@@ -214,7 +215,7 @@ def test_concurrent_requests_use_single_event_loop_connection(client):
 def services(tmp_path):
     db = Database(tmp_path / "unit.db")
     rp, mux = MockRp2354Client(), MockMuxClient()
-    sources = SourceManager(db)
+    sources = SourceManager(db, profile_files=profile_store(tmp_path))
     manager = ModulatorManager(db, sources, rp, mux, Settings())
     from fmheadendd.recovery import Recovery
     from unittest.mock import Mock
@@ -396,7 +397,7 @@ def test_failed_enable_retains_tracked_audio_until_successful_stop(services):
 
 def test_dependency_errors_through_api(tmp_path):
     rp = MockRp2354Client()
-    app = create_app(Settings(tmp_path / "errors.db"), rp=rp)
+    app = create_app(profile_settings(tmp_path / "errors.db"), rp=rp)
     with TestClient(app) as client:
         sid = source(client)
         assign(client, 0, sid, frequency_khz=98100)
@@ -413,7 +414,7 @@ def test_dependency_errors_through_api(tmp_path):
 
 
 def test_internal_error_is_sanitized(tmp_path):
-    app = create_app(Settings(tmp_path / "internal.db"))
+    app = create_app(profile_settings(tmp_path / "internal.db"))
     with TestClient(app, raise_server_exceptions=False) as client:
         def fail(table, record_id):
             raise RuntimeError("private internal details")
@@ -464,7 +465,7 @@ def test_cli_serves_http(tmp_path):
 
 def test_unconfigured_frequency_blocks_enable_without_side_effects(tmp_path):
     rp, mux = MockRp2354Client(), MockMuxClient()
-    settings = Settings(tmp_path / "unset.db")
+    settings = profile_settings(tmp_path / "unset.db")
     app = create_app(settings, rp=rp, mux=mux)
     with TestClient(app) as client:
         sid = source(client)

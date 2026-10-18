@@ -1,4 +1,5 @@
 """Runtime buffer sizes without GI, hardware or wall-clock timing."""
+from fmheadendd.tests.profile_support import profile_store
 import sys
 from types import SimpleNamespace
 
@@ -6,6 +7,7 @@ import pytest
 
 from fmheadendd.app import argument_parser, create_app
 from fmheadendd.config import Settings
+from fmheadendd.database import Database
 from fmheadendd.models.configuration import InputSourceConfig
 from fmheadendd.sources.gst_pipeline import GstPipeline
 from fmheadendd.sources.manager import SourceManager
@@ -96,17 +98,21 @@ def test_cli_overrides_and_conversion_bounds():
             Settings(pcm_staging_max_age_ms=value)
 
 
-def test_manager_rebuild_preserves_output_and_buffer_configuration():
-    manager = SourceManager(None, GstPipeline, pcm_staging_buffer_ms=123, pcm_consumer_buffer_ms=456,
-                            pcm_staging_max_age_ms=75)
-    first = manager._new_pipeline(source())
-    first.output.attach(0)
-    replacement = manager._new_pipeline(source(), output=first.output)
-    assert replacement.output is first.output
-    assert replacement.staging.max_bytes == first.staging.max_bytes == 123 * 192
-    assert replacement.staging.max_age_s == first.staging.max_age_s == .075
-    assert replacement.output._queues[0].max_bytes == 456 * 192
-    assert replacement.output._queues[0].max_age_s == .456
+def test_manager_rebuild_preserves_output_and_buffer_configuration(tmp_path):
+    db = Database(tmp_path / 'buffers.db')
+    try:
+        manager = SourceManager(db, GstPipeline, profile_files=profile_store(tmp_path), pcm_staging_buffer_ms=123, pcm_consumer_buffer_ms=456,
+                                pcm_staging_max_age_ms=75)
+        first = manager._new_pipeline(source())
+        first.output.attach(0)
+        replacement = manager._new_pipeline(source(), output=first.output)
+        assert replacement.output is first.output
+        assert replacement.staging.max_bytes == first.staging.max_bytes == 123 * 192
+        assert replacement.staging.max_age_s == first.staging.max_age_s == .075
+        assert replacement.output._queues[0].max_bytes == 456 * 192
+        assert replacement.output._queues[0].max_age_s == .456
+    finally:
+        db.close()
 
 
 def test_application_passes_settings_to_source_manager(tmp_path, caplog):

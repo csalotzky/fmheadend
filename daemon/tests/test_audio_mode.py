@@ -1,11 +1,11 @@
 """Explicit physical analog selection; no hardware is required."""
+from fmheadendd.tests.profile_support import profile_settings
 from fastapi.testclient import TestClient
 from fmheadendd.app import create_app
-from fmheadendd.config import Settings
 
 
 def test_api_mode_transition_and_digital_validation(tmp_path):
-    with TestClient(create_app(Settings(tmp_path/'config.db'))) as api:
+    with TestClient(create_app(profile_settings(tmp_path/'config.db'))) as api:
         p='/api/v1'
         assert api.post(p+'/sources',json={'name':'Obsolete','type':'ANALOG','config':{}}).status_code==422
         assert api.post(p+'/sources/test',json={'name':'Obsolete','type':'ANALOG','config':{}}).status_code==422
