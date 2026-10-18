@@ -26,7 +26,7 @@
       <div>
         <a [routerLink]="['/sources', source.id]"
           ><strong class="list-primary">{{ source.name }}</strong></a
-        ><span class="muted"> {{ source.type }}</span>
+        ><span class="muted"> {{ group.label }}</span>
         <p class="endpoint" [title]="endpoint(source)">{{ endpoint(source) }}</p>
         <p class="audio-profile">
           <span class="muted">Audio profile:</span> {{ profileLabel(source) }}

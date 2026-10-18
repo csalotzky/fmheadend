@@ -37,8 +37,8 @@ export class SourcesList {
   private api = inject(SourceApi);
   readonly sources = computed(() => sortSources(this.shared.data()?.sources ?? []));
   readonly groups = computed(() => [
-    ['HTTP', 'HTTP'], ['LOCAL', 'Local media'], ['PODCAST', 'Podcast'],
-    ['UDP', 'UDP'], ['RTP', 'RTP'], ['ALSA', 'ALSA'],
+    ['HTTP', 'Internet stream (HTTP)'], ['LOCAL', 'Local media'], ['PODCAST', 'Podcast'],
+    ['UDP', 'Network stream (UDP)'], ['RTP', 'Network stream (RTP)'], ['ALSA', 'Sound card (ALSA)'],
   ].map(([type, label]) => ({
     type, label,
     sources: this.sources().filter((source) => source.type === type),

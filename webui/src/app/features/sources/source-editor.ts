@@ -170,9 +170,9 @@ export class SourceEditor implements OnInit, OnDestroy {
     : undefined;
   readonly types: SourceType[] = ['HTTP', 'UDP', 'RTP', 'ALSA', 'LOCAL', 'PODCAST'];
   readonly typeLabels: Record<SourceType, string> = {
-    HTTP: 'HTTP',
-    UDP: 'UDP',
-    RTP: 'RTP',
+    HTTP: 'Internet stream (HTTP)',
+    UDP: 'Network stream (UDP)',
+    RTP: 'Network stream (RTP)',
     ALSA: 'Sound card (ALSA)',
     LOCAL: 'Local media',
     PODCAST: 'Podcast',
