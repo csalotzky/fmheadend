@@ -210,6 +210,7 @@ def test_writer_idle_publish_wakes_and_close_detaches_notification(monkeypatch):
 
 def test_status_exposes_stage_consumer_writer_and_mux_diagnostics_without_io():
     from fmheadendd.status.service import StatusService
+    from fmheadendd.config import Settings
     from fmheadendd.models.runtime_status import InputSourceStatus, ModulatorStatus, SourcePcmStatus
     from fmheadendd.mux.client import MockMuxClient
     from fmheadendd.rp2354.client import MockRp2354Client
@@ -220,7 +221,7 @@ def test_status_exposes_stage_consumer_writer_and_mux_diagnostics_without_io():
     pcm = SourcePcmStatus(staging=PcmQueue().snapshot(), consumers=output.snapshot())
     sources = SimpleNamespace(status=Mock(return_value=InputSourceStatus(source_id=1, state='RUNNING', pcm=pcm)))
     sources.statuses = {1: sources.status.return_value}
-    modulators = SimpleNamespace(global_stopped=False, statuses={i: ModulatorStatus(id=i) for i in range(8)}, active_sources={0: 1, 1: 1},
+    modulators = SimpleNamespace(global_stopped=False, physical_ids=range(8), settings=Settings(), statuses={i: ModulatorStatus(id=i) for i in range(8)}, active_sources={0: 1, 1: 1},
         get=lambda channel: SimpleNamespace(id=channel, audio_mode='DIGITAL', rf_attenuation_db=0,
             input_source_id=1 if channel < 2 else None, rds_enabled=False),
         desired_on=lambda channel: False, rds=None)
