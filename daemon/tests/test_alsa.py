@@ -1,11 +1,11 @@
 """ALSA inventory never opens PCM; configuration remains independent of hardware."""
+from fmheadendd.tests.profile_support import profile_settings
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from fmheadendd.alsa import AlsaDiscovery
 from fmheadendd.app import create_app
-from fmheadendd.config import Settings
 from fmheadendd.errors import DomainError
 from fmheadendd.models.configuration import AlsaConfig
 
@@ -75,7 +75,7 @@ def test_canonical_config_has_no_user_rate_or_channel_count():
 
 
 def test_endpoint_refresh_errors_persistence_and_probe(tmp_path):
-    with TestClient(create_app(Settings(tmp_path / 'alsa.db'))) as client:
+    with TestClient(create_app(profile_settings(tmp_path / 'alsa.db'))) as client:
         client.app.state.services.alsa = AlsaDiscovery(tmp_path)
         url = '/api/v1/alsa/capture-devices'
         assert client.get(url).json() == {'devices': []}
@@ -97,5 +97,5 @@ def test_endpoint_refresh_errors_persistence_and_probe(tmp_path):
         (tmp_path / 'card2/id').write_text('invalid card id')
         failure = client.get(url)
         assert failure.status_code == 503 and failure.json()['error'] == 'ALSA_DISCOVERY_ERROR'
-    with TestClient(create_app(Settings(tmp_path / 'alsa.db'))) as client:
+    with TestClient(create_app(profile_settings(tmp_path / 'alsa.db'))) as client:
         assert client.get(f'/api/v1/sources/{sid}').json()['config'] == body['config']

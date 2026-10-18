@@ -1,12 +1,11 @@
 """File selection -> existing source ownership/pipeline/mux contract."""
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
 from fmheadendd.app import create_app
-from fmheadendd.config import Settings
+from fmheadendd.tests.profile_support import BUNDLED_PROFILES as DEFAULT, profile_settings
 from fmheadendd.database import Database
 from fmheadendd.audio_profile_files import AudioProfileFiles
 from fmheadendd.errors import DependencyUnavailable
@@ -16,7 +15,6 @@ from fmheadendd.sources.output import PcmOutput
 from fmheadendd.sources.gst_pipeline import GstPipeline
 from fmheadendd.tests.test_audio_profile_files import document
 
-DEFAULT = Path(__file__).resolve().parents[2] / 'audio-profiles/default'
 BASE = '/api/v1/audio-profiles/files/'
 SOURCE = {'name': 'Feed', 'type': 'HTTP', 'config': {'uri': 'http://localhost/live'}}
 
@@ -43,8 +41,7 @@ class FakePipeline:
 
 @pytest.fixture
 def api(tmp_path):
-    settings = Settings(tmp_path / 'db', audio_profiles_default_dir=DEFAULT,
-                        audio_profiles_custom_dir=tmp_path / 'custom')
+    settings = profile_settings(tmp_path / 'db')
     with TestClient(create_app(settings, pipeline_factory=FakePipeline)) as client:
         yield client
 

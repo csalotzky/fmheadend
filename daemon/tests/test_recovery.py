@@ -1,10 +1,10 @@
 """M6A deterministic integration using the existing high-level RP mock."""
+from fmheadendd.tests.profile_support import profile_settings
 from pathlib import Path
 from unittest.mock import Mock
 import pytest
 from fastapi.testclient import TestClient
 from fmheadendd.app import create_app
-from fmheadendd.config import Settings
 from fmheadendd.database import Database
 from fmheadendd.models.configuration import InputSourceConfig, ModulatorConfig
 from fmheadendd.rp2354.client import MockRp2354Client
@@ -36,7 +36,7 @@ def test_startup_loss_recovery_order_and_shutdown(tmp_path):
             events.append((_name,*args))
             return _original(*args)
         setattr(rp,name,wrap)
-    app=create_app(Settings(path),rp=rp,clock=lambda:now[0])
+    app=create_app(profile_settings(path),rp=rp,clock=lambda:now[0])
     with TestClient(app) as api:
         assert api.get(P+'/status').json()['system']['system_state']=='DEGRADED'
         assert api.get(P+'/modulators/0').status_code == 503
@@ -85,7 +85,7 @@ def test_failed_restore_never_claims_healthy(tmp_path,failure):
         def mismatch():
             result=original();result['modulators'][0]['tx_state']='OFF';return result
         rp.get_status=mismatch
-    app=create_app(Settings(path),rp=rp)
+    app=create_app(profile_settings(path),rp=rp)
     with TestClient(app) as api:
         status=api.get(P+'/status').json()
         assert status['system']['system_state']=='DEGRADED'
@@ -107,7 +107,7 @@ def test_failed_restore_never_claims_healthy(tmp_path,failure):
 
 
 def test_mux_loss_does_not_reconfigure_rp(tmp_path):
-    app=create_app(Settings(tmp_path/'config.db'))
+    app=create_app(profile_settings(tmp_path/'config.db'))
     with TestClient(app) as api:
         s=app.state.services
         s.rp.set_tx_config=Mock(wraps=s.rp.set_tx_config)
@@ -126,7 +126,7 @@ def test_bad_final_startup_read_retries_observation_not_hardware(tmp_path):
     rp.set_tx_enabled = Mock(wraps=rp.set_tx_enabled)
     rp.set_tx_config = Mock(wraps=rp.set_tx_config)
     rp.clear_rds = Mock(wraps=rp.clear_rds)
-    app = create_app(Settings(path), rp=rp, clock=lambda:now[0])
+    app = create_app(profile_settings(path), rp=rp, clock=lambda:now[0])
     with TestClient(app):
         assert not app.state.services.recovery.ready
         counts = [m.call_count for m in (rp.set_tx_enabled,rp.set_tx_config,rp.clear_rds)]
@@ -138,7 +138,7 @@ def test_bad_final_startup_read_retries_observation_not_hardware(tmp_path):
 
 def test_unavailable_shutdown_preserves_desired_and_cleans_workers(tmp_path):
     path=tmp_path/'config.db';seed(path);rp=MockRp2354Client()
-    app=create_app(Settings(path),rp=rp)
+    app=create_app(profile_settings(path),rp=rp)
     with TestClient(app):
         rp.available=False
         rp.set_tx_enabled=Mock(wraps=rp.set_tx_enabled)
@@ -153,7 +153,7 @@ def test_desired_stop_after_failed_final_startup_observation(tmp_path):
     rp = MockRp2354Client(clock=lambda: now[0])
     original = rp.get_status
     rp.get_status = Mock(side_effect=DependencyUnavailable('lost final status'))
-    app = create_app(Settings(path), rp=rp, clock=lambda: now[0])
+    app = create_app(profile_settings(path), rp=rp, clock=lambda: now[0])
     with TestClient(app) as api:
         s = app.state.services
         assert not s.recovery.ready and rp.enabled[0]
@@ -190,7 +190,7 @@ def test_systemd_contract():
 
 def test_rds_transport_failure_fences_only_target(tmp_path):
     path=tmp_path/'config.db';seed(path);now=[0.0]
-    app=create_app(Settings(path),clock=lambda:now[0])
+    app=create_app(profile_settings(path),clock=lambda:now[0])
     with TestClient(app):
         s=app.state.services
         s.rp.push_rds=Mock(side_effect=DependencyUnavailable('ambiguous push'))
@@ -211,7 +211,7 @@ def test_uptime_decrease_alone_does_not_restore_hardware(tmp_path):
     def status():
         result=original();result['uptime_ms']=uptime[0];return result
     rp.get_status=status
-    app=create_app(Settings(tmp_path/'config.db'),rp=rp,clock=lambda:now[0])
+    app=create_app(profile_settings(tmp_path/'config.db'),rp=rp,clock=lambda:now[0])
     with TestClient(app):
         rp.set_tx_enabled=Mock(wraps=rp.set_tx_enabled)
         rp.set_tx_config=Mock(wraps=rp.set_tx_config)
@@ -225,7 +225,7 @@ def test_uptime_decrease_alone_does_not_restore_hardware(tmp_path):
 
 def test_stream_error_keeps_rf_and_pipeline_during_rp_recovery(tmp_path):
     now=[0.0]
-    app=create_app(Settings(tmp_path/'config.db'),clock=lambda:now[0])
+    app=create_app(profile_settings(tmp_path/'config.db'),clock=lambda:now[0])
     with TestClient(app) as api:
         sid=api.post(P+'/sources',json={'name':'http','type':'HTTP','config':{'uri':'http://example.org/audio'}}).json()['id']
         api.patch(P+'/modulators/0',json={'input_source_id':sid,'frequency_khz':98100})
@@ -248,7 +248,7 @@ def test_stream_error_keeps_rf_and_pipeline_during_rp_recovery(tmp_path):
 def test_explicit_user_choices_survive_normal_shutdown_and_restart(tmp_path, enabled):
     path = tmp_path / 'restart.db'
     rp = MockRp2354Client()
-    with TestClient(create_app(Settings(path), rp=rp)) as api:
+    with TestClient(create_app(profile_settings(path), rp=rp)) as api:
         for channel in range(8):
             assert api.patch(P+f'/modulators/{channel}', json={
                 'audio_mode': 'ANALOG', 'frequency_khz': 98100}).status_code == 200
@@ -264,7 +264,7 @@ def test_explicit_user_choices_survive_normal_shutdown_and_restart(tmp_path, ena
     assert [m.enabled for m in db.list('modulators')] == [i in enabled for i in range(8)]
     db.close()
     restored = MockRp2354Client()
-    with TestClient(create_app(Settings(path), rp=restored)) as api:
+    with TestClient(create_app(profile_settings(path), rp=restored)) as api:
         refresh(api.app)
         assert api.app.state.services.recovery.ready
         assert restored.enabled == [i in enabled for i in range(8)]
@@ -279,14 +279,14 @@ def test_global_stop_survives_restart_and_start_keeps_resume_selection(tmp_path,
     db.save('modulators', ModulatorConfig.model_validate(
         config.model_dump(exclude={'id', 'timestamp', 'rds_override_profile_id'})), 2)
     db.close()
-    with TestClient(create_app(Settings(path))) as api:
+    with TestClient(create_app(profile_settings(path))) as api:
         for _ in range(2):
             assert api.post(P+'/modulators/stop-all').status_code == 200
         assert api.get(P+'/status').json()['system']['global_stopped'] is True
         assert [m['id'] for m in api.get(P+'/modulators').json() if m['enabled']] == [0, 2]
     rp = MockRp2354Client()
     rp.set_tx_enabled = Mock(wraps=rp.set_tx_enabled)
-    with TestClient(create_app(Settings(path), rp=rp)) as api:
+    with TestClient(create_app(profile_settings(path), rp=rp)) as api:
         refresh(api.app)
         assert api.app.state.services.recovery.ready
         assert not any(rp.enabled)
@@ -301,7 +301,7 @@ def test_global_stop_survives_restart_and_start_keeps_resume_selection(tmp_path,
         assert api.post(P+'/modulators/start-all').status_code == 200
         assert rp.enabled == [i == 0 or (i == 2 and not disable_before_resume) for i in range(8)]
         assert api.get(P+'/status').json()['system']['global_stopped'] is False
-    with TestClient(create_app(Settings(path))) as api:
+    with TestClient(create_app(profile_settings(path))) as api:
         refresh(api.app)
         assert api.app.state.services.rp.enabled == [
             i == 0 or (i == 2 and not disable_before_resume) for i in range(8)]
@@ -313,7 +313,7 @@ def test_global_command_persistence_failure_is_not_accepted(tmp_path, start):
     from unittest.mock import patch
     path = tmp_path / 'save-failure.db'
     seed(path)
-    with TestClient(create_app(Settings(path))) as api:
+    with TestClient(create_app(profile_settings(path))) as api:
         services = api.app.state.services
         if start:
             assert api.post(P+'/modulators/stop-all').status_code == 200
@@ -334,11 +334,11 @@ def test_failed_desired_startup_survives_restart_without_erasing_preference(tmp_
     seed(path)
     rp = MockRp2354Client()
     rp.set_tx_config = Mock(side_effect=DependencyUnavailable('configuration unavailable'))
-    with TestClient(create_app(Settings(path), rp=rp)) as api:
+    with TestClient(create_app(profile_settings(path), rp=rp)) as api:
         assert not api.app.state.services.recovery.ready
         assert 'configuration unavailable' in str(api.app.state.services.recovery.error)
         assert api.get(P+'/modulators/0').json()['enabled'] is True
-    with TestClient(create_app(Settings(path))) as api:
+    with TestClient(create_app(profile_settings(path))) as api:
         refresh(api.app)
         assert api.app.state.services.rp.enabled == [True] + [False] * 7
 
@@ -346,7 +346,7 @@ def test_failed_desired_startup_survives_restart_without_erasing_preference(tmp_
 def test_individual_start_replaces_global_hold_selection_and_survives_restart(tmp_path):
     path = tmp_path / 'new-selection.db'
     seed(path)
-    with TestClient(create_app(Settings(path))) as api:
+    with TestClient(create_app(profile_settings(path))) as api:
         for channel in (1, 2):
             assert api.patch(P+f'/modulators/{channel}', json={
                 'audio_mode': 'ANALOG', 'frequency_khz': 98100}).status_code == 200
@@ -369,7 +369,7 @@ def test_individual_start_replaces_global_hold_selection_and_survives_restart(tm
                 k: v for k, v in new.items() if k not in ('enabled', 'timestamp')}
     rp = MockRp2354Client()
     rp.set_tx_enabled = Mock(wraps=rp.set_tx_enabled)
-    with TestClient(create_app(Settings(path), rp=rp)) as api:
+    with TestClient(create_app(profile_settings(path), rp=rp)) as api:
         refresh(api.app)
         assert rp.enabled == [False, True] + [False] * 6
         assert all(call.args[0] == 1 for call in rp.set_tx_enabled.call_args_list if call.args[1])
@@ -384,7 +384,7 @@ def test_individual_selection_save_failure_preserves_global_hold(tmp_path):
     from unittest.mock import patch
     path = tmp_path / 'selection-failure.db'
     seed(path)
-    with TestClient(create_app(Settings(path))) as api:
+    with TestClient(create_app(profile_settings(path))) as api:
         assert api.patch(P+'/modulators/1', json={
             'audio_mode': 'ANALOG', 'frequency_khz': 98100}).status_code == 200
         assert api.post(P+'/modulators/stop-all').status_code == 200
@@ -408,7 +408,7 @@ def test_individual_selection_save_failure_preserves_global_hold(tmp_path):
 def test_new_individual_selection_survives_runtime_start_failure(tmp_path):
     path = tmp_path / 'selection-runtime-failure.db'
     seed(path)
-    with TestClient(create_app(Settings(path))) as api:
+    with TestClient(create_app(profile_settings(path))) as api:
         assert api.patch(P+'/modulators/1', json={
             'audio_mode': 'ANALOG', 'frequency_khz': 98100}).status_code == 200
         assert api.post(P+'/modulators/stop-all').status_code == 200
@@ -417,6 +417,6 @@ def test_new_individual_selection_survives_runtime_start_failure(tmp_path):
         assert api.post(P+'/modulators/1/start').status_code == 503
         assert [m['id'] for m in api.get(P+'/modulators').json() if m['enabled']] == [1]
         assert api.get(P+'/status').json()['system']['global_stopped'] is False
-    with TestClient(create_app(Settings(path))) as api:
+    with TestClient(create_app(profile_settings(path))) as api:
         refresh(api.app)
         assert api.app.state.services.rp.enabled == [False, True] + [False] * 6

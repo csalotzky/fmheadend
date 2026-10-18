@@ -1,10 +1,10 @@
 """One authoritative HTTP User-Agent property."""
+from fmheadendd.tests.profile_support import profile_settings
 from unittest.mock import Mock
 import pytest
 from fastapi.testclient import TestClient
 from fmheadendd.app import create_app
 from fmheadendd import __version__
-from fmheadendd.config import Settings
 from fmheadendd.models.configuration import InputSourceConfig
 from fmheadendd.sources.gst_pipeline import GstPipeline
 
@@ -21,7 +21,7 @@ def test_effective_property(override,expected):
     assert pipeline._callback_error is None
 
 def test_api_rejects_removed_field_and_accepts_authoritative_property(tmp_path):
-    with TestClient(create_app(Settings(tmp_path/'api.db'))) as api:
+    with TestClient(create_app(profile_settings(tmp_path/'api.db'))) as api:
         body={'name':'HTTP','type':'HTTP','config':{'uri':'http://example.org','user_agent':'Old'}}
         assert api.post('/api/v1/sources',json=body).status_code==422
         body['config'].pop('user_agent');body['gst_options']={'source':{'user-agent':'Station/2'}}

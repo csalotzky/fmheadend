@@ -1,11 +1,11 @@
 """Demand-driven source configuration."""
+from fmheadendd.tests.profile_support import profile_settings
 from fastapi.testclient import TestClient
 from fmheadendd.app import create_app
-from fmheadendd.config import Settings
 
 
 def test_source_contract_and_shared_demand(tmp_path):
-    app = create_app(Settings(tmp_path / "api.db"))
+    app = create_app(profile_settings(tmp_path / "api.db"))
     with TestClient(app) as api:
         root = "/api/v1"
         body = dict(name="Shared", type="HTTP", config={"uri":"http://example.org/live"})

@@ -1,4 +1,5 @@
 """Owned RDS content, effective projections and target-local hot application."""
+from fmheadendd.tests.profile_support import profile_settings
 import json
 from unittest.mock import Mock
 
@@ -6,7 +7,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from fmheadendd.app import create_app
-from fmheadendd.config import Settings
 from fmheadendd.database import Database
 from fmheadendd.errors import DomainError
 from fmheadendd.models.configuration import InputSourceConfig, ModulatorConfig, RdsProfileConfig
@@ -63,7 +63,7 @@ def test_effective_resolution_preserves_override_and_rejects_invalid_follow(tmp_
 
 @pytest.fixture
 def live(tmp_path):
-    app = create_app(Settings(tmp_path/'hot.db'), clock=lambda: 0.)
+    app = create_app(profile_settings(tmp_path/'hot.db'), clock=lambda: 0.)
     with TestClient(app) as api:
         source = api.post('/api/v1/sources', json=source_config(rds_profile=RdsProfileConfig(rds_pi=321)).model_dump(mode='json')).json()
         for tx in (0, 2, 5, 7):

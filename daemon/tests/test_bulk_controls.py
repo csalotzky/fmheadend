@@ -1,12 +1,12 @@
+from fmheadendd.tests.profile_support import profile_settings
 from fastapi.testclient import TestClient
 from fmheadendd.app import create_app
-from fmheadendd.config import Settings
 from fmheadendd.rp2354.client import MockRp2354Client
 
 
 def test_bulk_preserves_intent_and_recovery_hold(tmp_path):
     rp=MockRp2354Client();now=[0.0]
-    app=create_app(Settings(tmp_path/'db'),rp=rp,clock=lambda:now[0])
+    app=create_app(profile_settings(tmp_path/'db'),rp=rp,clock=lambda:now[0])
     with TestClient(app) as api:
         source=api.post('/api/v1/sources',json={'name':'Shared','type':'HTTP','config':{'uri':'http://localhost/feed'}}).json()
         for tx in (0,1,2):
@@ -40,7 +40,7 @@ def test_bulk_preserves_intent_and_recovery_hold(tmp_path):
 
 def test_stop_all_dependency_failure_retains_flags(tmp_path):
     rp=MockRp2354Client()
-    app=create_app(Settings(tmp_path/'db'),rp=rp)
+    app=create_app(profile_settings(tmp_path/'db'),rp=rp)
     with TestClient(app) as api:
         api.patch('/api/v1/modulators/0',json={'frequency_khz':98100,'audio_mode':'ANALOG'})
         api.post('/api/v1/modulators/0/start')

@@ -1,11 +1,11 @@
 """Podcast uses generic source CRUD/probe, with no network during persistence."""
+from fmheadendd.tests.profile_support import profile_settings, profile_store
 from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
 
 from fmheadendd.app import create_app
-from fmheadendd.config import Settings
 from fmheadendd.database import Database
 from fmheadendd.errors import DomainError
 from fmheadendd.models.configuration import InputSourceConfig
@@ -29,7 +29,7 @@ def api(tmp_path, monkeypatch):
     factory = Mock(side_effect=AssertionError('unexpected GStreamer'))
     factory.mocked = True
     factory.__name__ = 'NoPlayback'
-    with TestClient(create_app(Settings(tmp_path/'podcast.db'), pipeline_factory=factory)) as client:
+    with TestClient(create_app(profile_settings(tmp_path/'podcast.db'), pipeline_factory=factory)) as client:
         yield client
     factory.assert_not_called()
 
@@ -74,7 +74,7 @@ def test_invalid_configuration(api, config):
 
 
 def test_restart_preserves_only_config(tmp_path):
-    settings = Settings(tmp_path/'reload.db')
+    settings = profile_settings(tmp_path/'reload.db')
     with TestClient(create_app(settings)) as api:
         saved = api.post(P, json=body()).json()
     with TestClient(create_app(settings)) as api:
@@ -111,7 +111,7 @@ def test_probe_history_is_unchanged_and_does_not_start_playback(tmp_path, monkey
     db = Database(tmp_path/'history.db')
     source = db.save('sources', InputSourceConfig.model_validate(body()))
     monkeypatch.setattr(FeedFetcher, '__call__', lambda self, url: FeedResponse(RSS, url))
-    manager = SourceManager(db)
+    manager = SourceManager(db, profile_files=profile_store(tmp_path))
     assert manager.test(source).ok
     assert not db.connection.execute('SELECT * FROM podcast_history').fetchall()
     assert not manager.pipelines

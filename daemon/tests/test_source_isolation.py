@@ -1,11 +1,11 @@
 """External input availability is independent of control-plane health."""
+from fmheadendd.tests.profile_support import profile_settings
 from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
 
 from fmheadendd.app import create_app
-from fmheadendd.config import Settings
 from fmheadendd.database import Database
 from fmheadendd.errors import SourceUnavailable
 from fmheadendd.models.configuration import InputSourceConfig, ModulatorConfig
@@ -50,7 +50,7 @@ def test_startup_source_failure_isolated_and_retries_only_failed_audio(tmp_path,
     rp.set_tx_config = Mock(wraps=rp.set_tx_config)
     rp.set_tx_enabled = Mock(wraps=rp.set_tx_enabled)
     rp.get_status = Mock(wraps=rp.get_status)
-    app = create_app(Settings(path), pipeline_factory=Pipeline, rp=rp, clock=lambda: now[0])
+    app = create_app(profile_settings(path), pipeline_factory=Pipeline, rp=rp, clock=lambda: now[0])
     with TestClient(app) as api:
         s = app.state.services
         run(app, s.rds.tick)
@@ -96,7 +96,7 @@ def test_runtime_input_loss_keeps_rf_static_rds_and_controller(tmp_path, kind, a
     path = tmp_path/'runtime.db'
     ids = seed(path, kind)
     now = [0.0]
-    app = create_app(Settings(path), clock=lambda: now[0])
+    app = create_app(profile_settings(path), clock=lambda: now[0])
     with TestClient(app):
         s = app.state.services
         s.rp.set_tx_enabled = Mock(wraps=s.rp.set_tx_enabled)
@@ -128,7 +128,7 @@ def test_internal_audio_bug_is_degraded_but_not_controller_unavailable(tmp_path,
                 raise RuntimeError('unexpected pipeline bug')
             super().start()
     now = [0.0]
-    app = create_app(Settings(path), pipeline_factory=Broken, clock=lambda: now[0])
+    app = create_app(profile_settings(path), pipeline_factory=Broken, clock=lambda: now[0])
     with TestClient(app) as api:
         result = api.get(P+'/status').json()
         assert result['system']['system_state'] == 'DEGRADED'
@@ -146,7 +146,7 @@ def test_internal_audio_bug_is_degraded_but_not_controller_unavailable(tmp_path,
 
 @pytest.mark.parametrize('component', ['rp', 'mux'])
 def test_real_dependency_failure_still_degrades(tmp_path, component):
-    app = create_app(Settings(tmp_path/'dependency.db'))
+    app = create_app(profile_settings(tmp_path/'dependency.db'))
     with TestClient(app) as api:
         s = app.state.services
         getattr(s, component).available = False
@@ -164,7 +164,7 @@ def test_failed_explicit_start_retries_with_current_configuration_and_stop_cance
                 raise SourceUnavailable('USB input missing')
             super().start()
     now = [0.0]
-    app = create_app(Settings(tmp_path/'explicit.db'), pipeline_factory=Pipeline, clock=lambda: now[0])
+    app = create_app(profile_settings(tmp_path/'explicit.db'), pipeline_factory=Pipeline, clock=lambda: now[0])
     with TestClient(app) as api:
         sid = api.post(P+'/sources', json={'name': 'USB', 'type': 'ALSA',
             'config': {'device': 'hw:Missing,0'}}).json()['id']
