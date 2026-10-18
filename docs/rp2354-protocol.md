@@ -141,12 +141,12 @@ the second read returns 35 payload bytes followed by two CRC bytes.
 |---:|---|---|
 | 0 | u16 | protocol_version, exactly 1 |
 | 2 | char[16] | firmware_version |
-| 18 | char[16] | hardware_revision |
+| 18 | char[16] | hardware_target |
 | 34 | u8 | modulator_count, exactly 8 |
 
 Strings are nonempty printable ASCII, maximum 15 characters, NUL terminated and
 zero padded to 16 bytes. The public API exposes the keys `controller_protocol_version`,
-`controller_firmware_version`, `hardware_revision`, `modulator_count`. Unknown versions or
+`controller_firmware_version`, `hardware_target`, `modulator_count`. Unknown versions or
 counts block every command except GET_INFO; no best-effort interpretation or mock
 fallback is allowed. Successful GET_INFO is required before the first operational
 command and after a failed/reopened session or explicit reset.

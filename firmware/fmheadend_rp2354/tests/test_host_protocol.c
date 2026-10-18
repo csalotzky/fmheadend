@@ -121,9 +121,9 @@ int main(void)
     uint8_t payload[35];
     memcpy(payload, host.response + 2, sizeof(payload));
     assert(!strcmp((const char *)payload + 2, HOST_FIRMWARE_VERSION));
-    assert(!strcmp((const char *)payload + 18, HOST_HARDWARE_REVISION));
+    assert(!strcmp((const char *)payload + 18, HOST_HARDWARE_TARGET));
     for (unsigned i = 2 + sizeof(HOST_FIRMWARE_VERSION); i < 18; ++i) assert(!payload[i]);
-    for (unsigned i = 18 + sizeof(HOST_HARDWARE_REVISION); i < 34; ++i) assert(!payload[i]);
+    for (unsigned i = 18 + sizeof(HOST_HARDWARE_TARGET); i < 34; ++i) assert(!payload[i]);
     assert(payload[34] == 8);
     for (unsigned i = 2; i < 35; ++i) assert(host_protocol_read(&host) == payload[i]);
     assert(host_protocol_read(&host) == host.response[37]);

@@ -3,11 +3,12 @@ from unittest.mock import Mock
 import pytest
 from fastapi.testclient import TestClient
 from fmheadendd.app import create_app
+from fmheadendd import __version__
 from fmheadendd.config import Settings
 from fmheadendd.models.configuration import InputSourceConfig
 from fmheadendd.sources.gst_pipeline import GstPipeline
 
-@pytest.mark.parametrize('override,expected', [(None,'fmheadend/0.1.0'),('Station/2','Station/2')])
+@pytest.mark.parametrize('override,expected', [(None,f'fmheadend/{__version__}'),('Station/2','Station/2')])
 def test_effective_property(override,expected):
     pipeline=object.__new__(GstPipeline)
     pipeline.source=InputSourceConfig(name='HTTP',type='HTTP',config={'uri':'http://example.org'},

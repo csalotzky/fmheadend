@@ -305,7 +305,7 @@ PCM-confirmed URL recovery use the existing HTTP retry worker and shared Source.
 See [Radio Browser backend API and recovery](radio-browser.md).
 
 HTTP User-Agent has one configurable path: `gst_options.source["user-agent"]`.
-If absent, the existing application default is `fmheadend/0.1.0`. Example source-level
+If absent, the application default is `fmheadend/<application version>` from installed package metadata. Example source-level
 options: `{"source": {"user-agent": "Station/2"}}`. This sets the HTTP element property
 through the existing GStreamer source-setup callback; unsupported explicit properties
 produce a probe/ingest error. No separate `config.user_agent` field is accepted.
@@ -1041,7 +1041,7 @@ Visszaadandó minimum:
 
 - `protocol_version`;
 - `firmware_version`;
-- `hardware_revision`;
+- `hardware_target`;
 - `modulator_count`.
 
 A Linux kompatibilitási checket végez.
@@ -1425,10 +1425,10 @@ GET   /api/v1/system/info
 
 ```json
 {
-  "fmheadend_version": "0.1.0",
+  "fmheadend_version": "1.0.0",
   "controller_protocol_version": 1,
   "controller_firmware_version": "...",
-  "hardware_revision": "...",
+  "hardware_target": "...",
   "modulator_count": 8
 }
 ```

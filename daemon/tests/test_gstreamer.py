@@ -9,6 +9,7 @@ import wave
 
 import pytest
 from fmheadendd.errors import DependencyUnavailable
+from fmheadendd import __version__
 from fmheadendd.models.configuration import InputSourceConfig
 from fmheadendd.sources.gst_pipeline import GstPipeline, load_gst, caps_structure, make_rtp_caps, rtp_parameters
 
@@ -289,7 +290,7 @@ def test_http_user_agent_on_wire(gst,tmp_path,agent):
     pipeline=GstPipeline(source,reconnect=False)
     try:
         pipeline.start()
-        assert seen and all(value==(agent or 'fmheadend/0.1.0') for value in seen)
+        assert seen and all(value==(agent or f'fmheadend/{__version__}') for value in seen)
         assert pipeline.probe_result().station_name == 'Deterministic Station'
     finally:
         pipeline.stop();server.shutdown();server.server_close();thread.join()
