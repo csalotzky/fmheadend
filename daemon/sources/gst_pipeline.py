@@ -9,6 +9,7 @@ from urllib.parse import unquote, urlsplit
 import threading
 import time
 
+from .. import __version__
 from ..errors import DependencyUnavailable, SourceUnavailable
 from ..models.configuration import SourceType, SourceTestResult, LocalConfig
 from .local_playback import LocalPlayback, LocalPlaybackError
@@ -375,7 +376,7 @@ class GstPipeline:
             if element.find_property("timeout"):
                 element.set_property("timeout", math.ceil(self.timeout_s))
             if element.find_property("user-agent"):
-                element.set_property("user-agent", "fmheadend/0.1.0")
+                element.set_property("user-agent", f"fmheadend/{__version__}")
             if element.find_property("iradio-mode"):
                 element.set_property("iradio-mode", True)
             if element.find_property("retries"):

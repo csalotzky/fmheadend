@@ -48,9 +48,9 @@ import { errorMessage } from '../../core/api/headend-api';
           <dd>
             {{ rpAvailable() ? (info()?.controller_firmware_version ?? 'Unavailable') : 'Unavailable' }}
           </dd>
-          <dt>Hardware</dt>
+          <dt>Hardware target</dt>
           <dd>
-            {{ rpAvailable() ? (info()?.hardware_revision ?? 'Unavailable') : 'Unavailable' }}
+            {{ rpAvailable() ? (info()?.hardware_target ?? 'Unavailable') : 'Unavailable' }}
           </dd>
         </dl>
       </section>

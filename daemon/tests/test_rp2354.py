@@ -10,12 +10,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from fmheadendd.app import create_app
+from fmheadendd import __version__
 from fmheadendd.config import Settings
 from fmheadendd.rp2354 import protocol as p
 from fmheadendd.rp2354 import linux_client as linux
 from fmheadendd.rp2354.client import MockRp2354Client, TxConfig
 
-INFO = struct.pack('<H16s16sB', 1, b'0.1.0', b'Pico2', 8)
+INFO = struct.pack('<H16s16sB', 1, b'0.1.0', b'rp2354-tx-v1', 8)
 CONFIG = TxConfig(frequency_khz=98100, rf_attenuation_db=6.0, stereo=True, preemphasis_us=50,
                   audio_mode='DIGITAL', rds_enabled=False)
 
@@ -88,7 +89,7 @@ def test_get_info_and_linux_setup(calls):
     replies(calls, INFO)
     rp = client()
     assert rp.get_info() == {'rp_protocol_version': 1, 'rp_firmware_version': '0.1.0',
-                              'hardware_revision': 'Pico2', 'modulator_count': 8}
+                              'hardware_target': 'rp2354-tx-v1', 'modulator_count': 8}
     assert packets(calls) == [b'\x01\xff\x00']
     assert [call.args[1] for call in calls[0].read.call_args_list] == [2, 37]
     calls[1].ioctl.assert_any_call(42, linux.I2C_SLAVE, 0x42)
@@ -304,6 +305,7 @@ def test_http_stays_available_when_real_i2c_fails(calls, tmp_path):
         assert status['system']['mocked'] is False
         assert status['modulators'] == []
         info = api.get('/api/v1/system/info').json()
+        assert info['fmheadend_version'] == __version__
         assert info['controller_firmware_version'] is None and info['mocked'] is False
 
 
@@ -328,6 +330,9 @@ def test_native_status_reaches_existing_api(calls, tmp_path):
         assert status['modulators'][1]['audio_underrun_count'] == 11
         assert status['modulators'][1]['underruns'] == 0  # Separate mux count.
         assert api.get('/api/v1/system/info').json()['controller_firmware_version'] == '0.1.0'
+        info = api.get('/api/v1/system/info').json()
+        assert info['hardware_target'] == 'rp2354-tx-v1'
+        assert 'hardware_revision' not in info
 
 @pytest.mark.parametrize('code', [1, 2, 3, 5, 6])
 def test_client_maps_protocol_failure_without_retry(calls, code):

@@ -12,7 +12,7 @@ export interface SystemInfo {
   fmheadend_version: string;
   controller_protocol_version: number | null;
   controller_firmware_version: string | null;
-  hardware_revision: string | null;
+  hardware_target: string | null;
   modulator_count: number;
   mocked: boolean;
   frequency_plan: FrequencyPlan;

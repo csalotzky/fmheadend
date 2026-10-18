@@ -50,7 +50,9 @@ as an input without pulls and emits no UART logs. Do not enable it on a board
 where GPIO28 is shorted to SWCLK. Stdio UART/USB remain disabled in both modes.
 `FMHEADEND_FIRMWARE_VERSION` in `firmware_config.h` is the sole application version
 source for GET_INFO, the optional banner, Pico metadata and OTA manifests.
-PCB revision, protocol identifiers and ROM image versions are independent.
+The GET_INFO hardware target is `rp2354-tx-v1`, a firmware-compatible hardware
+family rather than a PCB revision. Protocol identifiers and ROM image versions
+are independent.
 
 Factory: ROM 1.0, non-TBYB. OTA: ROM 1.1, TBYB. Manifests contain the embedded
 build ID, ROM version, image size, TBYB and complete SHA-256. Source/build settings

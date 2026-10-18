@@ -59,6 +59,8 @@ describe('System and region plans', () => {
     expect(text).not.toContain('Counters and historical codes');
     expect(text).toContain('Multiplexer');
     expect(text).toContain('Controller');
+    expect(text).toContain('Hardware target');
+    expect(text.includes('rp2354-tx-v1')).toBe(state === 'OK');
     expect(text).toContain('Controller audio-link errors');
     expect(text).toContain('Last Controller error (history)');
     expect(text).toContain('QN_ERROR');

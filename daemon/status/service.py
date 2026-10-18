@@ -37,7 +37,7 @@ class StatusService:
         self.real_rp = isinstance(rp, Rp2354Client)
         self.system = SystemStatus(mocked=not self.real_rp)
         self.info = {"fmheadend_version": __version__, "controller_protocol_version": None,
-                     "controller_firmware_version": None, "hardware_revision": None,
+                     "controller_firmware_version": None, "hardware_target": None,
                      "modulator_count": None, "controller_capability_stale": True, "mocked": not self.real_rp}
         self.refresh()
 
@@ -131,7 +131,7 @@ class StatusService:
             self.info.update(
                 controller_protocol_version=info["rp_protocol_version"],
                 controller_firmware_version=info["rp_firmware_version"],
-                hardware_revision=info["hardware_revision"],
+                hardware_target=info["hardware_target"],
                 modulator_count=info["modulator_count"],
             )
             self._observed_at = self.clock()

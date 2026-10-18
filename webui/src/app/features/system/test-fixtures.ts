@@ -1,9 +1,9 @@
 import { SystemInfo } from '../../core/api/system-api';
 export const systemInfo: SystemInfo = {
-  fmheadend_version: '0.1.0',
+  fmheadend_version: '1.0.0',
   controller_protocol_version: 1,
   controller_firmware_version: 'mock',
-  hardware_revision: 'mock',
+  hardware_target: 'rp2354-tx-v1',
   modulator_count: 8,
   mocked: true,
   database_schema_version: 1,

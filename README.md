@@ -37,6 +37,10 @@ python -m pip install -e './daemon[test]'
 fmheadendd --mock-rp --mock-mux --database ./fmheadend.db --host 127.0.0.1 --port 8080
 ```
 
+The application version comes from `daemon/pyproject.toml` through installed
+package metadata. After changing it, repeat the editable install above and restart
+the backend to refresh the version; regular installations get it from the package.
+
 The system-site-packages flag exposes distro PyGObject/GStreamer bindings to the
 virtual environment. Use the distro Python interpreter; a separately installed
 Python must have matching GI bindings. Older Mint releases whose default Python

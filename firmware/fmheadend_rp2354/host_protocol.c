@@ -10,7 +10,7 @@ enum { GET_INFO = 1, SET_TX_CONFIG, SET_TX_ENABLED, GET_STATUS, RDS_PUSH,
        RP_SOFT_RESET, GET_RDS_FIFO_FREE };
 
 _Static_assert(sizeof(HOST_FIRMWARE_VERSION) <= 16, "firmware version too long");
-_Static_assert(sizeof(HOST_HARDWARE_REVISION) <= 16, "hardware revision too long");
+_Static_assert(sizeof(HOST_HARDWARE_TARGET) <= 16, "hardware target too long");
 
 uint16_t host_crc16(const uint8_t *data, size_t size)
 {
@@ -179,7 +179,7 @@ void host_protocol_stop(host_protocol_t *host, uint32_t uptime_ms)
             memset(host->response + 2, 0, 35);
             host->response[2] = 1;
             memcpy(host->response + 4, HOST_FIRMWARE_VERSION, sizeof(HOST_FIRMWARE_VERSION));
-            memcpy(host->response + 20, HOST_HARDWARE_REVISION, sizeof(HOST_HARDWARE_REVISION));
+            memcpy(host->response + 20, HOST_HARDWARE_TARGET, sizeof(HOST_HARDWARE_TARGET));
             host->response[36] = TX_COUNT;
             break;
         case RDS_PUSH: {

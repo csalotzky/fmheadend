@@ -254,7 +254,7 @@ def parse_info(payload: bytes) -> dict:
         raise ProtocolError("Invalid GET_INFO payload size")
     version, firmware, hardware, count = INFO.unpack(payload)
     info = {"rp_protocol_version": version, "rp_firmware_version": _text(firmware, "rp_firmware_version"),
-            "hardware_revision": _text(hardware, "hardware_revision"), "modulator_count": count}
+            "hardware_target": _text(hardware, "hardware_target"), "modulator_count": count}
     if version != PROTOCOL_VERSION or count != 8:
         raise IncompatibleProtocol(f"Unsupported Controller protocol/count: {version}/{count}; expected {PROTOCOL_VERSION}/8")
     return info
