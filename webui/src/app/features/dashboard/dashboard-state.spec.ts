@@ -103,6 +103,65 @@ describe('Dashboard API composition and operations', () => {
     await load(data);
     expect(state.stale()).toBe(true);
     expect(state.data()).toBeNull();
+    expect(state.channels()).toEqual([]);
+    expect(state.updated()).toBeNull();
+    expect(state.loading()).toBe(false);
+    expect(state.backendUnavailable()).toBe(false);
+  });
+  it.each(['missing', 'duplicate', 'unexpected', 'duplicate configuration'])(
+    'preserves the valid Dashboard on %s runtime inventory and recovers', async (kind) => {
+      await load();
+      const previous = state.data();
+      const channels = state.channels();
+      const updated = state.updated();
+      const count = state.lastValidActiveCount();
+      const bad = sample();
+      if (kind === 'missing') bad.status.modulators.pop();
+      if (kind === 'duplicate') bad.status.modulators[7] = bad.status.modulators[0];
+      if (kind === 'unexpected') bad.status.modulators[7].id = 8;
+      if (kind === 'duplicate configuration') bad.modulators[7] = bad.modulators[0];
+      await load(bad);
+      expect(state.stale()).toBe(true);
+      expect(state.data()).toBe(previous);
+      expect(state.channels()).toBe(channels);
+      expect(state.updated()).toBe(updated);
+      expect(state.lastValidActiveCount()).toBe(count);
+      expect(state.backendUnavailable()).toBe(false);
+      await load();
+      expect(state.stale()).toBe(false);
+      expect(state.data()).not.toBe(previous);
+    },
+  );
+  it.each([0, 1, 4, 8])('accepts matching inventories of %s TXs, including unknown/offline rows', async (count) => {
+    const data = sample();
+    data.modulators = data.modulators.slice(0, count);
+    data.status.modulators = data.status.modulators.slice(0, count);
+    for (const row of data.status.modulators) row.hardware_tx_state = 'UNKNOWN';
+    await load(data);
+    expect(state.stale()).toBe(false);
+    expect(state.channels()).toHaveLength(count);
+    expect(state.data()).toEqual(data);
+  });
+  it('does not extrapolate observation age or confuse incomplete HTTP 200 with unavailability', async () => {
+    vi.useFakeTimers();
+    state.start();
+    await vi.advanceTimersByTimeAsync(0);
+    respond();
+    await settle();
+    const age = state.observationAge();
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(state.observationAge()).toBe(age);
+    const bad = sample();
+    bad.status.modulators.pop();
+    await load(bad);
+    expect(state.backendUnavailable()).toBe(false);
+    expect(state.observationAge()).toBe(age);
+    for (let i = 0; i < 4; i++) {
+      await vi.advanceTimersByTimeAsync(5000);
+      respond(bad);
+      await settle();
+    }
+    expect(state.backendUnavailable()).toBe(false);
   });
   for (const action of ['start', 'stop'] as const)
     it(`sends per-channel ${action} and refreshes without optimistic TX changes`, async () => {

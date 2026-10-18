@@ -199,6 +199,18 @@ export class DashboardState {
       }).pipe(takeUntil(this.cancelled)))
       .then((snapshot) => {
         if (this.closed || generation !== this.snapshotGeneration) return;
+        // Both published lists describe the same physical inventory, including
+        // disabled/offline TXs. Separate HTTP reads can straddle a publication;
+        // retain the previous coherent snapshot until the next normal refresh.
+        const configuredIds = new Set(snapshot.modulators.map((row) => row.id));
+        const runtimeIds = new Set(snapshot.status.modulators.map((row) => row.id));
+        if (configuredIds.size !== snapshot.modulators.length ||
+            runtimeIds.size !== snapshot.status.modulators.length ||
+            configuredIds.size !== runtimeIds.size ||
+            [...configuredIds].some((id) => !runtimeIds.has(id))) {
+          this.stale.set(true);
+          return;
+        }
         this.confirmObservations(snapshot, requestedAt);
         this.channels.set(compose(snapshot, this.data() ?? undefined));
         if (snapshot.status.system.snapshot_stale !== true &&
