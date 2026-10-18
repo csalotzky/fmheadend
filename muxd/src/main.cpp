@@ -25,11 +25,16 @@ int main(int argc, char** argv) {
         std::uint64_t ring_buffer_ms = muxd::default_ring_buffer_ms;
         for (int i = 1; i < argc; ++i) {
             const std::string option = argv[i];
+            if (option == "--version") {
+                std::cout << "fmheadend-muxd " << FMHEADEND_MUXD_VERSION << '\n';
+                return 0;
+            }
             if (option == "--help") {
                 std::cout << "fmheadend-muxd --transport mock|spidev [--runtime-dir /run/fmheadend]\n"
                              "  [--spi-device /dev/spidev0.0] [--spi-clock-hz 25000000] [--spi-mode 0]\n"
                              "  [--ring-buffer-ms 300] (positive integer ms of PCM per channel)\n"
-                             "  [--capture FILE --capture-frames 375] (bounded mock capture only)\n";
+                             "  [--capture FILE --capture-frames 375] (bounded mock capture only)\n"
+                             "  --version\n";
                 return 0;
             }
             if (++i == argc) throw std::runtime_error("Missing option value");
