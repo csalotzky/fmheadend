@@ -13,7 +13,10 @@
 @if (!sources().length && !shared.loading() && !shared.stale()) {
   <p>No Sources configured. Add a source to make an input available to the transmitters.</p>
 }
-@for (source of sources(); track source.id) {
+@for (group of groups(); track group.type) {
+  <details class="source-group" open>
+    <summary>{{ group.label }} <span class="muted">({{ group.sources.length }})</span></summary>
+@for (source of group.sources; track source.id) {
   <section
     class="source-row list-card"
     [attr.data-source-type]="source.type"
@@ -60,4 +63,6 @@
     }
     <app-source-test-result [result]="results()[source.id] ?? null" />
   </section>
+}
+  </details>
 }

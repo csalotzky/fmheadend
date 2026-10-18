@@ -28,7 +28,7 @@
 }
 .rt-group textarea {
   resize: vertical;
-  min-height: 80px;
+  min-height: var(--rt-min-height, 80px);
 }
 label {
   min-width: 0;

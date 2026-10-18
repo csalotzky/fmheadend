@@ -576,7 +576,8 @@ describe('Sources management', () => {
       http.expectOne(`/api/v1/sources/${i + 1}/status`).flush({ state: 'RUNNING' });
     f.detectChanges();
     const rows = [...f.nativeElement.querySelectorAll('.source-row')] as HTMLElement[];
-    expect(rows.map((row) => row.dataset['sourceType'])).toEqual([...types]);
+    expect(rows.map((row) => row.dataset['sourceType'])).toEqual(['HTTP', 'LOCAL', 'PODCAST', 'UDP', 'RTP', 'ALSA']);
+    expect(f.nativeElement.querySelectorAll('details.source-group')).toHaveLength(6);
     expect(rows.every((row) => row.classList.contains('list-card'))).toBe(true);
     for (const type of types) expect(f.nativeElement.textContent).toContain(type);
   });

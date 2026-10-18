@@ -341,8 +341,7 @@
           <button type="button" (click)="fillFromSource()" [disabled]="!form.controls.name.value.trim()">
             Fill from source
           </button>
-          <small>Fill PS and fallback RadioText from the source name. PI stays unchanged. Save to
-            apply.</small>
+          <small>Fill PS and default RT from the source name.</small>
         </div>
         <app-rds-profile-editor [model]="rds" />
       </fieldset>
