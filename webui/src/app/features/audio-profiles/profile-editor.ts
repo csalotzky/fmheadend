@@ -18,6 +18,9 @@ import { errorMessage } from '../../core/api/headend-api';
   imports: [ReactiveFormsModule, FormsModule, DspFields],
   styleUrl: '../../shared/editor-layout.css',
   styles: `
+    .fields.profile-details {
+      grid-template-columns: minmax(0, 1fr);
+    }
     summary {
       cursor: pointer;
       font-weight: 600;
@@ -48,7 +51,7 @@ import { errorMessage } from '../../core/api/headend-api';
       <form [formGroup]="form" (ngSubmit)="save()">
         <fieldset [disabled]="saving() || readOnly()">
           <section class="editor-panel" aria-label="Profile details">
-            <div class="fields">
+            <div class="fields profile-details">
               <label>Name<input formControlName="name" required maxlength="200" /></label>
               <label>Description<textarea formControlName="description" rows="2"></textarea></label>
             </div>

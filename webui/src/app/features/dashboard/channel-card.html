@@ -25,7 +25,7 @@
     <div class="source-name">{{ channel().sourceName }}</div>
     <dl class="rds-data">
       <div>
-        <dt>PS{{ (channel().config?.rds_ps?.length ?? 0) > 1 ? ' carousel' : '' }}</dt>
+        <dt>PS</dt>
         <dd [title]="ps()">{{ ps() }}</dd>
       </div>
       @if (channel().config?.rds_enabled && channel().config?.rds_rt_enabled) {
