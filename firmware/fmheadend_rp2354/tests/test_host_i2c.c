@@ -183,9 +183,9 @@ int main(void)
     assert(abrt_snapshot.raw == 0x240 && abrt_snapshot.status == 0x64);
     assert(abrt_snapshot.txflr == 0 && abrt_snapshot.rxflr == 0);
     assert(!abrt_snapshot.receiving && !abrt_snapshot.pending && !abrt_snapshot.running);
-    assert(abrt_snapshot.size == 39 && abrt_snapshot.copied == 39);
-    assert(!memcmp(abrt_snapshot.response,host.response,39));
-    assert(abrt_snapshot.response[39] == 0);
+    assert(abrt_snapshot.size == 51 && abrt_snapshot.copied == sizeof(abrt_snapshot.response));
+    assert(!memcmp(abrt_snapshot.response,host.response,sizeof(abrt_snapshot.response)));
+    /* The diagnostic snapshot retains only the first 40 bytes of the 51-byte frame. */
     assert(read_byte() == 0 && read_byte() == 47);
     finish_read();
     /* Replace the live response and abort again before any foreground print. */
@@ -199,8 +199,8 @@ int main(void)
     const char *snapshot_log=strstr(uart_log,"HOST I2C ABRT SNAP:");
     assert(snapshot_log && !strstr(snapshot_log+1,"HOST I2C ABRT SNAP:"));
     assert(strstr(snapshot_log,"source=0x00802000 flags=0x00000040 raw=0x00000240 intr=0x00000040"));
-    assert(strstr(snapshot_log,"cursor=1 size=39 last_tx_advanced=1 receiving=0"));
-    assert(strstr(snapshot_log,"flush_cnt=1 copied=39\r\nresponse=00 23 01 00 30 2E"));
+    assert(strstr(snapshot_log,"cursor=1 size=51 last_tx_advanced=1 receiving=0"));
+    assert(strstr(snapshot_log,"flush_cnt=1 copied=40\r\nresponse=00 2F 01 00 31 2E"));
     uart_log[0]=0;
     irq(I2C_IC_INTR_STAT_R_TX_ABRT_BITS,0,0);
     drain();

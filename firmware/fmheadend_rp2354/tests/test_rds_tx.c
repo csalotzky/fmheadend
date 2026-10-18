@@ -275,7 +275,7 @@ static void startup_gate(void)
     assert(h.rds_tx.channel[0].phase==RDS_IDLE && h.rds[0].count==1);
     assert(h.rds_tx.channel[1].phase==RDS_DATA);
     until(1,RDS_WAIT);assert(!h.rds_tx.channel[0].submitted);
-    host_command(1,255);assert(h.response[1]==35); /* Host remains usable. */
+    host_command(1,255);assert(h.response[1]==47); /* Host remains usable. */
     fake_now=until_us-1;
     rds_tx_service(&h.rds_tx,&h.qn,h.rds);
     assert(!h.rds_tx.channel[0].submitted && !fake_regs[0][0x10]);
@@ -319,7 +319,7 @@ static void timeout_recovery(void)
     tick();assert(s->phase==RDS_BACKOFF && s->baseline==0x80);
     unsigned calls=fake_calls;uint64_t end=s->next_poll;
     tick();assert(fake_calls==calls); /* Backoff performs no bus work or sleep. */
-    host_command(1,255);assert(h.response[1]==35);
+    host_command(1,255);assert(h.response[1]==47);
     fake_now=end;until(0,RDS_WAIT);
     assert(fake_regs[0][0x10]==0x56 && fake_regs[0][0x11]==0x78);
     assert(s->baseline==0x80 && !s->accepted && h.rds[0].count==1);
