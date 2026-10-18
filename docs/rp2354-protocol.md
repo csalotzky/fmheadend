@@ -98,7 +98,7 @@ See [M8.3](milestone8_3.md) for timing bounds and failure isolation.
 
 | ID | Command | Target | Request payload bytes | OK payload bytes |
 |---:|---|---|---:|---:|
-| 0x01 | GET_INFO | 0xFF | 0 | 35 |
+| 0x01 | GET_INFO | 0xFF | 0 | 47 |
 | 0x02 | SET_TX_CONFIG | 0..7 | 15 | 0 |
 | 0x03 | SET_TX_ENABLED | 0..7 | 1 | 0 |
 | 0x04 | GET_STATUS | 0xFF | 0 | 130 |
@@ -134,15 +134,23 @@ sides; there is no legacy-payload compatibility path.
 
 ## GET_INFO (0x01)
 
-Request has no payload: `01 ff 00 53 f8`. OK response starts `00 23`;
-the second read returns 35 payload bytes followed by two CRC bytes.
+Request has no payload: `01 ff 00 53 f8`. OK response starts `00 2f`;
+the second read returns 47 payload bytes followed by two CRC bytes.
 
 | Payload offset | Type | Field |
 |---:|---|---|
 | 0 | u16 | protocol_version, exactly 1 |
 | 2 | char[16] | firmware_version |
 | 18 | char[16] | hardware_target |
-| 34 | u8 | modulator_count, exactly 8 |
+| 34 | u8 | modulator_count, 1..8 |
+| 35 | u32 | frequency_min_khz |
+| 39 | u32 | frequency_max_khz |
+| 43 | u32 | frequency_step_khz |
+
+The current `rp2354-qn8x-v1` firmware reports 76000, 108000 and 50 kHz.
+The raster is anchored at the reported minimum. All three values must be positive;
+maximum must be at least minimum and the range must be a multiple of the step.
+This is the unreleased V1 layout; 35-byte GET_INFO replies are not supported.
 
 Strings are nonempty printable ASCII, maximum 15 characters, NUL terminated and
 zero padded to 16 bytes. The public API exposes the keys `controller_protocol_version`,

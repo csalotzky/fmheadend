@@ -16,7 +16,34 @@ from fmheadendd.config import Settings
 
 
 def info(count):
-    return dict(rp_protocol_version=1, modulator_count=count)
+    return MockRp2354Client().get_info() | dict(modulator_count=count)
+
+
+def test_missing_capabilities_do_not_replace_verified_inventory():
+    recovery, _, _ = setup()
+    previous = dict(recovery.verified_info)
+    invalid = info(2)
+    del invalid['frequency_step_khz']
+    with pytest.raises(p.IncompatibleProtocol):
+        recovery._record_info(invalid)
+    assert recovery.verified_info == previous
+
+
+@pytest.mark.parametrize('frequency,valid', [(65025,True), (75025,True),
+    (65125,True), (65000,False), (75026,False), (65050,False)])
+def test_manager_uses_verified_minimum_anchored_raster(frequency, valid):
+    from fmheadendd.models.configuration import ModulatorConfig
+    from fmheadendd.errors import DomainError
+    recovery, _, _ = setup()
+    recovery._record_info(info(4) | dict(frequency_min_khz=65025,
+        frequency_max_khz=75025, frequency_step_khz=100))
+    recovery.error = DependencyUnavailable('Temporary outage')
+    config = ModulatorConfig(frequency_khz=frequency)
+    if valid:
+        recovery.modulators.validate(config)  # Cached limits survive communication failure.
+    else:
+        with pytest.raises(DomainError, match='Frequency must be'):
+            recovery.modulators.validate(config)
 
 
 def setup(count=4, mux=None, rp=None):
@@ -36,7 +63,7 @@ def setup(count=4, mux=None, rp=None):
 
 @pytest.mark.parametrize('count', range(1, 9))
 def test_all_counts(count):
-    assert p.parse_info(p.INFO.pack(1, b'fw', b'hw', count))['modulator_count'] == count
+    assert p.parse_info(p.INFO.pack(1, b'fw', b'hw', count, 76000, 108000, 50))['modulator_count'] == count
     recovery, mux, _ = setup(count)
     result = recovery.reconcile_mux(mux.get_status())
     assert result['stream_state'] == 'STREAMING'
@@ -48,8 +75,8 @@ def test_all_counts(count):
     mux.resume.assert_not_called()
 
 
-@pytest.mark.parametrize('payload', [b'', p.INFO.pack(1, b'fw', b'hw', 0),
-    p.INFO.pack(1, b'fw', b'hw', 9), p.INFO.pack(2, b'fw', b'hw', 8)])
+@pytest.mark.parametrize('payload', [b'', p.INFO.pack(1, b'fw', b'hw', 0, 76000, 108000, 50),
+    p.INFO.pack(1, b'fw', b'hw', 9, 76000, 108000, 50), p.INFO.pack(2, b'fw', b'hw', 8, 76000, 108000, 50)])
 def test_bad_info(payload):
     with pytest.raises(p.ProtocolError):
         p.parse_info(payload)

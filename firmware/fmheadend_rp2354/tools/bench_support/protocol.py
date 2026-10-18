@@ -101,7 +101,7 @@ ERROR_TYPES = {Status.INVALID_COMMAND: InvalidCommand, Status.INVALID_TARGET: In
                Status.QN_ERROR: QnError, Status.INTERNAL_ERROR: InternalError}
 GLOBAL_COMMANDS = {Command.FLASH_UPDATE, Command.GET_INFO, Command.GET_STATUS, Command.RESET_ERROR_COUNTERS, Command.RP_SOFT_RESET, Command.GET_RDS_FIFO_FREE}
 # All successful responses have exact fixed sizes in V1.
-INFO = struct.Struct("<H16s16sB")
+INFO = struct.Struct("<H16s16sBIII")
 GLOBAL_STATUS = struct.Struct("<BIIB")
 TX_CONFIG = struct.Struct("<IHBBBBBhBB")
 CHANNEL_STATUS = struct.Struct("<BhIIHBB")
@@ -249,14 +249,32 @@ def _text(data: bytes, field: str) -> str:
     return text
 
 
+def frequency_capabilities(info: dict) -> tuple[int, int, int]:
+    values = tuple(info.get(key) for key in ('frequency_min_khz', 'frequency_max_khz', 'frequency_step_khz'))
+    if any(type(value) is not int or not 0 < value <= 0xffffffff for value in values):
+        raise IncompatibleProtocol('Missing or invalid Controller frequency capabilities')
+    minimum, maximum, step = values
+    if minimum > maximum or (maximum - minimum) % step:
+        raise IncompatibleProtocol('Invalid Controller frequency range/raster')
+    return minimum, maximum, step
+
+
+def validate_frequency(frequency: int, info: dict) -> None:
+    minimum, maximum, step = frequency_capabilities(info)
+    if not minimum <= frequency <= maximum or (frequency - minimum) % step:
+        raise ValueError(f'Frequency must be {minimum}..{maximum} kHz on a {step} kHz raster from {minimum}')
+
+
 def parse_info(payload: bytes) -> dict:
     if len(payload) != INFO.size:
         raise ProtocolError("Invalid GET_INFO payload size")
-    version, firmware, hardware, count = INFO.unpack(payload)
+    version, firmware, hardware, count, minimum, maximum, step = INFO.unpack(payload)
     info = {"rp_protocol_version": version, "rp_firmware_version": _text(firmware, "rp_firmware_version"),
-            "hardware_target": _text(hardware, "hardware_target"), "modulator_count": count}
-    if version != PROTOCOL_VERSION or count != 8:
-        raise IncompatibleProtocol(f"Unsupported Controller protocol/count: {version}/{count}; expected {PROTOCOL_VERSION}/8")
+            "hardware_target": _text(hardware, "hardware_target"), "modulator_count": count,
+            "frequency_min_khz": minimum, "frequency_max_khz": maximum, "frequency_step_khz": step}
+    if version != PROTOCOL_VERSION or not 1 <= count <= 8:
+        raise IncompatibleProtocol(f"Unsupported Controller protocol/count: {version}/{count}; expected {PROTOCOL_VERSION}/1..8")
+    frequency_capabilities(info)
     return info
 
 

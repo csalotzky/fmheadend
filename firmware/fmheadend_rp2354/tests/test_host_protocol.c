@@ -114,18 +114,22 @@ int main(void)
     assert(host_protocol_read(&host) == HOST_BUSY && host_protocol_read(&host) == 0);
     const uint8_t info[] = {1, 0xff, 0};
     request(info, sizeof(info), HOST_OK);
-    assert(host.response_size == 39);
-    assert(host_protocol_read(&host) == 0 && host_protocol_read(&host) == 35);
+    assert(host.response_size == 51);
+    assert(host_protocol_read(&host) == 0 && host_protocol_read(&host) == 47);
     host_protocol_stop(&host, 999); /* Separate header read STOP. */
     assert(host_protocol_read(&host) == 1 && host_protocol_read(&host) == 0);
-    uint8_t payload[35];
+    uint8_t payload[47];
     memcpy(payload, host.response + 2, sizeof(payload));
     assert(!strcmp((const char *)payload + 2, HOST_FIRMWARE_VERSION));
     assert(!strcmp((const char *)payload + 18, HOST_HARDWARE_TARGET));
+    assert(!strcmp((const char *)payload + 18, "rp2354-qn8x-v1"));
+    assert(host_get_u32(payload + 35) == 76000);
+    assert(host_get_u32(payload + 39) == 108000);
+    assert(host_get_u32(payload + 43) == 50);
     for (unsigned i = 2 + sizeof(HOST_FIRMWARE_VERSION); i < 18; ++i) assert(!payload[i]);
     for (unsigned i = 18 + sizeof(HOST_HARDWARE_TARGET); i < 34; ++i) assert(!payload[i]);
     assert(payload[34] == 8);
-    for (unsigned i = 2; i < 35; ++i) assert(host_protocol_read(&host) == payload[i]);
+    for (unsigned i = 2; i < 47; ++i) assert(host_protocol_read(&host) == payload[i]);
     assert(host_protocol_read(&host) == host.response[37]);
     assert(host_protocol_read(&host) == host.response[38]);
     host_protocol_stop(&host, 999);

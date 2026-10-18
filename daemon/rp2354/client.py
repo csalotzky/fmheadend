@@ -62,7 +62,8 @@ class MockRp2354Client:
 
     def get_info(self):
         self._check()
-        return {"rp_protocol_version": PROTOCOL_VERSION, "rp_firmware_version": "mock", "hardware_target": "mock", "modulator_count": 8}
+        return {"rp_protocol_version": PROTOCOL_VERSION, "rp_firmware_version": "mock", "hardware_target": "mock", "modulator_count": 8,
+                "frequency_min_khz": 76000, "frequency_max_khz": 108000, "frequency_step_khz": 50}
 
     def get_status(self):
         self._check()

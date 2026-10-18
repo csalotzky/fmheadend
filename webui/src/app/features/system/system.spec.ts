@@ -9,6 +9,14 @@ import { planOptions, frequencyLabel } from '../../core/api/system-api';
 import { routes } from '../../app.routes';
 
 describe('System and region plans', () => {
+  it('does not invent an Expert range before capabilities arrive', () => {
+    expect(planOptions({ region: 0, region_name: 'Expert', fm_min_khz: null,
+      fm_max_khz: null, fm_step_khz: null })).toEqual([]);
+  });
+  it('uses a reported Expert range and minimum-anchored raster', () => {
+    expect(planOptions({ region: 0, region_name: 'Expert', fm_min_khz: 65025,
+      fm_max_khz: 65225, fm_step_khz: 100 }).map(o => o.value)).toEqual([65025, 65125, 65225]);
+  });
   beforeEach(() =>
     TestBed.configureTestingModule({
       providers: [provideHttpClient(), provideHttpClientTesting()],
@@ -60,7 +68,7 @@ describe('System and region plans', () => {
     expect(text).toContain('Multiplexer');
     expect(text).toContain('Controller');
     expect(text).toContain('Hardware target');
-    expect(text.includes('rp2354-tx-v1')).toBe(state === 'OK');
+    expect(text.includes('rp2354-qn8x-v1')).toBe(state === 'OK');
     expect(text).toContain('Controller audio-link errors');
     expect(text).toContain('Last Controller error (history)');
     expect(text).toContain('QN_ERROR');

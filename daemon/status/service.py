@@ -4,6 +4,7 @@ import logging
 from .host_metrics import HostMetrics
 from ..errors import DependencyUnavailable, DomainError
 from .. import __version__
+from ..regions import effective_plan
 from ..rp2354.linux_client import Rp2354Client
 from ..rp2354.protocol import IncompatibleProtocol, RpResponseError
 from ..models.runtime_status import HeadendStatus, SystemStatus, TxState, WriterPcmStatus, InputSourceStatus
@@ -47,6 +48,10 @@ class StatusService:
         Readers never collect Source diagnostics or enter PCM/control locks.
         Publication failure leaves the previous observation aging normally.
         """
+        capabilities = self.recovery.verified_info if self.recovery else None
+        for key in ('frequency_min_khz', 'frequency_max_khz', 'frequency_step_khz'):
+            self.info[key] = capabilities[key] if capabilities else None
+        self.info['frequency_plan'] = effective_plan(self.modulators.settings.region, capabilities)
         source_statuses = {}
         views = {}
         self._modulator_configs = {c.id: c for c in self.modulators.list()}

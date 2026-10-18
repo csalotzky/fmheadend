@@ -95,14 +95,14 @@ int main(void)
     const uint8_t info[] = {1,255,0};
     write_request(info, sizeof(info)); /* Final RX + STOP in the same IRQ. */
     assert(uart_log[0] == 0);
-    assert(read_byte() == 0 && read_byte() == 35);
+    assert(read_byte() == 0 && read_byte() == 47);
     finish_read();
     assert(read_byte() == 1 && read_byte() == 0);
-    for (unsigned i = 2; i < 35; ++i) assert(read_byte() == host.response[i + 2]);
+    for (unsigned i = 2; i < 47; ++i) assert(read_byte() == host.response[i + 2]);
     read_crc();
     finish_read();
     drain();
-    assert(strstr(uart_log, "HOST RX: GET_INFO") && strstr(uart_log, "HOST TX: OK payload=35 bytes"));
+    assert(strstr(uart_log, "HOST RX: GET_INFO") && strstr(uart_log, "HOST TX: OK payload=47 bytes"));
 
     const uint8_t on[] = {3,3,1,1};
     write_request(on, sizeof(on));
@@ -186,14 +186,14 @@ int main(void)
     assert(abrt_snapshot.size == 39 && abrt_snapshot.copied == 39);
     assert(!memcmp(abrt_snapshot.response,host.response,39));
     assert(abrt_snapshot.response[39] == 0);
-    assert(read_byte() == 0 && read_byte() == 35);
+    assert(read_byte() == 0 && read_byte() == 47);
     finish_read();
     /* Replace the live response and abort again before any foreground print. */
     write_request(rds_free,sizeof(rds_free));
     test_i2c1.hw.tx_abrt_source = 0x5000;
     irq(I2C_IC_INTR_STAT_R_TX_ABRT_BITS,0,0);
     assert(abrt_snapshot.source == 0x00802000 && abrt_snapshot.cursor == 1);
-    assert(abrt_snapshot.response[1] == 35 && host.response[1] == 16);
+    assert(abrt_snapshot.response[1] == 47 && host.response[1] == 16);
     drain();
     assert(abrt_snapshot_printed);
     const char *snapshot_log=strstr(uart_log,"HOST I2C ABRT SNAP:");
@@ -216,7 +216,7 @@ int main(void)
     assert(read_byte() == HOST_INVALID_ARGUMENT);
     drain();
     write_request(info, sizeof(info));
-    assert(read_byte() == 0 && read_byte() == 35);
+    assert(read_byte() == 0 && read_byte() == 47);
     finish_read(); drain(); uart_log[0]=0;
     uint8_t sine_config[sizeof(config)]; memcpy(sine_config,config,sizeof(config));
     sine_config[3+8]=2;

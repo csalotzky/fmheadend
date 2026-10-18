@@ -71,7 +71,9 @@
                 <option [ngValue]="option.value">{{ option.label }}</option>
               }</select
             ><small
-              >Required. {{ plan?.region_name }}; {{ plan?.fm_step_khz }} kHz raster.</small
+              >Required. {{ plan?.region_name }};
+              @if (plan?.fm_step_khz != null) { {{ plan.fm_step_khz }} kHz raster. }
+              @else { hardware capabilities unavailable. }</small
             ></label
           >
           <label

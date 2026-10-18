@@ -80,12 +80,14 @@ import { errorMessage } from '../../core/api/headend-api';
             <dd>{{ data.frequency_plan.region }} - {{ data.frequency_plan.region_name }}</dd>
             <dt>FM band</dt>
             <dd>
+              @if (data.frequency_plan.fm_min_khz !== null && data.frequency_plan.fm_max_khz !== null) {
               {{ frequency(data.frequency_plan.fm_min_khz).replace(' MHz', '') }}-{{
                 frequency(data.frequency_plan.fm_max_khz)
               }}
+              } @else { Unavailable }
             </dd>
             <dt>Step</dt>
-            <dd>{{ data.frequency_plan.fm_step_khz }} kHz</dd>
+            <dd>{{ data.frequency_plan.fm_step_khz === null ? 'Unavailable' : data.frequency_plan.fm_step_khz + ' kHz' }}</dd>
           </dl>
         } @else {
           <p>Unavailable</p>

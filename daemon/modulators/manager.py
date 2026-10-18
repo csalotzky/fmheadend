@@ -2,12 +2,11 @@ import logging
 import time
 import sqlite3
 from ..diagnostics import error_scope
-from ..regions import HARDWARE_MIN_KHZ, HARDWARE_MAX_KHZ, HARDWARE_STEP_KHZ
 from ..errors import DependencyUnavailable, DomainError, SourceUnavailable
 from ..models.configuration import ModulatorConfig, RDS_FIELDS
 from ..models.runtime_status import ModulatorStatus, TxState
 from ..rp2354.client import TxConfig
-from ..rp2354.protocol import Command, Outcome, RpResponseError, IncompatibleProtocol, execution_outcome
+from ..rp2354.protocol import Command, Outcome, RpResponseError, IncompatibleProtocol, execution_outcome, validate_frequency
 
 logger = logging.getLogger(__name__)
 
@@ -51,8 +50,14 @@ class ModulatorManager:
         if config.frequency_khz is None:
             if config.enabled:
                 raise DomainError(409, "FREQUENCY_REQUIRED", "Configure a transmitter frequency before enabling a modulator")
-        elif not HARDWARE_MIN_KHZ <= config.frequency_khz <= HARDWARE_MAX_KHZ or config.frequency_khz % HARDWARE_STEP_KHZ:
-            raise DomainError(422, "INVALID_FREQUENCY", "Frequency must be 76000..108000 kHz on the 50 kHz hardware raster")
+        else:
+            info = self.recovery.verified_info if self.recovery else None
+            if info is None:
+                raise DomainError(503, "DEPENDENCY_UNAVAILABLE", "Controller frequency capabilities have not been verified")
+            try:
+                validate_frequency(config.frequency_khz, info)
+            except ValueError as exc:
+                raise DomainError(422, "INVALID_FREQUENCY", str(exc)) from exc
         if config.input_source_id is not None:
             self.database.get("sources", config.input_source_id)
         elif config.enabled and config.audio_mode == "DIGITAL":
