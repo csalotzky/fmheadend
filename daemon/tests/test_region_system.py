@@ -20,6 +20,8 @@ def test_exact_plans_and_info(tmp_path,region,minimum,maximum,step,count):
     assert frequencies==[minimum+i*step for i in range(count)]
     assert frequencies[-1]==maximum
     with TestClient(create_app(Settings(tmp_path/'config.db',region))) as api:
+        initial_emphasis = 75 if region == 2 else 50
+        assert [tx['preemphasis_us'] for tx in api.get('/api/v1/modulators').json()] == [initial_emphasis] * 8
         info=api.get('/api/v1/system/info').json()
         assert info['frequency_plan']==plan.as_dict()
         assert info['database_schema_version']==1 and info['media_backend']=='MOCK'
@@ -28,6 +30,7 @@ def test_exact_plans_and_info(tmp_path,region,minimum,maximum,step,count):
         assert api.patch('/api/v1/modulators/0',json={'frequency_khz':76050,'preemphasis_us':75,'rds_af_khz':[87600,107900]}).status_code==200
         assert api.patch('/api/v1/modulators/0',json={'frequency_khz':76025}).status_code==422
     with TestClient(create_app(Settings(tmp_path/'config.db',(region+1)%4))) as api:
+        assert [tx['preemphasis_us'] for tx in api.get('/api/v1/modulators').json()][1:] == [initial_emphasis] * 7
         config=api.get('/api/v1/modulators/0').json()
         assert config['frequency_khz']==76050 and config['preemphasis_us']==75
         assert config['rds_af_khz']==[87600,107900]
