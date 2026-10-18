@@ -1,4 +1,4 @@
-from .models.configuration import InputSourceConfig, SystemConfig
+from .models.configuration import InputSourceConfig, SystemConfig, SystemSaveResult
 
 
 class ConfigurationService:
@@ -45,5 +45,13 @@ class ConfigurationService:
         return self.database.get_system()
 
     def update_system(self, patch):
-        config = SystemConfig.model_validate(self.get_system().model_dump() | patch.model_dump(exclude_unset=True))
-        return self.database.save_system(config)
+        previous = self.get_system()
+        config = SystemConfig.model_validate(previous.model_dump() | patch.model_dump(exclude_unset=True))
+        changed = config.default_audio_profile_id != previous.default_audio_profile_id
+        if 'default_audio_profile_id' in patch.model_fields_set:
+            profile = self.sources.profile_files.get(config.default_audio_profile_id).profile
+            self.sources.validate_profile(profile)
+        self.database.save_system(config)
+        errors = (self.sources.apply_default_profile(retry_failed_only=not changed)
+                  if 'default_audio_profile_id' in patch.model_fields_set else {})
+        return SystemSaveResult(**config.model_dump(), applied=not errors, restart_errors=errors)

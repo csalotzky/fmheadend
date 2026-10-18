@@ -53,8 +53,8 @@ def main():
             for index in range(args.sources):
                 profile = 'moderate_loud.json' if index < args.affected else 'unchanged.json'
                 source = request('POST', 'sources', dict(name=f'Repro {index}', type='HTTP',
-                    config=dict(uri=args.uri), processor_mode='builtin',
-                    audio_profile_path='custom/' + profile))
+                    config=dict(uri=args.uri), use_default_audio_profile=False,
+                    audio_profile_id='custom/' + profile))
                 request('PATCH', f'modulators/{index}', dict(input_source_id=source['id'],
                     frequency_khz=90000 + index * 200, rf_attenuation_db=22.5))
                 request('POST', f'modulators/{index}/start')

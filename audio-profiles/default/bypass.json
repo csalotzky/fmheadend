@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "name": "Bypass",
+  "description": "No filtering or dynamics processing. Source Gain and PCM format conversion still apply.",
+  "stages": {
+    "input_gain": {
+      "selected": "VOLUME",
+      "implementations": { "VOLUME": { "gain_db": 0.0 } }
+    },
+    "hpf": { "selected": "OFF", "implementations": {} },
+    "gate": { "selected": "OFF", "implementations": {} },
+    "agc": { "selected": "OFF", "implementations": {} },
+    "eq": { "selected": "OFF", "implementations": {} },
+    "wideband": { "selected": "OFF", "implementations": {} },
+    "multiband": { "selected": "OFF", "implementations": {} },
+    "master_gain": {
+      "selected": "VOLUME",
+      "implementations": { "VOLUME": { "gain_db": 0.0 } }
+    },
+    "limiter": { "selected": "OFF", "implementations": {} },
+    "lpf": { "selected": "OFF", "implementations": {} },
+    "clipper": { "selected": "OFF", "implementations": {} },
+    "output_trim": {
+      "selected": "TRIM",
+      "implementations": { "TRIM": { "gain_db": 0.0 } }
+    }
+  }
+}

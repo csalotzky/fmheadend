@@ -80,8 +80,10 @@ class SourceManager:
             source = pipeline.source
             sample = (pipeline.telemetry_snapshot() if hasattr(pipeline, 'telemetry_snapshot')
                       else dict(telemetry_available=False, generation=0))
+            # Applied identity was captured on the control thread at construction;
+            # telemetry must not read SQLite to resolve the dynamic default.
             records.append(dict(source_id=source_id, source_name=source.name,
-                processor_mode=source.processor_mode, audio_profile_path=source.audio_profile_path,
+                audio_profile_id=pipeline.audio_profile_id,
                 consumer_tx_ids=consumer_ids, **sample))
         return records
 
@@ -113,7 +115,7 @@ class SourceManager:
         never profile models, and is not retained here. Existing per-source TTL
         hits must not seed it: another source may already need a fresh file read.
         """
-        key = (source.processor_mode, source.audio_profile_path)
+        key = self.effective_profile_id(source)
         now = self.clock()
         previous = self._profile_observations.get(source.id)
         if previous is not None and previous[0] == key and 0 <= now - previous[1] < 1.0:
@@ -132,31 +134,48 @@ class SourceManager:
         return error
 
     def _new_pipeline(self, source, **kwargs):
-        if source.processor_mode == 'stereotool':
-            raise DependencyUnavailable('Stereo Tool processing is not implemented')
         try:
             profile = self.validate_config(source)
         except DomainError as exc:
             raise DependencyUnavailable(f'{exc.error}: {exc.message}') from exc
         if getattr(self.pipeline_factory, "mocked", True):
-            return self.pipeline_factory(source)
+            pipeline = self.pipeline_factory(source)
+            pipeline.audio_profile_id = self.effective_profile_id(source)
+            return pipeline
         if source.type == 'PODCAST':
             kwargs['podcast_database_path'] = self.database.connection.execute('PRAGMA database_list').fetchone()[2]
         pipeline = self.pipeline_factory(source, profile=profile,
             pcm_staging_buffer_ms=self.pcm_staging_buffer_ms,
             pcm_staging_max_age_ms=self.pcm_staging_max_age_ms,
             pcm_consumer_buffer_ms=self.pcm_consumer_buffer_ms, **kwargs)
+        pipeline.audio_profile_id = self.effective_profile_id(source)
         with self._telemetry_lock:
             if hasattr(pipeline, 'request_telemetry'):
                 pipeline.request_telemetry(*self._telemetry_request)
         return pipeline
 
+    def effective_profile_id(self, source):
+        return (self.database.get_system().default_audio_profile_id
+                if source.use_default_audio_profile else source.audio_profile_id)
+
     def validate_config(self, source):
-        if source.processor_mode == 'builtin':
-            if self.profile_files is None:
-                raise DomainError(503, 'PROFILE_STORAGE_ERROR', 'Profile storage is not configured')
-            return self.profile_files.get(source.audio_profile_path).profile
-        return None
+        if self.profile_files is None:
+            raise DomainError(503, 'PROFILE_STORAGE_ERROR', 'Profile storage is not configured')
+        return self.profile_files.get(self.effective_profile_id(source)).profile
+
+    def apply_default_profile(self, *, retry_failed_only=False):
+        """Control-owned; only replace existing inheriting pipelines, once per Source."""
+        self._profile_observations.clear()
+        errors = {}
+        for source_id in list(self.pipelines):
+            if retry_failed_only and source_id not in self.restart_errors:
+                continue
+            source = self.database.get('sources', source_id)
+            if source.use_default_audio_profile:
+                error = self._restart_audio(source)
+                if error:
+                    errors[source_id] = error
+        return errors
 
     def validate_profile(self, profile):
         if not getattr(self.pipeline_factory, 'mocked', True):
@@ -175,7 +194,7 @@ class SourceManager:
         errors = {}
         for source_id in list(self.pipelines):
             source = self.database.get('sources', source_id)
-            if source.audio_profile_path != path:
+            if self.effective_profile_id(source) != path:
                 continue
             error = self._restart_audio(source)
             if error:
@@ -186,8 +205,8 @@ class SourceManager:
         """Called after persistence on the control executor; retain fanout/consumers."""
         from ..models.configuration import SourceSaveResult
         self.radio_recovery.invalidate(saved.id)
-        runtime_fields = ('type', 'config', 'processor_mode', 'input_gain_db',
-                          'audio_profile_path', 'gst_options')
+        runtime_fields = ('type', 'config', 'use_default_audio_profile', 'input_gain_db',
+                          'audio_profile_id', 'gst_options')
         changed = any(getattr(previous, key) != getattr(saved, key) for key in runtime_fields)
         rds_only = (previous.rds_profile != saved.rds_profile and
                     previous.model_dump(exclude={'rds_profile', 'rds_profile_id', 'timestamp'}) ==
@@ -319,9 +338,6 @@ class SourceManager:
                                         **({count_field: 0} if exc.error == 'NO_PLAYABLE_TRACKS' else {}))
             return SourceTestResult(mocked=False, **{count_field: count},
                                     message='Discovery only; audio decoding was not tested.')
-        if source.processor_mode == 'stereotool':
-            return SourceTestResult(ok=False, mocked=getattr(self.pipeline_factory, 'mocked', True),
-                                    message='Stereo Tool processing is not implemented')
         self.validate_config(source)
         if source.type == 'PODCAST':
             from ..models.configuration import PodcastConfig

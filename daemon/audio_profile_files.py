@@ -26,10 +26,12 @@ def storage_errors():
 
 class AudioProfileFiles:
     def __init__(self, default_root, custom_root, *, is_referenced=lambda path: False,
+                 is_system_default=lambda path: False,
                  clock=lambda: datetime.now(timezone.utc)):
         # Roots are trusted deployment configuration, never supplied by API clients.
         self.roots = {"default": Path(default_root).absolute(), "custom": Path(custom_root).absolute()}
         self.is_referenced = is_referenced
+        self.is_system_default = is_system_default
         self.clock = clock
 
     def _path(self, logical):
@@ -69,7 +71,8 @@ class AudioProfileFiles:
             except (ValueError, UnicodeError, RecursionError) as exc:
                 raise DomainError(422, "INVALID_PROFILE", f"Invalid JSON in {logical}: {exc}") from exc
             profile = self.validate(data)
-            return ProfileFileResult(name=profile.name, description=profile.description, path=logical, kind=logical.split('/')[0], profile=profile)
+            return ProfileFileResult(name=profile.name, description=profile.description, path=logical,
+                kind=logical.split('/')[0], profile=profile, is_system_default=self.is_system_default(logical))
 
     def list(self):
         result = []
@@ -147,8 +150,8 @@ class AudioProfileFiles:
         self._custom(logical)
         with storage_errors():
             path = self._path(logical)
-            if self.is_referenced(logical):
-                raise DomainError(409, "PROFILE_IN_USE", "Profile is referenced by a Source")
+            if self.is_system_default(logical) or self.is_referenced(logical):
+                raise DomainError(409, "PROFILE_IN_USE", "Profile is the system default or referenced by a Source")
             try:
                 path.unlink()
             except FileNotFoundError as exc:

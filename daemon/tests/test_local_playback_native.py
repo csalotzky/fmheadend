@@ -225,7 +225,7 @@ def test_native_stop_at_track_handoff(tmp_path):
 def test_native_cycle_refresh_and_gain(tmp_path):
     from fmheadendd.tests.test_gstreamer import file_profile
     tone(tmp_path/'a.wav',4000,1)
-    source=config(tmp_path).model_copy(update=dict(processor_mode='builtin', audio_profile_path='custom/test.json', input_gain_db=-6))
+    source=config(tmp_path).model_copy(update=dict(use_default_audio_profile=False, audio_profile_id='custom/test.json', input_gain_db=-6))
     p=TracedPipeline(source,profile=file_profile('LOCAL native',gain_db=-6),timeout_s=3)
     p.output.attach(0)
     try:

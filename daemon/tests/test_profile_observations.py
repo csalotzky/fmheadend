@@ -28,7 +28,7 @@ def profiles(tmp_path):
 
 def manager_for(files, now, paths):
     manager = SourceManager(None, profile_files=files, clock=lambda: now[0])
-    sources = [SimpleNamespace(id=i, processor_mode='builtin', audio_profile_path=path)
+    sources = [SimpleNamespace(id=i, use_default_audio_profile=False, audio_profile_id=path)
                for i, path in enumerate(paths)]
     for source in sources:
         manager.pipelines[source.id] = SimpleNamespace(mocked=False,
@@ -50,7 +50,7 @@ def test_shared_and_distinct_profiles_and_runtime_ownership(profiles):
     with patch.object(files, 'get', wraps=files.get) as load:
         statuses, errors = observe(manager, sources)
         assert [c.args[0] for c in load.call_args_list] == ['custom/first.json', 'custom/second.json']
-        assert errors == {('builtin', 'custom/first.json'): None, ('builtin', 'custom/second.json'): None}
+        assert errors == {'custom/first.json': None, 'custom/second.json': None}
         assert all(s.state == 'RUNNING' for s in statuses)
         statuses[0].pcm.staging.accepted_bytes = 999
         statuses[0].stream_title = 'Changed'
@@ -96,11 +96,11 @@ def test_errors_are_shared_and_next_due_generation_observes_repair(profiles, fai
         path.write_text(json.dumps(invalid), encoding='utf-8')
     elif failure == 'path':
         for source in sources:
-            source.audio_profile_path = 'custom/../first.json'
+            source.audio_profile_id = 'custom/../first.json'
     permission = patch('fmheadendd.audio_profile_files.os.open', side_effect=PermissionError(13, 'Denied'))
     with (permission if failure == 'permission' else nullcontext()):
         with pytest.raises(DomainError) as expected:
-            files.get(sources[0].audio_profile_path)
+            files.get(sources[0].audio_profile_id)
         with patch.object(files, 'get', wraps=files.get) as load:
             statuses, errors = observe(manager, sources)
             load.assert_called_once()
@@ -109,7 +109,7 @@ def test_errors_are_shared_and_next_due_generation_observes_repair(profiles, fai
         assert list(errors.values()) == [text]
     path.write_text(json.dumps(data), encoding='utf-8')
     for source in sources:
-        source.audio_profile_path = 'custom/first.json'
+        source.audio_profile_id = 'custom/first.json'
     now[0] = 1.0
     assert all(s.state == 'RUNNING' for s in observe(manager, sources)[0])
 

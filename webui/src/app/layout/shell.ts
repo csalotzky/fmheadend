@@ -32,8 +32,10 @@ export class Shell implements OnInit, OnDestroy {
         error: () => this.version.set(null),
       });
       const profiles = this.profiles.list().subscribe({
-        next: (rows) =>
-          this.state.profileNames.set(Object.fromEntries(rows.map((p) => [p.path, p.name]))),
+        next: (rows) => {
+          this.state.profileNames.set(Object.fromEntries(rows.map((p) => [p.path, p.name])));
+          this.state.defaultAudioProfileId.set(rows.find((p) => p.is_system_default)?.path ?? null);
+        },
         error: () => this.state.profileNames.set({}),
       });
       cleanup(() => {

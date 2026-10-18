@@ -47,8 +47,8 @@ with tempfile.TemporaryDirectory(prefix='fmheadend-dsp-source-') as directory:
             file.write_text(json.dumps(dict(schema_version=1, description="Test profile",name='Shared test',stages=stages)))
             profile=AudioProfileFile.model_validate_json(file.read_text()) if builtin else None
             source=InputSourceConfig(name='Isolated',type='HTTP',config={'uri':f'http://127.0.0.1:{server.server_port}/source.wav'},
-                input_gain_db=-6,processor_mode='builtin' if builtin else 'bypass',
-                audio_profile_path='custom/probe.json' if builtin else None)
+                input_gain_db=-6,use_default_audio_profile=False,
+                audio_profile_id='custom/probe.json' if builtin else 'default/bypass.json')
             output=None
             for rebuild in range(2):
                 pipeline=GstPipeline(source,profile=profile,output=output,reconnect=False)

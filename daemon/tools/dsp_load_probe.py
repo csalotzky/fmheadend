@@ -72,7 +72,7 @@ with tempfile.TemporaryDirectory(prefix='fmheadend-dsp-load-') as directory:
                 for i in range(8):
                     source=InputSourceConfig(name=f'Independent {i}',type='HTTP',
                         config={'uri':f'http://127.0.0.1:{server.server_port}/{i}.mp3'},
-                        processor_mode='builtin',audio_profile_path='custom/load.json')
+                        use_default_audio_profile=False,audio_profile_id='custom/load.json')
                     p=GstPipeline(source,profile=profile,reconnect=False);pipelines.append(p)
                     p.output.attach(0);p.start()
                 startup=time.monotonic()-began

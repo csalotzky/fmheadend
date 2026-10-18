@@ -4,7 +4,7 @@ from ..alsa import AlsaCaptureDevices
 from ..models.configuration import (
     ErrorResponse,
     InputSource, InputSourceConfig, InputSourcePatch, SourceSaveResult, Modulator, ModulatorPatch,
-    RtOverride, RtStatus, SourceTestResult, SystemConfig, SystemConfigPatch,
+    RtOverride, RtStatus, SourceTestResult, SystemConfig, SystemConfigPatch, SystemSaveResult,
 )
 from ..models.runtime_status import HeadendStatus, InputSourceStatus, ModulatorStatus, ModulatorSaveResult
 from ..models.audio_profile_file import AudioProfileFile, CloneProfileFile, ProfileFileResult, ProfileFileSummary, ProfileSaveResult
@@ -226,7 +226,7 @@ def get_system_config(request: Request):
     return request.app.state.services.config.get_system()
 
 
-@router.patch("/system/config", response_model=SystemConfig, tags=["system"])
+@router.patch("/system/config", response_model=SystemSaveResult, tags=["system"])
 @control_route
 def update_system_config(body: SystemConfigPatch, request: Request):
     """Persist settings. Listener/log changes take effect on next daemon startup."""

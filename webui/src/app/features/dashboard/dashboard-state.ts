@@ -123,6 +123,10 @@ export class DashboardState {
   private snapshotGeneration = 0;
   private nextRefreshAt = 0;
   readonly profileNames = signal<Record<string, string>>({});
+  readonly defaultAudioProfileId = signal<string | null>(null);
+  profileId(source: InputSource): string | null {
+    return source.use_default_audio_profile ? this.defaultAudioProfileId() : source.audio_profile_id;
+  }
   private messageGeneration = 0;
   clearMessages() {
     this.feedbackExpiry.clear();

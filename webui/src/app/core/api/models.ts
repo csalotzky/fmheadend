@@ -37,9 +37,9 @@ export interface InputSource {
   name: string;
   type: 'HTTP' | 'UDP' | 'RTP' | 'ALSA' | 'LOCAL' | 'PODCAST';
   config: Record<string, unknown>;
-  processor_mode: 'bypass' | 'builtin' | 'stereotool';
+  use_default_audio_profile: boolean;
   input_gain_db: number;
-  audio_profile_path: string | null;
+  audio_profile_id: string | null;
   gst_options: Record<string, unknown>;
   timestamp: string;
 }
