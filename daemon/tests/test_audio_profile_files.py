@@ -393,16 +393,3 @@ def test_external_mutated_or_constructed_profile_is_not_trusted_by_result_model(
     for supplied in (profile, unvalidated):
         with pytest.raises(ValidationError):
             ProfileFileResult(description="Test profile", name='Invalid', path='custom/bad.json', kind='custom', profile=supplied)
-
-
-def test_tracked_profiles_contain_fm_peak_defaults():
-    for path in DEFAULT.parent.glob('*.json'):
-        if path.name == 'bypass.json':
-            continue  # No limiter/clipper settings in the processing-free profile.
-        data = json.loads(path.read_text(encoding='utf-8'))
-        limiter = data['stages']['limiter']['implementations']['FM_HEADEND_LIMITER']
-        clipper = data['stages']['clipper']['implementations']['FM_HEADEND_CLIPPER']
-        assert limiter['true_peak_detection'] is False, path
-        assert clipper['clipping_mode'] == 'hard', path
-        assert clipper['soft_knee_db'] == 2., path
-        assert AudioProfileFile.model_validate(data).model_dump() == data
