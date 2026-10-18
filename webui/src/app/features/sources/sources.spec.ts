@@ -673,14 +673,14 @@ describe('Sources management', () => {
         (e) => e.textContent?.trim(),
       );
     expect(labels()).toEqual([
-      'Audio profile: Studio processing',
-      'Audio profile: custom/missing.json',
-      'Audio profile: Basic Filtering',
-      'Audio profile: Bypass',
+      'Audio: Studio processing',
+      'Audio: custom/missing.json',
+      'Audio: System default (Basic Filtering)',
+      'Audio: Bypass',
     ]);
     shared.profileNames.set({});
     f.detectChanges();
-    expect(labels()[0]).toBe('Audio profile: custom/studio.json');
+    expect(labels()[0]).toBe('Audio: custom/studio.json');
     http.expectNone('/api/v1/audio-profiles/files');
     f.destroy();
   });

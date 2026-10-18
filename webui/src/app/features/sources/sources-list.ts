@@ -75,7 +75,8 @@ export class SourcesList {
   }
   profileLabel(source: InputSource): string {
     const path = this.shared.profileId(source);
-    return path ? this.shared.profileNames()[path] || path : '\u2014';
+    const name = path ? this.shared.profileNames()[path] || path : '\u2014';
+    return source.use_default_audio_profile ? `System default (${name})` : name;
   }
   references(id: number) {
     return this.shared.data()?.modulators.filter((m) => m.input_source_id === id).length ?? 0;
