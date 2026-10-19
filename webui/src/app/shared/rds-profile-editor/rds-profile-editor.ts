@@ -9,7 +9,7 @@ import { ptyLabels, rbdsPtyLabels, afOptions, mhz, textLength } from '../../feat
   selector: 'app-rds-profile-editor',
   imports: [ReactiveFormsModule],
   templateUrl: './rds-profile-editor.html',
-  styleUrls: ['../../features/modulators/modulators.css', './rds-profile-editor.css'],
+  styleUrl: './rds-profile-editor.css',
 })
 export class RdsProfileEditor {
   @Input({ required: true }) model!: RdsProfileForm;

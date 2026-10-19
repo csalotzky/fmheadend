@@ -1,52 +1,9 @@
 @import '../../shared/editor-layout.css';
 
-h3 {
-  font-size: 14px;
-  margin: 24px 0 10px;
-}
 input:disabled,
 select:disabled,
 fieldset:disabled {
   opacity: 0.65;
-}
-.check {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 12px 0;
-}
-.check input {
-  width: auto;
-  margin: 0;
-}
-.list-entry {
-  margin-bottom: 12px;
-  max-width: 540px;
-}
-.ps-fields {
-  display: grid;
-  grid-template-columns: minmax(120px, 1fr) 130px;
-  gap: 12px;
-  align-items: start;
-}
-.list-entry .actions {
-  display: flex;
-  flex-wrap: wrap;
-  margin-top: 8px;
-  gap: 6px;
-}
-.af-entry {
-  display: flex;
-  align-items: end;
-  gap: 12px;
-  margin-bottom: 12px;
-  max-width: 420px;
-}
-.af-entry label {
-  flex: 1;
-}
-.rt {
-  margin-top: 24px;
 }
 .runtime {
   border-left: 3px solid var(--border);
@@ -60,21 +17,4 @@ fieldset:disabled {
 .runtime p {
   flex-basis: 100%;
   margin: 0;
-}
-@media (max-width: 850px) {
-  .ps-fields {
-    grid-template-columns: 1fr 130px;
-  }
-}
-
-.rds-text {
-  font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace;
-}
-.ps-fields.single-ps {
-  grid-template-columns: minmax(120px, 1fr);
-}
-@media (max-width: 400px) {
-  .ps-fields {
-    grid-template-columns: 1fr;
-  }
 }

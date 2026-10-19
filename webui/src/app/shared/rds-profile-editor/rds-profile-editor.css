@@ -1,3 +1,75 @@
+@import '../editor-layout.css';
+
+h3 {
+  font-size: 14px;
+  margin: 24px 0 10px;
+}
+input:disabled,
+select:disabled,
+fieldset:disabled {
+  opacity: 0.65;
+}
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0;
+}
+.check input {
+  width: auto;
+  margin: 0;
+}
+.list-entry {
+  margin-bottom: 12px;
+  max-width: 540px;
+  padding: 12px;
+  border-left: 2px solid var(--border);
+  background: var(--background);
+}
+.ps-fields {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) 130px;
+  gap: 12px;
+  align-items: start;
+}
+.list-entry .actions {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  gap: 6px;
+}
+.af-entry {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+  margin-bottom: 12px;
+  max-width: 420px;
+}
+.af-entry label {
+  flex: 1;
+}
+.rt {
+  margin-top: 24px;
+}
+
+@media (max-width: 850px) {
+  .ps-fields {
+    grid-template-columns: 1fr 130px;
+  }
+}
+
+.rds-text {
+  font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace;
+}
+.ps-fields.single-ps {
+  grid-template-columns: minmax(120px, 1fr);
+}
+@media (max-width: 400px) {
+  .ps-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
 :host {
   display: block;
   margin-top: 18px;
@@ -15,11 +87,6 @@
   margin: 0 0 16px;
   line-height: 1.5;
 }
-.list-entry {
-  padding: 12px;
-  border-left: 2px solid var(--border);
-  background: var(--background);
-}
 .rt-group > label {
   margin: 16px 0 0;
 }
@@ -29,9 +96,6 @@
 .rt-group textarea {
   resize: vertical;
   min-height: var(--rt-min-height, 80px);
-}
-label {
-  min-width: 0;
 }
 .identification .check {
   align-self: center;
