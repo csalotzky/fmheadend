@@ -1,6 +1,6 @@
 import argparse
 import asyncio
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 import logging
 from types import SimpleNamespace
 import time
@@ -24,7 +24,7 @@ from .control import ControlExecutor
 from .database import Database, SCHEMA_VERSION
 from .regions import PLANS
 from .webui import mount_webui
-from .errors import DomainError
+from .errors import DependencyUnavailable, DomainError
 from .filesystem import FilesystemBrowser
 from .alsa import AlsaDiscovery
 from .modulators.manager import ModulatorManager
@@ -131,14 +131,34 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
             delay = services.recovery.retry_delay
             return min(interval, delay) if delay > 0 else interval
 
+        def maintenance_tick():
+            try:
+                return tick()
+            except Exception as exc:
+                services.status.publication_failed()
+                if not isinstance(exc, DependencyUnavailable):
+                    # Unknown partial progress is not permission to replay control.
+                    services.recovery.stopping = True
+                    services.rds.suspended = True
+                raise
+
         async def maintenance():
             while True:
                 try:
-                    interval = await control.call(tick)
+                    interval = await control.call(maintenance_tick)
+                except asyncio.CancelledError:
+                    raise
+                except DependencyUnavailable:
+                    logger.exception('Maintenance dependency failed; retrying in 250 ms')
+                    interval = 0.25
                 except DomainError as exc:
                     if exc.error != "CONTROL_BUSY":
+                        logger.critical('Maintenance stopped; daemon restart required', exc_info=True)
                         raise
                     interval = 0.25
+                except Exception:
+                    logger.critical('Maintenance stopped; daemon restart required', exc_info=True)
+                    raise
                 await asyncio.sleep(min(0.25, interval))
 
         task = asyncio.create_task(maintenance())
@@ -154,39 +174,55 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
                 await services.audio_telemetry.start()
             yield
         finally:
+            cleanup_errors = []
+
+            def cleanup(name, operation):
+                try:
+                    operation()
+                except Exception as exc:
+                    logger.exception('%s shutdown failed', name)
+                    cleanup_errors.append(exc)
+
             if services.audio_telemetry is not None:
                 try:
                     await services.audio_telemetry.close()
-                except Exception:
+                except Exception as exc:
                     logger.exception('Audio telemetry shutdown failed')
+                    cleanup_errors.append(exc)
             task.cancel()
-            with suppress(asyncio.CancelledError):
+            try:
                 await task
-            await radio_recovery.close()
-            try:
-                await services.radio_browser.close()
-            except Exception:
-                logger.error('Radio Browser client shutdown failed')
-            def shutdown():
+            except asyncio.CancelledError:
+                pass  # Expected cancellation of our maintenance task.
+            except Exception as exc:
+                logger.exception('Maintenance task failed before shutdown')
+                cleanup_errors.append(exc)
+            for name, operation in (
+                ('Radio Browser recovery', radio_recovery.close),
+                ('Radio Browser client', services.radio_browser.close),
+            ):
                 try:
-                    try:
-                        services.recovery.shutdown()
-                    finally:
-                        services.sources.close()
-                finally:
-                    try:
-                        services.mux.close()
-                    finally:
-                        try:
-                            if isinstance(services.rp, Rp2354Client):
-                                services.rp.close()
-                        finally:
-                            services.database.close()
+                    await operation()
+                except Exception as exc:
+                    logger.exception('%s shutdown failed', name)
+                    cleanup_errors.append(exc)
+
+            def shutdown():
+                cleanup('RF/recovery', services.recovery.shutdown)
+                cleanup('Sources', services.sources.close)
+                cleanup('Mux', services.mux.close)
+                if isinstance(services.rp, Rp2354Client):
+                    cleanup('Controller', services.rp.close)
+                cleanup('Database', services.database.close)
             try:
-                await control.call(shutdown)
+                # Queue behind any shielded in-flight work, but never reject
+                # essential cleanup because the normal request queue is full.
+                await asyncio.shield(asyncio.get_running_loop().run_in_executor(control.executor, shutdown))
             finally:
-                control.close()
-                logger.info("fmheadendd shutdown completed")
+                cleanup('Control executor', control.close)
+            if cleanup_errors:
+                raise ExceptionGroup('fmheadendd shutdown failures', cleanup_errors)
+            logger.info("fmheadendd shutdown completed")
 
     @asynccontextmanager
     async def lifespan(app):
