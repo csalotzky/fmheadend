@@ -29,6 +29,8 @@ def test_fresh_schema_and_model_defaults(tmp_path):
         assert db.connection.execute('SELECT * FROM podcast_history').fetchall() == []
         assert db.list("sources") == []
         assert db.get_system() == SystemConfig()
+        system_data = json.loads(db.connection.execute('SELECT data FROM system_config').fetchone()[0])
+        assert {'spi_device', 'spi_clock_hz'}.isdisjoint(system_data)
         assert [m.id for m in db.list("modulators")] == list(range(8))
         for tx in range(8):
             actual = db.get('modulators', tx)
@@ -66,6 +68,8 @@ def test_current_configuration_reopens_without_writes(tmp_path):
         audio_mode="ANALOG", frequency_khz=99500,
         rds_ps=[PsEntry(text="STUDIO")]), 7)
     db.save_system(SystemConfig(web_port=8090, log_level="DEBUG", controller_i2c_address=32))
+    assert {'spi_device', 'spi_clock_hz'}.isdisjoint(
+        json.loads(db.connection.execute('SELECT data FROM system_config').fetchone()[0]))
     before = snapshot(db.connection)
     db.close()
     for _ in range(2):
