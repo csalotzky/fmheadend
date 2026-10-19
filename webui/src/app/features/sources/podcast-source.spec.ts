@@ -371,7 +371,8 @@ describe('Podcast source configuration', () => {
   it('keeps the shared Audio processing panel and no playback controls', async () => {
     const f = await editor();
     const panel = el(f).querySelector('[aria-labelledby="audio-processing-heading"]')!;
-    expect(panel.textContent).toContain('Processor');
+    expect(panel.textContent).toContain('Audio Profile');
+    expect(panel.textContent).not.toContain('Processor');
     expect(panel.textContent).toContain('Source Gain');
     expect(panel.textContent).toContain('Advanced source options');
     expect(el(f).querySelector('[aria-labelledby="source-heading"]')!.contains(panel)).toBe(false);
@@ -388,9 +389,9 @@ describe('Podcast source configuration', () => {
       [...select.options].map((o) => [o.value, o.textContent?.trim()]),
     );
     expect(labels).toEqual({
-      HTTP: 'HTTP',
-      UDP: 'UDP',
-      RTP: 'RTP',
+      HTTP: 'Internet stream (HTTP)',
+      UDP: 'Network stream (UDP)',
+      RTP: 'Network stream (RTP)',
       ALSA: 'Sound card (ALSA)',
       LOCAL: 'Local media',
       PODCAST: 'Podcast',
