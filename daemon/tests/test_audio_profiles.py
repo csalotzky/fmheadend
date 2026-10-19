@@ -51,6 +51,30 @@ def source(api, **values):
     return response.json()['id']
 
 
+def test_corrupt_selected_profile_does_not_hide_catalog_or_change_references(api):
+    created = api.post(BASE + 'custom', json=document()).json()
+    path = created['path']
+    sid = source(api, use_default_audio_profile=False, audio_profile_id=path)
+    assert api.patch('/api/v1/system/config', json={'default_audio_profile_id': path}).status_code == 200
+    before_source = api.get(f'/api/v1/sources/{sid}').json()
+    before_system = api.get('/api/v1/system/config').json()
+    services = api.app.state.services
+    def corrupt_and_publish():
+        services.profile_files._path(path).write_text('{bad', encoding='utf-8')
+        services.status.publish(configuration_changed=True)
+    api.app.state.control.executor.submit(corrupt_and_publish).result()
+    result = api.get(BASE.rstrip('/'))
+    assert result.status_code == 200
+    assert 'default/basic_filtering.json' in {item['path'] for item in result.json()}
+    assert path not in {item['path'] for item in result.json()}
+    assert api.get(BASE + path).status_code == 422
+    assert api.get(f'/api/v1/sources/{sid}').json() == before_source
+    assert api.get('/api/v1/system/config').json() == before_system
+    assert api.get('/api/v1/status').status_code == 200
+    logs = api.get('/api/v1/system/logs').json()
+    assert any(path in str(row) and 'INVALID_PROFILE' in str(row) for row in logs)
+
+
 def test_modular_editor_metadata_uses_existing_api_family(api):
     result=api.get(BASE+'dsp')
     assert result.status_code==200

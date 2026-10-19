@@ -2,6 +2,7 @@
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -14,6 +15,7 @@ from .errors import DomainError
 from .models.audio_profile_file import AudioProfileFile, ProfileFileResult, ProfileFileSummary
 
 MAX_PROFILE_BYTES = 65536
+logger = logging.getLogger(__name__)
 
 
 @contextmanager
@@ -84,7 +86,18 @@ class AudioProfileFiles:
                     continue
                 for path in sorted(root.iterdir()):
                     if path.suffix == '.json':
-                        item = self.get(f"{kind}/{path.name}")
+                        logical = f"{kind}/{path.name}"
+                        try:
+                            item = self.get(logical)
+                        except DomainError as exc:
+                            # A bad document must not hide unrelated valid profiles.
+                            # Storage failures still fail the listing explicitly.
+                            logger.error("Cannot list Audio Profile %s: %s: %s",
+                                         logical, exc.error, exc.message)
+                            if exc.error not in ('INVALID_PROFILE', 'INVALID_PROFILE_PATH',
+                                                 'PROFILE_NOT_FOUND'):
+                                raise
+                            continue
                         result.append(ProfileFileSummary(**item.model_dump(exclude={'profile'})))
         return result
 

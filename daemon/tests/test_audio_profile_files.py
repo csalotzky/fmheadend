@@ -61,10 +61,10 @@ def test_description_required_in_documents_and_catalogue(store):
         AudioProfileFile.model_validate(data)
     assert error.value.errors()[0]['loc'] == ('description',)
     (store.roots['default'] / 'invalid.json').write_text(json.dumps(data), encoding='utf-8')
-    for operation in (lambda: store.get('default/invalid.json'), store.list):
-        with pytest.raises(DomainError) as error:
-            operation()
-        assert error.value.error == 'INVALID_PROFILE'
+    with pytest.raises(DomainError) as error:
+        store.get('default/invalid.json')
+    assert error.value.error == 'INVALID_PROFILE'
+    assert [item.path for item in store.list()] == ['default/test_filters.json']
 
 
 def test_description_api_roundtrip_and_validation(store, tmp_path):
@@ -110,6 +110,42 @@ def test_default_and_list(store):
     assert item.profile.stages['lpf'].implementations['CHEBYSHEV'] == dict(cutoff_hz=16000, poles=14, ripple_db=0, type=1)
     assert [x.model_dump() for x in store.list()] == [
         {'path': 'default/test_filters.json', 'name': 'Test filters', 'kind': 'default', 'description': document()['description'], 'is_system_default': False}]
+
+
+def test_list_isolates_bad_files_and_reports_each_error(store, caplog):
+    valid = store.create(document())
+    bad = {'broken.json': '{bad', 'structure.json': '{}', 'encoding.json': b'\xff'}
+    for name, raw in bad.items():
+        (store.roots['custom'] / name).write_bytes(raw.encode() if isinstance(raw, str) else raw)
+    listed = store.list()
+    assert {item.path for item in listed} == {'default/test_filters.json', valid.path}
+    assert store.get(valid.path) == valid
+    for name, raw in bad.items():
+        assert f'custom/{name}: INVALID_PROFILE:' in caplog.text
+        assert (store.roots['custom'] / name).read_bytes() == (raw.encode() if isinstance(raw, str) else raw)
+    assert 'Invalid JSON' in caplog.text
+    assert 'schema_version must be an integer' in caplog.text
+
+
+@pytest.mark.parametrize('failure', ['file', 'directory'])
+def test_list_preserves_storage_errors(store, monkeypatch, caplog, failure):
+    import errno
+    item = store.create(document())
+    def denied(*args, **kwargs):
+        raise PermissionError(errno.EACCES, 'permission denied')
+    if failure == 'file':
+        monkeypatch.setattr('fmheadendd.audio_profile_files.os.open', denied)
+    else:
+        monkeypatch.setattr(Path, 'iterdir', denied)
+    with pytest.raises(DomainError) as error:
+        store.list()
+    assert error.value.status == 503
+    assert error.value.error == 'PROFILE_STORAGE_ERROR'
+    assert 'permission denied' in error.value.message
+    if failure == 'file':
+        assert 'default/test_filters.json: PROFILE_STORAGE_ERROR' in caplog.text
+    monkeypatch.undo()
+    assert store.get(item.path) == item
 
 
 @pytest.mark.parametrize('weighting', [0, 50, 75])
@@ -253,8 +289,7 @@ def test_missing_invalid_and_repair(store):
         with pytest.raises(DomainError) as error:
             store.get('custom/bad.json')
         assert error.value.error == 'INVALID_PROFILE'
-        with pytest.raises(DomainError):
-            store.list()
+        assert [item.path for item in store.list()] == ['default/test_filters.json']
     store.save('custom/bad.json', document())
     assert store.get('custom/bad.json')
     (store.roots['custom'] / 'directory.json').mkdir()
