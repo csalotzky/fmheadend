@@ -39,6 +39,22 @@ def assign(client, tx, source_id, **kwargs):
     return response.json()
 
 
+@pytest.mark.parametrize('field,value', [('spi_device', '/dev/spidev1.0'), ('spi_clock_hz', 1000000)])
+def test_system_config_rejects_mux_owned_spi_settings(client, field, value):
+    before = client.get(P + '/system/config').json()
+    assert {'spi_device', 'spi_clock_hz'}.isdisjoint(before)
+    response = client.patch(P + '/system/config', json={field: value, 'web_port': 8888})
+    assert response.status_code == 422
+    assert client.get(P + '/system/config').json() == before
+    schemas = client.get('/openapi.json').json()['components']['schemas']
+    for name in ('SystemConfig', 'SystemConfigPatch', 'SystemSaveResult'):
+        assert {'spi_device', 'spi_clock_hz'}.isdisjoint(schemas[name]['properties'])
+    response = client.patch(P + '/system/config', json={'web_port': 8888})
+    assert response.status_code == 200
+    assert {'spi_device', 'spi_clock_hz'}.isdisjoint(response.json())
+    assert client.get(P + '/system/config').json() == {**before, 'web_port': 8888}
+
+
 def test_docs_and_fixed_modulators(client):
     assert client.get("/docs").status_code == 200
     schema = client.get("/openapi.json").json()

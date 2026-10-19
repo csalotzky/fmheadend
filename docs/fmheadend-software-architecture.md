@@ -565,14 +565,15 @@ Javasolt V1 mezők:
 
 | Mező | Példa |
 |---|---|
-| `spi_device` | `/dev/spidev0.0` |
-| `spi_clock_hz` | `25000000` |
 | `i2c_device` | `/dev/i2c-1` |
 | `controller_i2c_address` | implementation-defined |
 | `controller_status_poll_interval_ms` | pl. 1000 |
 | `web_listen_address` | `0.0.0.0` |
 | `web_port` | `8080` |
 | `log_level` | `INFO` |
+
+SPI device and clock are configured exclusively through `fmheadend-muxd`
+CLI options `--spi-device` and `--spi-clock-hz`, not backend `SystemConfig`.
 
 A `48000/S16LE/stereo` V1-ben lehet kódoldali konstans; nem kell a normál UI-ban állíthatóvá tenni.
 

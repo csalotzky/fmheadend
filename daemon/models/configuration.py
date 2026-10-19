@@ -240,8 +240,6 @@ class SystemConfig(Model):
     default_audio_profile_id: str = Field(default='default/basic_filtering.json',
         pattern=r'^(default|custom)/[a-zA-Z0-9_-]+\.json$')
     global_stopped: bool = False
-    spi_device: Name = "/dev/spidev0.0"
-    spi_clock_hz: int = Field(default=25000000, gt=0)
     i2c_device: Name = "/dev/i2c-1"
     controller_i2c_address: int | None = Field(default=None, ge=8, le=119)
     controller_status_poll_interval_ms: int = Field(default=1000, gt=0)
