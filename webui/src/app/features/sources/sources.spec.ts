@@ -570,7 +570,9 @@ describe('Sources management', () => {
     expect(rows.map((row) => row.dataset['sourceType'])).toEqual(['HTTP', 'LOCAL', 'PODCAST', 'UDP', 'RTP', 'ALSA']);
     expect(f.nativeElement.querySelectorAll('details.source-group')).toHaveLength(6);
     expect(rows.every((row) => row.classList.contains('list-card'))).toBe(true);
-    for (const type of types) expect(f.nativeElement.textContent).toContain(type);
+    for (const label of ['Internet stream (HTTP)', 'Network stream (UDP)',
+      'Network stream (RTP)', 'Sound card (ALSA)', 'Local media', 'Podcast'])
+      expect(f.nativeElement.textContent).toContain(label);
   });
   it('shows unavailable runtime on failed status request', () => {
     const f = list();

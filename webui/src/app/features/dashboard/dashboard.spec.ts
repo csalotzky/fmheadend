@@ -174,6 +174,7 @@ describe('Operational display', () => {
   it('uses hardware-reported TX state instead of desired enabled or historical errors', () => {
     const state = setup();
     const data = sample();
+    data.status.system.global_stopped = true;
     data.modulators[0].enabled = false;
     data.status.modulators[0].hardware_tx_state = 'ON';
     data.status.modulators[0].hardware_last_error = 'QN_ERROR';
@@ -263,13 +264,20 @@ describe('Operational display', () => {
     events.next(new NavigationEnd(1, '/sources', '/sources'));
     expect(state.notice()).toBe('');
   });
-  it('shows DEGRADED and global operations in the persistent shell', () => {
+  it('shows DEGRADED and global operations in the persistent shell', async () => {
     const state = setup();
     vi.spyOn(state, 'start').mockImplementation(() => {});
     const action = vi.spyOn(state, 'all').mockResolvedValue();
     const data = sample();
     data.status.system.system_state = 'DEGRADED';
-    state.data.set(data);
+    data.status.system.snapshot_stale = false;
+    data.status.system.controller_observation_stale = false;
+    const loaded = state.refresh();
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/v1/status').flush(data.status);
+    http.expectOne('/api/v1/modulators').flush(data.modulators);
+    http.expectOne('/api/v1/sources').flush(data.sources);
+    await loaded;
     const fixture = TestBed.createComponent(Shell);
     fixture.detectChanges();
     const el = fixture.nativeElement as HTMLElement;
@@ -310,16 +318,32 @@ describe('Operational display', () => {
     expect(buttons[0].textContent?.trim()).toBe('STOP ALL');
     expect(buttons[0].disabled).toBe(false);
   });
-  it('retains shell/navigation without displaying fake healthy status when offline', () => {
+  it('retains shell/navigation without displaying fake healthy status when offline', async () => {
+    vi.useFakeTimers();
     const state = setup();
-    vi.spyOn(state, 'start').mockImplementation(() => {});
-    state.stale.set(true);
     const fixture = TestBed.createComponent(Shell);
-    fixture.detectChanges();
-    const el = fixture.nativeElement as HTMLElement;
-    expect(el.textContent).toContain('BACKEND UNAVAILABLE');
-    expect(el.querySelectorAll('nav a')).toHaveLength(5);
-    expect(el.textContent).not.toContain('1 / 8 TX ON');
+    try {
+      state.stale.set(true);
+      fixture.detectChanges();
+      const el = fixture.nativeElement as HTMLElement;
+      expect(el.textContent).not.toContain('BACKEND UNAVAILABLE');
+      const http = TestBed.inject(HttpTestingController);
+      for (let attempt = 0; attempt < 4; attempt++) {
+        await vi.advanceTimersByTimeAsync(attempt === 0 ? 0 : 5000);
+        const failed = state.refresh();
+        http.expectOne('/api/v1/status').error(new ProgressEvent('network'));
+        await failed;
+        fixture.detectChanges();
+        if (attempt < 3) expect(el.textContent).not.toContain('BACKEND UNAVAILABLE');
+      }
+      expect(el.textContent).toContain('BACKEND UNAVAILABLE');
+      expect(el.querySelectorAll('nav a')).toHaveLength(5);
+      expect(el.textContent).not.toContain('1 / 8 TX ON');
+    } finally {
+      fixture.destroy();
+      state.stop();
+      vi.useRealTimers();
+    }
   });
   it('omits global banners on every route and retains action notifications', () => {
     const state = setup();
