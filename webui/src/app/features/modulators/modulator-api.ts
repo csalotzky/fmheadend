@@ -20,9 +20,6 @@ export class ModulatorApi {
   get(id: number) {
     return this.http.get<Modulator>(`/api/v1/modulators/${id}`).pipe(timeout(15000));
   }
-  save(id: number, body: ModulatorDraft) {
-    return this.http.patch<Modulator>(`/api/v1/modulators/${id}`, body).pipe(timeout(15000));
-  }
   saveAndResume(id: number, body: ModulatorDraft) {
     return this.http
       .post<ModulatorSaveResult>(`/api/v1/modulators/${id}/save-and-resume`, body)

@@ -7,6 +7,7 @@ from urllib.parse import urljoin
 
 import httpx
 
+from .. import __version__
 from ..errors import DomainError
 from .podcast import valid_http_url
 
@@ -27,7 +28,7 @@ class FeedFetcher:
     def __call__(self, url: str) -> FeedResponse:
         try:
             with httpx.Client(transport=self.transport, follow_redirects=False, trust_env=False,
-                              headers={"User-Agent": "FMHeadend/0.1 Podcast catalog",
+                              headers={"User-Agent": f"FMHeadend/{__version__} Podcast catalog",
                                        "Accept-Encoding": "identity"}) as client:
                 for redirect in range(6):
                     valid_http_url(url)
