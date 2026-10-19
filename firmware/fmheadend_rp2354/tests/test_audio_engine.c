@@ -206,7 +206,8 @@ int main(void)
         if(s==SM_CONFIG_ERROR || s==PINDIR_ERROR) assert(audio_engine_state()==AUDIO_PIO_FAULT && programs_removed==1);
         size_t size=strlen(uart_text);audio_engine_log_fault();assert(strlen(uart_text)==size);
     }
-    for(unsigned failure=0;failure<3;++failure) {
+    /* Preserve the scenario index when the simulated core park returns via longjmp. */
+    for(volatile unsigned failure=0;failure<3;++failure) {
         reset(NORMAL);assert(audio_engine_init());
         testing_stop=true;stop_stuck=failure==1;spi_stop_ok=failure!=2;
         atomic_store(&update_requested,true);on_core1=true;
