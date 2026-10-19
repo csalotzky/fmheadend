@@ -13,7 +13,7 @@ export interface SystemInfo {
   controller_protocol_version: number | null;
   controller_firmware_version: string | null;
   hardware_target: string | null;
-  modulator_count: number;
+  modulator_count: number | null;
   mocked: boolean;
   frequency_plan: FrequencyPlan;
   frequency_min_khz: number | null;

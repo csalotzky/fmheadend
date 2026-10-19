@@ -211,10 +211,6 @@ class Recovery:
         return True
 
     def _apply(self, step, channel):
-        if step == 'info':
-            info = self.rp.get_info()
-            self._record_info(info)
-            return
         self._guard_command(Command.SET_TX_CONFIG, channel)
         config = self.modulators.get(channel)
         if step == 'off':

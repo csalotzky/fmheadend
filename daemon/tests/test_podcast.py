@@ -267,7 +267,8 @@ def test_transport_redirect_utf8_gzip_and_safe_request_headers():
         return httpx.Response(200, headers={'content-encoding': 'gzip'}, stream=httpx.ByteStream(gzip.compress(rss(item()))))
     result = fetcher(handler)(URL)
     assert result.body == rss(item()) and result.url == 'https://example.org/final'
-    assert calls[0].headers['user-agent'].startswith('FMHeadend/')
+    from fmheadendd import __version__
+    assert calls[0].headers['user-agent'] == f'FMHeadend/{__version__} Podcast catalog'
 
 
 @pytest.mark.parametrize('kind', ['size', 'gzip_bomb', 'redirect_loop', 'redirect_file', 'timeout', 'http', 'encoding'])
