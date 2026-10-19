@@ -20,6 +20,7 @@ static bool initialized, armed, active, dropping;
 static uint64_t selected_at;
 static uint32_t stall_mask;
 
+#if DEBUG_UART_ENABLED
 /* Five immutable records per boot. Core 1 captures registers only; core 0
  * formats them later through the existing nonblocking UART queue. No waits,
  * extra FIFO reads, register clears or altered acceptance rules for tracing. */
@@ -56,6 +57,7 @@ static rx_registers_t rx_registers(void)
     r.cs=gpio_get(AUDIO_SPI_CS_PIN);
     return r;
 }
+#endif
 
 static bool stop_dma(void)
 {
@@ -110,6 +112,7 @@ static void cs_irq(uint pin, uint32_t events)
         return;
     }
     if (!(events&GPIO_IRQ_EDGE_RISE)) return;
+#if DEBUG_UART_ENABLED
     unsigned diagnostic_index=atomic_load_explicit(&rx_diagnostic_count,memory_order_relaxed);
     rx_diagnostic_t *diagnostic=diagnostic_index<RX_DIAGNOSTIC_LIMIT && !dropping ?
         &rx_diagnostics[diagnostic_index] : NULL;
@@ -119,12 +122,17 @@ static void cs_irq(uint pin, uint32_t events)
         diagnostic_start=time_us_64();
         diagnostic->was_armed=armed; diagnostic->was_active=active;
     }
+#endif
     bool fault=!armed || !active;
     bool aborted=stop_dma();
+#if DEBUG_UART_ENABLED
     if (diagnostic) diagnostic->stopped=rx_registers();
+#endif
     fault |= !aborted || (rx_pio->fdebug&stall_mask)!=0 ||
              (dma_hw->ch[rx_dma].ctrl_trig&DMA_CH0_CTRL_TRIG_AHB_ERROR_BITS)!=0;
+#if DEBUG_UART_ENABLED
     uint32_t remaining=dma_hw->ch[rx_dma].transfer_count;
+#endif
     uint8_t *buffer=spi_stream_capture(&stream);
     /* RP2350 ABORT forces TRANS_COUNT to zero; CAPTURE_BYTES-COUNT would invent bytes.
      * WRITE_ADDR advances only on completed writes. Once ABORT and BUSY clear,
@@ -134,15 +142,21 @@ static void cs_irq(uint pin, uint32_t events)
     uint32_t dma_bytes=aborted ? dma_hw->ch[rx_dma].write_addr-(uint32_t)(uintptr_t)buffer : 0;
     fault |= dma_bytes>SPI_CAPTURE_BYTES;
     size_t count=dma_bytes<=SPI_CAPTURE_BYTES ? dma_bytes : 0;
+#if DEBUG_UART_ENABLED
     unsigned drained=0;
+#endif
     /* At most eight residual FIFO entries; never CPU-receive the byte stream. */
     for (unsigned n=0;aborted && n<8 && !pio_sm_is_rx_fifo_empty(rx_pio,rx_sm);++n) {
         uint8_t byte=(uint8_t)pio_sm_get(rx_pio,rx_sm);
         if (count<SPI_CAPTURE_BYTES && aborted) buffer[count]=byte;
         ++count;
+#if DEBUG_UART_ENABLED
         ++drained;
+#endif
     }
+#if DEBUG_UART_ENABLED
     if (diagnostic) diagnostic->fifo_after=pio_sm_get_rx_fifo_level(rx_pio,rx_sm);
+#endif
     /* X was decremented once for EACH sampled bit, including partial bytes. */
     uint32_t bits=0;
     if (aborted) {
@@ -150,6 +164,7 @@ static void cs_irq(uint pin, uint32_t events)
         pio_sm_exec(rx_pio,rx_sm,pio_encode_push(false,false));
         bits=~pio_sm_get(rx_pio,rx_sm);
     }
+#if DEBUG_UART_ENABLED
     if (diagnostic && (fault || count!=SPI_FRAME_BYTES || bits!=8*SPI_FRAME_BYTES)) {
         diagnostic->bytes=count; diagnostic->bits=bits; diagnostic->drained=drained;
         diagnostic->dma_bytes=dma_bytes;
@@ -160,11 +175,14 @@ static void cs_irq(uint pin, uint32_t events)
         atomic_store_explicit(&rx_diagnostic_count,diagnostic_index+1,memory_order_release);
     }
     uint32_t previous_write=stream.write;
+#endif
     if (!dropping) spi_stream_complete(&stream,count,bits,fault,time_us_64());
+#if DEBUG_UART_ENABLED
     if (stream.write!=previous_write && !atomic_load_explicit(&first_valid_ready,memory_order_relaxed)) {
         first_valid.dma_bytes=dma_bytes; first_valid.drained=drained; first_valid.remaining=remaining;
         atomic_store_explicit(&first_valid_ready,true,memory_order_release);
     }
+#endif
     active=false; dropping=false; arm_capture();
 }
 bool spi_audio_init(void)
@@ -175,10 +193,12 @@ bool spi_audio_init(void)
 #endif
     int result=0;
     spi_stream_init(&stream);
+#if DEBUG_UART_ENABLED
     atomic_init(&rx_diagnostic_count,0);
     atomic_init(&first_valid_ready,false); first_valid_logged=false;
     rx_diagnostic_read=rx_diagnostic_part=0;
     rx_diagnostic_limit_logged=false;
+#endif
     /* Static PIO WAIT GPIO operands are the verified board pins. */
     _Static_assert(AUDIO_SPI_MOSI_PIN==0 && AUDIO_SPI_CS_PIN==1 && AUDIO_SPI_SCK_PIN==2,"SPI PIO pins");
     if (clock_get_hz(clk_sys)<150000000) goto failed;
@@ -272,6 +292,7 @@ void spi_audio_release(void)
     spi_stream_release(&stream); restore_interrupts(saved);
 }
 uint32_t spi_audio_error_count(void) { return spi_stream_errors(&stream); }
+#if DEBUG_UART_ENABLED
 static bool rx_diagnostic_line(char *line, size_t capacity)
 {
     if (!first_valid_logged && atomic_load_explicit(&first_valid_ready,memory_order_acquire)) {
@@ -333,3 +354,10 @@ bool spi_audio_diagnostic(char *line, size_t capacity, uint64_t now)
         events&SPI_QUEUE_FULL?" queue overflow":"",(unsigned long)spi_audio_error_count());
     return true;
 }
+#else
+bool spi_audio_diagnostic(char *line, size_t capacity, uint64_t now)
+{
+    (void)line; (void)capacity; (void)now;
+    return false;
+}
+#endif

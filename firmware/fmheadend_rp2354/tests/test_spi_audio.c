@@ -7,7 +7,7 @@ fake_pio_t fake_pio;
 fake_dma_t fake_dma;
 static bool cs=true,in_irq,masked,enabled,abort_stuck;
 static uint64_t now;
-static unsigned fifo_count, fifo_at, starts, fail_resource;
+static unsigned fifo_count, fifo_at, starts, fail_resource, diagnostic_fifo_reads;
 static uint32_t fifo[8], sampled_bits;
 static uint8_t *destination;
 static void (*callback)(unsigned,uint32_t);
@@ -59,7 +59,7 @@ void pio_sm_set_enabled(PIO p,unsigned n,bool on) { (void)p;assert(n==2);enabled
 void pio_sm_clear_fifos(PIO p,unsigned n) { (void)p;(void)n;fifo_count=fifo_at=0; }
 void pio_sm_restart(PIO p,unsigned n) { (void)p;(void)n; }
 bool pio_sm_is_rx_fifo_empty(PIO p,unsigned n) { (void)p;(void)n;return fifo_at==fifo_count; }
-unsigned pio_sm_get_rx_fifo_level(PIO p,unsigned n) { (void)p;(void)n;return fifo_count-fifo_at; }
+unsigned pio_sm_get_rx_fifo_level(PIO p,unsigned n) { (void)p;(void)n;++diagnostic_fifo_reads;return fifo_count-fifo_at; }
 uint32_t pio_sm_get(PIO p,unsigned n) { (void)p;(void)n;assert(fifo_at<fifo_count);return fifo[fifo_at++]; }
 void pio_sm_exec(PIO p,unsigned n,unsigned instruction)
 {
@@ -139,6 +139,8 @@ int main(void)
     /* DMA unavailable at a falling edge must be counted, not silently lost. */
     armed=false;before=spi_audio_error_count();edge(false,GPIO_IRQ_EDGE_FALL);
     edge(true,GPIO_IRQ_EDGE_RISE);assert(spi_audio_error_count()==before+1 && armed);
+#if DEBUG_UART_ENABLED
+    assert(diagnostic_fifo_reads>0);
     assert(atomic_load(&rx_diagnostic_count)==5);
     assert(rx_diagnostics[0].bytes==4099 && rx_diagnostics[0].entry.remaining==2);
     assert(rx_diagnostics[1].bytes==4101 && rx_diagnostics[1].stopped.remaining==0);
@@ -161,22 +163,34 @@ int main(void)
     for(unsigned i=0;i<20;++i) {
         if(spi_audio_diagnostic(line,sizeof(line),now+i*1000000)) assert(!strstr(line,"SPI RX BAD"));
     }
+#else
+    char line[320]="unchanged";
+    assert(!diagnostic_fifo_reads);
+    assert(!spi_audio_diagnostic(line,sizeof(line),now) && !strcmp(line,"unchanged"));
+#endif
     /* New boot: distinguish in-flight tail completion, residual FIFO drain and
      * a bit-count-only rejection. Diagnostics must not make any frame valid. */
     assert(spi_audio_init());spi_audio_start();
     late_dma_byte=true;transfer(0,4099,1,32792,false);
-    assert(spi_audio_error_count()==1 && atomic_load(&rx_diagnostic_count)==1);
+    assert(spi_audio_error_count()==1);
+#if DEBUG_UART_ENABLED
+    assert(atomic_load(&rx_diagnostic_count)==1);
     const rx_diagnostic_t *d=&rx_diagnostics[0];
     assert(d->entry.remaining==3 && d->stopped.remaining==0 && d->bytes==4099);
     assert(d->entry.fifo==1 && d->stopped.fifo==0 && !d->drained);
+#endif
     transfer(1,4100,2,32799,false);
+#if DEBUG_UART_ENABLED
     d=&rx_diagnostics[1];
     assert(d->bytes==4100 && d->bits==32799 && d->stopped.remaining==0);
     assert(d->entry.fifo==2 && d->stopped.fifo==2 && d->drained==2 && !d->fifo_after);
+#endif
     assert(spi_audio_error_count()==2 && !spi_audio_take());
+#if DEBUG_UART_ENABLED
     assert(rx_diagnostic_line(line,sizeof(line)));
     assert(rx_diagnostic_line(line,sizeof(line)));
     assert(strstr(line,"progressed=1 tail_pending=1 race_hint=possible"));
+#endif
     /* Exact observed board condition: 4100 bytes written, COUNT=1 at CS and
      * COUNT=0 after ABORT. Also retire an already-popped final byte and drain
      * a FIFO tail. Every output byte, guard byte, and acceptance is checked. */
@@ -186,7 +200,9 @@ int main(void)
         late_dma_byte=kind==2;
         transfer(kind,4100,kind==2?1:kind==3?8:0,32800,false);
         assert(spi_audio_error_count()==0);
+#if DEBUG_UART_ENABLED
         assert(atomic_load(&rx_diagnostic_count)==0);
+#endif
         if(kind) {
             p=spi_audio_take();assert(p && p[0]==kind-1);
             for(unsigned i=0;i<SPI_FRAME_BYTES;++i) assert(p[i]==pattern(kind-1,i));
@@ -197,14 +213,22 @@ int main(void)
     p=spi_audio_take();assert(p && p[0]==3);
     for(unsigned i=0;i<SPI_FRAME_BYTES;++i) assert(p[i]==pattern(3,i));
     assert(p[4100]==0xa5 && p[4101]==0xbd);spi_audio_release();
+#if DEBUG_UART_ENABLED
     assert(rx_diagnostic_line(line,sizeof(line)));
     assert(strstr(line,"bytes=4100/4100 bits=32800/32800 dma_bytes=4100 drained=0 rem_after_abort=0"));
     assert(!rx_diagnostic_line(line,sizeof(line))); /* First OK only once. */
+#endif
     /* Never use the bit count to clamp a real extra byte or fill a short one. */
     transfer(4,4101,0,32800,false);assert(spi_audio_error_count()==1);
-    assert(rx_diagnostics[0].bytes==4101 && !spi_audio_take());
+    assert(!spi_audio_take());
+#if DEBUG_UART_ENABLED
+    assert(rx_diagnostics[0].bytes==4101);
+#endif
     transfer(5,4099,0,32800,false);assert(spi_audio_error_count()==2);
-    assert(rx_diagnostics[1].bytes==4099 && !spi_audio_take());
+    assert(!spi_audio_take());
+#if DEBUG_UART_ENABLED
+    assert(rx_diagnostics[1].bytes==4099);
+#endif
     transfer(6,4100,0,32800,false);transfer(7,4100,0,32800,false);
     assert(spi_audio_take()[0]==6);spi_audio_release();
     assert(spi_audio_take()[0]==7);spi_audio_release();
