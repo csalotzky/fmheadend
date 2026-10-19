@@ -323,6 +323,54 @@ class SourceManager:
             pipeline.output.detach(modulator_id)
 
     def test(self, source: InputSourceConfig):
+        return self.prepare_test(source)()
+
+    def prepare_test(self, source: InputSourceConfig):
+        """Control-owned snapshot; returned probe never reads/writes manager or DB state.
+
+        Results describe the submitted configuration, even if it is later edited
+        or deleted. Active ingest is sampled now, never restarted by a probe.
+        """
+        source = source.model_copy(deep=True)
+        if source.type == 'LOCAL':
+            return lambda: self._test_local(source)
+        # Profile lookup includes DB-backed reference callbacks; snapshot it on
+        # the owner thread, along with the selected default and PCM settings.
+        profile = self.validate_config(source)
+        profile_id = self.effective_profile_id(source)
+        factory = self.pipeline_factory
+        options = dict(pcm_staging_buffer_ms=self.pcm_staging_buffer_ms,
+                       pcm_staging_max_age_ms=self.pcm_staging_max_age_ms,
+                       pcm_consumer_buffer_ms=self.pcm_consumer_buffer_ms,
+                       reconnect=False)
+        active = self.pipelines.get(getattr(source, "id", None))
+        result = (active.probe_result() if active is not None and
+                  not getattr(factory, 'mocked', True) else None)
+
+        def run():
+            if source.type == 'PODCAST':
+                from ..models.configuration import PodcastConfig
+                from .podcast_fetch import probe_podcast
+                return probe_podcast(PodcastConfig.model_validate(source.config))
+            if getattr(factory, 'mocked', True):
+                return probe(source)
+            if result is not None:
+                return result
+            pipeline = None
+            try:
+                pipeline = factory(source, profile=profile, **options)
+                pipeline.audio_profile_id = profile_id
+                pipeline.start()
+                return pipeline.probe_result()
+            except DependencyUnavailable as exc:
+                return SourceTestResult(ok=False, mocked=False, message=str(exc))
+            finally:
+                if pipeline is not None:
+                    pipeline.stop()
+        return run
+
+    @staticmethod
+    def _test_local(source):
         if source.type == 'LOCAL':
             from ..models.configuration import LocalConfig
             from .local_media import resolve_media
@@ -338,28 +386,6 @@ class SourceManager:
                                         **({count_field: 0} if exc.error == 'NO_PLAYABLE_TRACKS' else {}))
             return SourceTestResult(mocked=False, **{count_field: count},
                                     message='Discovery only; audio decoding was not tested.')
-        self.validate_config(source)
-        if source.type == 'PODCAST':
-            from ..models.configuration import PodcastConfig
-            from .podcast_fetch import probe_podcast
-            return probe_podcast(PodcastConfig.model_validate(source.config))
-        if getattr(self.pipeline_factory, "mocked", True):
-            return probe(source)
-        # Testing an active saved source reads its existing pipeline: no duplicate
-        # ingest or ALSA capture. An inactive/unsaved probe is temporary.
-        active = self.pipelines.get(getattr(source, "id", None))
-        if active is not None:
-            return active.probe_result()
-        pipeline = None
-        try:
-            pipeline = self._new_pipeline(source, reconnect=False)
-            pipeline.start()
-            return pipeline.probe_result()
-        except DependencyUnavailable as exc:
-            return SourceTestResult(ok=False, mocked=False, message=str(exc))
-        finally:
-            if pipeline is not None:
-                pipeline.stop()
 
     def output_for(self, source_id):
         """Resolve on the control thread; the mux worker only retains this output."""

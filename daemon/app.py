@@ -20,7 +20,7 @@ from .sources.radio_recovery import RadioRecoveryTask
 from .config import Settings, audio_telemetry_hz
 from .audio_telemetry import AudioTelemetry
 from .audio_profile_files import AudioProfileFiles
-from .control import ControlExecutor
+from .control import ControlExecutor, DiscoveryExecutor
 from .database import Database, SCHEMA_VERSION
 from .regions import PLANS
 from .webui import mount_webui
@@ -95,6 +95,8 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
             control.close()
             raise
         services = app.state.services
+        discovery = DiscoveryExecutor()
+        app.state.discovery = discovery
         services.radio_browser = radio_browser_client or RadioBrowserClient()
         radio_recovery = RadioRecoveryTask(control, services.sources.radio_recovery, services.radio_browser)
         services.audio_telemetry = (AudioTelemetry(settings.audio_telemetry_socket,
@@ -175,6 +177,7 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
             yield
         finally:
             cleanup_errors = []
+            discovery.closing = True
 
             def cleanup(name, operation):
                 try:
@@ -220,6 +223,13 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
                 await asyncio.shield(asyncio.get_running_loop().run_in_executor(control.executor, shutdown))
             finally:
                 cleanup('Control executor', control.close)
+            try:
+                # Independent probes own no DB/live pipeline state. Complete RF
+                # and source cleanup first, then drain their owned resources.
+                await discovery.close()
+            except Exception as exc:
+                logger.exception('Discovery shutdown failed')
+                cleanup_errors.append(exc)
             if cleanup_errors:
                 raise ExceptionGroup('fmheadendd shutdown failures', cleanup_errors)
             logger.info("fmheadendd shutdown completed")

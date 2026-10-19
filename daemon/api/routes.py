@@ -22,22 +22,20 @@ def published_view(request, response, name):
 
 
 @router.get("/alsa/capture-devices", response_model=AlsaCaptureDevices, tags=["alsa"])
-@control_route
-def alsa_capture_devices(request: Request, response: Response):
+async def alsa_capture_devices(request: Request, response: Response):
     response.headers['Cache-Control'] = 'no-store'
-    return request.app.state.services.alsa.capture_devices()
+    return await request.app.state.discovery.call(request.app.state.services.alsa.capture_devices)
 
 
 @router.get("/filesystem/locations", tags=["filesystem"])
-@control_route
-def filesystem_locations(request: Request):
-    return request.app.state.services.filesystem.locations()
+async def filesystem_locations(request: Request):
+    return await request.app.state.discovery.call(request.app.state.services.filesystem.locations)
 
 
 @router.get("/filesystem/browse", tags=["filesystem"])
-@control_route
-def filesystem_browse(path: str, mode: str, request: Request):
-    return request.app.state.services.filesystem.browse(path, mode)
+async def filesystem_browse(path: str, mode: str, request: Request):
+    return await request.app.state.discovery.call(
+        lambda: request.app.state.services.filesystem.browse(path, mode))
 
 
 @router.get('/system/logs', response_model=list[dict], tags=['system'])
@@ -58,10 +56,10 @@ def create_source(body: InputSourceConfig, request: Request):
 
 
 @router.post("/sources/test", response_model=SourceTestResult, tags=["sources"])
-@control_route
-def test_unsaved_source(body: InputSourceConfig, request: Request):
+async def test_unsaved_source(body: InputSourceConfig, request: Request):
     """Probe without persisting or assigning configuration. Uses the selected media backend."""
-    return request.app.state.services.sources.test(body)
+    probe = await request.app.state.control.call(lambda: request.app.state.services.sources.prepare_test(body))
+    return await request.app.state.discovery.call(probe)
 
 
 @router.get("/sources/{id}", response_model=InputSource, tags=["sources"])
@@ -85,10 +83,11 @@ def delete_source(id: int, request: Request):
 
 
 @router.post("/sources/{id}/test", response_model=SourceTestResult, tags=["sources"])
-@control_route
-def test_saved_source(id: int, request: Request):
+async def test_saved_source(id: int, request: Request):
     services = request.app.state.services
-    return services.sources.test(services.config.get("sources", id))
+    probe = await request.app.state.control.call(
+        lambda: services.sources.prepare_test(services.config.get("sources", id)))
+    return await request.app.state.discovery.call(probe)
 
 
 @router.get("/sources/{id}/status", response_model=InputSourceStatus, tags=["sources"])
