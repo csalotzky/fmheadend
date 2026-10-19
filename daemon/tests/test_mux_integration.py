@@ -13,7 +13,7 @@ import wave
 import pytest
 from fastapi.testclient import TestClient
 from fmheadendd.app import create_app
-from fmheadendd.config import Settings
+from fmheadendd.tests.profile_support import profile_settings
 from fmheadendd.errors import DependencyUnavailable
 from fmheadendd.mux.unix_client import UnixMuxClient
 from fmheadendd.sources.gst_pipeline import GstPipeline, load_gst
@@ -38,7 +38,14 @@ def mux_process():
                 deadline = time.monotonic() + 5
                 while True:
                     try:
-                        if client.get_status()["frames_sent"] > 0:
+                        status = client.get_status()
+                        if status["stream_state"] == "WAITING_FOR_CONFIG":
+                            assert status["frames_sent"] == 0
+                            client.set_tx_count(8)
+                            status = client.get_status()
+                        if (status["stream_state"] == "STREAMING" and
+                                status["tx_count"] == 8 and status["spi_frame_bytes"] == 4100 and
+                                status["frames_sent"] > 0):
                             break
                     except DependencyUnavailable:
                         pass
@@ -127,7 +134,7 @@ def test_real_http_gstreamer_to_mux_via_existing_api(mux_process, restart):
         wav.writeframes(b"\x10\x27" * 44100 * 10)
     server = ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(SimpleHTTPRequestHandler, directory=str(root)))
     thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
-    app = create_app(Settings(root / "config.db"), pipeline_factory=GstPipeline,
+    app = create_app(profile_settings(root / "config.db"), pipeline_factory=GstPipeline,
                      mux_factory=lambda sources: UnixMuxClient(sources.output_for, root))
     observer = UnixMuxClient(lambda unused: None, root)
     replacement = None
@@ -158,7 +165,9 @@ def test_real_http_gstreamer_to_mux_via_existing_api(mux_process, restart):
                 while time.monotonic()<deadline:
                     try:
                         current=observer.get_status()
-                        if all(current['channels'][i]['bytes_consumed']>0 for i in (0,7)):
+                        if (current['stream_state'] == 'STREAMING' and current['tx_count'] == 8 and
+                                current['spi_frame_bytes'] == 4100 and
+                                all(current['channels'][i]['bytes_consumed']>0 for i in (0,7))):
                             break
                     except DependencyUnavailable:
                         pass
