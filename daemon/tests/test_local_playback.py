@@ -1,3 +1,4 @@
+from fmheadendd.tests.local_support import initial, settle
 from pathlib import Path
 from threading import Event
 from unittest.mock import Mock
@@ -24,7 +25,7 @@ def make(tmp_path, candidates, **kwargs):
 def test_initial_uri_conversion_and_worker_resolution(tmp_path):
     path = tmp_path / 'space # percent % unicode \u00e9.wav'
     p, resolver = make(tmp_path, [MediaItem(path), *items('remote?token=secret')])
-    assert p.initial() == path.as_uri()
+    assert initial(p) == path.as_uri()
     resolver.assert_called_once()
     player = Mock()
     p.handoff(player)
@@ -34,13 +35,14 @@ def test_initial_uri_conversion_and_worker_resolution(tmp_path):
 
 def test_cycle_rescan_and_real_pcm_success(tmp_path):
     p, resolve = make(tmp_path, items('a', 'b'))
-    assert p.initial().endswith('/a')
+    assert initial(p).endswith('/a')
     p.stream_start()
     p.handoff(Mock())
     p.service(Mock())
     assert resolve.call_count == 1  # URI assignment/STREAM_START are not PCM.
     p.pcm()
     resolve.return_value = items('new')
+    settle(p)
     p.service(Mock())
     assert resolve.call_count == 2
     assert p.prepared.uri.endswith('/new')
@@ -48,7 +50,7 @@ def test_cycle_rescan_and_real_pcm_success(tmp_path):
 
 def test_eos_fallback_keeps_unrendered_handoff_and_then_advances(tmp_path):
     p, _ = make(tmp_path, items('a', 'b', 'c'))
-    p.initial(); p.stream_start(); p.pcm()
+    initial(p); p.stream_start(); p.pcm()
     p.handoff(Mock())
     assert p.resume(failed=False).endswith('/b')
     p.stream_start(); p.pcm()
@@ -57,7 +59,7 @@ def test_eos_fallback_keeps_unrendered_handoff_and_then_advances(tmp_path):
 
 def test_failure_skips_each_item_once_then_stops(tmp_path):
     p, resolve = make(tmp_path, items('a', 'b', 'c'))
-    assert p.initial().endswith('/a')
+    assert initial(p).endswith('/a')
     assert p.resume(failed=True).endswith('/b')
     assert p.resume(failed=True).endswith('/c')
     with pytest.raises(LocalPlaybackError, match='PLAYBACK_EXHAUSTED'):
@@ -67,7 +69,7 @@ def test_failure_skips_each_item_once_then_stops(tmp_path):
 
 def test_previous_stream_pcm_cannot_mark_prefetched_cycle_success(tmp_path):
     p, _ = make(tmp_path, items('a'))
-    p.initial(); p.stream_start(); p.pcm(); p.prepare()
+    initial(p); p.stream_start(); p.pcm(); settle(p); p.prepare()
     old = p.rendering.cycle
     p.handoff(Mock()); p.pcm()
     assert old.played and not p.cycle.played
@@ -77,27 +79,28 @@ def test_previous_stream_pcm_cannot_mark_prefetched_cycle_success(tmp_path):
 
 def test_success_prevents_false_exhaustion_and_reset_is_fresh(tmp_path):
     p, resolve = make(tmp_path, items('a', 'b'))
-    p.initial(); p.stream_start(); p.pcm()
+    initial(p); p.stream_start(); p.pcm()
+    settle(p)
     assert p.resume(failed=True).endswith('/b')
     assert resolve.call_count == 2
     p.close()
     assert p.queue is None and not p.submitted and p.prepared is None
     player = Mock(); p.handoff(player); player.set_property.assert_not_called()
     fresh, _ = make(tmp_path, items('new'))
-    assert fresh.initial().endswith('/new')
+    assert initial(fresh).endswith('/new')
 
 
 def test_empty_resolution_reports_safe_code_not_sensitive_path(tmp_path):
     p, resolve = make(tmp_path, [])
     resolve.side_effect = DomainError(409, 'NO_PLAYABLE_TRACKS', 'secret path')
     with pytest.raises(LocalPlaybackError, match='^NO_PLAYABLE_TRACKS$'):
-        p.initial()
+        initial(p)
 
 
 def test_random_keeps_core_shuffle_and_duplicates(tmp_path):
     candidates = items('a', 'b', 'a', 'c')
     p, resolve = make(tmp_path, candidates, order='random', rng=random.Random(42))
-    uris = [p.initial()]
+    uris = [initial(p)]
     for _ in range(3):
         uris.append(p.resume(failed=True))
     assert sorted(uris) == sorted(i.locator for i in candidates)
@@ -121,9 +124,9 @@ def test_handoff_never_waits_for_teardown_lock(tmp_path):
 
 def test_worker_never_assigns_uri_during_native_handoff(tmp_path):
     p, _ = make(tmp_path, items('one'))
-    p.initial(); player=Mock()
+    initial(p); player=Mock()
     p.handoff(player)  # No preloaded next-cycle item before actual PCM.
-    p.stream_start(); p.pcm(); p.service(player)
+    p.stream_start(); p.pcm(); settle(p); p.service(player)
     player.set_property.assert_not_called()
     assert p.prepared is not None  # EOS fallback owns a safe later state change.
 

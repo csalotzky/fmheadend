@@ -1,4 +1,5 @@
 ﻿"""LOCAL produces the ordinary source metadata; no extra RT selector or status."""
+from fmheadendd.tests.local_support import initial
 from fmheadendd.tests.profile_support import profile_store
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -17,7 +18,7 @@ def pipeline(tmp_path):
     p.Gst = SimpleNamespace(EventType=SimpleNamespace(STREAM_START='start',TAG='tag'), PadProbeReturn=SimpleNamespace(OK='OK'))
     p._local = LocalPlayback(SimpleNamespace(order='sequential'), p._audio_ready,
                              resolver=lambda _: [MediaItem(tmp_path/'My Song.flac'), MediaItem(tmp_path/'Song B.flac')])
-    p._local.initial()
+    initial(p._local)
     return p
 
 
@@ -63,7 +64,7 @@ def test_remote_fallback_is_safe_and_uri_unchanged(tmp_path):
     p=pipeline(tmp_path)
     uri='https://user:password@example.org/audio/My%20Programme.mp3?token=secret#secret'
     p._local=LocalPlayback(SimpleNamespace(order='sequential'),p._audio_ready,resolver=lambda _:[MediaItem(uri)])
-    assert p._local.initial()==uri
+    assert initial(p._local)==uri
     event(p,'start');p._publish_local_metadata()
     assert metadata(p)==('My Programme',None,'My Programme')
     event(p,'tag',title='Remote Title');p._publish_local_metadata()

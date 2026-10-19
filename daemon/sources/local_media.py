@@ -165,9 +165,9 @@ class PlaybackQueue:
     A fresh instance resets history on a source restart. No threads or persistence.
     """
     def __init__(self, items: Iterable[MediaItem], order: PlaybackOrder = PlaybackOrder.SEQUENTIAL,
-                 *, rng: random.Random | None = None):
+                 *, rng: random.Random | None = None, previous: MediaItem | None = None):
         self._builder = QueueBuilder(order, rng=rng)
-        self._previous: MediaItem | None = None
+        self._previous = previous
         self._candidates: tuple[MediaItem, ...] = ()
         self.rebuild(items)
 
@@ -180,6 +180,10 @@ class PlaybackQueue:
     @property
     def exhausted(self) -> bool:
         return self._position == len(self._cycle)
+
+    @property
+    def last_item(self) -> MediaItem | None:
+        return self._cycle[-1] if self._cycle else None
 
     def next_item(self) -> MediaItem | None:
         if self.exhausted:
