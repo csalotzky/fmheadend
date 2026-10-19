@@ -135,8 +135,11 @@ def test_local_missing_folder_preserves_external_failure_through_worker(native, 
     from fmheadendd.models.configuration import LocalConfig
     class MissingFolder(NoPcmPipeline):
         def _build(self):
-            LocalPlayback(LocalConfig(mode='folder', path=str(tmp_path/'missing')), lambda: None)._resolve()
-    pipeline = MissingFolder(InputSourceConfig(**SOURCES[0]), timeout_s=.2)
+            super()._build()
+            self._local = LocalPlayback(LocalConfig.model_validate(self.source.config).to_core(), self._audio_ready)
+            self._media_idle = self._local.initial() is None
+    pipeline = MissingFolder(InputSourceConfig(name='Missing', type='LOCAL',
+        config=dict(mode='folder', path=str(tmp_path/'missing'))), timeout_s=.2)
     with pytest.raises(SourceUnavailable, match='FOLDER_UNREADABLE'):
         pipeline.start()
     assert pipeline.snapshot()['error_scope'] == 'SOURCE'

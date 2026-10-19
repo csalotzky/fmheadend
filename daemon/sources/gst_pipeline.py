@@ -406,7 +406,8 @@ class GstPipeline:
         Gst = self.Gst
         if self.source.type in (SourceType.LOCAL, SourceType.PODCAST):
             if self.source.type == SourceType.LOCAL:
-                self._local = LocalPlayback(LocalConfig.model_validate(self.source.config).to_core(), self._audio_ready)
+                self._local = LocalPlayback(LocalConfig.model_validate(self.source.config).to_core(), self._audio_ready,
+                                            source_id=getattr(self.source, 'id', None))
             else:
                 from ..models.configuration import PodcastConfig
                 from .podcast_runtime import PodcastRuntime
@@ -729,7 +730,8 @@ class GstPipeline:
             if self._local is None or not isinstance(failure, SourceUnavailable):
                 raise failure
             self._local_resume(failed=True)
-        self._prepared.set()
+        if not (self.source.type == SourceType.LOCAL and self._media_idle):
+            self._prepared.set()
         started = time.monotonic()
         running_since = None
         observed_input_caps = None
@@ -747,6 +749,7 @@ class GstPipeline:
                     available = self._local.prepared is not None
                 if available:
                     self._local_resume(failed=False)
+                    self._prepared.set()
                     started = time.monotonic()
                 else:
                     self._update(state='ERROR', last_error=self._local.error)
