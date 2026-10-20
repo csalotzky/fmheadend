@@ -4,6 +4,8 @@ import math
 from .regions import PLANS
 from .sources.output import DEFAULT_STAGING_BUFFER_MS, DEFAULT_CONSUMER_BUFFER_MS, DEFAULT_STAGING_MAX_AGE_MS, pcm_capacity_bytes
 
+DEFAULT_PASSWD_FILE = "/var/lib/fmheadend/htpasswd"
+
 
 def audio_telemetry_hz(value):
     value = float(value)
@@ -25,6 +27,7 @@ class Settings:
     media_browser_roots: tuple[str | Path, ...] = ()
     audio_telemetry_socket: str | Path | None = None
     audio_telemetry_hz: float = 50.0
+    passwd_file: str | Path | None = None
 
     def __post_init__(self):
         audio_telemetry_hz(self.audio_telemetry_hz)

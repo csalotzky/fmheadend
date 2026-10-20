@@ -17,7 +17,7 @@ from .api.routes import router
 from .api.radio_browser import router as radio_browser_router
 from .radio_browser import RadioBrowserClient
 from .sources.radio_recovery import RadioRecoveryTask
-from .config import Settings, audio_telemetry_hz
+from .config import Settings, audio_telemetry_hz, DEFAULT_PASSWD_FILE
 from .audio_telemetry import AudioTelemetry
 from .audio_profile_files import AudioProfileFiles
 from .control import ControlExecutor, DiscoveryExecutor
@@ -48,6 +48,10 @@ logger = logging.getLogger(__name__)
 
 def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipeline, clock=time.monotonic, mux_factory=None, radio_browser_client=None):
     settings = settings or Settings()
+    auth = None
+    if settings.passwd_file is not None:
+        from .auth import BasicAuth, BasicAuthMiddleware
+        auth = BasicAuth(settings.passwd_file)
 
     @asynccontextmanager
     async def service_lifespan(app):
@@ -238,8 +242,14 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
     async def lifespan(app):
         with RecentLogs() as logs:
             app.state.recent_logs = logs
-            async with service_lifespan(app):
-                yield
+            if auth is not None:
+                await auth.start()  # Validate before database/control/hardware startup.
+            try:
+                async with service_lifespan(app):
+                    yield
+            finally:
+                if auth is not None:
+                    await auth.close()
 
     app = FastAPI(title="fmheadend", version=__version__, lifespan=lifespan,
                   description="V1 headend configuration, runtime status and diagnostics.")
@@ -269,6 +279,8 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
     app.include_router(radio_browser_router)
     if settings.webui_dir is not None:
         mount_webui(app, settings.webui_dir)
+    if auth is not None:
+        app.add_middleware(BasicAuthMiddleware, auth=auth)
     return app
 
 
@@ -303,6 +315,8 @@ def argument_parser():
                         help="Per-consumer PCM capacity and maximum age in ms (default 300)")
     parser.add_argument("--region", type=int, choices=sorted(PLANS), default=1, help="Frequency selection plan: 0 Expert, 1 Europe (default), 2 US, 3 Japan")
     parser.add_argument("--webui-dir", help="Production Angular browser assets directory (optional)")
+    parser.add_argument("--passwd-file", nargs="?", const=DEFAULT_PASSWD_FILE,
+                        help=f"Enable HTTP Basic Auth using bcrypt htpasswd (default {DEFAULT_PASSWD_FILE})")
     parser.add_argument("--media-browser-root", action="append", default=[],
                         help="Additional absolute root available to the LOCAL source path browser; repeatable")
     parser.add_argument("--audio-profiles-default-dir", default="/usr/share/fmheadend/audio-profiles/default")
@@ -323,7 +337,8 @@ def main():
                         pcm_consumer_buffer_ms=args.pcm_consumer_buffer_ms,
                         media_browser_roots=tuple(args.media_browser_root),
                         audio_telemetry_socket=args.audio_telemetry_socket,
-                        audio_telemetry_hz=args.audio_telemetry_hz)
+                        audio_telemetry_hz=args.audio_telemetry_hz,
+                        passwd_file=args.passwd_file)
     database = Database(args.database, initial_preemphasis_us=75 if settings.region == 2 else 50)
     try:
         config = database.get_system()
