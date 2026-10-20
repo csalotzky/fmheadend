@@ -294,7 +294,7 @@ def test_global_stop_survives_restart_and_start_keeps_resume_selection(tmp_path,
         assert api.get(P+'/status').json()['system']['global_stopped'] is True
         assert api.post(P+'/modulators/stop-all').status_code == 200
         # Ordinary system edits cannot release the hold.
-        assert api.patch(P+'/system/config', json={'log_level': 'DEBUG'}).status_code == 200
+        assert api.patch(P+'/system/config', json={'default_audio_profile_id': 'default/bypass.json'}).status_code == 200
         assert api.patch(P+'/system/config', json={'global_stopped': False}).status_code == 422
         if disable_before_resume:
             assert api.post(P+'/modulators/2/stop').status_code == 200

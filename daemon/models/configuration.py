@@ -240,12 +240,6 @@ class SystemConfig(Model):
     default_audio_profile_id: str = Field(default='default/basic_filtering.json',
         pattern=r'^(default|custom)/[a-zA-Z0-9_-]+\.json$')
     global_stopped: bool = False
-    i2c_device: Name = "/dev/i2c-1"
-    controller_i2c_address: int | None = Field(default=None, ge=8, le=119)
-    controller_status_poll_interval_ms: int = Field(default=1000, gt=0)
-    web_listen_address: Name = "0.0.0.0"
-    web_port: Port = 8080
-    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
 
 class SystemSaveResult(SystemConfig):

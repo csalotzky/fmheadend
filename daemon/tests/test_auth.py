@@ -78,14 +78,14 @@ def test_entire_http_app_is_protected(tmp_path, prefix):
             assert response.status_code == 401
             assert response.headers['www-authenticate'] == 'Basic realm="FMheadend", charset="UTF-8"'
             assert response.headers['cache-control'] == 'no-store'
-        assert client.patch('/api/v1/system/config', json={'web_port': 9999}).status_code == 401
+        assert client.patch('/api/v1/system/config', json={'default_audio_profile_id': 'default/bypass.json'}).status_code == 401
         assert client.options('/api/v1/status').status_code == 401
         assert client.get('/main.js', auth=('alice', 'wrong')).status_code == 401
         assert client.get('/main.js', auth=('alice', 'secret')).text == 'asset'
         assert client.get('/sources/1', auth=('alice', 'secret')).text == '<html>SPA</html>'
         assert client.get('/api/v1/status', auth=('alice', 'secret')).status_code == 200
-        assert client.get('/api/v1/system/config', auth=('alice', 'secret')).json()['web_port'] == 8080
-        assert client.patch('/api/v1/system/config', json={'web_port': 8888}, auth=('alice', 'secret')).status_code == 200
+        assert client.get('/api/v1/system/config', auth=('alice', 'secret')).json()['default_audio_profile_id'] == 'default/basic_filtering.json'
+        assert client.patch('/api/v1/system/config', json={'default_audio_profile_id': 'default/bypass.json'}, auth=('alice', 'secret')).status_code == 200
 
 
 def test_disabled_and_credential_limits(tmp_path):

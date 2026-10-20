@@ -115,7 +115,7 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
             next_snapshot = now + 1.0
             # Observation errors must not retroactively fail a confirmed action.
             try:
-                interval = services.config.get_system().controller_status_poll_interval_ms / 1000
+                interval = settings.controller_status_poll_interval_ms / 1000
                 services.status.publish(max_age_s=max(2.0, 2 * interval), configuration_changed=force)
             except Exception:
                 services.status.publication_failed()
@@ -131,7 +131,7 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
             now = time.monotonic()
             if now >= next_poll:
                 services.status.refresh(publish=False)
-                next_poll = now + services.config.get_system().controller_status_poll_interval_ms / 1000
+                next_poll = now + settings.controller_status_poll_interval_ms / 1000
             publish_status(force=False)
             interval = min(POLL_SECONDS, max(0.01, next_poll - time.monotonic()))
             delay = services.recovery.retry_delay
@@ -295,16 +295,28 @@ def pcm_buffer_ms(text):
         raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
+def positive_interval_ms(text):
+    try:
+        value = int(text)
+        if value > 0:
+            return value
+    except ValueError:
+        pass
+    raise argparse.ArgumentTypeError("Controller status poll interval must be a positive integer")
+
+
 def argument_parser():
     parser = argparse.ArgumentParser(description="fmheadendd media and Controller control")
     parser.add_argument("--database", default="/var/lib/fmheadend/fmheadend.db")
-    parser.add_argument("--host", help="Override persistent web_listen_address")
-    parser.add_argument("--port", type=int, help="Override persistent web_port")
+    parser.add_argument("--host", default="0.0.0.0", help="HTTP listen address")
+    parser.add_argument("--port", type=int, default=8080, help="HTTP listen port")
     parser.add_argument("--mock", action="store_true", help="Use mock sources, mux and Controller control")
     parser.add_argument("--mock-rp", action="store_true", help="Use the original high-level mock Controller client")
-    parser.add_argument("--i2c-device", help="Override persistent i2c_device, e.g. /dev/i2c-1")
+    parser.add_argument("--i2c-device", default="/dev/i2c-1", help="Controller I2C device")
     parser.add_argument("--rp-i2c-address", type=lambda value: int(value, 0), help="7-bit slave address, decimal or 0x hex; no default")
     parser.add_argument("--i2c-timeout-ms", type=int, default=200)
+    parser.add_argument("--controller-status-poll-interval-ms", type=positive_interval_ms, default=1000)
+    parser.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], default="INFO")
     parser.add_argument("--mock-mux", action="store_true", help="Use real sources with the M2 mock mux")
     parser.add_argument("--mux-runtime-dir", default="/run/fmheadend")
     parser.add_argument("--pcm-staging-buffer-ms", type=pcm_buffer_ms, default=DEFAULT_STAGING_BUFFER_MS,
@@ -338,24 +350,20 @@ def main():
                         media_browser_roots=tuple(args.media_browser_root),
                         audio_telemetry_socket=args.audio_telemetry_socket,
                         audio_telemetry_hz=args.audio_telemetry_hz,
-                        passwd_file=args.passwd_file)
-    database = Database(args.database, initial_preemphasis_us=75 if settings.region == 2 else 50)
-    try:
-        config = database.get_system()
-    finally:
-        database.close()
-    logging.basicConfig(level=config.log_level, format="%(levelname)s %(name)s %(message)s")
+                        passwd_file=args.passwd_file,
+                        controller_status_poll_interval_ms=args.controller_status_poll_interval_ms)
+    logging.basicConfig(level=args.log_level, format="%(levelname)s %(name)s %(message)s")
     import uvicorn
     mux_factory = None if args.mock or args.mock_mux else lambda sources: UnixMuxClient(sources.output_for, args.mux_runtime_dir)
     try:
         rp = MockRp2354Client() if args.mock or args.mock_rp else Rp2354Client(
-            args.i2c_device or config.i2c_device,
-            config.controller_i2c_address if args.rp_i2c_address is None else args.rp_i2c_address,
+            args.i2c_device,
+            args.rp_i2c_address,
             timeout_ms=args.i2c_timeout_ms)
     except ValueError as exc:
         parser.error(str(exc))
-    uvicorn.run(create_app(settings, rp=rp, pipeline_factory=MockPipeline if args.mock else GstPipeline, mux_factory=mux_factory), host=args.host or config.web_listen_address,
-                port=args.port if args.port is not None else config.web_port, log_level=config.log_level.lower())
+    uvicorn.run(create_app(settings, rp=rp, pipeline_factory=MockPipeline if args.mock else GstPipeline, mux_factory=mux_factory), host=args.host,
+                port=args.port, log_level=args.log_level.lower())
 
 
 if __name__ == "__main__":

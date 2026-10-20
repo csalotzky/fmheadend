@@ -28,8 +28,11 @@ class Settings:
     audio_telemetry_socket: str | Path | None = None
     audio_telemetry_hz: float = 50.0
     passwd_file: str | Path | None = None
+    controller_status_poll_interval_ms: int = 1000
 
     def __post_init__(self):
+        if type(self.controller_status_poll_interval_ms) is not int or self.controller_status_poll_interval_ms <= 0:
+            raise ValueError("Controller status poll interval must be a positive integer")
         audio_telemetry_hz(self.audio_telemetry_hz)
         pcm_capacity_bytes(self.pcm_staging_buffer_ms)
         pcm_capacity_bytes(self.pcm_consumer_buffer_ms)
