@@ -58,7 +58,7 @@ sudo apt install build-essential python3-venv python3-gi python3-gst-1.0 \
 python3 -m venv --system-site-packages .venv
 . .venv/bin/activate
 python -m pip install -e './daemon[test]'
-fmheadendd --mock-rp --mock-mux --database ./fmheadend.db --host 127.0.0.1 --port 8080
+fmheadendd --mock-controller --mock-mux --database ./fmheadend.db --host 127.0.0.1 --port 8080
 ```
 
 The application version comes from `daemon/pyproject.toml` through installed
@@ -72,7 +72,7 @@ is below 3.11 do not satisfy the existing package requirement.
 
 The CLI uses real GStreamer, the independent Unix mux daemon and Linux RP2354
 I2C by default. The command above explicitly mocks RP and mux for standalone
-Milestone 2 operation. Use `--mock-rp` with native mux for Milestone 3 operation
+Milestone 2 operation. Use `--mock-controller` with native mux for Milestone 3 operation
 without an RP. Use `--mock` for all original Milestone 1 mocks without GI.
 Real I2C requires an explicitly configured slave address; failure never falls
 back to mock, and the HTTP server remains available with degraded status. The `create_app()` factory retains its mock defaults for

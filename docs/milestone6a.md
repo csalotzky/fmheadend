@@ -228,11 +228,11 @@ Mock transport is never selected as a fallback.
 Create `/etc/fmheadend/fmheadendd.env` for current hardware-free testing:
 
 ```ini
-FMHEADEND_ARGS="--database /var/lib/fmheadend/fmheadend.db --mock-rp"
+FMHEADEND_ARGS="--database /var/lib/fmheadend/fmheadend.db --mock-controller"
 ```
 
-For real Controller, remove `--mock-rp` and configure `--i2c-device /dev/i2c-1` and the
-actual `--rp-i2c-address` (or set those persistent system fields). No slave address
+For real Controller, remove `--mock-controller` and configure `--i2c-device /dev/i2c-1` and the
+actual `--controller-i2c-address` (or set those persistent system fields). No slave address
 is invented. Environment files are required so transport/hardware mode is explicit.
 
 Once executable paths, account/groups and environment files are configured:
@@ -251,7 +251,7 @@ are enabled or installed automatically by development tests.
 ## Manual smoke now: real HTTP and native mux, mock Controller/SPI
 
 Use the service setup above, or run the two executables separately with mock SPI
-and `--mock-rp`. Create an HTTP source with a working HTTP/HLS URI:
+and `--mock-controller`. Create an HTTP source with a working HTTP/HLS URI:
 
 ```sh
 curl -sS -X POST localhost:8080/api/v1/sources -H 'Content-Type: application/json' \

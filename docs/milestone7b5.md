@@ -62,7 +62,7 @@ contents to the administrator-selected deployment location, for example
 `/opt/fmheadend/webui`. Example deployment command (administrator paths must be installed separately):
 
 ```sh
-fmheadendd --region 1 --host 0.0.0.0 --port 8080   --webui-dir /opt/fmheadend/webui --mock-rp   --database /var/lib/fmheadend/fmheadend.db
+fmheadendd --region 1 --host 0.0.0.0 --port 8080   --webui-dir /opt/fmheadend/webui --mock-controller   --database /var/lib/fmheadend/fmheadend.db
 ```
 
 This example uses mock RP but retains native GStreamer and independent muxd;

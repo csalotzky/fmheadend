@@ -306,36 +306,38 @@ def positive_interval_ms(text):
 
 
 def argument_parser():
-    parser = argparse.ArgumentParser(description="fmheadendd media and Controller control")
-    parser.add_argument("--database", default="/var/lib/fmheadend/fmheadend.db")
+    parser = argparse.ArgumentParser(description="fmheadendd media and Controller control",
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    development = parser.add_argument_group("Development / Testing")
+    parser.add_argument("--database", default="/var/lib/fmheadend/fmheadend.db", help="SQLite configuration file")
     parser.add_argument("--host", default="0.0.0.0", help="HTTP listen address")
     parser.add_argument("--port", type=int, default=8080, help="HTTP listen port")
-    parser.add_argument("--mock", action="store_true", help="Use mock sources, mux and Controller control")
-    parser.add_argument("--mock-rp", action="store_true", help="Use the original high-level mock Controller client")
+    development.add_argument("--mock", action="store_true", help="Use mock sources, mux and Controller control")
+    development.add_argument("--mock-controller", action="store_true", help="Use the high-level mock Controller client")
     parser.add_argument("--i2c-device", default="/dev/i2c-1", help="Controller I2C device")
-    parser.add_argument("--rp-i2c-address", type=lambda value: int(value, 0), help="7-bit slave address, decimal or 0x hex; no default")
-    parser.add_argument("--i2c-timeout-ms", type=int, default=200)
-    parser.add_argument("--controller-status-poll-interval-ms", type=positive_interval_ms, default=1000)
-    parser.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], default="INFO")
-    parser.add_argument("--mock-mux", action="store_true", help="Use real sources with the M2 mock mux")
-    parser.add_argument("--mux-runtime-dir", default="/run/fmheadend")
+    parser.add_argument("--controller-i2c-address", type=lambda value: int(value, 0), help="7-bit slave address, decimal or 0x hex; no address assumed")
+    parser.add_argument("--i2c-timeout-ms", type=int, default=200, help="Controller I2C timeout in ms")
+    parser.add_argument("--controller-status-poll-interval-ms", type=positive_interval_ms, default=1000, help="Controller status polling interval in ms")
+    parser.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], default="INFO", help="Daemon log level")
+    development.add_argument("--mock-mux", action="store_true", help="Use real sources with the mock mux")
+    parser.add_argument("--mux-runtime-dir", default="/run/fmheadend", help="Mux Unix socket directory")
     parser.add_argument("--pcm-staging-buffer-ms", type=pcm_buffer_ms, default=DEFAULT_STAGING_BUFFER_MS,
-                        help="Staging byte capacity / burst headroom in ms (default 200); independent of staging maximum age")
+                        help="Staging byte capacity / burst headroom in ms; independent of maximum age")
     parser.add_argument("--pcm-staging-max-age-ms", type=pcm_buffer_ms, default=DEFAULT_STAGING_MAX_AGE_MS,
-                        help="Staging maximum PCM age in ms (default 100); independent of staging byte capacity")
+                        help="Staging maximum PCM age in ms; independent of byte capacity")
     parser.add_argument("--pcm-consumer-buffer-ms", type=pcm_buffer_ms, default=DEFAULT_CONSUMER_BUFFER_MS,
-                        help="Per-consumer PCM capacity and maximum age in ms (default 300)")
+                        help="Per-consumer PCM capacity and maximum age in ms")
     parser.add_argument("--region", type=int, choices=sorted(PLANS), default=1, help="Frequency selection plan: 0 Expert, 1 Europe (default), 2 US, 3 Japan")
     parser.add_argument("--webui-dir", help="Production Angular browser assets directory (optional)")
     parser.add_argument("--passwd-file", nargs="?", const=DEFAULT_PASSWD_FILE,
-                        help=f"Enable HTTP Basic Auth using bcrypt htpasswd (default {DEFAULT_PASSWD_FILE})")
+                        help=f"Bcrypt htpasswd file; bare option uses {DEFAULT_PASSWD_FILE}; default %(default)s disables auth")
     parser.add_argument("--media-browser-root", action="append", default=[],
                         help="Additional absolute root available to the LOCAL source path browser; repeatable")
-    parser.add_argument("--audio-profiles-default-dir", default="/usr/share/fmheadend/audio-profiles/default")
-    parser.add_argument("--audio-profiles-custom-dir", default="/var/lib/fmheadend/audio-profiles/custom")
+    parser.add_argument("--audio-profiles-default-dir", default="/usr/share/fmheadend/audio-profiles/default", help="Bundled Audio Profile directory")
+    parser.add_argument("--audio-profiles-custom-dir", default="/var/lib/fmheadend/audio-profiles/custom", help="Custom Audio Profile directory")
     parser.add_argument("--audio-telemetry-socket", help="Optional local DSP diagnostics Unix socket path")
     parser.add_argument("--audio-telemetry-hz", type=audio_telemetry_hz, default=50.0,
-                        help="Diagnostic sampling rate, 10..100 Hz (default 50)")
+                        help="Diagnostic sampling rate, 10..100 Hz")
     return parser
 
 
@@ -356,9 +358,9 @@ def main():
     import uvicorn
     mux_factory = None if args.mock or args.mock_mux else lambda sources: UnixMuxClient(sources.output_for, args.mux_runtime_dir)
     try:
-        rp = MockRp2354Client() if args.mock or args.mock_rp else Rp2354Client(
+        rp = MockRp2354Client() if args.mock or args.mock_controller else Rp2354Client(
             args.i2c_device,
-            args.rp_i2c_address,
+            args.controller_i2c_address,
             timeout_ms=args.i2c_timeout_ms)
     except ValueError as exc:
         parser.error(str(exc))

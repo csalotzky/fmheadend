@@ -134,7 +134,7 @@ smoke_dir=$(mktemp -d /tmp/fmheadend-m7b1.XXXXXX)
 mkdir "$smoke_dir/run"
 fmheadend-muxd --transport mock --runtime-dir "$smoke_dir/run" &
 mux_pid=$!
-fmheadendd --mock-rp --database "$smoke_dir/test.db" \
+fmheadendd --mock-controller --database "$smoke_dir/test.db" \
   --mux-runtime-dir "$smoke_dir/run" --host 127.0.0.1 --port 18080 &
 backend_pid=$!
 ```

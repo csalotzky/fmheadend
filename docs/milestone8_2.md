@@ -32,7 +32,7 @@ The user-selected deployment address is **7-bit `0x62`** (wire address bytes
 `FMHEADEND_HOST_I2C_ADDRESS` defaults to this explicitly selected board address
 and can be changed with `-DFMHEADEND_HOST_I2C_ADDRESS=0x62`. CMake rejects values
 outside `0x08..0x77` and nonnumeric input. This does not add a universal default to
-protocol V1 or the Linux client. Pi `--rp-i2c-address 0x62` / persistent
+protocol V1 or the Linux client. Pi `--controller-i2c-address 0x62` / persistent
 `controller_i2c_address=98` must match the firmware build.
 
 ## Implemented commands and deliberate exceptions
@@ -248,7 +248,7 @@ $ocd = Join-Path $env:USERPROFILE '.pico-sdk/openocd/0.12.0+dev'
    traces, ELF version/hash, board revision and physical RF/LED observations.
 
 To try the Linux daemon afterward, its existing configuration must select the
-real RP and `--i2c-device /dev/i2c-1 --rp-i2c-address 0x62`. Restart it only after
+real RP and `--i2c-device /dev/i2c-1 --controller-i2c-address 0x62`. Restart it only after
 the manual client exits. DEGRADED and unsupported-command errors are expected
 with these stubs; this milestone does not complete the M6A recovery sequence.
 

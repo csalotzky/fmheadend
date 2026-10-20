@@ -1,6 +1,6 @@
 # Milestone 2: GStreamer source ingest
 
-With Milestones 3-4 installed, use `--mock-rp --mock-mux` on the Python daemon
+With Milestones 3-4 installed, use `--mock-controller --mock-mux` on the Python daemon
 for standalone Milestone 2 operation. See [Milestone 4 modes](milestone4.md).
 
 ## Dependencies and installation
