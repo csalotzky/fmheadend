@@ -289,6 +289,7 @@ export class DashboardState {
         return next;
       });
       if (c.messageGeneration === this.messageGeneration) {
+        this.failures.update((failures) => failures.filter((failure) => failure.id !== id));
         this.actionFeedback.update((v) => ({
           ...v,
           [id]: `Controller observation confirms ${c.state}.`,
@@ -326,6 +327,7 @@ export class DashboardState {
         this.notice.set(`TX ${id}: command returned ${result.tx_state}. Refreshing observations.`);
     } catch (error) {
       if (!this.closed && generation === this.messageGeneration) {
+        this.trackConfirmation(id, action === 'start' ? 'ON' : 'OFF', generation, false, true);
         this.failures.set([{ id, message: errorMessage(error) }]);
         this.notice.set('Operation failed or outcome unknown.');
         this.actionFeedback.update((v) => ({
@@ -345,13 +347,15 @@ export class DashboardState {
     state: 'ON' | 'OFF',
     generation: number,
     commandConfirmed: boolean,
+    pollingOnly = false,
   ) {
     const receivedAt = Date.now();
     this.confirmations.set(id, {
       state,
       receivedAt,
-      deadline: receivedAt + 10000,
-      expired: false,
+      // Failed requests retain their error until normal polling confirms the state.
+      deadline: pollingOnly ? receivedAt : receivedAt + 10000,
+      expired: pollingOnly,
       messageGeneration: generation,
       commandConfirmed,
     });
