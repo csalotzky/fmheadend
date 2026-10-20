@@ -2,7 +2,7 @@ import logging
 import time
 import sqlite3
 from ..diagnostics import error_scope
-from ..errors import DependencyUnavailable, DomainError, SourceUnavailable
+from ..errors import DependencyUnavailable, DomainError, SourceUnavailable, SourcePending, SourceStartupFailed
 from ..models.configuration import ModulatorConfig, RDS_FIELDS
 from ..models.runtime_status import ModulatorStatus, TxState
 from ..rp2354.client import TxConfig
@@ -226,7 +226,9 @@ class ModulatorManager:
         status = self.statuses[modulator_id]
         if status.tx_state == TxState.ON and (config.audio_mode == "ANALOG" or modulator_id in self.active_sources):
             return status
-        if modulator_id in self.active_sources:
+        if modulator_id in self.active_sources and not (
+                self.recovery and modulator_id in self.recovery.audio_pending
+                and self.active_sources[modulator_id] == config.input_source_id):
             stopped = self._stop(modulator_id, retry_budget)
             if stopped.last_error:
                 raise DomainError(503, 'DEPENDENCY_UNAVAILABLE', stopped.last_error)
@@ -250,6 +252,12 @@ class ModulatorManager:
             command = Command.SET_TX_ENABLED
             self._lifecycle_command(command, lambda: self.rp.set_tx_enabled(modulator_id, True), retry_budget)
         except (DependencyUnavailable, ValueError) as exc:
+            if isinstance(exc, SourcePending):
+                self.active_sources[modulator_id] = source.id
+                status.tx_state = previous_state
+                if self.recovery:
+                    self.recovery.defer_audio(modulator_id, exc)
+                raise DomainError(503, "DEPENDENCY_UNAVAILABLE", str(exc)) from exc
             # An uncertain ON is retried as ON, never converted to an OFF cycle.
             rf_off = command is None or (not enable_attempted and execution_outcome(exc, command) != Outcome.AMBIGUOUS)
             if rf_off:
@@ -265,7 +273,9 @@ class ModulatorManager:
             if source_failure:
                 status.source_state, status.source_last_error = 'ERROR', str(exc)
                 status.source_error_scope = 'SOURCE'
-                if self.recovery:
+                if isinstance(exc, SourceStartupFailed):
+                    self.fail_audio_start(modulator_id, exc)
+                elif self.recovery:
                     self.recovery.defer_audio(modulator_id, exc)
             if self.recovery and command is not None:
                 self.recovery.command_failed(modulator_id, command, exc)
@@ -389,10 +399,27 @@ class ModulatorManager:
         existing = self.active_sources.get(config.id)
         if existing != source.id:
             self.release_audio(config.id)
+        try:
             self.sources.acquire(source.id, config.id)
+        except SourcePending:
             self.active_sources[config.id] = source.id
+            raise
+        self.active_sources[config.id] = source.id
         self.mux.attach(config.id, source.id)
         self.statuses[config.id].source_state = self.sources.statuses[source.id].state
+
+    def fail_audio_start(self, channel, error):
+        """Cancel terminal LOCAL startup without sending an RF enable command."""
+        self.release_audio(channel)
+        config = self.get(channel)
+        self.database.save("modulators", ModulatorConfig.model_validate(
+            config.model_dump(exclude={"id", "timestamp", "rds_override_profile_id"}) | {"enabled": False}), channel)
+        if self.recovery:
+            self.recovery.audio_pending.pop(channel, None)
+        row = self.statuses[channel]
+        row.source_state, row.source_last_error, row.source_error_scope = 'ERROR', str(error), 'SOURCE'
+        logger.error('TX%s source %s LOCAL startup failed; enable intent cleared: %s',
+                     channel, config.input_source_id, error)
 
     def release_audio(self, channel):
         self.mux.detach(channel)

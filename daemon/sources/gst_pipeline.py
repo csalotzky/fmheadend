@@ -10,7 +10,7 @@ import threading
 import time
 
 from .. import __version__
-from ..errors import DependencyUnavailable, SourceUnavailable
+from ..errors import DependencyUnavailable, SourceUnavailable, SourcePending, SourceStartupFailed
 from ..models.configuration import SourceType, SourceTestResult, LocalConfig
 from .local_playback import LocalPlayback, LocalPlaybackError
 from .alsa_capture import link_alsa_capture
@@ -310,6 +310,10 @@ class GstPipeline:
             return
         self._thread = threading.Thread(target=self._run, name=f"source-{getattr(self.source, 'id', 'probe')}", daemon=True)
         self._thread.start()
+        if self.source.type == SourceType.LOCAL and self.reconnect:
+            self._startup_pending = True
+            self.check_startup()
+            return
         deadline = time.monotonic() + self.timeout_s
         # Normal operation needs a constructed pipeline, not a live sender.
         # Explicit probes still require decoded PCM within their deadline.
@@ -323,6 +327,17 @@ class GstPipeline:
         if self.fatal_error:
             self.stop()
             raise self._failure or DependencyUnavailable(self.fatal_error)
+
+    def check_startup(self):
+        """Control worker: observe LOCAL preparation without waiting on discovery."""
+        if not getattr(self, '_startup_pending', False):
+            return
+        if self.fatal_error or self._finished.is_set():
+            raise SourceStartupFailed(str(self._failure or self.fatal_error or 'LOCAL startup stopped'))
+        if not self._ready.is_set():
+            raise SourcePending(self.snapshot()['last_error'] or 'LOCAL_DISCOVERY_PENDING')
+        self._startup_pending = False
+        log.info('source %s LOCAL startup ready: decoded PCM available', getattr(self.source, 'id', 'probe'))
 
     def stop(self):
         if self.source.type == SourceType.PODCAST:

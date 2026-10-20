@@ -131,6 +131,7 @@ def test_failed_playing_distinguishes_unavailable_sender_from_missing_plugin(nat
 
 
 def test_local_missing_folder_preserves_external_failure_through_worker(native, tmp_path):
+    from fmheadendd.errors import SourcePending, SourceStartupFailed
     from fmheadendd.sources.local_playback import LocalPlayback
     from fmheadendd.models.configuration import LocalConfig
     class MissingFolder(NoPcmPipeline):
@@ -140,9 +141,15 @@ def test_local_missing_folder_preserves_external_failure_through_worker(native, 
             self._media_idle = self._local.initial() is None
     pipeline = MissingFolder(InputSourceConfig(name='Missing', type='LOCAL',
         config=dict(mode='folder', path=str(tmp_path/'missing'))), timeout_s=.2)
-    with pytest.raises(SourceUnavailable, match='FOLDER_UNREADABLE'):
-        pipeline.start()
-    assert pipeline.snapshot()['error_scope'] == 'SOURCE'
+    try:
+        with pytest.raises((SourcePending, SourceStartupFailed)):
+            pipeline.start()
+        assert pipeline._finished.wait(2)
+        with pytest.raises(SourceStartupFailed, match='FOLDER_UNREADABLE'):
+            pipeline.check_startup()
+        assert pipeline.snapshot()['error_scope'] == 'SOURCE'
+    finally:
+        pipeline.stop()
     assert not pipeline._thread.is_alive()
 
 

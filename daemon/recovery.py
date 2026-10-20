@@ -3,7 +3,7 @@ import logging
 import time
 import sqlite3
 from .diagnostics import error_scope
-from .errors import DependencyUnavailable, DomainError, SourceUnavailable
+from .errors import DependencyUnavailable, DomainError, SourceUnavailable, SourcePending, SourceStartupFailed
 from .models.runtime_status import TxState, ModulatorStatus
 from .rp2354.client import TxConfig
 from .rp2354.protocol import Command, IncompatibleProtocol, Outcome, RpResponseError, execution_outcome, PROTOCOL_VERSION, frequency_capabilities
@@ -187,6 +187,8 @@ class Recovery:
 
     def defer_audio(self, channel, error, *, configured=None):
         if channel not in self.audio_pending:
+            if isinstance(error, SourcePending):
+                logger.info('TX%s audio startup deferred; RF remains OFF: %s', channel, error)
             self._audio_enabled[channel] = self.modulators.statuses[channel].tx_state == TxState.ON
         self.audio_pending[channel] = self.clock() + 5.0
         self._audio_config[channel] = configured
@@ -201,6 +203,11 @@ class Recovery:
         except Exception as exc:
             # This boundary contains only source/mux work, never RP commands.
             # Unexpected failures remain visible system faults with traceback.
+            if isinstance(exc, SourceStartupFailed):
+                self.modulators.fail_audio_start(config.id, exc)
+                row = self.modulators.statuses[config.id]
+                row.source_state, row.source_last_error = 'ERROR', str(exc)
+                return False
             self.defer_audio(config.id, exc, configured=TxConfig.from_modulator(config))
             if not isinstance(exc, SourceUnavailable):
                 logger.exception('TX%s internal audio startup failure', config.id)

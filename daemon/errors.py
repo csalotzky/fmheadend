@@ -12,3 +12,11 @@ class DependencyUnavailable(Exception):
 
 class SourceUnavailable(DependencyUnavailable):
     """An external media input/decoder is unavailable, not a system failure."""
+
+
+class SourcePending(SourceUnavailable):
+    """An owned source is still preparing; retry without destroying its worker."""
+
+
+class SourceStartupFailed(SourceUnavailable):
+    """A retained LOCAL startup ended; explicit user action is needed to retry."""
