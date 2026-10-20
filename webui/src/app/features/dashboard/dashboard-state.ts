@@ -289,7 +289,14 @@ export class DashboardState {
         return next;
       });
       if (c.messageGeneration === this.messageGeneration) {
+        const resolvedFailure = this.failures().some((failure) => failure.id === id);
         this.failures.update((failures) => failures.filter((failure) => failure.id !== id));
+        if (
+          resolvedFailure &&
+          this.failures().length === 0 &&
+          this.notice() === 'Operation failed or outcome unknown.'
+        )
+          this.notice.set('');
         this.actionFeedback.update((v) => ({
           ...v,
           [id]: `Controller observation confirms ${c.state}.`,
