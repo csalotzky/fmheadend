@@ -397,7 +397,7 @@ The existing once-per-incident raw response log includes the CRC trailer in its
 `payload`/`payload_length` fields, exactly as returned by the second Linux read.
 An unavailable device does not prevent the HTTP application from starting.
 
-The real CLI is the default. `--mock-rp` explicitly selects the unchanged high-level
+The real CLI is the default. `--mock-controller` explicitly selects the unchanged high-level
 `MockRp2354Client`; `--mock` selects all original mocks. `--mock-mux` affects only
 mux selection. The embedding `create_app()` keeps its original mock defaults;
 pass `rp=Rp2354Client(device, address)` to opt into real control.

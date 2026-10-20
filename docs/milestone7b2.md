@@ -100,7 +100,7 @@ rejected saves, dirty navigation, polling isolation, AF/PS list edits and manual
 Backend tests verify active edits have no persistence or hardware side effects.
 
 Use an isolated temporary DB/runtime with native mux `--transport mock` and fmheadendd
-`--mock-rp`, following the M7B1 smoke setup. Point an untracked Angular dev proxy at it.
+`--mock-controller`, following the M7B1 smoke setup. Point an untracked Angular dev proxy at it.
 Configure a source, open Modulators, edit TX0, select digital input and exercise Fill from
 source. Save, then explicitly start via Dashboard. A subsequent editor Save must return
 409 without stopping TX. Explicitly stop, save manual analog settings, then start again.

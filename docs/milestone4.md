@@ -24,17 +24,17 @@ failure, with DEGRADED status and a useful error. There is never automatic fallb
 | CLI mode | Sources | Mux | Controller control |
 |---|---|---|---|
 | no mock flags | GStreamer | Unix client | Linux I2C |
-| `--mock-rp` | GStreamer | Unix client | Original high-level mock |
-| `--mock-rp --mock-mux` | GStreamer | Original mock | Original high-level mock |
+| `--mock-controller` | GStreamer | Unix client | Original high-level mock |
+| `--mock-controller --mock-mux` | GStreamer | Original mock | Original high-level mock |
 | `--mock` | Original mock | Original mock | Original high-level mock |
 
-Use **`--mock-rp` to continue the validated Milestone 3 setup without Controller hardware**.
+Use **`--mock-controller` to continue the validated Milestone 3 setup without Controller hardware**.
 `--mock-mux` alone does not mock I2C. The embedding `create_app()` factory retains
 its original mock defaults; inject the real client explicitly when embedding.
 
 The existing persistent `SystemConfig.i2c_device` and
 `SystemConfig.controller_i2c_address` select the hardware. CLI overrides are
-`--i2c-device /dev/i2c-N` and `--rp-i2c-address 0xNN`. No address is assumed when
+`--i2c-device /dev/i2c-N` and `--controller-i2c-address 0xNN`. No address is assumed when
 unset; startup reports hardware unavailable while serving the API. I2C configuration
 changes take effect on daemon restart. `--i2c-timeout-ms` defaults to 200.
 
@@ -140,7 +140,7 @@ For the integrated API, start muxd independently as documented in
 
 ```sh
 fmheadendd --database "$HOME/fmheadend-m4-smoke.db" --host 127.0.0.1 --port 8080 \
-  --i2c-device "$RP_I2C_DEVICE" --rp-i2c-address "$RP_I2C_ADDRESS"
+  --i2c-device "$RP_I2C_DEVICE" --controller-i2c-address "$RP_I2C_ADDRESS"
 curl -sS http://127.0.0.1:8080/api/v1/system/info
 curl -sS http://127.0.0.1:8080/api/v1/status
 ```

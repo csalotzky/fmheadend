@@ -460,7 +460,7 @@ def test_config_encoding_failure_releases_source(tmp_path):
     finally:
         db.close()
 
-@pytest.mark.parametrize('flags,real_rp', [([], True), (['--mock'], False), (['--mock-rp'], False), (['--mock-mux'], True)])
+@pytest.mark.parametrize('flags,real_rp', [([], True), (['--mock'], False), (['--mock-controller'], False), (['--mock-mux'], True)])
 def test_cli_selects_explicit_hardware_mode(monkeypatch, tmp_path, flags, real_rp):
     import fmheadendd.app as application
     import uvicorn

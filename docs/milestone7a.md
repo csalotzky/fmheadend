@@ -122,7 +122,7 @@ compile checks, and the generated Prettier dependency can check formatting.
 
 Use an isolated test database/runtime directory so operational configuration is not
 changed. Start the native mux with `--transport mock`, then fmheadendd with
-`--mock-rp`, pointing both at the same runtime directory (see M3/M6A commands).
+`--mock-controller`, pointing both at the same runtime directory (see M3/M6A commands).
 Use the existing API to create an HTTP source with a real accessible URL and assign
 an explicitly chosen frequency to at least one channel. Enable RDS if desired.
 Start that channel, then run the Angular dev server and open Dashboard.
@@ -131,7 +131,7 @@ Example commands, in separate terminals (choose unused test paths and a real HTT
 
 ```sh
 fmheadend-muxd --transport mock --runtime-dir /tmp/fmheadend-ui-run
-fmheadendd --mock-rp --database /tmp/fmheadend-ui.db \
+fmheadendd --mock-controller --database /tmp/fmheadend-ui.db \
   --mux-runtime-dir /tmp/fmheadend-ui-run --host 127.0.0.1 --port 8080
 curl -sS -X POST localhost:8080/api/v1/sources -H 'Content-Type: application/json' \
   -d '{"name":"UI smoke","type":"HTTP","config":{"uri":"https://example.org/replace-with-real-stream"}}'
