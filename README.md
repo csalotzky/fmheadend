@@ -14,6 +14,30 @@ See [Milestone 3 build, run, wire format and verification](docs/milestone3.md).
 See [Milestone 2 setup and verification](docs/milestone2.md) for transport details,
 dependency installation, integration tests and smoke tests.
 
+## Optional HTTP password protection
+
+Authentication is disabled unless `--passwd-file [PATH]` is supplied. With no
+path it reads `/var/lib/fmheadend/htpasswd`, directly above `audio-profiles/`.
+Changing `--audio-profiles-custom-dir` does not change this location. An explicit
+path selects a different file. Provide an Apache-compatible bcrypt htpasswd file
+(for example, created interactively with `htpasswd -B`), readable only by the
+service account and trusted administrators. The daemon never creates credentials.
+
+The complete HTTP app is protected, including API, docs, static assets served via
+`--webui-dir` (such as `www/`) and SPA routes. Browsers use their native Basic Auth
+prompt. **Use HTTPS or a trusted encrypted transport: Basic Auth over plain HTTP
+does not protect passwords against interception.** Do not place the password file
+inside the served WebUI directory.
+
+Missing, unreadable, empty or invalid password files prevent startup. At runtime,
+file changes invalidate cached authentication; unavailable/invalid files deny
+access until corrected. Only bcrypt `$2a$`, `$2b$`, `$2y$` entries are accepted,
+with costs 4–16, UTF-8 usernames up to 128 bytes, passwords up to 72 UTF-8 bytes
+and a 64 KiB file limit. Duplicate usernames are rejected. No legacy hash fallback.
+Verification uses one worker independent of control/audio, at most eight pending
+checks, and a 128-entry, 30-second cache of keyed credential digests. Excess requests
+receive 401; no passwords or Authorization headers are cached or logged.
+
 ## Run on Linux Mint / Raspberry Pi
 
 Python 3.11 or newer is required.
