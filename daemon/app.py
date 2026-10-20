@@ -364,9 +364,13 @@ def main():
             timeout_ms=args.i2c_timeout_ms)
     except ValueError as exc:
         parser.error(str(exc))
-    uvicorn.run(create_app(settings, rp=rp, pipeline_factory=MockPipeline if args.mock else GstPipeline, mux_factory=mux_factory), host=args.host,
-                port=args.port, log_level=args.log_level.lower())
-
+    uvicorn.run(
+        create_app(settings, rp=rp, pipeline_factory=MockPipeline if args.mock else GstPipeline, mux_factory=mux_factory),
+        host=args.host,
+        port=args.port,
+        log_level=args.log_level.lower(),
+        access_log=False,
+    )
 
 if __name__ == "__main__":
     main()
