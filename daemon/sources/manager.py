@@ -1,7 +1,7 @@
 import logging
 import time
 from threading import Lock
-from ..errors import DependencyUnavailable, DomainError, SourceUnavailable
+from ..errors import DependencyUnavailable, DomainError, SourceUnavailable, SourcePending
 from ..models.configuration import InputSourceConfig, SourceTestResult
 from ..models.runtime_status import InputSourceStatus, SourceState
 from .pipeline import MockPipeline, probe
@@ -231,6 +231,10 @@ class SourceManager:
             self.statuses[source_id] = InputSourceStatus(source_id=source_id,
                 **({'state': SourceState.RUNNING} if getattr(replacement, 'mocked', True) else replacement.snapshot()))
             return None
+        except SourcePending as exc:
+            self.restart_errors.pop(source_id, None)
+            logger.info('source %s LOCAL replacement pending; retaining discovery worker', source_id)
+            return str(exc)
         except Exception as exc:
             self.restart_errors[source_id] = str(exc)
             self.statuses[source_id] = InputSourceStatus(source_id=source_id, state=SourceState.ERROR, last_error=str(exc),
@@ -253,6 +257,9 @@ class SourceManager:
             consumers = self.consumers.setdefault(source_id, set())
         self._profile_observations.pop(source_id, None)
         if modulator_id in consumers:
+            pipeline = self.pipelines[source_id]
+            if hasattr(pipeline, 'check_startup'):
+                pipeline.check_startup()
             return
         status = self.status(source_id)
         if not consumers:
@@ -266,6 +273,9 @@ class SourceManager:
                 if not getattr(pipeline, "mocked", True):
                     pipeline.output.attach(modulator_id)
                 pipeline.start()
+            except SourcePending:
+                logger.info('source %s LOCAL startup deferred; retaining discovery worker', source_id)
+                raise
             except Exception as exc:
                 try:
                     if pipeline is not None:
@@ -289,7 +299,8 @@ class SourceManager:
             logger.info("source %s started", source_id)
         else:
             pipeline = self.pipelines[source_id]
-            error = self.restart_errors.get(source_id) or getattr(pipeline, 'fatal_error', None)
+            error = self.restart_errors.get(source_id) or (
+                None if getattr(pipeline, '_startup_pending', False) else getattr(pipeline, 'fatal_error', None))
             if error:
                 scope = self.status(source_id).error_scope
                 raise (SourceUnavailable if scope == 'SOURCE' else DependencyUnavailable)(error)
@@ -297,6 +308,8 @@ class SourceManager:
                 pipeline.output.attach(modulator_id)
         with self._registry_lock:
             consumers.add(modulator_id)
+        if hasattr(pipeline, 'check_startup'):
+            pipeline.check_startup()
 
     def release(self, source_id, modulator_id):
         consumers = self.consumers.get(source_id)
@@ -306,6 +319,8 @@ class SourceManager:
             return
         pipeline = self.pipelines[source_id]
         if len(consumers) == 1:
+            failed_start = (InputSourceStatus(source_id=source_id, **pipeline.snapshot())
+                            if getattr(pipeline, '_startup_pending', False) and pipeline.fatal_error else None)
             self.radio_recovery.invalidate(source_id)
             # Retain ownership if native teardown fails; never replace a worker
             # that might still be alive with a second pipeline for this source.
@@ -313,7 +328,7 @@ class SourceManager:
             with self._registry_lock:
                 self.pipelines.pop(source_id)
                 self.consumers.pop(source_id)
-            self.statuses[source_id] = InputSourceStatus(source_id=source_id)
+            self.statuses[source_id] = failed_start or InputSourceStatus(source_id=source_id)
             self.restart_errors.pop(source_id, None)
             logger.info("source %s stopped", source_id)
             self._profile_observations.pop(source_id, None)
