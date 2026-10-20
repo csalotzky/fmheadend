@@ -184,12 +184,12 @@ class StatusService:
                 mux_status = self.recovery.reconcile_mux(mux_status)
             self.system.mux_state = mux_status["state"]
             self.system.spi_errors = mux_status["spi_errors"]
-            self.system.mux_transport = mux_status.get("transport", "mock")
+            self.system.mux_transport = mux_status.get("transport")
             self.system.mux_transport_state = mux_status.get("transport_state", "RUNNING")
             self.system.mux_frames_sent = mux_status["frames_sent"]
             self.system.mux_late_frames = mux_status.get("late_frames", 0)
             self.system.mux_transport_errors = mux_status.get("transport_errors", 0)
-            self.system.mux_mocked = mux_status.get("mocked", True)
+            self.system.mux_mocked = mux_status.get("mocked")
             if mux_status.get('stream_state') != 'STREAMING' or (self.recovery and
                     self.recovery.verified_info is not None and
                     mux_status['tx_count'] != self.recovery.verified_info['modulator_count']):

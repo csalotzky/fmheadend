@@ -27,6 +27,54 @@ def client(tmp_path):
         yield client
 
 
+@pytest.mark.parametrize('transport', ['spidev', 'mock'])
+def test_mux_transport_requires_observation_and_survives_disconnect(tmp_path, monkeypatch, transport):
+    from fmheadendd.mux.unix_client import UnixMuxClient
+
+    mux = UnixMuxClient(lambda unused: None)
+    reply = None
+
+    def request(command, **fields):
+        assert command == 'get_status'
+        if reply is None:
+            raise DependencyUnavailable('Mux control unavailable')
+        return reply
+
+    monkeypatch.setattr(mux, '_request', request)
+    app = create_app(profile_settings(tmp_path / 'headend.db'), mux=mux)
+    with TestClient(app) as api:
+        initial = api.get(P + '/status').json()['system']
+        assert initial['system_state'] == 'DEGRADED'
+        assert initial['controller_state'] == 'OK'
+        assert initial['mux_state'] == 'ERROR'
+        assert initial['mux_transport'] is None
+        assert initial['mux_mocked'] is None
+
+        observed = MockMuxClient()
+        observed.set_tx_count(8)
+        status = observed.get_status()
+        status.update(transport=transport, mocked=transport == 'mock')
+        for channel in status['channels']:
+            channel.update(bytes_received=0, bytes_consumed=0)
+
+        def refresh(value):
+            nonlocal reply
+            reply = value
+            app.state.services.status.refresh()
+
+        app.state.control.executor.submit(refresh, status).result(timeout=3)
+        connected = api.get(P + '/status').json()['system']
+        assert connected['mux_state'] == 'RUNNING'
+        assert connected['mux_transport'] == transport
+        assert connected['mux_mocked'] is (transport == 'mock')
+        app.state.control.executor.submit(refresh, None).result(timeout=3)
+        disconnected = api.get(P + '/status').json()['system']
+        assert disconnected['system_state'] == 'DEGRADED'
+        assert disconnected['mux_state'] == 'ERROR'
+        assert disconnected['mux_transport'] == transport
+        assert disconnected['mux_mocked'] is (transport == 'mock')
+
+
 def source(client, body=None):
     response = client.post(P + "/sources", json=body or HTTP)
     assert response.status_code == 201, response.text

@@ -227,6 +227,31 @@ describe('Operational display', () => {
     expect(cards[1].textContent).not.toContain('Audio Profile');
     expect(f.nativeElement.textContent).not.toContain('8 physical channels');
   });
+  it('shows SPI MOCK only for an observed mock transport, including after disconnect', () => {
+    const state = setup();
+    vi.spyOn(state, 'start').mockImplementation(() => {});
+    const f = TestBed.createComponent(Shell);
+    const http = TestBed.inject(HttpTestingController);
+    for (const [transport, mocked, muxState] of [
+      [null, null, 'ERROR'],
+      ['spidev', false, 'RUNNING'],
+      ['spidev', false, 'ERROR'],
+      ['mock', true, 'RUNNING'],
+      ['mock', true, 'ERROR'],
+    ] as const) {
+      const data = sample();
+      Object.assign(data.status.system, {
+        mux_transport: transport, mux_mocked: mocked, mux_state: muxState,
+      });
+      state.data.set(data);
+      f.detectChanges();
+      http.expectOne('/api/v1/system/info').flush({ fmheadend_version: '1.0.0' });
+      http.expectOne('/api/v1/audio-profiles/files').flush([]);
+      f.detectChanges();
+      expect(f.nativeElement.textContent.includes('SPI MOCK')).toBe(mocked === true);
+    }
+    http.verify();
+  });
   it('loads real version branding and clears transient messages on navigation', () => {
     const state = setup();
     vi.spyOn(state, 'start').mockImplementation(() => {});

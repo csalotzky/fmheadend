@@ -9,6 +9,29 @@ import { planOptions, frequencyLabel } from '../../core/api/system-api';
 import { routes } from '../../app.routes';
 
 describe('System and region plans', () => {
+  it.each([
+    [null, null, 'Unavailable'],
+    ['spidev', false, 'spidev'],
+    ['mock', true, 'mock (mock)'],
+  ])('renders observed transport %s without inventing a fallback', (transport, mocked, expected) => {
+    const shared = TestBed.inject(DashboardState);
+    const data = sample();
+    data.status.system.mux_transport = transport;
+    data.status.system.mux_mocked = mocked;
+    data.status.system.mux_state = 'ERROR';
+    shared.data.set(data);
+    shared.stale.set(false);
+    const f = TestBed.createComponent(SystemPage);
+    f.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/v1/system/info').flush(systemInfo);
+    http.expectOne('/api/v1/system/logs').flush([]);
+    f.detectChanges();
+    const label = Array.from(f.nativeElement.querySelectorAll('dt') as NodeListOf<HTMLElement>)
+      .find((node) => node.textContent === 'Transport');
+    expect(label?.nextElementSibling?.textContent?.trim()).toBe(expected);
+    http.verify();
+  });
   it('does not invent an Expert range before capabilities arrive', () => {
     expect(planOptions({ region: 0, region_name: 'Expert', fm_min_khz: null,
       fm_max_khz: null, fm_step_khz: null })).toEqual([]);

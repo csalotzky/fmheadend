@@ -109,12 +109,12 @@ class SystemStatus(Model):
     controller_observation_stale: bool = True
     controller_observation_age_s: float | None = None
     mux_state: str = "RUNNING"
-    mux_transport: str = "mock"
+    mux_transport: str | None = None
     mux_transport_state: str = "RUNNING"
     mux_frames_sent: int = 0
     mux_late_frames: int = 0
     mux_transport_errors: int = 0
-    mux_mocked: bool = True
+    mux_mocked: bool | None = None
     spi_errors: int = 0
     i2c_errors: int = 0
     controller_uptime_ms: int | None = None
