@@ -53,6 +53,7 @@ class MockMuxClient:
         if not self.available:
             raise DependencyUnavailable("Mock mux is unavailable")
         return {"state": "RUNNING", "spi_ok": True, "spi_errors": 0, "frames_sent": 0,
+                "transport": "mock", "mocked": True, "transport_state": "RUNNING",
                 "tx_count": self.tx_count, "stream_state": self.stream_state,
                 "spi_frame_bytes": None if self.tx_count is None else 4 + 512 * self.tx_count,
                 "channels": [{"id": i, "underruns": 0, "overruns": 0} for i in range(8)], "last_error": None}

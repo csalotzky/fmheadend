@@ -79,10 +79,10 @@ export interface SystemStatus {
   system_state: string;
   controller_state: string;
   mux_state: string;
-  mux_transport: string;
+  mux_transport: string | null;
   mux_transport_state: string;
   mux_frames_sent: number;
-  mux_mocked: boolean;
+  mux_mocked: boolean | null;
   spi_errors: number;
   i2c_errors: number;
   controller_uptime_ms: number | null;
