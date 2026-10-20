@@ -87,20 +87,25 @@ def assign(client, tx, source_id, **kwargs):
     return response.json()
 
 
-@pytest.mark.parametrize('field,value', [('spi_device', '/dev/spidev1.0'), ('spi_clock_hz', 1000000)])
-def test_system_config_rejects_mux_owned_spi_settings(client, field, value):
+@pytest.mark.parametrize('field,value', [
+    ('spi_device', '/dev/spidev1.0'), ('spi_clock_hz', 1000000),
+    ('i2c_device', '/dev/i2c-3'), ('controller_i2c_address', 98),
+    ('web_listen_address', '127.0.0.1'), ('web_port', 8888),
+    ('controller_status_poll_interval_ms', 500), ('log_level', 'DEBUG'),
+])
+def test_system_config_rejects_startup_and_mux_owned_settings(client, field, value):
     before = client.get(P + '/system/config').json()
-    assert {'spi_device', 'spi_clock_hz'}.isdisjoint(before)
-    response = client.patch(P + '/system/config', json={field: value, 'web_port': 8888})
+    assert set(before) == {'default_audio_profile_id', 'global_stopped'}
+    response = client.patch(P + '/system/config', json={field: value, 'default_audio_profile_id': 'default/bypass.json'})
     assert response.status_code == 422
     assert client.get(P + '/system/config').json() == before
     schemas = client.get('/openapi.json').json()['components']['schemas']
     for name in ('SystemConfig', 'SystemConfigPatch', 'SystemSaveResult'):
-        assert {'spi_device', 'spi_clock_hz'}.isdisjoint(schemas[name]['properties'])
-    response = client.patch(P + '/system/config', json={'web_port': 8888})
+        assert field not in schemas[name]['properties']
+    response = client.patch(P + '/system/config', json={'default_audio_profile_id': 'default/bypass.json'})
     assert response.status_code == 200
     assert {'spi_device', 'spi_clock_hz'}.isdisjoint(response.json())
-    assert client.get(P + '/system/config').json() == {**before, 'web_port': 8888}
+    assert client.get(P + '/system/config').json() == {**before, 'default_audio_profile_id': 'default/bypass.json'}
 
 
 def test_docs_and_fixed_modulators(client):
@@ -242,14 +247,14 @@ def test_restart_persistence_and_runtime_reset(tmp_path):
         assign(client, 3, sid, frequency_khz=98100, rds_rt="Fallback")
         client.post(P + "/modulators/3/start")
         client.put(P + "/modulators/3/rds/rt", json={"text": "Override"})
-        client.patch(P + "/system/config", json={"web_port": 8888})
+        assert client.patch(P + "/system/config", json={"default_audio_profile_id": "default/bypass.json"}).status_code == 200
     with TestClient(create_app(settings)) as client:
         row = client.get(P + "/modulators/3").json()
         assert row["frequency_khz"] == 98100 and row["enabled"]
         assert row["input_source_id"] == sid
         assert client.get(P + "/modulators/3/rds/rt").json()["text"] == "Fallback"
         assert client.get(P + "/status").json()["modulators"][3]["tx_state"] == "ON"
-        assert client.get(P + "/system/config").json()["web_port"] == 8888
+        assert client.get(P + "/system/config").json()["default_audio_profile_id"] == "default/bypass.json"
         assert client.get(f"{P}/sources/{sid}").json()["name"] == HTTP["name"]
 
 

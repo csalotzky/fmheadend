@@ -67,9 +67,9 @@ def test_current_configuration_reopens_without_writes(tmp_path):
     db.save("modulators", ModulatorConfig(
         audio_mode="ANALOG", frequency_khz=99500,
         rds_ps=[PsEntry(text="STUDIO")]), 7)
-    db.save_system(SystemConfig(web_port=8090, log_level="DEBUG", controller_i2c_address=32))
-    assert {'spi_device', 'spi_clock_hz'}.isdisjoint(
-        json.loads(db.connection.execute('SELECT data FROM system_config').fetchone()[0]))
+    db.save_system(SystemConfig(default_audio_profile_id="default/bypass.json", global_stopped=True))
+    assert set(json.loads(db.connection.execute('SELECT data FROM system_config').fetchone()[0])) == {
+        'default_audio_profile_id', 'global_stopped'}
     before = snapshot(db.connection)
     db.close()
     for _ in range(2):
@@ -80,7 +80,7 @@ def test_current_configuration_reopens_without_writes(tmp_path):
             assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 1
             assert db.get("sources", source.id) == source
             assert db.get("modulators", 3).rds_ps[0].duration_s == 9
-            assert db.get_system().web_port == 8090
+            assert db.get_system() == SystemConfig(default_audio_profile_id="default/bypass.json", global_stopped=True)
         finally:
             db.close()
 

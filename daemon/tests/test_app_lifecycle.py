@@ -16,6 +16,43 @@ async def wait_for(predicate):
             await asyncio.sleep(0.01)
 
 
+def test_polling_and_snapshot_freshness_use_runtime_interval(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from fmheadendd import app as app_module
+
+    now = [0.0]
+    monkeypatch.setattr(app_module, 'time', SimpleNamespace(monotonic=lambda: now[0]))
+    app = create_app(profile_settings(tmp_path / 'config.db',
+                                     controller_status_poll_interval_ms=2500))
+
+    async def run():
+        async with app.router.lifespan_context(app):
+            services = app.state.services
+            refreshes, ticks = [], []
+            original_refresh, original_tick = services.status.refresh, services.rds.tick
+
+            def refresh(**kwargs):
+                refreshes.append(now[0])
+                return original_refresh(**kwargs)
+
+            def tick():
+                ticks.append(now[0])
+                return original_tick()
+
+            monkeypatch.setattr(services.status, 'refresh', refresh)
+            monkeypatch.setattr(services.rds, 'tick', tick)
+            await wait_for(lambda: len(refreshes) == 1)
+            now[0] = 1.0
+            await wait_for(lambda: 1.0 in ticks)
+            assert refreshes == [0.0]
+            now[0] = 2.5
+            await wait_for(lambda: len(refreshes) == 2)
+            assert refreshes == [0.0, 2.5]
+            assert services.status._published[1] == 5.0
+
+    asyncio.run(run())
+
+
 def track_cleanup(monkeypatch, app, events, failures=()):
     services = app.state.services
     for name, owner, method in (
