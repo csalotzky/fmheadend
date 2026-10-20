@@ -1,136 +1,143 @@
-# Standalone FMheadend RP2354 firmware
+# FMheadend Controller firmware (RP2354)
 
-Open this directory itself as the Raspberry Pi Pico VS Code project. All source,
-build/provisioning scripts, bench helpers and tests needed by this project are
-local. The host OTA uploader is a separate application; the firmware build never
-imports or invokes it. The OTA interface remains a `.bin` with adjacent `.bin.json`.
+Firmware for the FMheadend Controller, based on the RP2354 with **2 MiB flash** (`rp2354-qn8x-v1`). It controls **1–8 physical FM transmitters**, receives PCM over SPI, handles host-generated RDS groups and supports A/B firmware updates. RF is OFF at startup; unavailable PCM is replaced with silence.
 
-## Build and program (Windows 11)
+- Controller protocol: **version 1**
+- Firmware application version: **1.0.0** (`firmware_config.h`)
+- Standard host audio format: **128 stereo frames per TX per SPI packet**, 48 kHz
 
-Install the Pico extension toolchain in its normal user directory: Pico SDK 2.3.1,
-ARM GCC 15_2_Rel1, CMake 4.3.4, Ninja 1.13.2, picotool 2.3.1 and OpenOCD
-0.12.0+dev. Python 3.11 or later must be discoverable by CMake. No host repository
-or host virtual environment is required. From this project directory:
+This directory can be built, tested and provisioned independently of the main FMheadend repository. The Linux I²C firmware updater is supplied separately in the host repository.
+
+## 1. Build
+
+### Prerequisites
+
+The supplied PowerShell workflow uses the Raspberry Pi Pico VS Code extension's Windows toolchain:
+
+| Tool | Configured version |
+|---|---|
+| Pico SDK / picotool | 2.3.1 |
+| ARM GCC | 15_2_Rel1 |
+| CMake / Ninja | 4.3.4 / 1.13.2 |
+| OpenOCD (SWD/debug) | 0.12.0+dev |
+| Python | 3.11+ |
+
+Open **this firmware directory** as the VS Code workspace. **Compile Project** runs:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File tools/rp2354_build.ps1
 ```
 
-**Compile Project** runs this same operation. It builds all eight TX populations, factory and OTA, from the
-same source, validates both manifests and generates the partition table:
+Or, with Pico SDK, ARM compiler, picotool and Ninja already configured:
+
+```sh
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+```
+
+Set `PICO_SDK_PATH`, `PICO_TOOLCHAIN_PATH` and, if needed, `picotool_DIR` for a custom toolchain. Use a fresh `build/` directory when changing machines or toolchains. **Building does not program the device.**
+
+### Output files
+
+A standard build generates **16 firmware images**: factory and OTA images for each physical TX count `N = 1..8`.
 
 ```text
-build/factory/fmheadend_rp2354_tx{1..8}.bin
-build/factory/fmheadend_rp2354_tx{1..8}.bin.json
-build/ota/fmheadend_rp2354_tx{1..8}.bin
-build/ota/fmheadend_rp2354_tx{1..8}.bin.json
+build/factory/fmheadend_rp2354_txN.bin
+build/factory/fmheadend_rp2354_txN.bin.json
+build/ota/fmheadend_rp2354_txN.bin
+build/ota/fmheadend_rp2354_txN.bin.json
 build/partitions.bin
 ```
 
-Each image has an isolated target/build header; the build ID includes TX count
-and packet frame count. Manifests retain the existing uploader-compatible schema.
-Provisioning selects `build/factory/fmheadend_rp2354_tx8.bin` by default.
+Each binary must stay with its matching `.bin.json` manifest. The filename determines the intended TX population; the manifest does **not** independently encode the TX count. Matching ELF files are generated for debugging.
 
-`firmware_config.h` defines `TX_COUNT` (1..8, default 8) and
-`FRAMES_PER_PACKET` (1..128, default 128). CMake builds every TX count and accepts
-`-DFRAMES_PER_PACKET=64` (use a separate build directory for different packet
-sizes). The two 4096-byte output buffers and four SPI slots stay statically sized;
-only the active DMA count, PCM stride and refill timing vary. Missing TX lanes
-are zero-filled. GET_INFO reports the actual population; existing fixed-size
-status/FIFO replies retain eight entries, with absent entries inactive/empty.
+### Build options
 
-The unmodified host supports only TX8/128. Other populations need matching host
-SPI lengths and GET_INFO support; smaller packets also need matching send cadence.
-No hardware timing qualification is implied for small packet sizes.
+| Setting | Default | Description |
+|---|---|---|
+| `TX_COUNT` | 8 in `firmware_config.h` | Standard build generates separate TX1–TX8 targets |
+| `FRAMES_PER_PACKET` | 128 | Stereo frames per TX; standard host requires 128 |
+| `DEBUG_UART_ENABLED` | OFF | Optional 115200 8N1 debug output |
+| `FMHEADEND_HOST_I2C_ADDRESS` | `0x62` | Controller 7-bit I²C address (`0x08..0x77`) |
 
-`DEBUG_UART_ENABLED` defaults to OFF (`firmware_config.h` and the CMake option).
-Enable diagnostics for all variants with `cmake -S . -B build -DDEBUG_UART_ENABLED=ON`,
-then use the normal Compile operation; use OFF to disable again. OFF leaves GPIO28
-as an input without pulls and emits no UART logs. Do not enable it on a board
-where GPIO28 is shorted to SWCLK. Stdio UART/USB remain disabled in both modes.
-`FMHEADEND_FIRMWARE_VERSION` in `firmware_config.h` is the sole application version
-source for GET_INFO, the optional banner, Pico metadata and OTA manifests.
-The GET_INFO hardware target is `rp2354-qn8x-v1`, a firmware-compatible hardware
-family rather than a PCB revision. Protocol identifiers and ROM image versions
-are independent.
+The standard host sends `4 + 512*N` SPI bytes per packet at **375 packets/s**. A different `FRAMES_PER_PACKET` value requires a matching host sender; it is not negotiated at runtime.
 
-GET_INFO has a 47-byte payload: the existing identity/count fields followed by
-three little-endian uint32 frequency capabilities: 76000, 108000, 50 kHz.
-The unreleased protocol remains version 1; hosts must use the matching parser.
+Enable or disable UART diagnostics in an existing build:
 
-Factory: ROM 1.0, non-TBYB. OTA: ROM 1.1, TBYB. Manifests contain the embedded
-build ID, ROM version, image size, TBYB and complete SHA-256. Source/build settings
-determine the build ID. A copied CMake cache is automatically reconfigured for
-the new project root by the PowerShell entry point. Generated build directories
-can also be omitted when copying the project.
+```sh
+cmake -S . -B build -DDEBUG_UART_ENABLED=ON
+cmake --build build --parallel
+# To disable again:
+cmake -S . -B build -DDEBUG_UART_ENABLED=OFF
+cmake --build build --parallel
+```
 
-**Flash Pico Project (SWD)** delegates to **Flash RP2354 Factory (SWD)**. Both
-build/validate and immediately start provisioning without interactive questions.
-They identify the RP2350-family device and autodetected 2 MiB flash, erase all
-sectors, write the partition table and factory image, then compare a complete
-physical flash readback byte for byte. No target CRC algorithm is used.
-An unavailable SWD target fails without an automatic hardware reconnect loop.
-The local Tcl-server startup wait is not a retry of the hardware connection.
+UART output uses the firmware's designated debug connection; confirm the board's wiring before enabling it.
 
-Provisioning uses the Python selected by CMake. The hardware-free preflight is:
+## 2. Initial installation (SWD)
+
+> **Destructive:** provisioning erases the **entire 2 MiB flash**, including both application slots and update journals. The supplied provisioning script installs **TX8 factory firmware only**. Do not use it on a TX1–TX7 board.
+
+Connect a suitable Debug Probe and put the RP2354 into **BOOTSEL**. After building, optionally validate artifacts without accessing hardware:
 
 ```powershell
 python tools/rp2354_provision.py --build-dir build --dry-run
 ```
 
-Readback and OpenOCD logs are retained in `build/`. A post-verification reset
-failure is reported separately: flash contents may be verified while normal
-boot is still unconfirmed. Release BOOTSEL and reset manually if required by
-the board. Agent-initiated hardware work follows [AGENTS.md](AGENTS.md); this
-does not introduce a confirmation prompt into user-invoked tasks.
+To erase and program the device (starts **without a confirmation prompt**):
 
-**Debug** configurations attach without loading. Select the symbols for the
-running factory or OTA target via the Pico extension. Flat ELF/UF2 loading is
-blocked: the native 0x10000000 runtime origin maps to an A/B slot at boot, while
-physical 0x10000000 holds the partition table. Never replace the Flash task with
-a generic `program ELF` command.
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/rp2354_build.ps1 -Provision
+```
 
-## Firmware boundaries
+The VS Code **Flash RP2354 Factory (SWD)** task performs the same operation.
 
-Firmware 0.8.6b uses protocol V1, host address 0x62, two-stage READ and CRC16.
-Host bus configuration remains 50 kHz. The IRQ services the hardware peripheral;
-bounded foreground work handles QN control and flash operations. Safe boot leaves
-RF OFF. Normal UART is 115200 8N1 on GPIO28/29, GPIO27 indicates status.
+The script checks the chip family and 2 MiB flash size, then:
 
-Flash offsets: table 0x000000, A 0x004000, B 0x0F4000, journal 0x1FE000.
-Each application slot is 960 KiB. Native ROM A/B selection, TBYB trial and explicit
-buy are used; no custom bootloader. Equal/older version activation follows the
-ROM rules. Successful CONFIRM/ABORT returns to normal operation by ACK-gated
-reboot. The host must verify the resulting slot/build/finalization state.
+| Physical address | Operation |
+|---|---|
+| `0x10000000` | Write `build/partitions.bin` |
+| `0x10004000` | Write `build/factory/fmheadend_rp2354_tx8.bin` |
 
-Audio is 48 kHz stereo, 16-bit I2S: BCLK 1.536 MHz and WS 48 kHz. Core1 owns
-SPI/I2S DMA and PIO. Missing digital samples produce silence. Audio/RDS never
-implicitly enables RF. RDS is a bounded FIFO transport; the bench helpers supply
-test groups, not application scheduling policy.
+It verifies the **entire flash by readback** before requesting a cold reset. Results are saved to `build/provision-openocd.log` and `build/provision-readback.bin`.
 
-## Offline tests and optional bench tools
+If readback succeeds but the reset is not acknowledged, release BOOTSEL, reset manually and check Controller status; **do not erase again solely because the reset failed**. Failed readback means provisioning is not verified.
 
-With a native C compiler (not ARM GCC), CMake and Python:
+**Never flash the ELF or UF2 as a flat image at `0x10000000`:** that overwrites the partition table. The ROM maps the selected A/B application image to that runtime address; factory firmware is physically installed at `0x10004000`.
 
-```text
-cmake -S tests -B build/tests
-cmake --build build/tests
-ctest --test-dir build/tests --output-on-failure
+## 3. Debugging and tests
+
+The supplied Cortex-Debug configurations **attach without loading firmware**. They default to TX8 factory symbols (`build/factory/fmheadend_rp2354_tx8.elf`); select the ELF matching the running image. Debug attachment may halt the Controller.
+
+Offline native tests use fake hardware. With a host C compiler, CMake and Python:
+
+```sh
+cmake -S tests -B build/tests-debug -DCMAKE_BUILD_TYPE=Debug
+cmake --build build/tests-debug
+ctest --test-dir build/tests-debug --output-on-failure
+
+cmake -S tests -B build/tests-release -DCMAKE_BUILD_TYPE=Release
+cmake --build build/tests-release
+ctest --test-dir build/tests-release --output-on-failure
+```
+
+Use a single-configuration generator (such as Ninja or Unix Makefiles). Additional offline Python tests:
+
+```sh
 python -m pytest tests/test_rp2354_provision.py tests/test_rp2354_partitions.py
 ```
 
-Set `PICOTOOL` to the installed executable for the offline partition tests.
-Those tests only create/inspect local files. Pytest is required for these two
-test modules; the existing CTest Python checks use the standard library.
+Install `pytest` separately. Set `PICOTOOL` to picotool 2.3.1 for partition tests; otherwise those checks skip. The optional bench tools under `tools/` may access hardware and enable RF; **do not run them as offline tests**. Tools requiring Pydantic models use `tools/requirements-bench.txt`.
 
-The optional Linux bench tools in `tools/` use the local `bench_support` snapshot
-for their existing wire codec, Linux client, configuration validation and RDS
-encoder. They do not import the external daemon. Install
-`tools/requirements-bench.txt` for tools using TxConfig (Pydantic 2). Build and SWD
-provisioning need only standard-library Python. Bench tools can operate real
-hardware: do not run them as part of ordinary offline validation.
+## 4. I²C firmware updates
 
-Known hardware findings from the earlier workflow validation: full SWD readback
-and OTA in both directions succeeded, but OpenOCD normal reset failed on that
-board and repeated I2C `80 80` header/CRC errors required recovery. This structural
-refactor changes neither behavior nor timing and is not a claim to fix those faults.
+Once the board has a valid A/B installation, subsequent updates use the host repository's **`tools/rp2354_flash.py`**, not the SWD provisioning script. The uploader requires the host Controller client, firmware artifact validator and installed `fmheadendd` package metadata.
+
+Choose the matching `build/ota/fmheadend_rp2354_txN.bin` and `.bin.json`. Stop other Controller clients before starting an update. Successful updates leave **RF OFF**.
+
+In the complete FMheadend repository, see:
+
+- [RP2354 firmware installation and update](../../docs/rp2354-firmware-update.md) — I²C uploader commands, A/B boot, rollback and recovery.
+- [Controller protocol](../../docs/controller-protocol.md) — I²C command frames, status codes and SPI audio format.
+
+These links require the full repository; the build, SWD and test instructions above work with this directory alone. Neither offline tests nor successful flash readback establish RF/audio performance or power-loss-safe OTA on every board.
