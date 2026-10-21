@@ -277,9 +277,12 @@ The response is shaped as follows:
 {"text":"Live programme","origin":"override","remaining_ttl_s":300.0}
 ```
 
-`text` is at most 64 printable characters. Omit `ttl_s` or send `null` for an
-override without automatic expiry. `origin` is `override`, `metadata` or
-`fallback`. Overrides are runtime-only and do not survive a backend restart.
+`text` is at most 64 printable characters; an empty string is valid. When
+supplied, `ttl_s` must be a finite number greater than zero; it has no configured maximum. Omit it or send
+`null` for an override without automatic expiry. `origin` is `override`,
+`metadata` or `fallback`; `remaining_ttl_s` is non-null only for an expiring
+override. After expiry, `GET` returns the selected metadata or fallback text.
+Overrides are runtime-only and do not survive a backend restart.
 
 Persisted RDS content is part of Source and Modulator configuration, not a separate
 top-level REST resource. An RDS profile object contains `rds_pi`, `rds_ecc`,
