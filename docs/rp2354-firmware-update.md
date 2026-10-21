@@ -19,7 +19,7 @@ See the [Controller protocol](controller-protocol.md#6-rp2354-firmware-update-ex
 
 ## 2. Flash layout and firmware images
 
-### Flash layout
+### 2.1 Flash layout
 
 Physical offsets, with exclusive end addresses:
 
@@ -36,7 +36,7 @@ Physical offsets, with exclusive end addresses:
 
 The updater validates partition boundaries, A/B links and boot/runtime mapping before writing. Ordinary OTA erase/program operations affect the inactive slot and journal; explicit ROM confirmation can also change image metadata or invalidate the previous image.
 
-### Artifacts and image selection
+### 2.2 Artifacts and image selection
 
 A firmware build produces **16 images** (TX1–TX8, each in factory and OTA form), with adjacent manifests:
 
@@ -70,7 +70,7 @@ The supported image format is the build-generated, unsigned ARM Secure XIP image
 
 **Warning: provisioning erases all 2 MiB**, including both application slots and update journals. The provided script is suitable **only for TX8 hardware**.
 
-### Prerequisites and build
+### 3.1 Prerequisites and build
 
 Use Windows, the Raspberry Pi Pico VS Code extension's local toolchain, an appropriate Debug Probe and the following configured tools:
 
@@ -94,7 +94,7 @@ Optional offline validation (no SWD access):
 python tools/rp2354_provision.py --build-dir build --dry-run
 ```
 
-### Provisioning
+### 3.2 Provisioning
 
 Place the Controller in **BOOTSEL** and connect the Debug Probe. This command **starts erasing/programming without confirmation**:
 
@@ -119,7 +119,7 @@ If readback succeeds but reset is not acknowledged, **do not erase again just fo
 
 The Linux updater is **`tools/rp2354_flash.py`**, located at the repository root. It requires the host Controller client, firmware artifact validator and installed `fmheadendd` Python package metadata; copying the script alone is insufficient.
 
-### Prerequisites
+### 4.1 Prerequisites
 
 Use an existing correctly installed FMheadend Python environment, or create one from the repository root:
 
@@ -138,7 +138,7 @@ Before updating:
 - Choose the correct `.bin` and adjacent `.bin.json`, with device access permissions and a writable log location.
 - Use the Controller's actual I²C device and address. The examples below use `/dev/i2c-1` and `0x62`.
 
-### Commands
+### 4.2 Commands
 
 From the repository root, with **TX8 as an example**:
 
@@ -155,7 +155,7 @@ python3 tools/rp2354_flash.py --device /dev/i2c-1 --address 0x62 firmware/fmhead
 
 Use the matching TX variant for other boards. `--log PATH` changes the default `rp2354-upload.log`. `--dry-run` also creates a log; `--status` and `--dry-run` cannot be combined.
 
-### Update sequence
+### 4.3 Update sequence
 
 | Step | Operation |
 |---|---|
@@ -170,7 +170,7 @@ Use the matching TX variant for other boards. `--log PATH` changes the default `
 
 A successful update leaves **RF OFF**; restart normal host operation deliberately. The startup-ready flag does not prove RF output, audio quality or RDS reception. OTA does not modify the host SQLite database.
 
-### Communication failures
+### 4.4 Communication failures
 
 The uploader checks response CRCs and reconciles uncertain results with STATUS. A valid FLASH_UPDATE BUSY response is **polled, not retransmitted**.
 
@@ -221,7 +221,7 @@ Recorded engineering runs include SWD readback, OTA activation/confirmation, res
 
 **Power-loss safety has not been comprehensively qualified.** In particular, interruptions during erase/programming, journal updates, trial/confirmation and ROM buy, as well as rollback timing, still require hardware testing. ROM buy can modify both images and must not be described as an atomic, hardware-proven operation. Keep a working SWD recovery path.
 
-## Implementation references
+## 8. Implementation references
 
 - Firmware: `partitions.json`, `flash_update.c`, `flash_update_platform.c`, `host_protocol.c`, `host_i2c.c`, `CMakeLists.txt`, `cmake/image/CMakeLists.txt`.
 - Firmware tools: `tools/rp2354_build.ps1`, `tools/rp2354_provision.py`, `tools/rp2354_artifact.py`.
