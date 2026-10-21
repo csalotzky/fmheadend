@@ -38,7 +38,7 @@ All multibyte integers and CRC trailers are **little-endian**. Payload structure
 
 The CRC covers the header and payload, excluding its own two bytes: **CRC-16/CCITT-FALSE**, polynomial `0x1021`, init `0xFFFF`, no reflection, XOR-out `0` (check: `123456789` → `0x29B1`). An empty ACK or error response is four bytes.
 
-### Transaction sequence
+### 2.1 Transaction sequence
 
 | Step | I²C operation |
 |---:|---|
