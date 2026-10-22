@@ -660,6 +660,18 @@ describe('Modulator configuration', () => {
       f.nativeElement.querySelector('[formControlName="rds_pty"]').options,
     ) as HTMLOptionElement[];
     expect(options.filter((o) => !o.disabled)).toHaveLength(30);
+    const checkbox = f.nativeElement.querySelector('[formControlName="rds_enabled"]');
+    const sourceSelect = f.nativeElement.querySelector('[formControlName="rds_follow_source"]');
+    expect(checkbox.closest('label').textContent.trim()).toBe('RDS enabled');
+    checkbox.click();
+    await f.whenStable();
+    f.detectChanges();
+    expect(c.form.controls.rds_enabled.value).toBe(false);
+    expect(sourceSelect.closest('fieldset').disabled).toBe(true);
+    checkbox.click();
+    await f.whenStable();
+    f.detectChanges();
+    expect(sourceSelect.closest('fieldset').disabled).toBe(false);
     c.form.controls.rds_enabled.setValue(false);
     const body = c.draft();
     expect(body.rds_override_profile!.rds_ps).toEqual(sample().modulators[0].rds_ps);

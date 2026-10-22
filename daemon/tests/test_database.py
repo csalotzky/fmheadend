@@ -34,6 +34,9 @@ def test_fresh_schema_and_model_defaults(tmp_path):
         assert [m.id for m in db.list("modulators")] == list(range(8))
         for tx in range(8):
             actual = db.get('modulators', tx)
+            assert actual.gain_mode == 'MANUAL'
+            assert actual.rds_enabled is True
+            assert actual.enabled is False
             assert actual.rds_pi == 0xFFF0 + tx
             assert actual.rds_ps == [PsEntry(text=f'TX {tx}')]
             assert actual.rds_override_profile.rds_pi == actual.rds_pi
@@ -65,7 +68,7 @@ def test_current_configuration_reopens_without_writes(tmp_path):
         rds_ps=[PsEntry(text="STATION", duration_s=9), PsEntry(text="SECOND")],
         rds_pty=10, rds_tp=True, rds_rt="Saved text", rds_metadata_to_rt=True), 3)
     db.save("modulators", ModulatorConfig(
-        audio_mode="ANALOG", frequency_khz=99500,
+        audio_mode="ANALOG", frequency_khz=99500, gain_mode="AUTO", rds_enabled=False,
         rds_ps=[PsEntry(text="STUDIO")]), 7)
     db.save_system(SystemConfig(default_audio_profile_id="default/bypass.json", global_stopped=True))
     assert set(json.loads(db.connection.execute('SELECT data FROM system_config').fetchone()[0])) == {
@@ -80,6 +83,8 @@ def test_current_configuration_reopens_without_writes(tmp_path):
             assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 1
             assert db.get("sources", source.id) == source
             assert db.get("modulators", 3).rds_ps[0].duration_s == 9
+            assert db.get("modulators", 7).gain_mode == 'AUTO'
+            assert db.get("modulators", 7).rds_enabled is False
             assert db.get_system() == SystemConfig(default_audio_profile_id="default/bypass.json", global_stopped=True)
         finally:
             db.close()

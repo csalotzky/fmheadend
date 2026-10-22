@@ -48,7 +48,8 @@ class Database:
                 for modulator_id in range(8):
                     profile = RdsProfileConfig(rds_pi=0xFFF0 + modulator_id, rds_ps=[PsEntry(text=f"TX {modulator_id}")], rds_rt="", rds_rt_enabled=False)
                     profile_id = self._write_profile(None, profile)
-                    config = ModulatorConfig(preemphasis_us=initial_preemphasis_us)
+                    config = ModulatorConfig(preemphasis_us=initial_preemphasis_us,
+                                             gain_mode="MANUAL", rds_enabled=True)
                     data = config.model_dump(mode="json", exclude=RDS_FIELDS | {"rds_override_profile"}) | {"timestamp": utcnow().isoformat()}
                     self.connection.execute("INSERT INTO modulators VALUES (?, NULL, ?, ?)", (modulator_id, profile_id, json.dumps(data)))
                 self.connection.execute("INSERT INTO system_config VALUES (1, ?)", (SystemConfig().model_dump_json(),))
