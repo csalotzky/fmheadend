@@ -43,7 +43,7 @@ def test_effective_resolution_preserves_override_and_rejects_invalid_follow(tmp_
     s = db.save('sources', source_config(rds_profile=RdsProfileConfig(rds_pi=123, rds_rt='Source')))
     initial = db.get('modulators', 0)
     followed = db.save('modulators', initial.model_copy(update={'input_source_id': s.id, 'rds_follow_source': True}), 0)
-    assert followed.rds_pi == 123 and not followed.rds_enabled
+    assert followed.rds_pi == 123 and followed.rds_enabled == initial.rds_enabled
     assert followed.rds_override_profile == initial.rds_override_profile
     with pytest.raises(DomainError, match='TX0') as exc:
         db.save('sources', s.model_copy(update={'rds_profile': None}), s.id)

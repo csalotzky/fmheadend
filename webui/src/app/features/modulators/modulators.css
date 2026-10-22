@@ -1,5 +1,16 @@
 @import '../../shared/editor-layout.css';
 
+.rds-enabled {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.rds-enabled input[type='checkbox'] {
+  margin: 0;
+  flex: none;
+}
+
 input:disabled,
 select:disabled,
 fieldset:disabled {
