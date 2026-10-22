@@ -197,7 +197,7 @@ for the default username `admin`, replace `YOUR_PASSWORD` with the chosen passwo
 
 ```sh
 sudo /opt/fmheadend/venv/bin/python ~/fmheadend/tools/create_passwd.py \
-  --user admin --file /var/lib/fmheadend/htpasswd \
+  --user 'YOUR_USERNAME' --file /var/lib/fmheadend/htpasswd \
   --password 'YOUR_PASSWORD'
 sudo chown root:fmheadend /var/lib/fmheadend/htpasswd
 sudo chmod 0640 /var/lib/fmheadend/htpasswd
