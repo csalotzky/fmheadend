@@ -35,30 +35,54 @@ For Raspberry Pi OS Lite / Debian-based installations:
 
 ```sh
 sudo apt update
-sudo apt install build-essential cmake python3-dev python3-venv \
+sudo apt install git build-essential cmake pkg-config \
+  libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+  python3-dev python3-venv \
   python3-gi python3-gst-1.0 gir1.2-gstreamer-1.0 \
   gir1.2-gst-plugins-base-1.0 gstreamer1.0-tools \
   gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
   gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly \
-  gstreamer1.0-libav gstreamer1.0-alsa alsa-utils
+  gstreamer1.0-libav gstreamer1.0-alsa alsa-utils \
+  lsp-plugins-lv2
 ```
 
 The Python environment must be able to import the OS-provided PyGObject/GStreamer bindings. Node.js **24.x** (`>=24.15.0`) and npm **11–12** are additionally required when building the Angular WebUI from source.
 
-### 3.1 FMheadend GStreamer plugins — strongly recommended
+### 3.1 FMheadend GStreamer plugins
 
-`fmheadendlimiter` and `fmheadendclipper` will be distributed from a **separate repository/release**. They are not required to start the backend, but **many bundled Audio Profiles depend on them** and cannot be used without them. Treat both plugins as part of a normal installation.
+FMheadend uses two custom GStreamer audio processing plugins:
 
-**Plugin download/install instructions: pending publication of the separate repository.** Do not assume the default Audio Profiles will work until these plugins are installed.
+- **`fmheadendlimiter`** — FM preemphasis-aware lookahead limiter.
+- **`fmheadendclipper`** — FM preemphasis-aware final peak clipper.
 
-After installation, check their GStreamer registration:
+These plugins are not included in the standard GStreamer packages. Although the FMheadend backend can start without them, many bundled Audio Profiles depend on them. **Installing both is recommended for a normal FMheadend setup.**
+
+The plugins are maintained in a [separate GitHub repository](https://github.com/csalotzky/fmheadend-gst-plugins).
+
+**Build and install:**
 
 ```sh
-gst-inspect-1.0 fmheadendlimiter
-gst-inspect-1.0 fmheadendclipper
+cd ~
+git clone https://github.com/csalotzky/fmheadend-gst-plugins.git
+cd fmheadend-gst-plugins
+
+make -j"$(nproc)" plugin
+make test
+make integration-test
+sudo make install
 ```
 
-Other plugins, such as LSP LV2 processors, are needed only by profiles using them. On supported distributions, the corresponding package may be `lsp-plugins-lv2`.
+**Verify installation:**
+
+```sh
+gst-inspect-1.0 fmheadendlimiter >/dev/null 2>&1 && echo "Limiter: OK" || echo "Limiter: FAILED"
+gst-inspect-1.0 fmheadendclipper >/dev/null 2>&1 && echo "Clipper: OK" || echo "Clipper: FAILED"
+```
+
+Both commands should display the corresponding plugin information without errors.
+
+For additional information, see the [plugin documentation](https://github.com/csalotzky/fmheadend-gst-plugins#readme).
+
 
 ## 4. Service account and directories
 
