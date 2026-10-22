@@ -27,7 +27,37 @@ A shell installer is planned for Raspberry Pi OS. It will download prebuilt comp
 
 Development currently takes place on a **Raspberry Pi 3B**. Testing on Pi 4 and Zero 2 W is planned; Pi 5 has not been tested. Actual capacity depends on the number of active channels and DSP workload, not just I²C/SPI compatibility.
 
-Enable the appropriate I²C and SPI interfaces in Raspberry Pi OS before installing. Confirm the resulting device names (`/dev/i2c-*`, `/dev/spidev*`) on the target system.
+### 2.1 Enable I²C and SPI
+
+On Raspberry Pi OS, enable both interfaces and reboot:
+
+```sh
+sudo raspi-config nonint do_i2c 0
+sudo raspi-config nonint do_spi 0
+sudo reboot
+```
+
+In these commands, `0` means **enable**; it is not a bus number. After the reboot,
+verify the standard interfaces:
+
+```sh
+ls -l /dev/i2c-1 /dev/spidev0.0
+```
+
+The standard FMheadend configuration uses:
+
+- `/dev/i2c-1` for Controller communication.
+- `/dev/spidev0.0` for PCM audio transport over SPI.
+
+If either device is missing, list the available interfaces:
+
+```sh
+ls -l /dev/i2c-* /dev/spidev*
+```
+
+Select the interfaces that match the Controller's physical wiring. SPI bus and
+chip-select numbers are significant: `/dev/spidev0.0` and `/dev/spidev0.1` are
+not interchangeable.
 
 ## 3. System dependencies
 
@@ -212,7 +242,13 @@ Create `/etc/fmheadend/fmheadendd.env`:
 FMHEADEND_ARGS="--database /var/lib/fmheadend/fmheadend.db --host 0.0.0.0 --port 8080 --i2c-device /dev/i2c-1 --controller-i2c-address 0x62 --mux-runtime-dir /run/fmheadend --webui-dir /usr/share/fmheadend/webui --audio-profiles-default-dir /usr/share/fmheadend/audio-profiles/default --audio-profiles-custom-dir /var/lib/fmheadend/audio-profiles/custom"
 ```
 
-Adjust the I²C/SPI device paths and Controller address for the actual installation. `--transport spidev` uses real hardware; for a software-only check, set `--transport mock` explicitly in `MUXD_ARGS`.
+The examples use the standard Raspberry Pi interfaces. For different physical
+wiring, set the backend's `--i2c-device` in `/etc/fmheadend/fmheadendd.env` and
+the mux's `--spi-device` in `/etc/fmheadend/muxd.env` to the corresponding Linux
+devices. Keep the default paths for a standard installation.
+
+The `--transport spidev` setting uses real hardware; for a software-only check,
+set `--transport mock` explicitly in `MUXD_ARGS`.
 
 **Network security:** the example binds HTTP to all interfaces (`0.0.0.0`). Restrict network access or use authentication behind HTTPS/a trusted encrypted connection. Basic Authentication is optional (`--passwd-file`); never expose credentials over unencrypted public HTTP.
 
