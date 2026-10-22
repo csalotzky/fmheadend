@@ -104,7 +104,7 @@ Confirm that the device groups exist and that the service account can access the
 | Path | Purpose |
 |---|---|
 | `/opt/fmheadend/venv` | Installed Python backend |
-| `/opt/fmheadend/webui` | Built WebUI |
+| `/usr/share/fmheadend/webui` | Built WebUI |
 | `/usr/share/fmheadend/audio-profiles/default` | Bundled, read-only Audio Profiles |
 | `/var/lib/fmheadend` | SQLite database and custom profiles |
 | `/run/fmheadend` | Runtime sockets, created by the mux service |
@@ -175,11 +175,11 @@ cd ~/fmheadend/webui
 npm ci
 npm run build
 
-sudo install -d -m 0755 /opt/fmheadend/webui
-sudo cp -a dist/fmheadend-ui/browser/. /opt/fmheadend/webui/
+sudo install -d -m 0755 /usr/share/fmheadend/webui
+sudo cp -a dist/fmheadend-ui/browser/. /usr/share/fmheadend/webui/
 ```
 
-Verify that `/opt/fmheadend/webui/index.html` exists.
+Verify that `/usr/share/fmheadend/webui/index.html` exists.
 
 ### 5.4 Bundled Audio Profiles
 
@@ -209,7 +209,7 @@ MUXD_ARGS="--transport spidev --spi-device /dev/spidev0.0 --spi-clock-hz 2500000
 Create `/etc/fmheadend/fmheadendd.env`:
 
 ```ini
-FMHEADEND_ARGS="--database /var/lib/fmheadend/fmheadend.db --host 0.0.0.0 --port 8080 --i2c-device /dev/i2c-1 --controller-i2c-address 0x62 --mux-runtime-dir /run/fmheadend --webui-dir /opt/fmheadend/webui --audio-profiles-default-dir /usr/share/fmheadend/audio-profiles/default --audio-profiles-custom-dir /var/lib/fmheadend/audio-profiles/custom"
+FMHEADEND_ARGS="--database /var/lib/fmheadend/fmheadend.db --host 0.0.0.0 --port 8080 --i2c-device /dev/i2c-1 --controller-i2c-address 0x62 --mux-runtime-dir /run/fmheadend --webui-dir /usr/share/fmheadend/webui --audio-profiles-default-dir /usr/share/fmheadend/audio-profiles/default --audio-profiles-custom-dir /var/lib/fmheadend/audio-profiles/custom"
 ```
 
 Adjust the I²C/SPI device paths and Controller address for the actual installation. `--transport spidev` uses real hardware; for a software-only check, set `--transport mock` explicitly in `MUXD_ARGS`.
@@ -243,7 +243,7 @@ Open `http://<pi-address>:8080/` to access the WebUI when network access is conf
 |---|---|
 | Python cannot import `gi` / `Gst` | OS GStreamer packages and virtual environment created with `--system-site-packages` |
 | Backend installation fails to build native code | Compiler, Python headers and build dependencies |
-| WebUI does not load | `/opt/fmheadend/webui/index.html` and `--webui-dir` |
+| WebUI does not load | `/usr/share/fmheadend/webui/index.html` and `--webui-dir` |
 | Controller unavailable | I²C address, device, permissions, connection and firmware |
 | SPI transfer fails | Device, access rights, SPI configuration and sufficient `spidev` buffer size (up to 4,100 bytes per packet) |
 | Factory Audio Profile cannot run | `fmheadendlimiter`, `fmheadendclipper` and any other plugins required by that profile |

@@ -127,7 +127,7 @@ capabilities determine the currently available physical TX inventory.
 | SQLite database | `/var/lib/fmheadend/fmheadend.db` | Configured by `--database`. |
 | Bundled Audio Profiles | `/usr/share/fmheadend/audio-profiles/default` | Configured by `--audio-profiles-default-dir`; missing defaults are an error. |
 | Custom Audio Profiles | `/var/lib/fmheadend/audio-profiles/custom` | Configured by `--audio-profiles-custom-dir`; created lazily. |
-| WebUI assets | None | Enabled only by `--webui-dir`; `/opt/fmheadend/webui` is an installation-guide example. |
+| WebUI assets | None | Enabled only by `--webui-dir`; `/usr/share/fmheadend/webui` is an installation-guide example. |
 | Mux sockets | `/run/fmheadend` | Configured independently by backend `--mux-runtime-dir` and mux `--runtime-dir`. |
 | Password file | None; bare `--passwd-file` selects `/var/lib/fmheadend/htpasswd` | Independent of the custom-profile directory. |
 | Audio telemetry socket | None | Created only by `--audio-telemetry-socket`; its adjacent `.owner` marker is managed by the daemon. |
@@ -183,7 +183,7 @@ MUXD_ARGS="--transport spidev --runtime-dir /run/fmheadend"
 
 ```ini
 # /etc/fmheadend/fmheadendd.env
-FMHEADEND_ARGS="--controller-i2c-address 0x62 --webui-dir /opt/fmheadend/webui"
+FMHEADEND_ARGS="--controller-i2c-address 0x62 --webui-dir /usr/share/fmheadend/webui"
 ```
 
 The two runtime-directory values must match. Add paths or hardware-specific
