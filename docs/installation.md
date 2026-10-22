@@ -193,15 +193,12 @@ The bundled profiles are separate from the Python package. The default-profile d
 ### 5.5 Optional: Password protection
 
 Authentication is optional and disabled by default. To create a bcrypt password file
-for the default username `admin`, enter the password without echoing it to the terminal:
+for the default username `admin`, replace `YOUR_PASSWORD` with the chosen password:
 
 ```sh
-read -rsp "FMheadend password: " FMHEADEND_PASSWORD
-printf '\n'
 sudo /opt/fmheadend/venv/bin/python ~/fmheadend/tools/create_passwd.py \
   --user admin --file /var/lib/fmheadend/htpasswd \
-  --password "$FMHEADEND_PASSWORD"
-unset FMHEADEND_PASSWORD
+  --password 'YOUR_PASSWORD'
 sudo chown root:fmheadend /var/lib/fmheadend/htpasswd
 sudo chmod 0640 /var/lib/fmheadend/htpasswd
 ```
