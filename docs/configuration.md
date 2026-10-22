@@ -183,7 +183,7 @@ MUXD_ARGS="--transport spidev --runtime-dir /run/fmheadend"
 
 ```ini
 # /etc/fmheadend/fmheadendd.env
-FMHEADEND_ARGS="--controller-i2c-address 0x62 --webui-dir /usr/share/fmheadend/webui"
+FMHEADEND_ARGS="--host 0.0.0.0 --port 8080 --i2c-device /dev/i2c-1 --region 1 --webui-dir /usr/share/fmheadend/webui"
 ```
 
 The two runtime-directory values must match. Add paths or hardware-specific

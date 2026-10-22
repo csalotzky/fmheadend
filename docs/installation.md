@@ -109,7 +109,8 @@ gst-inspect-1.0 fmheadendlimiter >/dev/null 2>&1 && echo "Limiter: OK" || echo "
 gst-inspect-1.0 fmheadendclipper >/dev/null 2>&1 && echo "Clipper: OK" || echo "Clipper: FAILED"
 ```
 
-Both commands should display the corresponding plugin information without errors.
+The commands print `Limiter: OK` and `Clipper: OK` when the plugins are available;
+otherwise they print the corresponding `FAILED` result.
 
 For additional information, see the [plugin documentation](https://github.com/csalotzky/fmheadend-gst-plugins#readme).
 
@@ -239,8 +240,11 @@ MUXD_ARGS="--transport spidev --spi-device /dev/spidev0.0 --spi-clock-hz 2500000
 Create `/etc/fmheadend/fmheadendd.env`:
 
 ```ini
-FMHEADEND_ARGS="--database /var/lib/fmheadend/fmheadend.db --host 0.0.0.0 --port 8080 --i2c-device /dev/i2c-1 --controller-i2c-address 0x62 --mux-runtime-dir /run/fmheadend --webui-dir /usr/share/fmheadend/webui --audio-profiles-default-dir /usr/share/fmheadend/audio-profiles/default --audio-profiles-custom-dir /var/lib/fmheadend/audio-profiles/custom"
+FMHEADEND_ARGS="--host 0.0.0.0 --port 8080 --i2c-device /dev/i2c-1 --region 1 --webui-dir /usr/share/fmheadend/webui"
 ```
+
+`--region`: `0` Expert, `1` Europe (default), `2` United States, `3` Japan; see the
+[configuration reference](configuration.md#12-controller-communication) for details.
 
 The examples use the standard Raspberry Pi interfaces. For different physical
 wiring, set the backend's `--i2c-device` in `/etc/fmheadend/fmheadendd.env` and
@@ -250,7 +254,39 @@ devices. Keep the default paths for a standard installation.
 The `--transport spidev` setting uses real hardware; for a software-only check,
 set `--transport mock` explicitly in `MUXD_ARGS`.
 
-**Network security:** the example binds HTTP to all interfaces (`0.0.0.0`). Restrict network access or use authentication behind HTTPS/a trusted encrypted connection. Basic Authentication is optional (`--passwd-file`); never expose credentials over unencrypted public HTTP.
+**Network security:** the example binds HTTP to all interfaces (`0.0.0.0`). Restrict
+network access and use HTTPS or another trusted encrypted connection when the service
+is accessible across an untrusted network.
+
+### 6.1 Optional: Password protection
+
+Authentication is disabled by default. Install the htpasswd utility, create a bcrypt
+password entry for the example username `admin`, then restrict the file to root and
+the FMheadend service group:
+
+```sh
+sudo apt update
+sudo apt install apache2-utils
+sudo htpasswd -cB /var/lib/fmheadend/htpasswd admin
+sudo chown root:fmheadend /var/lib/fmheadend/htpasswd
+sudo chmod 0640 /var/lib/fmheadend/htpasswd
+```
+
+`htpasswd` prompts for the password and confirmation. Add `--passwd-file` to the
+existing value in `/etc/fmheadend/fmheadendd.env`:
+
+```ini
+FMHEADEND_ARGS="--host 0.0.0.0 --port 8080 --i2c-device /dev/i2c-1 --region 1 --webui-dir /usr/share/fmheadend/webui --passwd-file /var/lib/fmheadend/htpasswd"
+```
+
+If the backend is already running, apply the change with:
+
+```sh
+sudo systemctl restart fmheadendd.service
+```
+
+Authentication protects both the WebUI and REST API. HTTP Basic Authentication does
+not encrypt credentials; use HTTPS for access across untrusted networks.
 
 Enable and start:
 
