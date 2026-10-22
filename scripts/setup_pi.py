@@ -15,7 +15,11 @@ from pathlib import Path
 
 CONFIG_PATH = Path("/boot/firmware/config.txt")
 CMDLINE_PATH = Path("/boot/firmware/cmdline.txt")
+MODEL_PATH = Path("/proc/device-tree/model")
 SPI_BUFSIZ = 8192
+DEFAULT_I2C_SPEED = 25_000
+DEFAULT_I2C_DELAY_US = 2
+DEFAULT_I2C_BUS = 8
 
 
 class SetupError(RuntimeError):
@@ -24,10 +28,10 @@ class SetupError(RuntimeError):
 
 @dataclass(frozen=True)
 class SetupOptions:
-    i2c_mode: str = "hw"
-    i2c_speed: int = 25_000
-    i2c_delay_us: int = 2
-    i2c_bus: int | None = None
+    i2c_mode: str = "sw"
+    i2c_speed: int = DEFAULT_I2C_SPEED
+    i2c_delay_us: int = DEFAULT_I2C_DELAY_US
+    i2c_bus: int = DEFAULT_I2C_BUS
     keep_spi_bufsiz: bool = False
     overwrite_existing: bool = False
 
@@ -87,26 +91,32 @@ def argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Configure Raspberry Pi OS I2C and SPI for FMheadend"
     )
-    parser.add_argument("--i2c-mode", choices=("hw", "sw"), default="hw")
+    parser.add_argument(
+        "--i2c-mode",
+        choices=("hw", "sw"),
+        default=argparse.SUPPRESS,
+        help="override the Raspberry Pi model default",
+    )
     parser.add_argument(
         "--i2c-speed",
         type=_bounded_int("I2C speed", 1_000, 1_000_000),
-        default=25_000,
+        default=argparse.SUPPRESS,
         metavar="HZ",
-        help="hardware I2C frequency (experimental default: %(default)s)",
+        help=f"hardware I2C frequency (experimental default: {DEFAULT_I2C_SPEED})",
     )
     parser.add_argument(
         "--i2c-delay-us",
         type=_bounded_int("I2C delay", 1, 1_000),
-        default=2,
+        default=argparse.SUPPRESS,
         metavar="N",
-        help="software I2C bit delay in microseconds (default: %(default)s)",
+        help=f"software I2C bit delay in microseconds (default: {DEFAULT_I2C_DELAY_US})",
     )
     parser.add_argument(
         "--i2c-bus",
         type=_bounded_int("I2C bus", 0, 255),
+        default=argparse.SUPPRESS,
         metavar="N",
-        help="software I2C bus number (required with --i2c-mode sw)",
+        help=f"software I2C bus number (default: {DEFAULT_I2C_BUS})",
     )
     parser.add_argument(
         "--keep-spi-bufsiz",
@@ -121,6 +131,58 @@ def argument_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _read_pi_model(path: Path = MODEL_PATH) -> str:
+    try:
+        raw = Path(path).read_bytes()
+        model = raw.rstrip(b"\0\r\n").decode("utf-8").strip()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise SetupError(f"Cannot identify Raspberry Pi model from {path}: {exc}") from exc
+    if not model:
+        raise SetupError(f"Raspberry Pi model in {path} is empty")
+    return model
+
+
+def _model_default_i2c_mode(model: str) -> str:
+    if re.match(r"^Raspberry Pi 5(?:\s|$)", model, re.IGNORECASE):
+        return "hw"
+    if re.match(
+        r"^Raspberry Pi (?:Zero(?:\s+2)?(?:\s+W|\s+WH)?|[1-4](?:\s|$)|"
+        r"400(?:\s|$)|Compute Module [1-4](?:\s|$)|Compute Module(?:\s+Rev|$)|"
+        r"Model\s+[AB](?:\s|$))",
+        model,
+        re.IGNORECASE,
+    ):
+        return "sw"
+    raise SetupError(
+        f"Unsupported or unknown Raspberry Pi model {model!r}; specify "
+        "--i2c-mode explicitly"
+    )
+
+
+def _options_from_namespace(
+    namespace: argparse.Namespace, model_path: Path = MODEL_PATH
+) -> SetupOptions:
+    explicit_mode = hasattr(namespace, "i2c_mode")
+    mode = namespace.i2c_mode if explicit_mode else _model_default_i2c_mode(
+        _read_pi_model(model_path)
+    )
+    explicit_speed = hasattr(namespace, "i2c_speed")
+    explicit_delay = hasattr(namespace, "i2c_delay_us")
+    explicit_bus = hasattr(namespace, "i2c_bus")
+    if mode == "hw" and (explicit_delay or explicit_bus):
+        raise SetupError("--i2c-delay-us and --i2c-bus are valid only in software I2C mode")
+    if mode == "sw" and explicit_speed:
+        raise SetupError("--i2c-speed is valid only in hardware I2C mode")
+    return SetupOptions(
+        i2c_mode=mode,
+        i2c_speed=getattr(namespace, "i2c_speed", DEFAULT_I2C_SPEED),
+        i2c_delay_us=getattr(namespace, "i2c_delay_us", DEFAULT_I2C_DELAY_US),
+        i2c_bus=getattr(namespace, "i2c_bus", DEFAULT_I2C_BUS),
+        keep_spi_bufsiz=namespace.keep_spi_bufsiz,
+        overwrite_existing=namespace.overwrite_existing,
+    )
+
+
 def _validate_options(options: SetupOptions) -> None:
     if options.i2c_mode not in {"hw", "sw"}:
         raise SetupError("I2C mode must be 'hw' or 'sw'")
@@ -128,12 +190,8 @@ def _validate_options(options: SetupOptions) -> None:
         raise SetupError("I2C speed must be between 1000 and 1000000 Hz")
     if not 1 <= options.i2c_delay_us <= 1_000:
         raise SetupError("I2C delay must be between 1 and 1000 microseconds")
-    if options.i2c_bus is not None and not 0 <= options.i2c_bus <= 255:
+    if not 0 <= options.i2c_bus <= 255:
         raise SetupError("I2C bus must be between 0 and 255")
-    if options.i2c_mode == "sw" and options.i2c_bus is None:
-        raise SetupError("--i2c-bus is required with --i2c-mode sw")
-    if options.i2c_mode == "hw" and options.i2c_bus is not None:
-        raise SetupError("--i2c-bus is valid only with --i2c-mode sw")
 
 
 def _read_text(path: Path, *, one_line: bool = False) -> FileText:
@@ -194,7 +252,30 @@ def _overlay_parts(line: str) -> tuple[str, list[str], str] | None:
     return match.group(1), [part.strip() for part in match.group(1).split(",")], comment
 
 
-def _config_entries(lines: list[str]) -> list[ConfigEntry]:
+def _i2c_gpio_parameters(
+    overlay: tuple[str, list[str], str], line_number: int
+) -> tuple[tuple[str, str], ...]:
+    parameters: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for parameter in overlay[1][1:]:
+        key, separator, value = parameter.partition("=")
+        key = key.strip().lower()
+        if not separator or not key or key in seen:
+            raise SetupError(
+                f"Malformed or duplicate i2c-gpio parameter in config.txt line "
+                f"{line_number}"
+            )
+        seen.add(key)
+        parameters.append((key, value.strip().lower()))
+    return tuple(parameters)
+
+
+def _managed_i2c_gpio(parameters: tuple[tuple[str, str], ...]) -> bool:
+    values = dict(parameters)
+    return values.get("i2c_gpio_sda") == "2" and values.get("i2c_gpio_scl") == "3"
+
+
+def _config_entries(lines: list[str], options: SetupOptions) -> list[ConfigEntry]:
     entries: list[ConfigEntry] = []
     section = "global"
     for index, line in enumerate(lines):
@@ -215,6 +296,8 @@ def _config_entries(lines: list[str]) -> list[ConfigEntry]:
                 f"Include in config.txt line {index + 1} may contain relevant settings; "
                 "edit it manually"
             )
+        if inactive:
+            continue
         dtparam = _dtparam_parts(line)
         relevant_tokens: list[tuple[str, str | None]] = []
         if dtparam:
@@ -225,11 +308,32 @@ def _config_entries(lines: list[str]) -> list[ConfigEntry]:
                     relevant_tokens.append((key, value.strip().lower() if separator else None))
         overlay = _overlay_parts(line)
         overlay_name = overlay[1][0].lower() if overlay and overlay[1] else ""
-        relevant_overlay = overlay_name == "i2c-gpio"
+        relevant_overlay = False
+        overlay_parameters: tuple[tuple[str, str], ...] = ()
+        if overlay_name == "i2c-gpio":
+            overlay_parameters = _i2c_gpio_parameters(overlay, index + 1)
+            parameter_values = dict(overlay_parameters)
+            sda = parameter_values.get("i2c_gpio_sda")
+            scl = parameter_values.get("i2c_gpio_scl")
+            if (sda in {"2", "3"} or scl in {"2", "3"}) and not (
+                sda == "2" and scl == "3"
+            ):
+                raise SetupError(
+                    f"Ambiguous i2c-gpio use of GPIO2/3 in config.txt line {index + 1}"
+                )
+            relevant_overlay = _managed_i2c_gpio(overlay_parameters)
+            if options.i2c_mode == "sw" and not relevant_overlay:
+                try:
+                    overlay_bus = int(parameter_values.get("bus", ""), 10)
+                except ValueError:
+                    overlay_bus = None
+                if overlay_bus == options.i2c_bus:
+                    raise SetupError(
+                        f"Software I2C bus {options.i2c_bus} is already used by an "
+                        f"i2c-gpio overlay in config.txt line {index + 1}"
+                    )
         ambiguous_spi_overlay = overlay_name.startswith("spi0-")
         if (relevant_tokens or relevant_overlay or ambiguous_spi_overlay) and not active:
-            if inactive:
-                continue
             raise SetupError(
                 f"Relevant setting in conditional [{section}] at config.txt line "
                 f"{index + 1} is ambiguous"
@@ -241,14 +345,8 @@ def _config_entries(lines: list[str]) -> list[ConfigEntry]:
         for key, value in relevant_tokens:
             entries.append(ConfigEntry(index, "dtparam", key, value))
         if relevant_overlay:
-            parameters: list[tuple[str, str]] = []
-            for parameter in overlay[1][1:]:
-                key, separator, value = parameter.partition("=")
-                if not separator or not key.strip():
-                    raise SetupError(f"Malformed i2c-gpio overlay in config.txt line {index + 1}")
-                parameters.append((key.strip().lower(), value.strip().lower()))
             entries.append(
-                ConfigEntry(index, "overlay", "i2c-gpio", None, tuple(parameters))
+                ConfigEntry(index, "overlay", "i2c-gpio", None, overlay_parameters)
             )
     return entries
 
@@ -305,7 +403,7 @@ def _comment_only(line: str, comment: str) -> str | None:
 def _remove_relevant_config(lines: list[str]) -> list[str]:
     result: list[str] = []
     section = "global"
-    for line in lines:
+    for index, line in enumerate(lines):
         section_match = re.match(r"^\s*\[([^]]+)]\s*(?:#.*)?$", line)
         if section_match:
             section = section_match.group(1).strip().lower()
@@ -331,7 +429,9 @@ def _remove_relevant_config(lines: list[str]) -> list[str]:
                         result.append(preserved)
                 continue
         overlay = _overlay_parts(line)
-        if overlay and overlay[1] and overlay[1][0].lower() == "i2c-gpio":
+        if overlay and overlay[1] and overlay[1][0].lower() == "i2c-gpio" and (
+            _managed_i2c_gpio(_i2c_gpio_parameters(overlay, index + 1))
+        ):
             preserved = _comment_only(line, overlay[2])
             if preserved is not None:
                 result.append(preserved)
@@ -356,8 +456,11 @@ def _append_config(lines: list[str], options: SetupOptions) -> list[str]:
     if _last_section(result) not in {"global", "all"}:
         result.extend(["[all]", ""])
     if options.i2c_mode == "hw":
-        result.append(
-            f"dtparam=i2c_arm=on,i2c_arm_baudrate={options.i2c_speed}"
+        result.extend(
+            [
+                "dtparam=i2c_arm=on",
+                f"dtparam=i2c_arm_baudrate={options.i2c_speed}",
+            ]
         )
     else:
         result.extend(
@@ -373,19 +476,23 @@ def _append_config(lines: list[str], options: SetupOptions) -> list[str]:
 
 
 def _plan_config(file: FileText, options: SetupOptions) -> str:
-    entries = _config_entries(file.lines)
-    if entries and _config_matches(entries, options):
-        return file.text
+    entries = _config_entries(file.lines, options)
     if entries and not options.overwrite_existing:
-        locations = ", ".join(
-            str(line) for line in sorted({entry.line + 1 for entry in entries})
+        details = "; ".join(
+            f"{file.path}: line {line + 1}: {file.lines[line].strip()}"
+            for line in sorted({entry.line for entry in entries})
         )
         raise SetupError(
-            "Existing I2C/SPI settings in config.txt line(s) "
-            f"{locations}; use --overwrite-existing to replace them"
+            f"Existing relevant boot setting(s): {details}; use "
+            "--overwrite-existing to replace them"
         )
+    if entries and _config_matches(entries, options):
+        return file.text
     lines = _remove_relevant_config(file.lines) if entries else list(file.lines)
-    return file.render(_append_config(lines, options))
+    planned_lines = _append_config(lines, options)
+    if not _config_matches(_config_entries(planned_lines, options), options):
+        raise SetupError(f"Generated configuration for {file.path} failed validation")
+    return file.render(planned_lines)
 
 
 def _plan_cmdline(file: FileText, options: SetupOptions) -> str:
@@ -398,13 +505,14 @@ def _plan_cmdline(file: FileText, options: SetupOptions) -> str:
         if re.match(r"^spidev\.bufsiz(?:=|$)", token, re.IGNORECASE)
     ]
     desired = f"spidev.bufsiz={SPI_BUFSIZ}"
-    if len(relevant) == 1 and tokens[relevant[0]].lower() == desired:
-        return file.text
     if relevant and not options.overwrite_existing:
         raise SetupError(
-            "Existing spidev.bufsiz setting in cmdline.txt; use "
+            f"Existing relevant boot setting in {file.path}: line 1: "
+            f"{tokens[relevant[0]]}; use "
             "--overwrite-existing to replace it"
         )
+    if len(relevant) == 1 and tokens[relevant[0]].lower() == desired:
+        return file.text
     tokens = [token for index, token in enumerate(tokens) if index not in relevant]
     tokens.append(desired)
     return file.render([" ".join(tokens)])
@@ -487,18 +595,12 @@ def main(
     argv: list[str] | None = None,
     config_path: Path = CONFIG_PATH,
     cmdline_path: Path = CMDLINE_PATH,
+    model_path: Path = MODEL_PATH,
 ) -> int:
     parser = argument_parser()
     namespace = parser.parse_args(argv)
-    options = SetupOptions(
-        i2c_mode=namespace.i2c_mode,
-        i2c_speed=namespace.i2c_speed,
-        i2c_delay_us=namespace.i2c_delay_us,
-        i2c_bus=namespace.i2c_bus,
-        keep_spi_bufsiz=namespace.keep_spi_bufsiz,
-        overwrite_existing=namespace.overwrite_existing,
-    )
     try:
+        options = _options_from_namespace(namespace, model_path)
         result = configure_files(options, config_path, cmdline_path)
     except SetupError as exc:
         parser.exit(2, f"setup_pi.py: error: {exc}\n")
