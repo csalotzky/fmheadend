@@ -112,14 +112,27 @@ Confirm that the device groups exist and that the service account can access the
 
 ## 5. Install FMheadend from source
 
-Run these commands from a checked-out or unpacked FMheadend source tree. Replace `<source-tree>` with its actual location.
+Download the FMheadend source code from the [official GitHub repository](https://github.com/csalotzky/fmheadend):
+
+```sh
+cd ~
+git clone https://github.com/csalotzky/fmheadend.git
+cd fmheadend
+```
+
+The source code is now available in `~/fmheadend`. Follow the steps below to build and install each component.
 
 ### 5.1 Backend
 
 ```sh
-cd <source-tree>
+cd ~/fmheadend
 sudo python3 -m venv --system-site-packages /opt/fmheadend/venv
 sudo /opt/fmheadend/venv/bin/python -m pip install ./daemon
+```
+
+Verify that the virtual environment can access the system GStreamer bindings:
+
+```sh
 /opt/fmheadend/venv/bin/python -c 'import gi; gi.require_version("Gst", "1.0"); from gi.repository import Gst; Gst.init(None); print(Gst.version_string())'
 ```
 
@@ -128,7 +141,7 @@ The backend executable is `/opt/fmheadend/venv/bin/fmheadendd`. Its installation
 ### 5.2 PCM mux daemon
 
 ```sh
-cd <source-tree>
+cd ~/fmheadend
 cmake -S muxd -B build/muxd -DCMAKE_BUILD_TYPE=Release
 cmake --build build/muxd --parallel
 sudo cmake --install build/muxd
@@ -139,12 +152,29 @@ The commands assume the default CMake installation prefix (`/usr/local`).
 
 ### 5.3 WebUI
 
-With the required Node.js/npm versions installed:
+The WebUI requires Node.js only when building from source. Prebuilt releases do not require Node.js or npm on the target device.
+
+**Install Node.js 24.x and npm (source builds only):**
 
 ```sh
-cd <source-tree>/webui
+sudo apt install -y curl
+curl -fsSL https://deb.nodesource.com/setup_24.x -o /tmp/nodesource_setup.sh
+sudo -E bash /tmp/nodesource_setup.sh
+sudo apt install -y nodejs
+
+node --version
+npm --version
+```
+
+The required versions are Node.js >=24.15.0 <25 and npm >=11 <13.
+
+**Build and install the WebUI:**
+
+```sh
+cd ~/fmheadend/webui
 npm ci
 npm run build
+
 sudo install -d -m 0755 /opt/fmheadend/webui
 sudo cp -a dist/fmheadend-ui/browser/. /opt/fmheadend/webui/
 ```
@@ -154,7 +184,7 @@ Verify that `/opt/fmheadend/webui/index.html` exists.
 ### 5.4 Bundled Audio Profiles
 
 ```sh
-cd <source-tree>
+cd ~/fmheadend
 sudo install -d -m 0755 /usr/share/fmheadend/audio-profiles/default
 sudo install -m 0644 audio-profiles/default/*.json /usr/share/fmheadend/audio-profiles/default/
 ```
@@ -166,7 +196,7 @@ The bundled profiles are separate from the Python package. The default-profile d
 Install the supplied systemd units:
 
 ```sh
-cd <source-tree>
+cd ~/fmheadend
 sudo install -m 0644 systemd/fmheadend-muxd.service systemd/fmheadendd.service /etc/systemd/system/
 ```
 
@@ -221,4 +251,4 @@ Open `http://<pi-address>:8080/` to access the WebUI when network access is conf
 
 For protocol diagnostics, see the [Controller protocol](controller-protocol.md). For SWD provisioning or I²C firmware updates, see the [RP2354 firmware update guide](rp2354-firmware-update.md).
 
-The manual installation instructions still require a clean-system validation. The separate GStreamer plugin distribution and GitHub Release installer are not published yet.
+The manual installation procedure is undergoing clean-system validation. The automated GitHub Release installer is not yet available.
