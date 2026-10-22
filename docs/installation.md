@@ -27,27 +27,47 @@ A shell installer is planned for Raspberry Pi OS. It will download prebuilt comp
 
 Development currently takes place on a **Raspberry Pi 3B**. Testing on Pi 4 and Zero 2 W is planned; Pi 5 has not been tested. Actual capacity depends on the number of active channels and DSP workload, not just I²C/SPI compatibility.
 
-### 2.1 Enable I²C and SPI
+### 2.1 Configure I²C and SPI
 
-On Raspberry Pi OS, enable both interfaces and reboot:
+From the checked-out FMheadend repository (see section 5), run the non-interactive
+hardware setup utility, then reboot:
 
 ```sh
-sudo raspi-config nonint do_i2c 0
-sudo raspi-config nonint do_spi 0
+cd ~/fmheadend
+sudo python3 scripts/setup_pi.py
 sudo reboot
 ```
 
-In these commands, `0` means **enable**; it is not a bus number. After the reboot,
-verify the standard interfaces:
+The utility updates `/boot/firmware/config.txt` and `cmdline.txt`, creates backups,
+enables SPI0 and sets `spidev.bufsiz=8192`. Its model-dependent I²C defaults are:
+
+| Raspberry Pi | I²C configuration | Expected device |
+|---|---|---|
+| Pi 3, Pi 4, Zero/Zero 2 W and other supported pre-Pi-5 models | Software I²C on GPIO2/3, bus 8, 2 µs delay | `/dev/i2c-8` |
+| Pi 5 | Hardware I²C on GPIO2/3 at 25 kHz | `/dev/i2c-1` |
+
+The software-I²C delay is a timing parameter, not an exact guaranteed clock rate.
+The 25 kHz hardware-I²C setting is experimental. Pi 3 and Pi 4 default to software
+I²C because hardware I²C has shown clock-stretching and communication problems.
+
+Existing active I²C, SPI or `spidev.bufsiz` settings cause a safe failure. Review
+the reported entries, then rerun with `--overwrite-existing` to replace only the
+relevant settings. Useful overrides are:
 
 ```sh
-ls -l /dev/i2c-1 /dev/spidev0.0
+sudo python3 scripts/setup_pi.py --i2c-mode hw --i2c-speed 25000 --overwrite-existing
+sudo python3 scripts/setup_pi.py --i2c-mode sw --i2c-bus 8 --i2c-delay-us 2 --overwrite-existing
 ```
 
-The standard FMheadend configuration uses:
+Use `--keep-spi-bufsiz` only when the existing kernel SPI buffer configuration must
+remain untouched. The utility never reboots or changes FMheadend service files.
 
-- `/dev/i2c-1` for Controller communication.
-- `/dev/spidev0.0` for PCM audio transport over SPI.
+After reboot, verify the I²C device printed by the utility and SPI0. For the Pi 3/4
+defaults:
+
+```sh
+ls -l /dev/i2c-8 /dev/spidev0.0
+```
 
 If either device is missing, list the available interfaces:
 
@@ -55,7 +75,7 @@ If either device is missing, list the available interfaces:
 ls -l /dev/i2c-* /dev/spidev*
 ```
 
-Select the interfaces that match the Controller's physical wiring. SPI bus and
+Select interfaces that match the Controller's physical wiring. SPI bus and
 chip-select numbers are significant: `/dev/spidev0.0` and `/dev/spidev0.1` are
 not interchangeable.
 
@@ -240,16 +260,17 @@ MUXD_ARGS="--transport spidev --spi-device /dev/spidev0.0 --spi-clock-hz 2500000
 Create `/etc/fmheadend/fmheadendd.env`:
 
 ```ini
-FMHEADEND_ARGS="--host 0.0.0.0 --port 8080 --i2c-device /dev/i2c-1 --region 1 --webui-dir /usr/share/fmheadend/webui"
+FMHEADEND_ARGS="--host 0.0.0.0 --port 8080 --i2c-device /dev/i2c-8 --region 1 --webui-dir /usr/share/fmheadend/webui"
 ```
 
 `--region`: `0` Expert, `1` Europe (default), `2` United States, `3` Japan; see the
 [configuration reference](configuration.md#12-controller-communication) for details.
 
-The examples use the standard Raspberry Pi interfaces. For different physical
-wiring, set the backend's `--i2c-device` in `/etc/fmheadend/fmheadendd.env` and
-the mux's `--spi-device` in `/etc/fmheadend/muxd.env` to the corresponding Linux
-devices. Keep the default paths for a standard installation.
+The backend example uses the setup utility's Pi 3/4 software-I²C default. On Pi 5
+or with `--i2c-mode hw`, use `/dev/i2c-1`. For different physical wiring or an
+`--i2c-bus` override, set `--i2c-device` in `/etc/fmheadend/fmheadendd.env` to the
+device reported by the utility. Set `--spi-device` in `/etc/fmheadend/muxd.env` to
+the corresponding Linux SPI device. Keep `/dev/spidev0.0` for standard wiring.
 
 The `--transport spidev` setting uses real hardware; for a software-only check,
 set `--transport mock` explicitly in `MUXD_ARGS`.
@@ -276,7 +297,7 @@ sudo chmod 0640 /var/lib/fmheadend/htpasswd
 existing value in `/etc/fmheadend/fmheadendd.env`:
 
 ```ini
-FMHEADEND_ARGS="--host 0.0.0.0 --port 8080 --i2c-device /dev/i2c-1 --region 1 --webui-dir /usr/share/fmheadend/webui --passwd-file /var/lib/fmheadend/htpasswd"
+FMHEADEND_ARGS="--host 0.0.0.0 --port 8080 --i2c-device /dev/i2c-8 --region 1 --webui-dir /usr/share/fmheadend/webui --passwd-file /var/lib/fmheadend/htpasswd"
 ```
 
 If the backend is already running, apply the change with:
