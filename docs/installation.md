@@ -67,8 +67,7 @@ sudo python3 tools/setup_pi.py --i2c-mode hw --i2c-speed 100000 --overwrite-exis
 sudo python3 tools/setup_pi.py --i2c-mode sw --i2c-bus 8 --i2c-delay-us 2 --overwrite-existing
 ```
 
-Use `--keep-spi-bufsiz` only when the existing kernel SPI buffer configuration must
-remain untouched. The utility never reboots or changes FMheadend service files.
+FMheadend requires an SPI buffer of at least **4100 bytes**; the Linux default of 4096 bytes is insufficient. The setup utility configures 8192 bytes. Use `--keep-spi-bufsiz` only if an adequate buffer size is already configured.
 
 After reboot, verify the I²C device printed by the utility, SPI0 and the SPI buffer
 size:
