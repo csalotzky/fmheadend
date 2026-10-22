@@ -190,6 +190,25 @@ sudo install -m 0644 audio-profiles/default/*.json /usr/share/fmheadend/audio-pr
 
 The bundled profiles are separate from the Python package. The default-profile directory must be present and readable by the backend.
 
+### 5.5 Optional: Password protection
+
+Authentication is optional and disabled by default. To create a bcrypt password file
+for the default username `admin`, enter the password without echoing it to the terminal:
+
+```sh
+read -rsp "FMheadend password: " FMHEADEND_PASSWORD
+printf '\n'
+sudo /opt/fmheadend/venv/bin/python ~/fmheadend/tools/create_passwd.py \
+  --user admin --file /var/lib/fmheadend/htpasswd \
+  --password "$FMHEADEND_PASSWORD"
+unset FMHEADEND_PASSWORD
+sudo chown root:fmheadend /var/lib/fmheadend/htpasswd
+sudo chmod 0640 /var/lib/fmheadend/htpasswd
+```
+
+Authentication protects both the WebUI and REST API. HTTP Basic Authentication does
+not encrypt credentials; use HTTPS for access across untrusted networks.
+
 ## 6. Configure I²C and SPI
 
 FMheadend requires I²C and SPI to be enabled, with the SPI transfer buffer increased
@@ -272,10 +291,18 @@ Create `/etc/fmheadend/muxd.env`:
 MUXD_ARGS="--transport spidev --spi-device /dev/spidev0.0 --spi-clock-hz 25000000 --runtime-dir /run/fmheadend"
 ```
 
-Create `/etc/fmheadend/fmheadendd.env`:
+Create `/etc/fmheadend/fmheadendd.env` using exactly one of these alternatives.
+
+Without authentication (default):
 
 ```ini
 FMHEADEND_ARGS="--host 0.0.0.0 --port 8080 --i2c-device /dev/i2c-8 --region 1 --webui-dir /usr/share/fmheadend/webui"
+```
+
+With authentication, if section 5.5 was completed:
+
+```ini
+FMHEADEND_ARGS="--host 0.0.0.0 --port 8080 --i2c-device /dev/i2c-8 --region 1 --webui-dir /usr/share/fmheadend/webui --passwd-file /var/lib/fmheadend/htpasswd"
 ```
 
 `--region`: `0` Expert, `1` Europe (default), `2` United States, `3` Japan; see the
@@ -293,36 +320,6 @@ set `--transport mock` explicitly in `MUXD_ARGS`.
 **Network security:** the example binds HTTP to all interfaces (`0.0.0.0`). Restrict
 network access and use HTTPS or another trusted encrypted connection when the service
 is accessible across an untrusted network.
-
-### 7.1 Optional: Password protection
-
-Authentication is disabled by default. Install the htpasswd utility, create a bcrypt
-password entry for the example username `admin`, then restrict the file to root and
-the FMheadend service group:
-
-```sh
-sudo apt update
-sudo apt install apache2-utils
-sudo htpasswd -cB /var/lib/fmheadend/htpasswd admin
-sudo chown root:fmheadend /var/lib/fmheadend/htpasswd
-sudo chmod 0640 /var/lib/fmheadend/htpasswd
-```
-
-`htpasswd` prompts for the password and confirmation. Add `--passwd-file` to the
-existing value in `/etc/fmheadend/fmheadendd.env`:
-
-```ini
-FMHEADEND_ARGS="--host 0.0.0.0 --port 8080 --i2c-device /dev/i2c-8 --region 1 --webui-dir /usr/share/fmheadend/webui --passwd-file /var/lib/fmheadend/htpasswd"
-```
-
-If the backend is already running, apply the change with:
-
-```sh
-sudo systemctl restart fmheadendd.service
-```
-
-Authentication protects both the WebUI and REST API. HTTP Basic Authentication does
-not encrypt credentials; use HTTPS for access across untrusted networks.
 
 Enable and start:
 
