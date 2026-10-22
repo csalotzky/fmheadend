@@ -11,7 +11,7 @@ import pytest
 @pytest.fixture
 def monitor():
     spec = importlib.util.spec_from_file_location(
-        'audio_monitor', Path(__file__).resolve().parents[2] / 'scripts/audio_monitor.py')
+        'audio_monitor', Path(__file__).resolve().parents[2] / 'tools/audio_monitor.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

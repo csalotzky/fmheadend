@@ -34,7 +34,7 @@ hardware setup utility, then reboot:
 
 ```sh
 cd ~/fmheadend
-sudo python3 scripts/setup_pi.py
+sudo python3 tools/setup_pi.py
 sudo reboot
 ```
 
@@ -55,8 +55,8 @@ the reported entries, then rerun with `--overwrite-existing` to replace only the
 relevant settings. Useful overrides are:
 
 ```sh
-sudo python3 scripts/setup_pi.py --i2c-mode hw --i2c-speed 25000 --overwrite-existing
-sudo python3 scripts/setup_pi.py --i2c-mode sw --i2c-bus 8 --i2c-delay-us 2 --overwrite-existing
+sudo python3 tools/setup_pi.py --i2c-mode hw --i2c-speed 25000 --overwrite-existing
+sudo python3 tools/setup_pi.py --i2c-mode sw --i2c-bus 8 --i2c-delay-us 2 --overwrite-existing
 ```
 
 Use `--keep-spi-bufsiz` only when the existing kernel SPI buffer configuration must
