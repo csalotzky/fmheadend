@@ -305,11 +305,7 @@ FMHEADEND_ARGS="--host 0.0.0.0 --port 8080 --i2c-device /dev/i2c-8 --region 1 --
 `--region`: `0` Expert, `1` Europe (default), `2` United States, `3` Japan; see the
 [configuration reference](configuration.md#12-controller-communication) for details.
 
-The backend example uses the setup utility's Pi 3/4 software-I²C default. On Pi 5
-or with `--i2c-mode hw`, use `/dev/i2c-1`. For different physical wiring or an
-`--i2c-bus` override, set `--i2c-device` in `/etc/fmheadend/fmheadendd.env` to the
-device reported by the utility. Set `--spi-device` in `/etc/fmheadend/muxd.env` to
-the corresponding Linux SPI device. Keep `/dev/spidev0.0` for standard wiring.
+Make sure `--i2c-device` matches the I²C interface configured in Chapter 6. By default, the `setup_pi.py` utility configures `/dev/i2c-8` on Pi 3/4 and `/dev/i2c-1` on Pi 5. If you changed the I²C configuration, adjust this path accordingly.
 
 The `--transport spidev` setting uses real hardware; for a software-only check,
 set `--transport mock` explicitly in `MUXD_ARGS`.
