@@ -64,7 +64,7 @@ def test_older_or_unavailable_clipper_property(unavailable):
 
 def test_console_clipper_window_and_legacy_display():
     spec = importlib.util.spec_from_file_location(
-        'audio_monitor', Path(__file__).resolve().parents[2] / 'scripts/audio_monitor.py')
+        'audio_monitor', Path(__file__).resolve().parents[2] / 'tools/audio_monitor.py')
     monitor = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(monitor)
     stage = StageMeters(Clipper(), 'FM_HEADEND_CLIPPER', {}).collect()

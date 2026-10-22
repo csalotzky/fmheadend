@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.setup_pi import SetupError, SetupOptions, configure_files, main
+from tools.setup_pi import SetupError, SetupOptions, configure_files, main
 
 
 def files(tmp_path, config="", cmdline="console=serial0,115200 root=/dev/mmcblk0p2\n"):

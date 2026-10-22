@@ -51,7 +51,7 @@ def test_band_wiring_telemetry_roundtrip(impl, enable, count):
     assert f'elm-{count - 1}l' in sample['values']
     assert f'elm-{count}l' not in sample['values']
     assert ('rl-0' in sample['values']) == (enable == 'ee')
-    monitor = load_script(Path(__file__).resolve().parents[2] / 'scripts/audio_monitor.py')
+    monitor = load_script(Path(__file__).resolve().parents[2] / 'tools/audio_monitor.py')
     text = '\n'.join(monitor.render_gate({'stages': {'gate': sample}}))
     assert ('MULTIBAND GATE' if enable == 'ge' else 'MULTIBAND EXPANDER') in text
     assert f'B{count} env' in text and f'B{count + 1} env' not in text

@@ -12,7 +12,7 @@ import pytest
 @pytest.fixture
 def tool():
     spec = importlib.util.spec_from_file_location(
-        'capture_mux_pcm', Path(__file__).resolve().parents[2] / 'scripts/capture_mux_pcm.py')
+        'capture_mux_pcm', Path(__file__).resolve().parents[2] / 'tools/capture_mux_pcm.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
