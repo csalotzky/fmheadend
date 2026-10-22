@@ -49,7 +49,7 @@ def test_pre_pi5_defaults_to_software_i2c_bus_8(tmp_path, capsys, model):
     assert "I2C device: /dev/i2c-8" in capsys.readouterr().out
 
 
-def test_pi5_defaults_to_hardware_i2c_at_25khz(tmp_path, capsys):
+def test_pi5_defaults_to_hardware_i2c_at_100khz(tmp_path, capsys):
     paths = files(tmp_path, "# Raspberry Pi boot settings\n")
     result = main(
         [], *paths, model_file(tmp_path, "Raspberry Pi 5 Model B Rev 1.0")
@@ -58,14 +58,14 @@ def test_pi5_defaults_to_hardware_i2c_at_25khz(tmp_path, capsys):
     assert paths[0].read_text(encoding="utf-8") == (
         "# Raspberry Pi boot settings\n\n"
         "dtparam=i2c_arm=on\n"
-        "dtparam=i2c_arm_baudrate=25000\n"
+        "dtparam=i2c_arm_baudrate=100000\n"
         "dtparam=spi=on\n"
     )
     assert paths[1].read_text(encoding="utf-8") == (
         "console=serial0,115200 root=/dev/mmcblk0p2 spidev.bufsiz=8192\n"
     )
     output = capsys.readouterr().out
-    assert "I2C configuration: hardware GPIO2/3 at 25000 Hz" in output
+    assert "I2C configuration: hardware GPIO2/3 at 100000 Hz" in output
     assert "I2C device: /dev/i2c-1" in output
     assert "SPI0: enabled" in output
     assert "spidev.bufsiz: 8192" in output
@@ -93,9 +93,9 @@ def test_unknown_model_requires_explicit_mode_without_modifying_files(tmp_path, 
         ),
         (
             "Raspberry Pi 4 Model B Rev 1.5",
-            ["--i2c-mode", "hw", "--i2c-speed", "100000"],
+            ["--i2c-mode", "hw", "--i2c-speed", "400000"],
             "/dev/i2c-1",
-            "dtparam=i2c_arm_baudrate=100000",
+            "dtparam=i2c_arm_baudrate=400000",
         ),
     ],
 )
@@ -213,7 +213,7 @@ def test_switching_software_to_hardware_removes_gpio_overlay(tmp_path):
     config = paths[0].read_text(encoding="utf-8")
     assert "dtoverlay=i2c-gpio" not in config
     assert "dtparam=i2c_arm=on" in config
-    assert "dtparam=i2c_arm_baudrate=25000" in config
+    assert "dtparam=i2c_arm_baudrate=100000" in config
 
 
 def test_software_bus_conflict_is_rejected_even_with_overwrite(tmp_path):
