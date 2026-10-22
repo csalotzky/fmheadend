@@ -27,73 +27,6 @@ A shell installer is planned for Raspberry Pi OS. It will download prebuilt comp
 
 Development currently takes place on a **Raspberry Pi 3B**. Testing on Pi 4 and Zero 2 W is planned; Pi 5 has not been tested. Actual capacity depends on the number of active channels and DSP workload, not just I²C/SPI compatibility.
 
-### 2.1 Configure I²C and SPI
-
-FMheadend requires I²C and SPI to be enabled, with the SPI transfer buffer increased
-to 8192 bytes. The supplied `tools/setup_pi.py` utility configures these settings
-automatically.
-
-After cloning the FMheadend repository as described in section 5, run:
-
-```sh
-cd ~/fmheadend
-sudo python3 tools/setup_pi.py
-```
-
-**A reboot is required for the configuration changes to take effect:**
-
-```sh
-sudo reboot
-```
-
-The utility updates `/boot/firmware/config.txt` and `cmdline.txt`, creates backups,
-enables SPI0 and sets `spidev.bufsiz=8192`. Its model-dependent I²C defaults are:
-
-| Raspberry Pi | I²C configuration | Expected device |
-|---|---|---|
-| Pi 3, Pi 4, Zero/Zero 2 W and other supported pre-Pi-5 models | Software I²C on GPIO2/3, bus 8, 2 µs delay | `/dev/i2c-8` |
-| Pi 5 | Hardware I²C at 100 kHz | `/dev/i2c-1` |
-
-Certain Broadcom I²C controllers have a [documented clock-stretching issue](https://github.com/raspberrypi/linux/issues/254), also [reported on Raspberry Pi 4](https://github.com/raspberrypi/linux/issues/4884). During FMheadend testing, hardware I²C caused intermittent communication errors on Raspberry Pi 3 and Pi 4. Software I²C is therefore used as a temporary workaround until the issue is investigated further.
-
-The software-I²C delay is a timing parameter, not an exact guaranteed clock rate.
-
-Existing active I²C, SPI or `spidev.bufsiz` settings cause a safe failure. Review
-the reported entries, then rerun with `--overwrite-existing` to replace only the
-relevant settings. Useful overrides are:
-
-```sh
-sudo python3 tools/setup_pi.py --i2c-mode hw --i2c-speed 100000 --overwrite-existing
-sudo python3 tools/setup_pi.py --i2c-mode sw --i2c-bus 8 --i2c-delay-us 2 --overwrite-existing
-```
-
-FMheadend requires an SPI buffer of at least **4100 bytes**; the Linux default of 4096 bytes is insufficient. The setup utility configures 8192 bytes. Use `--keep-spi-bufsiz` only if an adequate buffer size is already configured.
-
-After reboot, verify the I²C device printed by the utility, SPI0 and the SPI buffer
-size:
-
-```sh
-# Pi 3/4 and supported older models
-ls -l /dev/i2c-8 /dev/spidev0.0
-
-# Pi 5 or explicit hardware I²C mode
-ls -l /dev/i2c-1 /dev/spidev0.0
-
-cat /sys/module/spidev/parameters/bufsiz
-```
-
-The final command should print `8192`.
-
-If either device is missing, list the available interfaces:
-
-```sh
-ls -l /dev/i2c-* /dev/spidev*
-```
-
-Select interfaces that match the Controller's physical wiring. SPI bus and
-chip-select numbers are significant: `/dev/spidev0.0` and `/dev/spidev0.1` are
-not interchangeable.
-
 ## 3. System dependencies
 
 For Raspberry Pi OS Lite / Debian-based installations:
@@ -257,7 +190,74 @@ sudo install -m 0644 audio-profiles/default/*.json /usr/share/fmheadend/audio-pr
 
 The bundled profiles are separate from the Python package. The default-profile directory must be present and readable by the backend.
 
-## 6. Configure the services
+## 6. Configure I²C and SPI
+
+FMheadend requires I²C and SPI to be enabled, with the SPI transfer buffer increased
+to 8192 bytes. The supplied `tools/setup_pi.py` utility configures these settings
+automatically.
+
+After cloning the FMheadend repository as described in section 5, run:
+
+```sh
+cd ~/fmheadend
+sudo python3 tools/setup_pi.py
+```
+
+**A reboot is required for the configuration changes to take effect:**
+
+```sh
+sudo reboot
+```
+
+The utility updates `/boot/firmware/config.txt` and `cmdline.txt`, creates backups,
+enables SPI0 and sets `spidev.bufsiz=8192`. Its model-dependent I²C defaults are:
+
+| Raspberry Pi | I²C configuration | Expected device |
+|---|---|---|
+| Pi 3, Pi 4, Zero/Zero 2 W and other supported pre-Pi-5 models | Software I²C on GPIO2/3, bus 8, 2 µs delay | `/dev/i2c-8` |
+| Pi 5 | Hardware I²C at 100 kHz | `/dev/i2c-1` |
+
+Certain Broadcom I²C controllers have a [documented clock-stretching issue](https://github.com/raspberrypi/linux/issues/254), also [reported on Raspberry Pi 4](https://github.com/raspberrypi/linux/issues/4884). During FMheadend testing, hardware I²C caused intermittent communication errors on Raspberry Pi 3 and Pi 4. Software I²C is therefore used as a temporary workaround until the issue is investigated further.
+
+The software-I²C delay is a timing parameter, not an exact guaranteed clock rate.
+
+Existing active I²C, SPI or `spidev.bufsiz` settings cause a safe failure. Review
+the reported entries, then rerun with `--overwrite-existing` to replace only the
+relevant settings. Useful overrides are:
+
+```sh
+sudo python3 tools/setup_pi.py --i2c-mode hw --i2c-speed 100000 --overwrite-existing
+sudo python3 tools/setup_pi.py --i2c-mode sw --i2c-bus 8 --i2c-delay-us 2 --overwrite-existing
+```
+
+FMheadend requires an SPI buffer of at least **4100 bytes**; the Linux default of 4096 bytes is insufficient. The setup utility configures 8192 bytes. Use `--keep-spi-bufsiz` only if an adequate buffer size is already configured.
+
+After reboot, verify the I²C device printed by the utility, SPI0 and the SPI buffer
+size:
+
+```sh
+# Pi 3/4 and supported older models
+ls -l /dev/i2c-8 /dev/spidev0.0
+
+# Pi 5 or explicit hardware I²C mode
+ls -l /dev/i2c-1 /dev/spidev0.0
+
+cat /sys/module/spidev/parameters/bufsiz
+```
+
+The final command should print `8192`.
+
+If either device is missing, list the available interfaces:
+
+```sh
+ls -l /dev/i2c-* /dev/spidev*
+```
+
+Select interfaces that match the Controller's physical wiring. SPI bus and
+chip-select numbers are significant: `/dev/spidev0.0` and `/dev/spidev0.1` are
+not interchangeable.
+
+## 7. Configure the services
 
 Install the supplied systemd units:
 
@@ -294,7 +294,7 @@ set `--transport mock` explicitly in `MUXD_ARGS`.
 network access and use HTTPS or another trusted encrypted connection when the service
 is accessible across an untrusted network.
 
-### 6.1 Optional: Password protection
+### 7.1 Optional: Password protection
 
 Authentication is disabled by default. Install the htpasswd utility, create a bcrypt
 password entry for the example username `admin`, then restrict the file to root and
@@ -334,7 +334,7 @@ sudo systemctl enable --now fmheadend-muxd.service fmheadendd.service
 
 The mux service waits for the backend to supply the physical transmitter count before sending SPI audio.
 
-## 7. Verify the installation
+## 8. Verify the installation
 
 ```sh
 systemctl status fmheadend-muxd.service fmheadendd.service
@@ -345,7 +345,7 @@ curl -fsS http://127.0.0.1:8080/api/v1/system/info
 
 Open `http://<pi-address>:8080/` to access the WebUI when network access is configured. Create Sources and configure Modulators before starting transmitters. A new database does not automatically enable RF output.
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 | Problem | Check |
 |---|---|
