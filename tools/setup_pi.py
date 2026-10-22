@@ -17,7 +17,7 @@ CONFIG_PATH = Path("/boot/firmware/config.txt")
 CMDLINE_PATH = Path("/boot/firmware/cmdline.txt")
 MODEL_PATH = Path("/proc/device-tree/model")
 SPI_BUFSIZ = 8192
-DEFAULT_I2C_SPEED = 25_000
+DEFAULT_I2C_SPEED = 100_000
 DEFAULT_I2C_DELAY_US = 2
 DEFAULT_I2C_BUS = 8
 
@@ -102,7 +102,7 @@ def argument_parser() -> argparse.ArgumentParser:
         type=_bounded_int("I2C speed", 1_000, 1_000_000),
         default=argparse.SUPPRESS,
         metavar="HZ",
-        help=f"hardware I2C frequency (experimental default: {DEFAULT_I2C_SPEED})",
+        help=f"hardware I2C frequency (default: {DEFAULT_I2C_SPEED})",
     )
     parser.add_argument(
         "--i2c-delay-us",

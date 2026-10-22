@@ -29,12 +29,20 @@ Development currently takes place on a **Raspberry Pi 3B**. Testing on Pi 4 and 
 
 ### 2.1 Configure I²C and SPI
 
-From the checked-out FMheadend repository (see section 5), run the non-interactive
-hardware setup utility, then reboot:
+FMheadend requires I²C and SPI to be enabled, with the SPI transfer buffer increased
+to 8192 bytes. The supplied `tools/setup_pi.py` utility configures these settings
+automatically.
+
+After cloning the FMheadend repository as described in section 5, run:
 
 ```sh
 cd ~/fmheadend
 sudo python3 tools/setup_pi.py
+```
+
+**A reboot is required for the configuration changes to take effect:**
+
+```sh
 sudo reboot
 ```
 
@@ -44,30 +52,38 @@ enables SPI0 and sets `spidev.bufsiz=8192`. Its model-dependent I²C defaults ar
 | Raspberry Pi | I²C configuration | Expected device |
 |---|---|---|
 | Pi 3, Pi 4, Zero/Zero 2 W and other supported pre-Pi-5 models | Software I²C on GPIO2/3, bus 8, 2 µs delay | `/dev/i2c-8` |
-| Pi 5 | Hardware I²C on GPIO2/3 at 25 kHz | `/dev/i2c-1` |
+| Pi 5 | Hardware I²C at 100 kHz | `/dev/i2c-1` |
+
+Certain Broadcom I²C controllers have a [documented clock-stretching issue](https://github.com/raspberrypi/linux/issues/254), also [reported on Raspberry Pi 4](https://github.com/raspberrypi/linux/issues/4884). During FMheadend testing, hardware I²C caused intermittent communication errors on Raspberry Pi 3 and Pi 4. Software I²C is therefore used as a temporary workaround until the issue is investigated further.
 
 The software-I²C delay is a timing parameter, not an exact guaranteed clock rate.
-The 25 kHz hardware-I²C setting is experimental. Pi 3 and Pi 4 default to software
-I²C because hardware I²C has shown clock-stretching and communication problems.
 
 Existing active I²C, SPI or `spidev.bufsiz` settings cause a safe failure. Review
 the reported entries, then rerun with `--overwrite-existing` to replace only the
 relevant settings. Useful overrides are:
 
 ```sh
-sudo python3 tools/setup_pi.py --i2c-mode hw --i2c-speed 25000 --overwrite-existing
+sudo python3 tools/setup_pi.py --i2c-mode hw --i2c-speed 100000 --overwrite-existing
 sudo python3 tools/setup_pi.py --i2c-mode sw --i2c-bus 8 --i2c-delay-us 2 --overwrite-existing
 ```
 
 Use `--keep-spi-bufsiz` only when the existing kernel SPI buffer configuration must
 remain untouched. The utility never reboots or changes FMheadend service files.
 
-After reboot, verify the I²C device printed by the utility and SPI0. For the Pi 3/4
-defaults:
+After reboot, verify the I²C device printed by the utility, SPI0 and the SPI buffer
+size:
 
 ```sh
+# Pi 3/4 and supported older models
 ls -l /dev/i2c-8 /dev/spidev0.0
+
+# Pi 5 or explicit hardware I²C mode
+ls -l /dev/i2c-1 /dev/spidev0.0
+
+cat /sys/module/spidev/parameters/bufsiz
 ```
+
+The final command should print `8192`.
 
 If either device is missing, list the available interfaces:
 
