@@ -315,7 +315,7 @@ def argument_parser():
     development.add_argument("--mock", action="store_true", help="Use mock sources, mux and Controller control")
     development.add_argument("--mock-controller", action="store_true", help="Use the high-level mock Controller client")
     parser.add_argument("--i2c-device", default="/dev/i2c-1", help="Controller I2C device")
-    parser.add_argument("--controller-i2c-address", type=lambda value: int(value, 0), help="7-bit slave address, decimal or 0x hex; no address assumed")
+    parser.add_argument("--controller-i2c-address", type=lambda value: int(value, 0), default=0x62, help="7-bit Controller address, decimal or 0x hex (default: %(default)#x)")
     parser.add_argument("--i2c-timeout-ms", type=int, default=200, help="Controller I2C timeout in ms")
     parser.add_argument("--controller-status-poll-interval-ms", type=positive_interval_ms, default=1000, help="Controller status polling interval in ms")
     parser.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], default="INFO", help="Daemon log level")

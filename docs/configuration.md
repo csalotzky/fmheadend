@@ -30,7 +30,7 @@ backend service.
 | Option | Default | Description |
 |---|---|---|
 | `--i2c-device PATH` | `/dev/i2c-1` | Linux I²C adapter used for Controller communication. |
-| `--controller-i2c-address ADDRESS` | Required for real Controller mode | 7-bit Controller address in decimal or `0x` hexadecimal form. No address is assumed. |
+| `--controller-i2c-address ADDRESS` | `0x62` | 7-bit Controller address in decimal or `0x` hexadecimal form. Overrides the default address. |
 | `--i2c-timeout-ms MS` | `200` | I²C adapter transaction timeout in milliseconds. |
 | `--controller-status-poll-interval-ms MS` | `1000` | Positive Controller status-poll interval in milliseconds. |
 | `--region CODE` | `1` | Region behavior: `0` Expert, `1` Europe, `2` United States, `3` Japan. |

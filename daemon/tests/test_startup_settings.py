@@ -9,7 +9,7 @@ from fmheadendd.config import Settings
 
 def test_startup_defaults():
     args = app.argument_parser().parse_args([])
-    assert (args.i2c_device, args.controller_i2c_address) == ('/dev/i2c-1', None)
+    assert (args.i2c_device, args.controller_i2c_address) == ('/dev/i2c-1', 0x62)
     assert (args.host, args.port) == ('0.0.0.0', 8080)
     assert args.controller_status_poll_interval_ms == 1000
     assert args.log_level == 'INFO'
@@ -31,7 +31,8 @@ def test_help_groups_and_displays_actual_defaults():
     text = ' '.join(parser.format_help().split())
     for action in parser._actions:
         if action.default is not None and action.dest != 'help':
-            assert f'(default: {action.default})' in text
+            default = f'{action.default:#x}' if action.dest == 'controller_i2c_address' else str(action.default)
+            assert f'(default: {default})' in text
     assert '--rp-i2c-address' not in text and '--mock-rp' not in text
 
 
@@ -46,11 +47,16 @@ def test_runtime_settings_reject_invalid_poll_interval():
         Settings(controller_status_poll_interval_ms=0)
 
 
-def test_main_uses_cli_without_reading_persisted_startup_settings(monkeypatch):
+@pytest.mark.parametrize('address_args, expected_address', [
+    ([], 0x62),
+    (['--controller-i2c-address', '0x42'], 0x42),
+    (['--controller-i2c-address', '66'], 0x42),
+])
+def test_main_uses_cli_without_reading_persisted_startup_settings(monkeypatch, address_args, expected_address):
     import uvicorn
 
     monkeypatch.setattr('sys.argv', [
-        'fmheadendd', '--i2c-device', '/dev/i2c-3', '--controller-i2c-address', '0x62',
+        'fmheadendd', '--i2c-device', '/dev/i2c-3', *address_args,
         '--host', '127.0.0.1', '--port', '8090',
         '--controller-status-poll-interval-ms', '2500', '--log-level', 'DEBUG',
     ])
@@ -63,7 +69,7 @@ def test_main_uses_cli_without_reading_persisted_startup_settings(monkeypatch):
     monkeypatch.setattr(uvicorn, 'run', run)
     app.main()
     database.assert_not_called()
-    rp.assert_called_once_with('/dev/i2c-3', 98, timeout_ms=200)
+    rp.assert_called_once_with('/dev/i2c-3', expected_address, timeout_ms=200)
     assert create.call_args.args[0].controller_status_poll_interval_ms == 2500
     assert logging.call_args.kwargs['level'] == 'DEBUG'
-    run.assert_called_once_with(create.return_value, host='127.0.0.1', port=8090, log_level='debug')
+    run.assert_called_once_with(create.return_value, host='127.0.0.1', port=8090, log_level='debug', access_log=False)
