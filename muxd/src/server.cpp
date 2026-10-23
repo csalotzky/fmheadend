@@ -41,10 +41,11 @@ constexpr const char* success = "{\"ok\":true}\n";
 constexpr const char* state_error = "{\"error\":\"INVALID_STATE\",\"message\":\"Configure before resume; pause before changing TX count\"}\n";
 constexpr const char* timeout_error = "{\"error\":\"CONTROL_TIMEOUT\",\"message\":\"Command expired without application\"}\n";
 }
-Server::Server(std::string directory, Transport& transport, std::size_t ring_capacity)
+Server::Server(std::string directory, Transport& transport, std::size_t ring_capacity, bool timing_diagnostics)
     : directory_(std::move(directory)), transport_(transport),
       inputs_(make_channels(ring_capacity, std::make_index_sequence<channels>{})),
-      receive_buffer_bytes_(static_cast<int>(std::min<std::size_t>(ring_capacity, std::numeric_limits<int>::max()))) {
+      receive_buffer_bytes_(static_cast<int>(std::min<std::size_t>(ring_capacity, std::numeric_limits<int>::max()))),
+      timing_diagnostics_(timing_diagnostics) {
     listeners_.fill(-1); producers_.fill(-1);
 }
 Server::~Server() {
@@ -128,6 +129,8 @@ void Server::pump() {
     auto deadline = Clock::now();
     // Carry fractional nanoseconds without changing the PCM frame cadence.
     std::uint64_t remainder = 0;
+    Clock::time_point previous_send{};
+    bool have_previous_send = false;
     while (!stopping_) {
         Frame frame = builder.next(inputs_);
         std::size_t bytes = 0;
@@ -138,12 +141,23 @@ void Server::pump() {
         }
         bool ok = true;
         std::string error;
-        try { if (bytes) transport_.send(frame, bytes); }
+        Clock::time_point send_start{};
+        try {
+            if (bytes) {
+                if (timing_diagnostics_) send_start = Clock::now();
+                transport_.send(frame, bytes);
+            }
+        }
         catch (const std::exception& exc) { ok = false; error = exc.what(); }
         {
             std::lock_guard<std::mutex> lock(status_mutex_);
             ++frames_built_;
             if (bytes) {
+                if (timing_diagnostics_) {
+                    if (have_previous_send) timing_.record_gap(send_start - previous_send);
+                    previous_send = send_start;
+                    have_previous_send = true;
+                }
                 if (ok) ++frames_sent_; else ++transport_errors_;
                 transport_ok_ = ok;
                 last_error_ = std::move(error);
@@ -155,9 +169,11 @@ void Server::pump() {
         const auto now = Clock::now();
         if (deadline < now) {
             // Do not burst old frames after a scheduling/transport stall.
+            const auto late = timing_diagnostics_ ? now - deadline : Clock::duration::zero();
             deadline = now;
             std::lock_guard<std::mutex> lock(status_mutex_);
             ++late_frames_;
+            if (timing_diagnostics_) timing_.record_late(late);
         }
         std::this_thread::sleep_until(deadline);
     }
@@ -178,6 +194,13 @@ std::string Server::status_json() const {
             << ",\"transport_errors\":" << transport_errors_
             << ",\"spi_errors\":" << (transport_.mocked() ? 0 : transport_errors_)
             << ",\"late_frames\":" << late_frames_
+            << ",\"timing_diagnostics\":" << (timing_diagnostics_ ? "true" : "false")
+            << ",\"late_max_us\":" << timing_.late_max_us
+            << ",\"late_over_100us\":" << timing_.late_over_100us
+            << ",\"late_over_500us\":" << timing_.late_over_500us
+            << ",\"late_over_1000us\":" << timing_.late_over_1000us
+            << ",\"late_over_3000us\":" << timing_.late_over_3000us
+            << ",\"send_gap_max_us\":" << timing_.send_gap_max_us
             << ",\"last_error\":" << (last_error_.empty() ? "null" : quote(last_error_)) << ",\"channels\":[";
     }
     for (std::size_t i = 0; i != channels; ++i) {

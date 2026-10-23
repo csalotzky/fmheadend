@@ -1,5 +1,6 @@
 #pragma once
 #include "muxd/transport.hpp"
+#include "muxd/timing.hpp"
 #include <atomic>
 #include <csignal>
 #include <chrono>
@@ -11,7 +12,8 @@ namespace muxd {
 class Server {
 public:
     Server(std::string directory, Transport& transport,
-           std::size_t ring_capacity = ring_capacity_bytes(default_ring_buffer_ms));
+           std::size_t ring_capacity = ring_capacity_bytes(default_ring_buffer_ms),
+           bool timing_diagnostics = false);
     ~Server();
     Server(const Server&) = delete;
     Server& operator=(const Server&) = delete;
@@ -37,6 +39,8 @@ private:
     Transport& transport_;
     std::array<Channel, channels> inputs_;
     const int receive_buffer_bytes_;
+    const bool timing_diagnostics_;
+    TimingDiagnostics timing_; // Protected by the existing status mutex.
     std::array<int, channels> listeners_, producers_;
     int control_ = -1, lock_ = -1;
     std::vector<std::string> paths_;
