@@ -13,6 +13,16 @@ the [RP2354 firmware update guide](rp2354-firmware-update.md) for firmware work.
 | `fmheadend-muxd.service` | Receives PCM and sends framed audio to the Controller over SPI. | Running and configured by the backend. |
 | `fmheadendd.service` | Controller communication, sources, RDS, REST API and WebUI. | Running; Dashboard reports `RUNNING` when dependencies are healthy. |
 
+On Raspberry Pi, the mux service must run with `SCHED_FIFO` priority 50 to prevent
+occasional late SPI packets. Check the running muxd threads with:
+
+```sh
+ps -L -p "$(systemctl show -p MainPID --value fmheadend-muxd.service)" \
+  -o pid,tid,cls,rtprio,comm
+```
+
+The expected scheduling class and realtime priority are `FF` and `50`.
+
 With systemd services installed, start both:
 
 ```sh
