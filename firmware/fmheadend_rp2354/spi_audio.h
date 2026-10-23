@@ -10,6 +10,7 @@ void spi_audio_poll(void); /* Core 1: bounded stuck-CS/error recovery. */
 const uint8_t *spi_audio_take(void);
 void spi_audio_release(void);
 uint32_t spi_audio_error_count(void);
+void spi_audio_diagnostics(uint32_t counts[8]);
 /* Core 0: aggregate exceptional events, no per-frame UART. */
 bool spi_audio_diagnostic(char *line, size_t capacity, uint64_t now);
 #endif

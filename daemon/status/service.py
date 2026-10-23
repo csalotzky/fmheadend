@@ -2,6 +2,7 @@ import time
 import logging
 
 from .host_metrics import HostMetrics
+from .spi_diagnostics import SpiDiagnostics
 from ..errors import DependencyUnavailable, DomainError
 from .. import __version__
 from ..regions import effective_plan
@@ -27,6 +28,7 @@ class StatusService:
         self.radiotext = radiotext
         self.clock, self.started = clock, clock()
         self.host_metrics = HostMetrics(clock)
+        self.spi_diagnostics = SpiDiagnostics(rp, clock)
         self.recovery = recovery
         self.config, self.profile_files = config, profile_files
         self._profile_list = None

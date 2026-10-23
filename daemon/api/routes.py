@@ -21,6 +21,12 @@ def published_view(request, response, name):
     return status.published_view(name)
 
 
+@router.get('/diagnostics/spi', response_model=dict, tags=['diagnostics'])
+async def spi_diagnostics(request: Request, response: Response):
+    response.headers['Cache-Control'] = 'no-store'
+    return await request.app.state.services.status.spi_diagnostics.read(request.app.state.control)
+
+
 @router.get("/alsa/capture-devices", response_model=AlsaCaptureDevices, tags=["alsa"])
 async def alsa_capture_devices(request: Request, response: Response):
     response.headers['Cache-Control'] = 'no-store'

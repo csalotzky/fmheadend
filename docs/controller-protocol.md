@@ -77,6 +77,7 @@ Payload sizes exclude the I²C header and CRC. All successful response sizes are
 | `0x09` | RESET_ERROR_COUNTERS | Global | 0 | — |
 | `0x0A` | RP_SOFT_RESET | Global | 0 | — |
 | `0x0B` | [GET_RDS_FIFO_FREE](#49-get_rds_fifo_free-0x0b) | Global | 0 | 16 |
+| `0x0C` | [GET_SPI_DIAGNOSTICS](#410-get_spi_diagnostics-0x0c) | Global | 0 | 32 |
 | `0xF0` | [FLASH_UPDATE](#6-rp2354-firmware-update-extension) | Global | Variable | 9 or 112 |
 
 `0x09` and `0x0A` are defined in the host client but **not implemented by the firmware**; they return `INVALID_COMMAND`. `FLASH_UPDATE` is detailed in [section 6](#6-rp2354-firmware-update-extension).
@@ -218,6 +219,36 @@ Global target. Empty request payload. **Response: 16 bytes.**
 
 Absent TX entries are zero. Values count **groups**, not bytes.
 
+### 4.10 GET_SPI_DIAGNOSTICS (`0x0C`)
+
+Global target (`0xFF`), empty request payload. The response contains eight
+little-endian `u32` counters: **32 payload bytes, 36 bytes including header and CRC**.
+Offsets below are relative to the payload.
+
+| Offset | Counter | Counts |
+|---:|---|---|
+| 0 | `rp_spi_audio_link_error_count` | Existing aggregate, also returned by GET_STATUS |
+| 4 | LENGTH | Rejected transaction length or bit count |
+| 8 | RECEIVE_ERROR | Receive/DMA, capture initialization or recovery faults |
+| 12 | GAP | Forward counter discontinuity; one error per rejected frame, not per missing counter |
+| 16 | DUPLICATE | Repeated frame counter |
+| 20 | BACKWARD | Backward frame counter |
+| 24 | QUEUE_FULL | Frame rejected because no queue slot is free |
+| 28 | LOST | Expired queued audio or queue exhaustion during playback |
+
+Each actual aggregate error increment has one corresponding category. A receive
+fault takes precedence over a length fault. Companion UART events (including LOST
+after another error flushes playback) do not add errors. Never-connected silence
+does not count as LOST. Counters work with UART disabled, saturate independently
+at `0xFFFFFFFF`, and persist until firmware reinitialization/reset; reads never clear them.
+
+Values are sampled atomically per counter from the audio core, not as one locked
+snapshot: an error during sampling can temporarily make the aggregate differ from
+the category sum. Poll for diagnosis as needed, using the normal **2 ms** request
+STOP-to-read wait and BUSY handling. The command uses foreground execution without
+QN register reads; premature reads follow the ordinary cancellation rules below.
+During firmware-update maintenance it returns BUSY.
+
 ## 5. Status codes, timing and failures
 
 All error responses have an empty payload.
@@ -236,7 +267,7 @@ All error responses have an empty payload.
 
 | Commands | Wait |
 |---|---:|
-| GET_INFO, RDS_PUSH, RDS_CLEAR, GET_RDS_FIFO_FREE | 2 ms |
+| GET_INFO, RDS_PUSH, RDS_CLEAR, GET_RDS_FIFO_FREE, GET_SPI_DIAGNOSTICS | 2 ms |
 | QN_READ_REGISTER, QN_WRITE_REGISTER | 100 ms |
 | SET_TX_ENABLED | 150 ms |
 | GET_STATUS | 850 ms |

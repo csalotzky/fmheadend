@@ -292,6 +292,7 @@ void spi_audio_release(void)
     spi_stream_release(&stream); restore_interrupts(saved);
 }
 uint32_t spi_audio_error_count(void) { return spi_stream_errors(&stream); }
+void spi_audio_diagnostics(uint32_t counts[8]) { spi_stream_diagnostics(&stream,counts); }
 #if DEBUG_UART_ENABLED
 static bool rx_diagnostic_line(char *line, size_t capacity)
 {

@@ -20,6 +20,7 @@ typedef struct {
     uint32_t write, read, flush_before, previous;
     bool have_counter, reset_pending, playing, borrowed, seen_valid, seen_playback;
     atomic_uint errors, events;
+    atomic_uint error_counts[7]; /* LENGTH, RECEIVE_ERROR, GAP, DUPLICATE, BACKWARD, QUEUE_FULL, LOST. */
 } spi_stream_t;
 /* Core 1 only. Hardware adapter masks its CS IRQ around take/release/poll.
  * Producer never writes a queued/borrowed buffer. No copies or allocation. */
@@ -30,4 +31,5 @@ void spi_stream_error(spi_stream_t *s, unsigned event);
 const uint8_t *spi_stream_take(spi_stream_t *s, uint64_t now);
 void spi_stream_release(spi_stream_t *s);
 uint32_t spi_stream_errors(const spi_stream_t *s);
+void spi_stream_diagnostics(const spi_stream_t *s, uint32_t counts[8]);
 #endif

@@ -140,6 +140,15 @@ int main(void)
     assert(host.response_cursor == 0 && host_protocol_read(&host) == 0);
 
     status(0xff);
+    const uint8_t diagnostics[] = {0x0c,255,0};
+    request(diagnostics,sizeof(diagnostics),HOST_OK);
+    assert(host.response_size==36 && host.response[1]==32);
+    const uint8_t diagnostics_target[] = {0x0c,0,0};
+    request(diagnostics_target,sizeof(diagnostics_target),HOST_INVALID_TARGET);
+    const uint8_t diagnostics_payload[] = {0x0c,255,1,0};
+    request(diagnostics_payload,sizeof(diagnostics_payload),HOST_INVALID_ARGUMENT);
+    assert(host_response_wait_ms(0x0c)==2);
+    assert(!strcmp(host_command_name(0x0c),"GET_SPI_DIAGNOSTICS"));
     host_log_event_t event = request(config, sizeof(config), HOST_OK);
     assert(event.command == 2 && event.target == 3 && event.length == 15);
     assert(!memcmp(event.payload, config + 3, 15));

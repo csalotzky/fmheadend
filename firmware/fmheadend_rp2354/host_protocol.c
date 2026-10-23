@@ -7,7 +7,7 @@
 
 enum { GET_INFO = 1, SET_TX_CONFIG, SET_TX_ENABLED, GET_STATUS, RDS_PUSH,
        RDS_CLEAR, QN_READ_REGISTER, QN_WRITE_REGISTER, RESET_ERROR_COUNTERS,
-       RP_SOFT_RESET, GET_RDS_FIFO_FREE };
+       RP_SOFT_RESET, GET_RDS_FIFO_FREE, GET_SPI_DIAGNOSTICS };
 
 _Static_assert(sizeof(HOST_FIRMWARE_VERSION) <= 16, "firmware version too long");
 _Static_assert(sizeof(HOST_HARDWARE_TARGET) <= 16, "hardware target too long");
@@ -90,7 +90,7 @@ static uint8_t validate(const host_protocol_t *host)
         return length ? HOST_OK : HOST_INVALID_ARGUMENT;
     }
 #endif
-    if (command < GET_INFO || command > GET_RDS_FIFO_FREE) return HOST_INVALID_COMMAND;
+    if (command < GET_INFO || command > GET_SPI_DIAGNOSTICS) return HOST_INVALID_COMMAND;
     const bool global = command == GET_INFO || command == GET_STATUS ||
                         command >= RESET_ERROR_COUNTERS;
     if (global ? target != 0xff : target >= TX_COUNT) return HOST_INVALID_TARGET;
@@ -212,7 +212,7 @@ void host_protocol_stop(host_protocol_t *host, uint32_t uptime_ms)
             }
             quiet = true; /* Polling is not a state transition. */
             break;
-        case GET_STATUS: case SET_TX_CONFIG: case SET_TX_ENABLED:
+        case GET_SPI_DIAGNOSTICS: case GET_STATUS: case SET_TX_CONFIG: case SET_TX_ENABLED:
         case QN_READ_REGISTER: case QN_WRITE_REGISTER:
             host->work = (host_work_t){.event=event, .generation=host->generation};
             host->pending = true;
@@ -251,7 +251,11 @@ void host_protocol_run_work(host_protocol_t *host, host_work_t *work, uint32_t u
         e->status=HOST_BUSY; e->response_length=0; return;
     }
 #endif
-    if (e->command==GET_STATUS) {
+    if (e->command==GET_SPI_DIAGNOSTICS) {
+        /* The hardware adapter supplies the live counters before completion,
+         * just as it supplies the GET_STATUS SPI aggregate. */
+        e->response_length=32;
+    } else if (e->command==GET_STATUS) {
         qn_control_status(&host->qn,work->result,uptime);
         e->response_length=130;
     } else {
@@ -333,11 +337,12 @@ const char *host_command_name(uint8_t command)
 {
     static const char *const names[] = {"UNKNOWN", "GET_INFO", "SET_TX_CONFIG",
         "SET_TX_ENABLED", "GET_STATUS", "RDS_PUSH", "RDS_CLEAR", "QN_READ_REGISTER",
-        "QN_WRITE_REGISTER", "RESET_ERROR_COUNTERS", "RP_SOFT_RESET", "GET_RDS_FIFO_FREE"};
+        "QN_WRITE_REGISTER", "RESET_ERROR_COUNTERS", "RP_SOFT_RESET", "GET_RDS_FIFO_FREE",
+        "GET_SPI_DIAGNOSTICS"};
 #ifdef FMHEADEND_FLASH_UPDATE
     if(command==FU_COMMAND) return "FLASH_UPDATE";
 #endif
-    return command <= GET_RDS_FIFO_FREE ? names[command] : names[0];
+    return command <= GET_SPI_DIAGNOSTICS ? names[command] : names[0];
 }
 const char *host_status_name(uint8_t status)
 {

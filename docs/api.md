@@ -75,17 +75,30 @@ subsequent status snapshots.
 
 ## 2. Endpoint inventory
 
-The application registers 38 functional operations under `/api/v1`.
+The application registers 39 functional operations under `/api/v1`.
 
-### 2.1 System and status — 5 operations
+### 2.1 System and status — 6 operations
 
 | Method | Endpoint | Purpose |
 |---|---|---|
 | `GET` | `/api/v1/status` | Return the cached system and physical-Modulator runtime snapshot. |
 | `GET` | `/api/v1/system/info` | Return application, Controller, capability, frequency-plan and media-backend information. |
 | `GET` | `/api/v1/system/logs` | Return the newest 100 in-process backend log entries since startup. |
+| `GET` | `/api/v1/diagnostics/spi` | Read Controller SPI error counters through a demand-driven five-second cache. |
 | `GET` | `/api/v1/system/config` | Read persistent system configuration. |
 | `PATCH` | `/api/v1/system/config` | Change the system-default Audio Profile and apply it to active inheriting Sources. |
+
+`GET /api/v1/diagnostics/spi` returns unsigned 32-bit counters named
+`rp_spi_audio_link_error_count` (aggregate), `length`, `receive_error`, `gap`,
+`duplicate`, `backward`, `queue_full` and `lost`, plus `observation_age_s`.
+Age is measured from completion of the last successful observation. Concurrent
+requests share one refresh on the serialized control worker; there is no periodic
+polling or counter reset. Responses use `Cache-Control: no-store`.
+Controller failures return `503 DEPENDENCY_UNAVAILABLE`, with a one-second retry
+cooldown instead of returning old counters as a successful observation. Control
+queue saturation returns `503 CONTROL_BUSY`. Mock Controller mode returns zero counters.
+The Controller firmware must implement `GET_SPI_DIAGNOSTICS` (`0x0C`); see the
+[counter semantics](controller-protocol.md#410-get_spi_diagnostics-0x0c).
 
 `SystemConfig` contains `default_audio_profile_id` and `global_stopped`.
 `global_stopped` is read-only through this resource and is changed by START ALL,

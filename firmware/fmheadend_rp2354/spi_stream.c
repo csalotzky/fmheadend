@@ -4,14 +4,37 @@
 static uint32_t le32(const uint8_t *p)
 { return (uint32_t)p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24; }
 void spi_stream_init(spi_stream_t *s)
-{ memset(s,0,sizeof(*s)); atomic_init(&s->errors,0); atomic_init(&s->events,0); }
+{
+    memset(s,0,sizeof(*s)); atomic_init(&s->errors,0); atomic_init(&s->events,0);
+    for (unsigned i=0;i<7;++i) atomic_init(&s->error_counts[i],0);
+}
 uint8_t *spi_stream_capture(spi_stream_t *s) { return s->frames[s->write%SPI_FRAME_SLOTS]; }
 uint32_t spi_stream_errors(const spi_stream_t *s) { return atomic_load(&s->errors); }
+void spi_stream_diagnostics(const spi_stream_t *s, uint32_t counts[8])
+{
+    counts[0]=spi_stream_errors(s);
+    for (unsigned i=0;i<7;++i)
+        counts[i+1]=atomic_load_explicit(&s->error_counts[i],memory_order_relaxed);
+}
 void spi_stream_error(spi_stream_t *s, unsigned event)
 {
     /* Only core 1 writes, with its CS IRQ masked in foreground. */
     unsigned errors=atomic_load(&s->errors);
     if (errors!=UINT32_MAX) atomic_store(&s->errors,errors+1);
+    unsigned index;
+    switch (event) {
+    case SPI_LENGTH: index=0; break;
+    case SPI_RECEIVE_ERROR: index=1; break;
+    case SPI_GAP: index=2; break;
+    case SPI_DUPLICATE: index=3; break;
+    case SPI_BACKWARD: index=4; break;
+    case SPI_QUEUE_FULL: index=5; break;
+    case SPI_LOST: index=6; break;
+    default: assert(false); return;
+    }
+    unsigned count=atomic_load_explicit(&s->error_counts[index],memory_order_relaxed);
+    if (count!=UINT32_MAX)
+        atomic_store_explicit(&s->error_counts[index],count+1,memory_order_relaxed);
     atomic_fetch_or(&s->events,event);
     s->flush_before=s->write; s->reset_pending=true;
 }

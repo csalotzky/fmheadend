@@ -4,6 +4,13 @@
 #include <stdio.h>
 #include <string.h>
 static spi_stream_t s;
+static void counts(unsigned index, uint32_t value)
+{
+    uint32_t snapshot[8];
+    spi_stream_diagnostics(&s,snapshot);
+    assert(snapshot[0]==value);
+    for (unsigned i=0;i<7;++i) assert(snapshot[i+1]==(i==index ? value : 0));
+}
 static uint32_t out[AUDIO_BUFFER_WORDS];
 static void frame(uint32_t counter, size_t bytes, uint32_t bits, bool fault, uint64_t now)
 {
@@ -54,6 +61,7 @@ int main(void)
     assert(spi_stream_take(&s,1000)[0]==2);spi_stream_release(&s);
     assert(!spi_stream_errors(&s));
     assert(!spi_stream_take(&s,1000) && spi_stream_errors(&s)==1);
+    counts(6,1);
     for(unsigned i=0;i<100;++i) assert(!spi_stream_take(&s,1000));
     assert(spi_stream_errors(&s)==1);
     good(3);good(4);assert(spi_stream_take(&s,1000)[0]==3);spi_stream_release(&s);
@@ -73,6 +81,7 @@ int main(void)
         default: good(0);event=SPI_BACKWARD;break;
         }
         assert(spi_stream_errors(&s)==1 && (atomic_load(&s.events)&event));
+        counts(kind<3 ? 0 : kind-2,1);
         assert(!spi_stream_take(&s,1000));
         uint32_t next=s.previous+1; good(next); good(next+1);
         assert(spi_stream_take(&s,1000));spi_stream_release(&s);
@@ -82,6 +91,7 @@ int main(void)
     assert(!spi_stream_errors(&s)); assert(spi_stream_take(&s,1000));
     good(2); assert(spi_stream_errors(&s)==1 && (atomic_load(&s.events)&SPI_QUEUE_FULL));
     spi_stream_release(&s);assert(!spi_stream_take(&s,1000));
+    counts(5,1); /* Companion LOST event must not increment LOST. */
     good(3);good(4);assert(spi_stream_take(&s,1000));spi_stream_release(&s);
     spi_stream_init(&s);s.read=s.write=UINT32_MAX;good(0);good(1);
     assert(spi_stream_take(&s,1000)[0]==0);spi_stream_release(&s);
@@ -89,8 +99,12 @@ int main(void)
     assert(s.read==1 && s.write==1);
     spi_stream_init(&s);good(0);good(1);
     assert(!spi_stream_take(&s,22000) && spi_stream_errors(&s)==1);
+    counts(6,1);
+    spi_stream_init(&s);
+    atomic_store(&s.error_counts[0],UINT32_MAX);
     atomic_store(&s.errors,UINT32_MAX);spi_stream_error(&s,SPI_LENGTH);
     assert(spi_stream_errors(&s)==UINT32_MAX);
+    counts(0,UINT32_MAX);
     /* Exhaust every signed sample bit pattern against the wire decoder. */
     uint8_t packed[4100]={0};
     for(unsigned value=0;value<65536;++value) {

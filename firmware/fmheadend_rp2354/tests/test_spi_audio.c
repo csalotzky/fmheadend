@@ -236,6 +236,10 @@ int main(void)
      * same bounded deadline and never drain/re-arm while DMA may own a byte. */
     busy_stuck=true;transfer(8,4100,1,32800,false);
     assert(spi_audio_error_count()==3 && !armed && fifo_at==0);
+    uint32_t counters[8];
+    spi_audio_diagnostics(counters);
+    assert(counters[0]==3 && counters[1]==2 && counters[2]==1);
+    for (unsigned i=3;i<8;++i) assert(counters[i]==0);
     busy_stuck=false;fake_dma.ch[3].ctrl_trig=0;spi_audio_poll();assert(armed);
     assert(!spi_audio_take());
     transfer(9,4100,0,32800,false);transfer(10,4100,0,32800,false);
