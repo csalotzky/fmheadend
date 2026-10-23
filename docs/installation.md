@@ -40,7 +40,7 @@ sudo apt install git build-essential cmake pkg-config \
   gir1.2-gst-plugins-base-1.0 gstreamer1.0-tools \
   gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
   gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly \
-  gstreamer1.0-libav gstreamer1.0-alsa alsa-utils \
+  gstreamer1.0-libav gstreamer1.0-alsa alsa-utils i2c-tools \
   lsp-plugins-lv2
 ```
 
@@ -225,8 +225,9 @@ sudo python3 tools/setup_pi.py
 sudo reboot
 ```
 
-The utility updates `/boot/firmware/config.txt` and `cmdline.txt`, creates backups,
-enables SPI0 and sets `spidev.bufsiz=8192`. Its model-dependent I²C defaults are:
+The utility updates `/boot/firmware/config.txt` and `cmdline.txt`, configures automatic
+loading of `i2c-dev`, creates backups, enables SPI0 and sets `spidev.bufsiz=8192`.
+Its model-dependent I²C defaults are:
 
 | Raspberry Pi | I²C configuration | Expected device |
 |---|---|---|
@@ -262,6 +263,10 @@ cat /sys/module/spidev/parameters/bufsiz
 ```
 
 The final command should print `8192`.
+
+On Pi 3/4, `/dev/i2c-8` should be owned by `root:i2c` with `0660` permissions.
+The `i2c-tools` package supplies the standard device permission rule; no manual
+`modprobe`, ownership, permission or custom udev setup is required.
 
 If either device is missing, list the available interfaces:
 
