@@ -94,6 +94,7 @@ not a `MUXD_ARGS` value or mux CLI option.
 | `--spi-clock-hz HZ` | `25000000` | Positive SPI clock in Hz for `spidev`; accepts an unsigned 32-bit integer. |
 | `--spi-mode MODE` | `0` | SPI mode `0` through `3`. |
 | `--ring-buffer-ms MS` | `300` | Positive PCM ring capacity per channel in milliseconds. |
+| `--timing-diagnostics` | Off | Collect detailed timing counters in the Unix socket `get_status` response. |
 | `--capture FILE` | Disabled | Bounded mock-transport frame capture file. Invalid with `spidev`. |
 | `--capture-frames COUNT` | `375` | Mock-capture frame limit, `1` through `100000`. |
 | `--help` | — | Prints usage. |
@@ -101,6 +102,16 @@ not a `MUXD_ARGS` value or mux CLI option.
 
 The mux starts in `WAITING_FOR_CONFIG`; it sends no SPI frames until the backend
 has negotiated Controller capabilities and configured the physical TX count.
+
+With `--timing-diagnostics`, `get_status` reports `timing_diagnostics: true`,
+`late_max_us`, `late_over_100us`, `late_over_500us`, `late_over_1000us`,
+`late_over_3000us` and `send_gap_max_us`. Lateness measures how far the pump has
+passed its next deadline after frame processing/sending, matching `late_frames`.
+Threshold counts are cumulative and strictly greater than their named threshold.
+The send gap measures consecutive transport-send starts, including failed sends
+and pauses between sends; the first send has no gap. Maxima are whole microseconds.
+Counters accumulate until process restart. When disabled, detailed counters remain
+zero and no extra clock reads occur; `late_frames` continues normally.
 
 ## 3. Persistent system configuration
 

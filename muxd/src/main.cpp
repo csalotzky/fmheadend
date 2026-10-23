@@ -23,6 +23,7 @@ int main(int argc, char** argv) {
         std::uint8_t mode = 0;
         std::uint64_t capture_frames = 375;
         std::uint64_t ring_buffer_ms = muxd::default_ring_buffer_ms;
+        bool timing_diagnostics = false;
         for (int i = 1; i < argc; ++i) {
             const std::string option = argv[i];
             if (option == "--version") {
@@ -33,10 +34,12 @@ int main(int argc, char** argv) {
                 std::cout << "fmheadend-muxd --transport mock|spidev [--runtime-dir /run/fmheadend]\n"
                              "  [--spi-device /dev/spidev0.0] [--spi-clock-hz 25000000] [--spi-mode 0]\n"
                              "  [--ring-buffer-ms 300] (positive integer ms of PCM per channel)\n"
+                             "  [--timing-diagnostics] (detailed timing counters; default OFF)\n"
                              "  [--capture FILE --capture-frames 375] (bounded mock capture only)\n"
                              "  --version\n";
                 return 0;
             }
+            if (option == "--timing-diagnostics") { timing_diagnostics = true; continue; }
             if (++i == argc) throw std::runtime_error("Missing option value");
             const std::string value = argv[i];
             if (option == "--runtime-dir") directory = value;
@@ -60,7 +63,7 @@ int main(int argc, char** argv) {
         std::signal(SIGINT, stop); std::signal(SIGTERM, stop); std::signal(SIGPIPE, SIG_IGN);
         std::cerr << "fmheadend-muxd transport=" << backend << " runtime=" << directory
                   << " ring_buffer_ms=" << ring_buffer_ms << " ring_buffer_bytes=" << ring_capacity << '\n';
-        muxd::Server server(directory, *transport, ring_capacity);
+        muxd::Server server(directory, *transport, ring_capacity, timing_diagnostics);
         server.run(interrupted);
         return 0;
     } catch (const std::exception& error) {
