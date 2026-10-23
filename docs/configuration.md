@@ -82,6 +82,10 @@ an unavailable real Controller or SPI transport.
 Set mux options directly or in the `MUXD_ARGS` value read by
 `fmheadend-muxd.service`. Mux settings require a muxd restart.
 
+Reliable SPI PCM delivery on Raspberry Pi requires realtime scheduling. The supplied
+`fmheadend-muxd.service` configures `SCHED_FIFO` priority 50; this is a service setting,
+not a `MUXD_ARGS` value or mux CLI option.
+
 | Option | Default | Description |
 |---|---|---|
 | `--transport mock\|spidev` | Required | Selects the transport. No transport is selected implicitly. |

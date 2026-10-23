@@ -156,10 +156,10 @@ The WebUI requires Node.js only when building from source. Prebuilt releases do 
 **Install Node.js 24.x and npm (source builds only):**
 
 ```sh
-sudo apt install -y curl
+sudo apt install curl
 curl -fsSL https://deb.nodesource.com/setup_24.x -o /tmp/nodesource_setup.sh
 sudo -E bash /tmp/nodesource_setup.sh
-sudo apt install -y nodejs
+sudo apt install nodejs
 
 node --version
 npm --version
@@ -276,6 +276,8 @@ not interchangeable.
 ## 7. Configure the services
 
 Install the supplied systemd units:
+
+> **Important:** On Raspberry Pi, the mux daemon requires realtime scheduling (`SCHED_FIFO`, priority 50). Without it, SPI audio packets may occasionally be delivered too late, causing audio glitches. The supplied systemd service configures this automatically.
 
 ```sh
 cd ~/fmheadend
