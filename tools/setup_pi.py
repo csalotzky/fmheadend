@@ -15,6 +15,7 @@ from pathlib import Path
 
 CONFIG_PATH = Path("/boot/firmware/config.txt")
 CMDLINE_PATH = Path("/boot/firmware/cmdline.txt")
+MODULES_LOAD_PATH = Path("/etc/modules-load.d/i2c-dev.conf")
 MODEL_PATH = Path("/proc/device-tree/model")
 SPI_BUFSIZ = 8192
 DEFAULT_I2C_SPEED = 100_000
@@ -44,6 +45,7 @@ class FileText:
     newline: str
     trailing_newline: bool
     mode: int
+    existed: bool = True
 
     def render(self, lines: list[str]) -> str:
         result = self.newline.join(lines)
@@ -64,7 +66,7 @@ class ConfigEntry:
 @dataclass(frozen=True)
 class SetupResult:
     changed: tuple[Path, ...]
-    backups: tuple[Path, ...]
+    backups: tuple[Path | None, ...]
     i2c_device: str
 
     @property
@@ -126,7 +128,7 @@ def argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--overwrite-existing",
         action="store_true",
-        help="replace existing I2C, SPI and spidev buffer settings",
+        help="replace existing I2C, SPI, spidev buffer and module-load settings",
     )
     return parser
 
@@ -215,6 +217,16 @@ def _read_text(path: Path, *, one_line: bool = False) -> FileText:
         raise SetupError(f"{path} must contain exactly one non-empty line")
     mode = stat.S_IMODE(path.stat().st_mode)
     return FileText(path, text, lines, newline, trailing, mode)
+
+
+def _read_modules_load(path: Path) -> FileText:
+    if path.is_symlink():
+        raise SetupError(f"Expected a regular file or missing path at {path}")
+    if path.exists():
+        return _read_text(path)
+    if not path.parent.is_dir():
+        raise SetupError(f"Expected an existing directory at {path.parent}")
+    return FileText(path, "", [], "\n", True, 0o644, existed=False)
 
 
 def _code_and_comment(line: str) -> tuple[str, str]:
@@ -518,6 +530,27 @@ def _plan_cmdline(file: FileText, options: SetupOptions) -> str:
     return file.render([" ".join(tokens)])
 
 
+def _plan_modules_load(file: FileText, options: SetupOptions) -> str:
+    active = [
+        (index, line.strip())
+        for index, line in enumerate(file.lines)
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    if [line for _, line in active] == ["i2c-dev"]:
+        return file.text
+    if file.existed and not options.overwrite_existing:
+        detail = (
+            f"line {active[0][0] + 1}: {active[0][1]}"
+            if active
+            else "no active module entry"
+        )
+        raise SetupError(
+            f"Existing conflicting module-load configuration in {file.path}: "
+            f"{detail}; use --overwrite-existing to replace it"
+        )
+    return "i2c-dev\n"
+
+
 def _backup(path: Path) -> Path:
     candidate = path.with_name(path.name + ".fmheadend.bak")
     number = 1
@@ -556,18 +589,22 @@ def configure_files(
     options: SetupOptions,
     config_path: Path = CONFIG_PATH,
     cmdline_path: Path = CMDLINE_PATH,
+    modules_load_path: Path = MODULES_LOAD_PATH,
 ) -> SetupResult:
     _validate_options(options)
     config = _read_text(Path(config_path))
     cmdline = _read_text(Path(cmdline_path), one_line=True)
+    modules_load = _read_modules_load(Path(modules_load_path))
     planned = {
         config.path: (config, _plan_config(config, options)),
         cmdline.path: (cmdline, _plan_cmdline(cmdline, options)),
+        modules_load.path: (modules_load, _plan_modules_load(modules_load, options)),
     }
     changes = [path for path, (source, text) in planned.items() if text != source.text]
-    backups: dict[Path, Path] = {}
+    backups: dict[Path, Path | None] = {}
     for path in changes:
-        backups[path] = _backup(path)
+        source, _ = planned[path]
+        backups[path] = _backup(path) if source.existed else None
     written: list[Path] = []
     try:
         for path in changes:
@@ -579,7 +616,11 @@ def configure_files(
         for path in reversed(written):
             source, _ = planned[path]
             try:
-                _atomic_write(source, backups[path].read_bytes().decode("utf-8"))
+                backup = backups[path]
+                if backup is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    _atomic_write(source, backup.read_bytes().decode("utf-8"))
             except (OSError, SetupError) as rollback_exc:
                 rollback_errors.append(f"{path}: {rollback_exc}")
         if rollback_errors:
@@ -595,18 +636,22 @@ def main(
     argv: list[str] | None = None,
     config_path: Path = CONFIG_PATH,
     cmdline_path: Path = CMDLINE_PATH,
+    modules_load_path: Path = MODULES_LOAD_PATH,
     model_path: Path = MODEL_PATH,
 ) -> int:
     parser = argument_parser()
     namespace = parser.parse_args(argv)
     try:
         options = _options_from_namespace(namespace, model_path)
-        result = configure_files(options, config_path, cmdline_path)
+        result = configure_files(options, config_path, cmdline_path, modules_load_path)
     except SetupError as exc:
         parser.exit(2, f"setup_pi.py: error: {exc}\n")
     if result.changed:
         for path, backup in zip(result.changed, result.backups, strict=True):
-            print(f"Updated {path} (backup: {backup})")
+            if backup is None:
+                print(f"Created {path}")
+            else:
+                print(f"Updated {path} (backup: {backup})")
     else:
         print("Configuration already matches the requested settings; no files changed")
     if options.i2c_mode == "hw":

@@ -7,14 +7,24 @@ import pytest
 from tools.setup_pi import SetupError, SetupOptions, configure_files, main
 
 
-def files(tmp_path, config="", cmdline="console=serial0,115200 root=/dev/mmcblk0p2\n"):
+def files(
+    tmp_path,
+    config="",
+    cmdline="console=serial0,115200 root=/dev/mmcblk0p2\n",
+    module_load="i2c-dev\n",
+):
     boot = tmp_path / "boot" / "firmware"
     boot.mkdir(parents=True)
     config_path = boot / "config.txt"
     cmdline_path = boot / "cmdline.txt"
+    modules_load_dir = tmp_path / "etc" / "modules-load.d"
+    modules_load_dir.mkdir(parents=True)
+    modules_load_path = modules_load_dir / "i2c-dev.conf"
     config_path.write_text(config, encoding="utf-8")
     cmdline_path.write_text(cmdline, encoding="utf-8")
-    return config_path, cmdline_path
+    if module_load is not None:
+        modules_load_path.write_text(module_load, encoding="utf-8")
+    return config_path, cmdline_path, modules_load_path
 
 
 def model_file(tmp_path, model):
@@ -252,6 +262,49 @@ def test_repeated_overwrite_run_is_idempotent_and_has_no_duplicates(tmp_path):
     assert paths[0].read_text(encoding="utf-8").count("dtoverlay=i2c-gpio") == 1
     assert paths[1].read_text(encoding="utf-8").count("spidev.bufsiz=8192") == 1
     assert len(first.backups) == 2
+
+
+@pytest.mark.parametrize("i2c_mode", ["hw", "sw"])
+def test_missing_module_load_configuration_is_created(tmp_path, i2c_mode):
+    paths = files(tmp_path, module_load=None)
+    result = configure(paths, i2c_mode=i2c_mode)
+    assert paths[2].read_text(encoding="utf-8") == "i2c-dev\n"
+    assert paths[2] in result.changed
+    assert result.backups[result.changed.index(paths[2])] is None
+
+
+def test_main_reports_created_module_load_configuration(tmp_path, capsys):
+    paths = files(tmp_path, module_load=None)
+    model = model_file(tmp_path, "Raspberry Pi 4 Model B Rev 1.5")
+    assert main([], *paths, model) == 0
+    assert f"Created {paths[2]}" in capsys.readouterr().out
+
+
+def test_correct_module_load_configuration_is_left_unchanged(tmp_path):
+    paths = files(tmp_path, module_load="# keep this comment\n\ni2c-dev\n")
+    before = paths[2].read_bytes()
+    result = configure(paths)
+    assert paths[2].read_bytes() == before
+    assert paths[2] not in result.changed
+
+
+def test_conflicting_module_load_configuration_fails_before_changes(tmp_path):
+    paths = files(tmp_path, module_load="i2c-bcm2835\n")
+    before = tuple(path.read_bytes() for path in paths)
+    with pytest.raises(SetupError, match="conflicting module-load configuration") as exc:
+        configure(paths)
+    assert f"{paths[2]}: line 1: i2c-bcm2835" in str(exc.value)
+    assert tuple(path.read_bytes() for path in paths) == before
+    assert not list(tmp_path.rglob("*.fmheadend.bak*"))
+
+
+def test_overwrite_replaces_and_backs_up_conflicting_module_load_file(tmp_path):
+    paths = files(tmp_path, module_load="i2c-bcm2835\n")
+    result = configure(paths, overwrite_existing=True)
+    assert paths[2].read_text(encoding="utf-8") == "i2c-dev\n"
+    backup = result.backups[result.changed.index(paths[2])]
+    assert backup is not None
+    assert backup.read_text(encoding="utf-8") == "i2c-bcm2835\n"
 
 
 def test_existing_correct_values_still_require_overwrite(tmp_path):
