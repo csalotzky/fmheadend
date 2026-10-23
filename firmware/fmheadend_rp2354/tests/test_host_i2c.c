@@ -13,6 +13,11 @@ static char uart_log[4096];
 static audio_state_t audio_state=AUDIO_RUNNING;
 static uint8_t audio_mask, digital_mask;
 uint32_t spi_audio_error_count(void) { return 0x12345678; }
+void spi_audio_diagnostics(uint32_t counts[8])
+{
+    assert(!in_irq && !masked);
+    for (unsigned i=0;i<8;++i) counts[i]=0x12345678u+i;
+}
 bool spi_audio_diagnostic(char *s,size_t n,uint64_t now) { (void)s;(void)n;(void)now;return false; }
 audio_state_t audio_engine_state(void) { assert(!in_irq && !masked); return audio_state; }
 void audio_engine_set_sources(uint8_t mask, uint8_t digital) { assert(!in_irq && !masked); audio_mask=mask; digital_mask=digital; }
@@ -91,6 +96,19 @@ int main(void)
     assert(test_i2c1.hw.enable == 1 && test_i2c1.hw.ack_general_call == 0);
     assert(test_i2c1.hw.con & I2C_IC_CON_STOP_DET_IFADDRESSED_BITS);
     assert(strstr(uart_log, "address=0x62"));
+    uart_log[0] = 0;
+    const uint8_t diagnostics[] = {0x0c,255,0};
+    for (unsigned repeat=0;repeat<2;++repeat) {
+        write_request(diagnostics,sizeof(diagnostics));
+        assert(host.pending);
+        host_i2c_poll();
+        assert(host.response_size==36);
+        assert(read_byte()==HOST_OK && read_byte()==32);
+        for (unsigned i=0;i<8;++i)
+            for (unsigned b=0;b<4;++b)
+                assert(read_byte()==(uint8_t)((0x12345678u+i)>>(8*b)));
+        read_crc(); finish_read(); drain();
+    }
     uart_log[0] = 0;
     const uint8_t info[] = {1,255,0};
     write_request(info, sizeof(info)); /* Final RX + STOP in the same IRQ. */

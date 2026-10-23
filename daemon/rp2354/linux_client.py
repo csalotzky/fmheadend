@@ -219,6 +219,9 @@ class Rp2354Client:
     def get_rds_fifo_free(self) -> list[int]:
         return self._call(p.Command.GET_RDS_FIFO_FREE, p.GLOBAL, decode=p.parse_rds_fifo_free)
 
+    def get_spi_diagnostics(self) -> dict:
+        return self._call(p.Command.GET_SPI_DIAGNOSTICS, p.GLOBAL, decode=p.parse_spi_diagnostics)
+
     def push_rds(self, modulator_id: int, groups: list[tuple[int, int, int, int]]) -> None:
         self._call(p.Command.RDS_PUSH, modulator_id, p.rds_groups(groups))
 

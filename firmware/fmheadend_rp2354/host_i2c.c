@@ -220,6 +220,12 @@ void host_i2c_poll(void)
             uint32_t errors=spi_audio_error_count();
             for (unsigned b=0;b<4;++b) work.result[5+b]=errors>>(8*b);
         }
+        if (work.event.command==0x0c && work.event.status==HOST_OK) {
+            uint32_t counts[8];
+            spi_audio_diagnostics(counts);
+            for (unsigned i=0;i<8;++i)
+                for (unsigned b=0;b<4;++b) work.result[4*i+b]=counts[i]>>(8*b);
+        }
         lock=save_and_disable_interrupts();
         host_protocol_complete_work(&host,&work);
 #ifdef FMHEADEND_FLASH_UPDATE

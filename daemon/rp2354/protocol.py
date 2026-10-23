@@ -22,6 +22,7 @@ class Command(IntEnum):
     RESET_ERROR_COUNTERS = 9
     RP_SOFT_RESET = 10
     GET_RDS_FIFO_FREE = 11
+    GET_SPI_DIAGNOSTICS = 0x0C
     FLASH_UPDATE = 0xF0
 
 
@@ -68,7 +69,7 @@ class Outcome(StrEnum):
     RESPONSE = 'RESPONSE'
 
 
-READ_ONLY = {Command.GET_INFO, Command.GET_STATUS, Command.GET_RDS_FIFO_FREE, Command.QN_READ_REGISTER}
+READ_ONLY = {Command.GET_INFO, Command.GET_STATUS, Command.GET_RDS_FIFO_FREE, Command.QN_READ_REGISTER, Command.GET_SPI_DIAGNOSTICS}
 
 
 def execution_outcome(error, command):
@@ -99,7 +100,7 @@ class InternalError(RpResponseError): pass
 ERROR_TYPES = {Status.INVALID_COMMAND: InvalidCommand, Status.INVALID_TARGET: InvalidTarget,
                Status.INVALID_ARGUMENT: InvalidArgument, Status.BUSY: Busy,
                Status.QN_ERROR: QnError, Status.INTERNAL_ERROR: InternalError}
-GLOBAL_COMMANDS = {Command.FLASH_UPDATE, Command.GET_INFO, Command.GET_STATUS, Command.RESET_ERROR_COUNTERS, Command.RP_SOFT_RESET, Command.GET_RDS_FIFO_FREE}
+GLOBAL_COMMANDS = {Command.FLASH_UPDATE, Command.GET_INFO, Command.GET_STATUS, Command.RESET_ERROR_COUNTERS, Command.RP_SOFT_RESET, Command.GET_RDS_FIFO_FREE, Command.GET_SPI_DIAGNOSTICS}
 # All successful responses have exact fixed sizes in V1.
 INFO = struct.Struct("<H16s16sBIII")
 GLOBAL_STATUS = struct.Struct("<BIIB")
@@ -107,7 +108,17 @@ TX_CONFIG = struct.Struct("<IHBBBBBhBB")
 CHANNEL_STATUS = struct.Struct("<BhIIHBB")
 RESPONSE_SIZES = {command: 0 for command in Command}
 RESPONSE_SIZES.update({Command.GET_INFO: INFO.size, Command.GET_STATUS: GLOBAL_STATUS.size + 8 * CHANNEL_STATUS.size,
-                       Command.QN_READ_REGISTER: 1, Command.GET_RDS_FIFO_FREE: 16, Command.FLASH_UPDATE: 112})
+                       Command.QN_READ_REGISTER: 1, Command.GET_RDS_FIFO_FREE: 16, Command.FLASH_UPDATE: 112,
+                       Command.GET_SPI_DIAGNOSTICS: 32})
+
+SPI_DIAGNOSTIC_FIELDS = ('rp_spi_audio_link_error_count', 'length', 'receive_error',
+                         'gap', 'duplicate', 'backward', 'queue_full', 'lost')
+
+
+def parse_spi_diagnostics(payload: bytes) -> dict:
+    if len(payload) != 32:
+        raise ProtocolError('GET_SPI_DIAGNOSTICS requires exactly 32 payload bytes')
+    return dict(zip(SPI_DIAGNOSTIC_FIELDS, struct.unpack('<8I', payload), strict=True))
 
 
 def uint(value: int, bits: int, name: str) -> int:

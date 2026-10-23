@@ -3,7 +3,7 @@ from collections import deque
 import time
 from pydantic import Field
 
-from .protocol import PROTOCOL_VERSION
+from .protocol import PROTOCOL_VERSION, SPI_DIAGNOSTIC_FIELDS
 from ..errors import DependencyUnavailable
 from ..models.configuration import Model, Modulator
 
@@ -30,6 +30,7 @@ class Rp2354Client(Protocol):
     def get_info(self) -> dict: ...
     def get_status(self) -> dict: ...
     def get_rds_fifo_free(self) -> list[int]: ...
+    def get_spi_diagnostics(self) -> dict: ...
     def push_rds(self, modulator_id: int, groups) -> None: ...
     def clear_rds(self, modulator_id: int) -> None: ...
 
@@ -79,6 +80,10 @@ class MockRp2354Client:
         self.rds_calls.append(("GET_RDS_FIFO_FREE",))
         self._drain_rds()
         return [self.rds_capacity - len(fifo) for fifo in self.rds_fifos]
+
+    def get_spi_diagnostics(self) -> dict:
+        self._check()
+        return dict.fromkeys(SPI_DIAGNOSTIC_FIELDS, 0)
 
     def _drain_rds(self):
         now = self.clock()

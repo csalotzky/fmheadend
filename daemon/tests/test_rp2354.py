@@ -60,6 +60,21 @@ def client():
     return linux.Rp2354Client('/dev/i2c-test', 0x42)
 
 
+def test_spi_diagnostics_wire_response(calls):
+    values = (0x12345678, 1, 2, 3, 4, 5, 6, 0xffffffff)
+    replies(calls, INFO, struct.pack('<8I', *values))
+    assert client().get_spi_diagnostics() == dict(zip(p.SPI_DIAGNOSTIC_FIELDS, values))
+    assert packets(calls)[-1] == bytes((0x0c, 0xff, 0))
+    assert p.RESPONSE_WAIT_MS[p.Command.GET_SPI_DIAGNOSTICS] == 2
+    assert p.Command.GET_SPI_DIAGNOSTICS in p.READ_ONLY
+
+
+@pytest.mark.parametrize('length', [0, 31, 33])
+def test_spi_diagnostics_rejects_wrong_payload_length(length):
+    with pytest.raises(p.ProtocolError, match='exactly 32'):
+        p.parse_spi_diagnostics(bytes(length))
+
+
 def packets(calls):
     wire = [call.args[1] for call in calls[0].write.call_args_list]
     assert all(packet == frame(packet[:-2]) for packet in wire)
