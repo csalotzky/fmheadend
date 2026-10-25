@@ -349,11 +349,21 @@ The mux service waits for the backend to supply the physical transmitter count b
 ```sh
 systemctl status fmheadend-muxd.service fmheadendd.service
 journalctl -u fmheadend-muxd.service -u fmheadendd.service -b
-curl -fsS http://127.0.0.1:8080/api/v1/status
-curl -fsS http://127.0.0.1:8080/api/v1/system/info
 ```
 
-Open `http://<pi-address>:8080/` to access the WebUI when network access is configured. Create Sources and configure Modulators before starting transmitters. A new database does not automatically enable RF output.
+Verify the REST API:
+
+Without authentication:
+```sh
+curl -fsS http://127.0.0.1:8080/api/v1/status
+```
+
+With authentication:
+```sh
+curl -fsS --user YOUR_USERNAME http://127.0.0.1:8080/api/v1/status
+```
+
+Open `http://<pi-address>:8080/` to access the WebUI. Create Sources and configure Modulators before starting transmitters.
 
 ## 9. Troubleshooting
 
