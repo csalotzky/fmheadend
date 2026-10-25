@@ -278,14 +278,14 @@
             {
               "filter": "bell",
               "frequency_hz": 120.0,
-              "gain_db": 0.75,
+              "gain_db": 0.5,
               "q": 0.7,
               "native_mode": 0
             },
             {
               "filter": "bell",
               "frequency_hz": 350.0,
-              "gain_db": -0.4,
+              "gain_db": -0.3,
               "q": 0.8,
               "native_mode": 0
             },
