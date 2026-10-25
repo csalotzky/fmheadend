@@ -1,3 +1,5 @@
+@import './checkbox-control.css';
+
 /* Shared editor primitives; import into editor and embedded form components. */
 a {
   color: var(--text);
@@ -50,9 +52,6 @@ textarea {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   font: 14px var(--sans);
-}
-input[type='checkbox'] {
-  width: auto;
 }
 input:focus-visible,
 select:focus-visible,

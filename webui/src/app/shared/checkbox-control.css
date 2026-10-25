@@ -1,0 +1,32 @@
+/* Shared by scoped editor styles and the station picker. */
+label.checkbox-control {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  column-gap: 8px;
+  row-gap: 4px;
+  align-items: center;
+  color: var(--text);
+  font: 400 12px/1.5 var(--sans);
+}
+label.checkbox-control > input[type='checkbox'] {
+  grid-column: 1;
+  grid-row: 1;
+  width: 16px;
+  height: 16px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+}
+label.checkbox-control > span {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+label.checkbox-control > small {
+  grid-column: 2;
+  margin: 0;
+  color: var(--muted);
+  font: 400 11px/1.5 var(--sans);
+  overflow-wrap: anywhere;
+}

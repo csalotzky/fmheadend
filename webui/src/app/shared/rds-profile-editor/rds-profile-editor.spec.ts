@@ -44,6 +44,11 @@ describe('Regional PTY presentation', () => {
         model.load({ ...profile, rds_pty: code });
         f.componentRef.setInput('model', model);
         f.detectChanges();
+        for (const checkbox of f.nativeElement.querySelectorAll('input[type="checkbox"]') as NodeListOf<HTMLInputElement>) {
+          expect(checkbox.closest('label')!.classList.contains('checkbox-control')).toBe(true);
+          expect(checkbox.nextElementSibling!.tagName).toBe('SPAN');
+          expect(checkbox.labels![0]).toBe(checkbox.closest('label'));
+        }
         const options = Array.from(f.nativeElement.querySelectorAll(
           'select[formControlName="rds_pty"] option:not([disabled])',
         )) as HTMLOptionElement[];

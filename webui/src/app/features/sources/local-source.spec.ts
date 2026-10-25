@@ -133,6 +133,8 @@ describe('Local media source configuration', () => {
     const checkbox: HTMLInputElement = f.nativeElement.querySelector('#source-recursive');
     expect(checkbox.closest('.local-path-panel')).not.toBeNull();
     expect(checkbox.closest('.local-path-control-group')).not.toBeNull();
+    expect(checkbox.closest('label')!.classList.contains('checkbox-control')).toBe(true);
+    expect(checkbox.nextElementSibling!.textContent!.trim()).toBe('Include subfolders');
     expect(
       (f.nativeElement.querySelector('#source-order') as HTMLElement).closest('.local-path-panel'),
     ).toBeNull();

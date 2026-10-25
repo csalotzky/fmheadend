@@ -12,6 +12,23 @@ describe('Modular DSP settings controls', () => {
     f.detectChanges();
     return f;
   }
+  it('places boolean labels after their checkboxes and descriptions below, with clickable labels', async () => {
+    const values = { bypass: false };
+    const f = await fields(
+      { properties: { bypass: { type: 'boolean', title: 'Compressor Bypass', description: 'Keep this description.' } } },
+      values,
+    );
+    const checkbox = f.nativeElement.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    const label = checkbox.closest('label')!;
+    expect(label.classList.contains('checkbox-control')).toBe(true);
+    expect(Array.from(label.children).map((child) => child.tagName)).toEqual(['INPUT', 'SPAN', 'SMALL']);
+    expect(label.querySelector('span')!.textContent).toBe('Compressor Bypass');
+    expect(label.querySelector('small')!.textContent).toBe('Keep this description.');
+    expect(checkbox.labels![0]).toBe(label);
+    label.querySelector('span')!.click();
+    await f.whenStable();
+    expect(values.bypass).toBe(true);
+  });
   it('Short-time Grow Off preserves its speed but disables the control', async () => {
     const values = { short_grow_enabled: false, short_grow_ms: 40, hidden_period: 400 };
     const f = await fields(

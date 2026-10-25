@@ -24,6 +24,19 @@ import { DspSchema } from './profile-api';
             [disabled]="disabled(field.schema)"
             (changed)="set(field.key, $event)"
           />
+        } @else if (field.schema.type === 'boolean' && field.schema.const === undefined && !field.schema.enum) {
+          <label class="checkbox-control">
+            <input
+              type="checkbox"
+              [ngModel]="values()[field.key]"
+              (ngModelChange)="set(field.key, $event)"
+              [ngModelOptions]="{ standalone: true }"
+            />
+            <span>{{ field.schema.title || field.key }}</span>
+            @if (field.schema.description) {
+              <small>{{ field.schema.description }}</small>
+            }
+          </label>
         } @else if (field.schema.type !== 'array') {
           <label
             >{{ field.schema.title || field.key }}
@@ -41,13 +54,6 @@ import { DspSchema } from './profile-api';
                   </option>
                 }
               </select>
-            } @else if (field.schema.type === 'boolean') {
-              <input
-                type="checkbox"
-                [ngModel]="values()[field.key]"
-                (ngModelChange)="set(field.key, $event)"
-                [ngModelOptions]="{ standalone: true }"
-              />
             } @else {
               <input
                 type="number"

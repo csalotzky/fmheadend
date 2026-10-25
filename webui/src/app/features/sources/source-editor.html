@@ -82,9 +82,9 @@
               [attr.title]="config.controls['path'].value || null" aria-labelledby="source-path-label"
               [attr.aria-describedby]="field.help ? 'source-path-help' : null" />
             @if (localMode() === 'folder') {
-            <label class="recursive-toggle">
+            <label class="recursive-toggle checkbox-control">
               <input type="checkbox" id="source-recursive" [formControlName]="'recursive'" />
-              Include subfolders
+              <span>Include subfolders</span>
             </label>
             }
           </div>
@@ -132,12 +132,16 @@
         </div>
         } @else if (field.key !== 'recursive') {
         <div [class.stream-row]="form.controls.type.value === 'HTTP' && field.key === 'uri'">
-          <label>{{ field.label }}
+          <label [class.checkbox-control]="field.checkbox">
+            @if (!field.checkbox) {
+            {{ field.label }}
             @if (field.required) {
             <span aria-hidden="true">*</span>
             }
+            }
             @if (field.checkbox) {
             <input type="checkbox" [id]="'source-' + field.key" [formControlName]="field.key" />
+            <span>{{ field.label }} @if (field.required) { <span aria-hidden="true">*</span> }</span>
             } @else if (field.options) {
             <select [id]="'source-' + field.key" [formControlName]="field.key" [required]="!!field.required"
               (change)="changeConfig(field.key)">
@@ -327,8 +331,8 @@
     </section>
     <section class="editor-panel" aria-labelledby="source-rds-heading">
       <h2 id="source-rds-heading">RDS</h2>
-      <label class="source-rds-toggle"><input type="checkbox" [formControl]="configureRds" (change)="toggleRds()"
-          [attr.disabled]="saving() || testing() ? '' : null" />Configure RDS for this source</label>
+      <label class="source-rds-toggle checkbox-control"><input type="checkbox" [formControl]="configureRds" (change)="toggleRds()"
+          [attr.disabled]="saving() || testing() ? '' : null" /><span>Configure RDS for this source</span></label>
       @if (configureRds.value) {
       <fieldset class="source-rds-content" [disabled]="saving() || testing()">
         <div class="source-rds-fill">

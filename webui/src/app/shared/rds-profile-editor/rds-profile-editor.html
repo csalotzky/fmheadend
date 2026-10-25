@@ -20,8 +20,8 @@
         }
       </select></label
     >
-    <label class="check"
-      ><input type="checkbox" formControlName="rds_tp" />Traffic programme (TP)</label
+    <label class="check checkbox-control"
+      ><input type="checkbox" formControlName="rds_tp" /><span>Traffic programme (TP)</span></label
     >
   </div>
   <div class="profile-group ps-group" role="group" aria-labelledby="rds-ps-heading">
@@ -98,8 +98,8 @@
   </div>
   <div class="profile-group rt-group" role="group" aria-labelledby="rds-rt-heading">
     <h3 id="rds-rt-heading">Radio Text (RT)</h3>
-    <label class="check"
-      ><input type="checkbox" formControlName="rds_rt_enabled" />Radio Text (RT) enabled</label
+    <label class="check checkbox-control"
+      ><input type="checkbox" formControlName="rds_rt_enabled" /><span>Radio Text (RT) enabled</span></label
     >
     @if (form.controls.rds_rt_enabled.value) {
       <label class="rt"
@@ -116,9 +116,9 @@
           <option value="PAD">PAD</option>
         </select></label
       >
-      <label class="check"
-        ><input type="checkbox" formControlName="rds_metadata_to_rt" />Use source metadata for
-        RadioText</label
+      <label class="check checkbox-control"
+        ><input type="checkbox" formControlName="rds_metadata_to_rt" /><span>Use source metadata for
+        RadioText</span></label
       >
     }
   </div>
