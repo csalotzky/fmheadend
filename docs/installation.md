@@ -190,18 +190,33 @@ sudo install -m 0644 audio-profiles/default/*.json /usr/share/fmheadend/audio-pr
 
 The bundled profiles are separate from the Python package. The default-profile directory must be present and readable by the backend.
 
+To choose initial database settings before the first service start:
+
+```sh
+sudo -u fmheadend /opt/fmheadend/venv/bin/fmheadend-init-db \
+  --database /var/lib/fmheadend/fmheadend.db --region 1 \
+  --default-audio-profile default/basic_filtering.json
+```
+
+The utility validates the profile before creating the database and refuses any
+existing destination. Region 2 initializes 75 µs preemphasis; other regions use
+50 µs. Use the same region in the backend service arguments for WebUI behavior.
+
 ### 5.5 Optional: Password protection
 
-Authentication is optional and disabled by default. To create a bcrypt password file
-for the default username `admin`, replace `YOUR_PASSWORD` with the chosen password:
+Authentication is optional and disabled by default. The password tool prompts for
+a username (default `admin`), then requests and confirms the password with hidden input:
 
 ```sh
 sudo /opt/fmheadend/venv/bin/python ~/fmheadend/tools/create_passwd.py \
-  --user 'YOUR_USERNAME' --file /var/lib/fmheadend/htpasswd \
-  --password 'YOUR_PASSWORD'
+  --file /var/lib/fmheadend/htpasswd
 sudo chown root:fmheadend /var/lib/fmheadend/htpasswd
 sudo chmod 0640 /var/lib/fmheadend/htpasswd
 ```
+
+`--user` and `--password` remain available for explicit values; only omitted values
+are prompted. Interactive entry requires a controlling terminal, including when
+stdin is redirected. Existing files require explicit `--overwrite` to replace.
 
 Authentication protects both the WebUI and REST API. HTTP Basic Authentication does
 not encrypt credentials; use HTTPS for access across untrusted networks.

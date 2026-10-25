@@ -122,6 +122,14 @@ zero and no extra clock reads occur; `late_frames` continues normally.
 
 `SystemConfig` contains exactly two database fields.
 
+For first installation, `fmheadend-init-db` accepts `--database`, `--region`
+(default `1`) and `--default-audio-profile` (default `default/basic_filtering.json`).
+Profile roots use `--audio-profiles-default-dir` and `--audio-profiles-custom-dir`,
+with the backend defaults listed below. It validates the selected profile and
+initializes all eight Modulators with regional preemphasis (US: 75 µs; others:
+50 µs), leaving them disabled. Existing files are never changed; no region setting
+is stored in SQLite. Later changes use the WebUI/API.
+
 | Setting | Default | Purpose | Changed by | Effect |
 |---|---|---|---|---|
 | `default_audio_profile_id` | `default/basic_filtering.json` | Profile inherited by Sources that follow the system default. | Audio Profiles WebUI, or `PATCH /api/v1/system/config` | Saved immediately. Active Sources following the default are reconfigured; stopped Sources remain stopped. |
