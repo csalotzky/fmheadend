@@ -303,6 +303,6 @@ Slow LOCAL discovery remains asynchronous and Source-local. A failed Source does
 | Operator actions, status and recovery | [Operations](operations.md) |
 | I2C command framing and Controller responses | [Controller protocol](controller-protocol.md) |
 | RP2354 provisioning, A/B boot and OTA | [RP2354 firmware update](rp2354-firmware-update.md) |
-| Standalone Controller firmware development | [Firmware README](../firmware/fmheadend_rp2354/README.md) |
+| Standalone Controller firmware development | [Controller repository README](https://github.com/csalotzky/fmheadend-controller/blob/master/README.md) |
 
 Firmware-update mechanics are outside the runtime diagrams. They share the Controller I2C transport but enter a maintenance flow that stops normal audio/RF operation as described in the firmware update guide.

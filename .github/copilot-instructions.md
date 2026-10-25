@@ -16,7 +16,7 @@ Run commands from the repository root unless noted. The Python daemon needs Pyth
 | Python daemon | `python -m pytest daemon/tests -q -ra` | `python -m pytest daemon/tests/test_rds.py -q -ra` or `python -m pytest daemon/tests/test_gstreamer.py -k <expression> -q -ra` |
 | C++ mux daemon | `cmake -S muxd -B build/muxd -DCMAKE_BUILD_TYPE=Release` then `cmake --build build/muxd -j2` and `ctest --test-dir build/muxd --output-on-failure` | `ctest --test-dir build/muxd -R '^ring$' --output-on-failure` |
 | Angular Web UI (from `webui/`) | `npm ci`, `npm test`, `npm run typecheck`, `npm run format:check`, `npm run build` | `npm test -- --include src/app/features/sources/sources.spec.ts` |
-| RP2354 native firmware tests | `cmake -S firmware/fmheadend_rp2354/tests -B firmware/fmheadend_rp2354/build/tests` then `ctest --test-dir firmware/fmheadend_rp2354/build/tests --output-on-failure` | `ctest --test-dir firmware/fmheadend_rp2354/build/tests -R '^test_rds_fifo$' --output-on-failure` |
+| Controller native firmware tests (in the [Controller repository](https://github.com/csalotzky/fmheadend-controller)) | `cmake -S tests -B build/tests` then `ctest --test-dir build/tests --output-on-failure` | `ctest --test-dir build/tests -R '^test_rds_fifo$' --output-on-failure` |
 
 - Python tests inject mock pipelines, mux clients, RP2354 clients, temporary SQLite databases, and clocks. Preserve this hardware-free testability. `gstreamer` and `muxd` pytest markers identify native-dependency tests.
 - There is no configured Python linter. C++ warnings are enabled by CMake; Web UI formatting is checked with Prettier.
@@ -28,7 +28,7 @@ The system has separate audio and control planes:
 
 - `daemon/` packages `fmheadendd`, the Python FastAPI control daemon. It owns SQLite desired configuration, source/pipeline orchestration, RDS encoding/scheduling, RP2354 I2C control, runtime aggregation, and the REST API.
 - `muxd/` builds the independent C++17 `fmheadend-muxd`. It accepts eight PCM Unix streams, keeps bounded per-channel rings, zero-fills underruns, discards oldest audio on overflow, builds fixed SPI frames, and sends them to the RP2354. It must not acquire GStreamer, SQLite, RDS, or QN configuration responsibilities.
-- `firmware/fmheadend_rp2354/` is the RP2354 implementation. It owns SPI frame receipt, I2S/DMA output, QN8007B hardware operations, I2C protocol execution, and RDS FIFO transport.
+- The independent [fmheadend-controller repository](https://github.com/csalotzky/fmheadend-controller) contains the RP2354 implementation. It owns SPI frame receipt, I2S/DMA output, QN8007B hardware operations, I2C protocol execution, and RDS FIFO transport.
 - `webui/` is an Angular standalone application. `core/api/` owns explicit REST types/calls; feature components own UI state. It uses relative `/api` requests and the development proxy, never a hard-coded target hostname. Production assets are served by `fmheadendd --webui-dir`.
 
 Digital audio follows one fixed downstream contract: 48 kHz, interleaved stereo, signed 16-bit little-endian PCM. GStreamer performs ingest, decoding, conversion, resampling, and optional processing; Python does not perform sample-by-sample DSP. The mux frame is a little-endian 32-bit counter followed by eight consecutive 512-byte channel blocks (4100 bytes total).
