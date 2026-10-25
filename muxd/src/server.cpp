@@ -129,6 +129,8 @@ void Server::pump() {
     auto deadline = Clock::now();
     // Carry fractional nanoseconds without changing the PCM frame cadence.
     std::uint64_t remainder = 0;
+    Clock::time_point woke{}, sleep_deadline{};
+    bool pending_timing = false;
     Clock::time_point previous_send{};
     bool have_previous_send = false;
     while (!stopping_) {
@@ -149,11 +151,16 @@ void Server::pump() {
             }
         }
         catch (const std::exception& exc) { ok = false; error = exc.what(); }
+        const auto completed = timing_diagnostics_ && bytes ? Clock::now() : Clock::time_point{};
         {
             std::lock_guard<std::mutex> lock(status_mutex_);
+            if (timing_diagnostics_ && pending_timing) {
+                timing_.wake_late.record(woke-sleep_deadline);
+            }
             ++frames_built_;
             if (bytes) {
                 if (timing_diagnostics_) {
+                    timing_.send_call.record(completed-send_start);
                     if (have_previous_send) timing_.record_gap(send_start - previous_send);
                     previous_send = send_start;
                     have_previous_send = true;
@@ -175,7 +182,12 @@ void Server::pump() {
             ++late_frames_;
             if (timing_diagnostics_) timing_.record_late(late);
         }
+        pending_timing = timing_diagnostics_ && bytes;
+        if (pending_timing) {
+            sleep_deadline=deadline;
+        }
         std::this_thread::sleep_until(deadline);
+        if (pending_timing) woke=Clock::now();
     }
 }
 std::string Server::status_json() const {
@@ -201,7 +213,18 @@ std::string Server::status_json() const {
             << ",\"late_over_1000us\":" << timing_.late_over_1000us
             << ",\"late_over_3000us\":" << timing_.late_over_3000us
             << ",\"send_gap_max_us\":" << timing_.send_gap_max_us
-            << ",\"last_error\":" << (last_error_.empty() ? "null" : quote(last_error_)) << ",\"channels\":[";
+            << ",\"rebase_total_ns\":" << timing_.rebase_total_ns
+            << ",\"timing_stages\":{";
+        bool first=true;
+        const auto span = [&](const char* name, const TimingSpan& value) {
+            if (!first) out << ',';
+            first=false;
+            out << quote(name) << ":{\"count\":" << value.count
+                << ",\"total_ns\":" << value.total_ns << ",\"min_us\":" << value.min_us
+                << ",\"max_us\":" << value.max_us << '}';
+        };
+        span("send_call",timing_.send_call); span("wake_late",timing_.wake_late);
+        out << "},\"last_error\":" << (last_error_.empty() ? "null" : quote(last_error_)) << ",\"channels\":[";
     }
     for (std::size_t i = 0; i != channels; ++i) {
         const auto item = inputs_[i].status();
