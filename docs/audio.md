@@ -63,6 +63,7 @@ The bundled profiles provide starting points ranging from simple filtering to mo
 | Basic Clipper | Basic filtering and peak clipping | Standard |
 | Basic AGC | Filtering, automatic level control and peak processing | Standard, TX Soft Clip ON |
 | Basic Limiter | AGC and additional peak limiting | Standard, TX Soft Clip ON |
+| Basic Wideband | AGC, wideband compression, FM limiting and hard clipping | Standard |
 | Light | Gentler multiband dynamics and peak control | Normal / Loud, with or without TX Soft Clip ON |
 | Moderate | Stronger multiband processing and peak control | Normal / Loud, with or without TX Soft Clip ON |
 
