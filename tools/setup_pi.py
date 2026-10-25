@@ -21,6 +21,7 @@ SPI_BUFSIZ = 8192
 DEFAULT_I2C_SPEED = 100_000
 DEFAULT_I2C_DELAY_US = 2
 DEFAULT_I2C_BUS = 8
+CORE_CLOCK_KEYS = {"core_freq", "core_freq_min", "core_freq_fixed"}
 
 
 class SetupError(RuntimeError):
@@ -35,6 +36,7 @@ class SetupOptions:
     i2c_bus: int = DEFAULT_I2C_BUS
     keep_spi_bufsiz: bool = False
     overwrite_existing: bool = False
+    fix_core_clock: bool = False
 
 
 @dataclass(frozen=True)
@@ -126,9 +128,14 @@ def argument_parser() -> argparse.ArgumentParser:
         help="leave the spidev.bufsiz kernel parameter unchanged",
     )
     parser.add_argument(
+        "--keep-core-clock",
+        action="store_true",
+        help="leave core clock settings unchanged (for testing)",
+    )
+    parser.add_argument(
         "--overwrite-existing",
         action="store_true",
-        help="replace existing I2C, SPI, spidev buffer and module-load settings",
+        help="replace existing I2C, SPI, core clock, spidev buffer and module-load settings",
     )
     return parser
 
@@ -165,9 +172,13 @@ def _options_from_namespace(
     namespace: argparse.Namespace, model_path: Path = MODEL_PATH
 ) -> SetupOptions:
     explicit_mode = hasattr(namespace, "i2c_mode")
-    mode = namespace.i2c_mode if explicit_mode else _model_default_i2c_mode(
-        _read_pi_model(model_path)
-    )
+    try:
+        model_mode = _model_default_i2c_mode(_read_pi_model(model_path))
+    except SetupError:
+        if not explicit_mode:
+            raise
+        model_mode = None
+    mode = namespace.i2c_mode if explicit_mode else model_mode
     explicit_speed = hasattr(namespace, "i2c_speed")
     explicit_delay = hasattr(namespace, "i2c_delay_us")
     explicit_bus = hasattr(namespace, "i2c_bus")
@@ -182,6 +193,7 @@ def _options_from_namespace(
         i2c_bus=getattr(namespace, "i2c_bus", DEFAULT_I2C_BUS),
         keep_spi_bufsiz=namespace.keep_spi_bufsiz,
         overwrite_existing=namespace.overwrite_existing,
+        fix_core_clock=model_mode == "sw" and not namespace.keep_core_clock,
     )
 
 
@@ -310,6 +322,14 @@ def _config_entries(lines: list[str], options: SetupOptions) -> list[ConfigEntry
             )
         if inactive:
             continue
+        clock = re.match(r"^\s*(core_freq(?:_min|_fixed)?)\s*=\s*(.*?)\s*$", code, re.IGNORECASE)
+        if clock and options.fix_core_clock:
+            if not active:
+                raise SetupError(
+                    f"Relevant core clock setting in conditional [{section}] at "
+                    f"config.txt line {index + 1} is ambiguous; edit it manually"
+                )
+            entries.append(ConfigEntry(index, "clock", clock.group(1).lower(), clock.group(2)))
         dtparam = _dtparam_parts(line)
         relevant_tokens: list[tuple[str, str | None]] = []
         if dtparam:
@@ -372,10 +392,17 @@ def _boolean(value: str | None) -> bool | None:
 
 
 def _config_matches(entries: list[ConfigEntry], options: SetupOptions) -> bool:
+    clocks = [entry for entry in entries if entry.kind == "clock"]
+    if options.fix_core_clock and (
+        len(clocks) != 1 or clocks[0].key != "core_freq_fixed" or clocks[0].value != "1"
+    ):
+        return False
     values: dict[str, list[str | None]] = {}
     overlays: list[ConfigEntry] = []
     for entry in entries:
-        if entry.kind == "overlay":
+        if entry.kind == "clock":
+            continue
+        elif entry.kind == "overlay":
             overlays.append(entry)
         else:
             values.setdefault(entry.key, []).append(entry.value)
@@ -412,7 +439,7 @@ def _comment_only(line: str, comment: str) -> str | None:
     return indent + comment
 
 
-def _remove_relevant_config(lines: list[str]) -> list[str]:
+def _remove_relevant_config(lines: list[str], options: SetupOptions) -> list[str]:
     result: list[str] = []
     section = "global"
     for index, line in enumerate(lines):
@@ -423,6 +450,12 @@ def _remove_relevant_config(lines: list[str]) -> list[str]:
             continue
         if section not in {"global", "all"}:
             result.append(line)
+            continue
+        code, comment = _code_and_comment(line)
+        if options.fix_core_clock and code.strip().partition("=")[0].strip().lower() in CORE_CLOCK_KEYS:
+            preserved = _comment_only(line, comment)
+            if preserved is not None:
+                result.append(preserved)
             continue
         dtparam = _dtparam_parts(line)
         if dtparam:
@@ -484,6 +517,8 @@ def _append_config(lines: list[str], options: SetupOptions) -> list[str]:
             ]
         )
     result.append("dtparam=spi=on")
+    if options.fix_core_clock:
+        result.append("core_freq_fixed=1")
     return result
 
 
@@ -500,7 +535,7 @@ def _plan_config(file: FileText, options: SetupOptions) -> str:
         )
     if entries and _config_matches(entries, options):
         return file.text
-    lines = _remove_relevant_config(file.lines) if entries else list(file.lines)
+    lines = _remove_relevant_config(file.lines, options) if entries else list(file.lines)
     planned_lines = _append_config(lines, options)
     if not _config_matches(_config_entries(planned_lines, options), options):
         raise SetupError(f"Generated configuration for {file.path} failed validation")
@@ -662,6 +697,11 @@ def main(
             f"bus {options.i2c_bus}, delay {options.i2c_delay_us} us"
         )
     print("SPI0: enabled")
+    if namespace.keep_core_clock:
+        print("Core clock: unchanged (--keep-core-clock)")
+    else:
+        print("Core clock: fixed at platform frequency" if options.fix_core_clock
+              else "Core clock: unchanged (Pi 5 or unidentified platform)")
     print(
         "spidev.bufsiz: unchanged"
         if options.keep_spi_bufsiz

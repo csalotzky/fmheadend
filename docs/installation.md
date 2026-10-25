@@ -227,6 +227,15 @@ sudo reboot
 
 The utility updates `/boot/firmware/config.txt` and `cmdline.txt`, configures automatic
 loading of `i2c-dev`, creates backups, enables SPI0 and sets `spidev.bufsiz=8192`.
+On Pi Zero/Zero 2 W and Pi 1–4, dynamic core clock changes can make the actual SPI
+clock differ from the requested rate. The setup utility sets
+[`core_freq_fixed=1`](https://www.raspberrypi.com/documentation/computers/config_txt.html#overclocking)
+to keep the core clock fixed at the platform's higher frequency. Pi 5 uses RP1 for
+SPI and does not require this setting; its core clock configuration is left unchanged.
+For testing, `--keep-core-clock` leaves all existing core clock settings untouched
+and adds none, even with `--overwrite-existing`. It does not undo an existing
+`core_freq_fixed=1` setting.
+
 Its model-dependent I²C defaults are:
 
 | Raspberry Pi | I²C configuration | Expected device |
@@ -240,7 +249,11 @@ The software-I²C delay is a timing parameter, not an exact guaranteed clock rat
 
 Existing active I²C, SPI or `spidev.bufsiz` settings cause a safe failure. Review
 the reported entries, then rerun with `--overwrite-existing` to replace only the
-relevant settings. Useful overrides are:
+relevant settings. On Pi Zero–4, this also replaces existing global `core_freq`,
+`core_freq_min` and `core_freq_fixed` entries with one `core_freq_fixed=1` line.
+Relevant settings in conditional sections require manual review; the utility
+stops without changing files. An unidentified model with an explicit I²C mode
+leaves core clock settings unchanged. Useful overrides are:
 
 ```sh
 sudo python3 tools/setup_pi.py --i2c-mode hw --i2c-speed 100000 --overwrite-existing
