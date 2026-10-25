@@ -110,6 +110,11 @@ passed its next deadline after frame processing/sending, matching `late_frames`.
 Threshold counts are cumulative and strictly greater than their named threshold.
 The send gap measures consecutive transport-send starts, including failed sends
 and pauses between sends; the first send has no gap. Maxima are whole microseconds.
+`timing_stages` contains `send_call` (transport-send duration, including failures)
+and `wake_late` (wake-up delay beyond the sleep deadline after a send).
+Each reports `count`, `total_ns`, `min_us` and `max_us`; wake-up samples are
+published on the following pump iteration. `rebase_total_ns` sums the deadline
+shifts caused by late frames. These measurements do not change scheduling.
 Counters accumulate until process restart. When disabled, detailed counters remain
 zero and no extra clock reads occur; `late_frames` continues normally.
 

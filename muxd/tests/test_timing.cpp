@@ -22,4 +22,11 @@ int main() {
     timing.record_gap(5000us);
     timing.record_gap(100us);
     CHECK(timing.send_gap_max_us == 5000);
+    CHECK(timing.rebase_total_ns == 7702001);
+    muxd::TimingSpan span;
+    span.record(-1us); // Clamp negative timing samples to zero.
+    span.record(100us);
+    span.record(100us+1ns);
+    span.record(3001us);
+    CHECK(span.count==4 && span.total_ns==3201001 && span.min_us==0 && span.max_us==3001);
 }

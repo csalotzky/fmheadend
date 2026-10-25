@@ -49,8 +49,17 @@ for options, milliseconds in (([], 300), (['--ring-buffer-ms', '1'], 1), (['--ri
             if enabled:
                 assert state['send_gap_max_us'] > 0
                 assert state['late_over_100us'] >= state['late_over_500us'] >= state['late_over_1000us'] >= state['late_over_3000us']
+                stages = state['timing_stages']
+                assert stages['send_call']['count'] == state['frames_sent']
+                assert set(stages) == {'send_call', 'wake_late'}
+                assert stages['wake_late']['count'] == state['frames_sent'] - 1
+                for values in stages.values():
+                    assert values['min_us'] <= values['max_us']
+                    assert set(values) == {'count', 'total_ns', 'min_us', 'max_us'}
             else:
                 assert all(state[field] == 0 for field in fields)
+                assert state['rebase_total_ns'] == 0
+                assert all(value == 0 for stage in state['timing_stages'].values() for value in stage.values())
         finally:
             process.terminate()
             _, log = process.communicate(timeout=2)
