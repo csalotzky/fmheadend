@@ -7,7 +7,7 @@ FMheadend uses the RP2354 boot ROM's A/B firmware mechanism with try-before-you-
 | SWD provisioning | Install the partition table and first firmware image | Debug Probe; **erases the entire flash** |
 | I²C update (OTA) | Upload and activate a new image in the inactive slot | Working, previously provisioned A/B firmware |
 
-See the [Controller protocol](controller-protocol.md#6-rp2354-firmware-update-extension) for FLASH_UPDATE message formats and the [firmware README](../firmware/fmheadend_rp2354/README.md) for standalone build and debug instructions.
+See the [Controller protocol](controller-protocol.md#6-rp2354-firmware-update-extension) for FLASH_UPDATE message formats and the [Controller repository README](https://github.com/csalotzky/fmheadend-controller/blob/master/README.md) for standalone build and debug instructions. SWD tools live in that repository; the I²C OTA updater is installed with the [FMheadend host package](https://github.com/csalotzky/fmheadend).
 
 ## 1. Essential precautions
 
@@ -48,7 +48,9 @@ build/ota/fmheadend_rp2354_txN.bin.json
 build/partitions.bin
 ```
 
-Replace `N` with 1–8. Paths above are relative to `firmware/fmheadend_rp2354/`.
+Replace `N` with 1–8. Paths above are relative to the `fmheadend-controller` repository root.
+
+Obtain the matching OTA `.bin` and `.bin.json` from the [Controller releases](https://github.com/csalotzky/fmheadend-controller/releases), when published, or build them from the Controller source. Download both files into the same directory and preserve their matching filenames. OTA updating does not require a Controller source checkout.
 
 | Identity / format | Current value |
 |---|---|
@@ -82,7 +84,14 @@ Use Windows, the Raspberry Pi Pico VS Code extension's local toolchain, an appro
 | OpenOCD | 0.12.0+dev |
 | Python | 3.11+ |
 
-Open `firmware/fmheadend_rp2354/` as the workspace. Build **without flashing**:
+Clone the independent Controller repository and open its root as the workspace:
+
+```sh
+git clone https://github.com/csalotzky/fmheadend-controller.git
+cd fmheadend-controller
+```
+
+Build **without flashing**:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File tools/rp2354_build.ps1
@@ -117,7 +126,7 @@ If readback succeeds but reset is not acknowledged, **do not erase again just fo
 
 ## 4. Firmware update — I²C
 
-The Linux updater is **`tools/rp2354_flash.py`**, located at the repository root. It requires the host Controller client, firmware artifact validator and installed `fmheadendd` Python package metadata; copying the script alone is insufficient.
+The Linux updater is **`fmheadend-controller-update`**, installed with the `fmheadendd` Python package. It includes the Controller client and OTA artifact validation. It works from any directory with a downloaded image/manifest pair; neither source repository is required at runtime. The host checkout's `tools/rp2354_flash.py` is an alternative launcher for the same installed updater.
 
 ### 4.1 Prerequisites
 
@@ -129,7 +138,7 @@ python3 -m venv .venv
 python3 -m pip install ./daemon
 ```
 
-Installing the daemon package also builds a native library, so a C compiler and Python build tools are required. Keep the repository checkout available while running the uploader.
+Installing the daemon package from source on Linux also builds a native library, so a C compiler and Python build tools are required. For the standard installation, the updater is `/opt/fmheadend/venv/bin/fmheadend-controller-update`; use that absolute path or activate the corresponding environment.
 
 Before updating:
 
@@ -140,17 +149,17 @@ Before updating:
 
 ### 4.2 Commands
 
-From the repository root, with **TX8 as an example**:
+From the directory containing the downloaded image and its manifest, with **TX8 as an example**:
 
 ```sh
 # Validate the image and manifest locally; no I2C access.
-python3 tools/rp2354_flash.py --dry-run firmware/fmheadend_rp2354/build/ota/fmheadend_rp2354_tx8.bin
+fmheadend-controller-update --dry-run fmheadend_rp2354_tx8.bin
 
 # Read update status; accesses the Controller without starting an update.
-python3 tools/rp2354_flash.py --device /dev/i2c-1 --address 0x62 --status
+fmheadend-controller-update --device /dev/i2c-1 --address 0x62 --status
 
 # Upload and activate; no interactive confirmation.
-python3 tools/rp2354_flash.py --device /dev/i2c-1 --address 0x62 firmware/fmheadend_rp2354/build/ota/fmheadend_rp2354_tx8.bin
+fmheadend-controller-update --device /dev/i2c-1 --address 0x62 fmheadend_rp2354_tx8.bin
 ```
 
 Use the matching TX variant for other boards. `--log PATH` changes the default `rp2354-upload.log`. `--dry-run` also creates a log; `--status` and `--dry-run` cannot be combined.
@@ -223,6 +232,6 @@ Recorded engineering runs include SWD readback, OTA activation/confirmation, res
 
 ## 8. Implementation references
 
-- Firmware: `partitions.json`, `flash_update.c`, `flash_update_platform.c`, `host_protocol.c`, `host_i2c.c`, `CMakeLists.txt`, `cmake/image/CMakeLists.txt`.
-- Firmware tools: `tools/rp2354_build.ps1`, `tools/rp2354_provision.py`, `tools/rp2354_artifact.py`.
-- Host checkout: `tools/rp2354_flash.py`, `daemon/rp2354/protocol.py`, `daemon/rp2354/linux_client.py`, `daemon/__init__.py`, `daemon/pyproject.toml`.
+- [Controller repository](https://github.com/csalotzky/fmheadend-controller): `partitions.json`, `flash_update.c`, `flash_update_platform.c`, `host_protocol.c`, `host_i2c.c`, `CMakeLists.txt`, `cmake/image/CMakeLists.txt`.
+- Controller tools: `tools/rp2354_build.ps1`, `tools/rp2354_provision.py`, `tools/rp2354_artifact.py`.
+- [Host repository](https://github.com/csalotzky/fmheadend): `daemon/rp2354/update.py`, `daemon/rp2354/artifact.py`, `daemon/rp2354/protocol.py`, `daemon/rp2354/linux_client.py`, `daemon/pyproject.toml`.
