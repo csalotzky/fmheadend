@@ -1,0 +1,60 @@
+name: Build WebUI
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: webui
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: webui/package.json
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build production WebUI
+        run: npm run build
+
+      - name: Package and verify WebUI
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          output=webui/dist/fmheadend-ui/browser
+          archive=fmheadend-webui.tar.gz
+          listing="$RUNNER_TEMP/webui-archive.txt"
+
+          test -s "$output/index.html"
+          tar -czf "$archive" -C "$output" .
+          tar -tzf "$archive" > "$listing"
+          grep -Fxq './index.html' "$listing"
+          grep -Eq '^\./main-[^/]+\.js$' "$listing"
+          grep -Eq '^\./styles-[^/]+\.css$' "$listing"
+          grep -Fxq './assets/fmheadend_logo_tower.svg' "$listing"
+          grep -Fxq './assets/fmheadend_favicon_16.png' "$listing"
+          grep -Eq '^\./media/[^/]+\.woff2$' "$listing"
+
+      - name: Upload WebUI archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: fmheadend-webui
+          path: fmheadend-webui.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
