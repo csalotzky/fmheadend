@@ -1,3 +1,5 @@
+@import '../../shared/checkbox-control.css';
+
 dialog {
   position: fixed;
   inset: 0;
@@ -77,13 +79,6 @@ select:focus-visible {
 }
 .checkbox {
   grid-column: 1 / -1;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.checkbox input {
-  width: auto;
-  margin: 0;
 }
 .results {
   flex: 1;

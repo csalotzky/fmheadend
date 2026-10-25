@@ -150,8 +150,8 @@
       </section>
       <section class="editor-panel" aria-labelledby="rds-heading">
         <h2 id="rds-heading">RDS</h2>
-        <label class="rds-enabled"
-          ><input type="checkbox" formControlName="rds_enabled" />RDS enabled</label
+        <label class="rds-enabled checkbox-control"
+          ><input type="checkbox" formControlName="rds_enabled" /><span>RDS enabled</span></label
         >
         <fieldset [disabled]="!form.controls.rds_enabled.value">
           <label

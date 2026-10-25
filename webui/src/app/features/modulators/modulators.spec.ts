@@ -663,6 +663,8 @@ describe('Modulator configuration', () => {
     const checkbox = f.nativeElement.querySelector('[formControlName="rds_enabled"]');
     const sourceSelect = f.nativeElement.querySelector('[formControlName="rds_follow_source"]');
     expect(checkbox.closest('label').textContent.trim()).toBe('RDS enabled');
+    expect(checkbox.closest('label').classList.contains('checkbox-control')).toBe(true);
+    expect(checkbox.nextElementSibling.textContent).toBe('RDS enabled');
     checkbox.click();
     await f.whenStable();
     f.detectChanges();

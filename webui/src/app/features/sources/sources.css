@@ -80,15 +80,8 @@ summary {
   background: #4b4338;
 }
 .recursive-toggle {
-  display: inline-flex;
   grid-column: 3;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--text);
   white-space: nowrap;
-}
-.recursive-toggle input {
-  margin: 0;
 }
 .local-path-panel > small {
   display: block;
@@ -310,14 +303,6 @@ summary {
   white-space: nowrap;
 }
 
-.source-rds-toggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.source-rds-toggle input {
-  margin: 0;
-}
 .source-rds-content {
   margin: 20px 0 0;
 }
