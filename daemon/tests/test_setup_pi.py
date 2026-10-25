@@ -44,6 +44,9 @@ def configure(paths, **changes):
         "Raspberry Pi 3 Model B Plus Rev 1.3",
         "Raspberry Pi 4 Model B Rev 1.5",
         "Raspberry Pi Zero 2 W Rev 1.0",
+        "Raspberry Pi Zero W Rev 1.1",
+        "Raspberry Pi Model B Rev 2",
+        "Raspberry Pi 2 Model B Rev 1.1",
     ],
 )
 def test_pre_pi5_defaults_to_software_i2c_bus_8(tmp_path, capsys, model):
@@ -56,6 +59,8 @@ def test_pre_pi5_defaults_to_software_i2c_bus_8(tmp_path, capsys, model):
         "i2c_gpio_delay_us=2"
     ) in config
     assert "dtparam=spi=on" in config
+    assert config.count("core_freq_fixed=1") == 1
+    assert "force_turbo" not in config
     assert "I2C device: /dev/i2c-8" in capsys.readouterr().out
 
 
@@ -115,6 +120,7 @@ def test_cli_mode_overrides_model_default(
     paths = files(tmp_path)
     assert main(args, *paths, model_file(tmp_path, model)) == 0
     assert expected_setting in paths[0].read_text(encoding="utf-8")
+    assert ("core_freq_fixed=1" in paths[0].read_text()) == ("Pi 4" in model)
     assert f"I2C device: {expected_device}" in capsys.readouterr().out
 
 
@@ -123,6 +129,94 @@ def test_explicit_mode_allows_unknown_or_missing_model_file(tmp_path):
     missing_model = tmp_path / "missing-model"
     assert main(["--i2c-mode", "sw"], *paths, missing_model) == 0
     assert "bus=8" in paths[0].read_text(encoding="utf-8")
+    assert "core_freq" not in paths[0].read_text()
+
+
+@pytest.mark.parametrize("setting", ["core_freq=500", "core_freq_min=500", "core_freq_fixed=1"])
+def test_core_clock_conflicts_fail_before_any_changes(tmp_path, setting):
+    paths = files(tmp_path, f"# keep\n{setting}\n", module_load=None)
+    before = [path.read_bytes() for path in paths[:2]]
+    with pytest.raises(SetupError, match="line 2: " + setting):
+        configure(paths, fix_core_clock=True)
+    assert [path.read_bytes() for path in paths[:2]] == before
+    assert not paths[2].exists()
+    assert not list(tmp_path.rglob("*.fmheadend.bak*"))
+
+
+def test_core_clock_overwrite_preserves_comments_and_is_idempotent(tmp_path):
+    original = (
+        "# core_freq=400\ncore_freq=500 # user note\ncore_freq_min=500\n"
+        "core_freq_fixed=0\ncore_freq_fixed=1\n"
+        "dtparam=audio=on,spi=off # combined\n"
+        "[pi4]\ngpu_mem=64\n[none]\ncore_freq_min=200\n"
+    )
+    paths = files(tmp_path, original)
+    first = configure(paths, fix_core_clock=True, overwrite_existing=True)
+    result = paths[0].read_text()
+    assert "# core_freq=400\n# user note\n" in result
+    assert "dtparam=audio=on # combined" in result
+    assert "[pi4]\ngpu_mem=64\n[none]\ncore_freq_min=200\n" in result
+    assert result.count("core_freq_fixed=1") == 1
+    assert "core_freq_fixed=0" not in result and "core_freq_min=500" not in result
+    assert "\n[all]\n" in result
+    assert first.backups[0].read_text() == original
+    assert first.reboot_required
+    second = configure(paths, fix_core_clock=True, overwrite_existing=True)
+    assert not second.changed and not second.reboot_required
+    assert paths[0].read_text() == result
+
+
+@pytest.mark.parametrize("section", ["pi4", "pi5", "tryboot", "0x12345678"])
+@pytest.mark.parametrize("setting", ["core_freq=500", "core_freq_min=500", "core_freq_fixed=1"])
+def test_conditional_core_clock_is_rejected_without_changes(tmp_path, section, setting):
+    paths = files(tmp_path, f"[{section}]\n{setting}\n")
+    before = [path.read_bytes() for path in paths]
+    with pytest.raises(SetupError, match="conditional.*line 2.*ambiguous"):
+        configure(paths, fix_core_clock=True, overwrite_existing=True)
+    assert [path.read_bytes() for path in paths] == before
+    assert not list(tmp_path.rglob("*.fmheadend.bak*"))
+
+
+def test_pi5_preserves_all_core_clock_settings_even_with_overwrite(tmp_path, capsys):
+    original = "core_freq=910\ncore_freq_min=500\n[pi5]\ncore_freq_fixed=0\n"
+    paths = files(tmp_path, original)
+    model = model_file(tmp_path, "Raspberry Pi 5 Model B Rev 1.0")
+    assert main(["--overwrite-existing"], *paths, model) == 0
+    result = paths[0].read_text()
+    assert result.startswith(original)
+    assert "core_freq_fixed=1" not in result
+    assert "Core clock: unchanged" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("overwrite", [False, True])
+@pytest.mark.parametrize("config", [
+    "",
+    "core_freq=450 # keep\ncore_freq_min=300\ncore_freq_fixed=1\n",
+    "[pi4]\ncore_freq=500\ncore_freq_min=250\ncore_freq_fixed=0\n",
+])
+def test_keep_core_clock_preserves_settings_even_with_overwrite(tmp_path, capsys, overwrite, config):
+    paths = files(tmp_path, config)
+    model = model_file(tmp_path, "Raspberry Pi 4 Model B Rev 1.5")
+    args = ["--keep-core-clock"] + (["--overwrite-existing"] if overwrite else [])
+    assert main(args, *paths, model) == 0
+    result = paths[0].read_text()
+    assert result.startswith(config)
+    assert [line for line in result.splitlines() if "core_freq" in line] == [
+        line for line in config.splitlines() if "core_freq" in line
+    ]
+    assert "dtparam=spi=on" in result
+    assert "Core clock: unchanged (--keep-core-clock)" in capsys.readouterr().out
+    assert main(["--keep-core-clock", "--overwrite-existing"], *paths, model) == 0
+    assert paths[0].read_text() == result
+    assert "Reboot required: no" in capsys.readouterr().out
+
+
+def test_core_clock_plan_not_written_if_later_preflight_fails(tmp_path):
+    paths = files(tmp_path, "core_freq_min=500\n", cmdline="root=x\nquiet\n")
+    before = [path.read_bytes() for path in paths]
+    with pytest.raises(SetupError, match="exactly one"):
+        configure(paths, fix_core_clock=True, overwrite_existing=True)
+    assert [path.read_bytes() for path in paths] == before
 
 
 @pytest.mark.parametrize(
