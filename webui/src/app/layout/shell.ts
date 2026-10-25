@@ -3,7 +3,16 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { Router, NavigationEnd } from '@angular/router';
 import { SystemApi } from '../core/api/system-api';
 import { ProfileApi } from '../features/audio-profiles/profile-api';
-import { Component, OnDestroy, OnInit, inject, signal } from '@angular/core';
+import {
+  AfterViewInit,
+  Component,
+  ElementRef,
+  OnDestroy,
+  OnInit,
+  ViewChild,
+  inject,
+  signal,
+} from '@angular/core';
 import { DatePipe } from '@angular/common';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { DashboardState } from '../features/dashboard/dashboard-state';
@@ -13,7 +22,10 @@ import { DashboardState } from '../features/dashboard/dashboard-state';
   templateUrl: './shell.html',
   styleUrl: './shell.css',
 })
-export class Shell implements OnInit, OnDestroy {
+export class Shell implements OnInit, AfterViewInit, OnDestroy {
+  @ViewChild('header') private header!: ElementRef<HTMLElement>;
+  private host = inject(ElementRef<HTMLElement>);
+  private headerObserver?: ResizeObserver;
   readonly state = inject(DashboardState);
   readonly menu = signal(false);
   readonly version = signal<string | null>(null);
@@ -59,7 +71,21 @@ export class Shell implements OnInit, OnDestroy {
   ngOnInit() {
     this.state.start();
   }
+  ngAfterViewInit() {
+    const updateHeaderHeight = () => {
+      this.host.nativeElement.style.setProperty(
+        '--shell-header-height',
+        `${this.header.nativeElement.getBoundingClientRect().height}px`,
+      );
+    };
+    updateHeaderHeight();
+    if (typeof ResizeObserver !== 'undefined') {
+      this.headerObserver = new ResizeObserver(updateHeaderHeight);
+      this.headerObserver.observe(this.header.nativeElement);
+    }
+  }
   ngOnDestroy() {
+    this.headerObserver?.disconnect();
     this.state.stop();
   }
 }

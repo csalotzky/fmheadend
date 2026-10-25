@@ -188,7 +188,7 @@ ul.banner {
   aside {
     display: none;
     z-index: 4;
-    top: 70px;
+    top: var(--shell-header-height, 0px);
     width: 210px;
     box-shadow: 8px 0 0 #0003;
   }
@@ -201,10 +201,27 @@ ul.banner {
   }
   .menu {
     display: block;
+    grid-column: 1;
+    grid-row: 1;
+    justify-self: start;
   }
   header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     padding: 12px;
     gap: 10px;
+  }
+  .global-actions {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
+  }
+  .global-state {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .global-state > strong {
+    flex-wrap: wrap;
   }
   .dependencies {
     gap: 10px;
@@ -214,16 +231,6 @@ ul.banner {
   }
 }
 @media (max-width: 620px) {
-  header {
-    flex-wrap: wrap;
-  }
-  .global-state {
-    flex: 1;
-  }
-  .global-actions {
-    width: 100%;
-    justify-content: flex-end;
-  }
   .dependencies {
     flex-wrap: wrap;
     font-size: 12px;
