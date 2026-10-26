@@ -20,10 +20,76 @@ DATABASE=$DATA_DIR/fmheadend.db
 PASSWD_FILE=$DATA_DIR/htpasswd
 WORK= MODE= REGION=1 DEFAULT_PROFILE= AUTH=no HARDWARE=no
 REBOOT_REQUIRED=no MANUAL_PENDING=no ARCHIVE= TTY=
+LOG_FILE= CURRENT_STEP= STEP=0 TOTAL_STEPS=11
+UI=1 ERROR_UI=2 COLOR= RESET=
+HTTP_HOST=0.0.0.0 HTTP_PORT=8080
+SPI_DEVICE=/dev/spidev0.0 SPI_CLOCK_HZ=25000000
 
-die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
-say() { printf '%s\n' "$*"; }
+die() {
+    printf 'Error: %s\n' "$*" >&"$ERROR_UI"
+    if [[ -n $LOG_FILE ]]; then
+        printf 'Error: %s\n' "$*" >>"$LOG_FILE"
+        printf 'Installation log: %s\n' "$LOG_FILE" >&"$ERROR_UI"
+    fi
+    exit 1
+}
+say() {
+    printf '%s\n' "$*" >&"$UI"
+    if [[ -n $LOG_FILE ]]; then printf '%s\n' "$*" >>"$LOG_FILE"; fi
+}
 support() { (cd -- "$SOURCE_DIR"; python3 -m tools.install_support "$@"); }
+
+init_ui() {
+    exec {UI}>&1 {ERROR_UI}>&2
+    COLOR= RESET=
+    if [[ -t 1 && -z ${NO_COLOR+x} && ${TERM:-dumb} != dumb ]]; then
+        COLOR=$'\033[1;36m'; RESET=$'\033[0m'
+    fi
+}
+
+section() {
+    printf '\n%s----------------------------------------\n%s\n----------------------------------------%s\n\n' \
+        "$COLOR" "$1" "$RESET" >&"$UI"
+}
+
+init_log() {
+    # mktemp creates an exclusive 0600 file, including under a hostile /var/tmp.
+    LOG_FILE=$(mktemp /var/tmp/fmheadend-install.XXXXXXXX.log)
+    chmod 0600 "$LOG_FILE"
+    say "Installation log: $LOG_FILE"
+    printf 'FMheadend installation: %s\nPlugin revision: %s\n' "$(date -u)" "$GST_PLUGINS_REVISION" >>"$LOG_FILE"
+}
+
+failure() {
+    local status=$1 line=$2
+    trap - ERR
+    printf '\nInstallation failed%s (line %s, exit %s).\n' \
+        "${CURRENT_STEP:+ during $CURRENT_STEP}" "$line" "$status" >&"$ERROR_UI"
+    if [[ -n $LOG_FILE ]]; then
+        printf '\nInstallation failed: step=%s line=%s exit=%s\n' \
+            "${CURRENT_STEP:-configuration}" "$line" "$status" >>"$LOG_FILE"
+        printf 'Recent command output:\n' >&"$ERROR_UI"
+        tail -n 12 -- "$LOG_FILE" >&"$ERROR_UI"
+        printf 'Full installation log: %s\n' "$LOG_FILE" >&"$ERROR_UI"
+    fi
+    printf 'Services may remain stopped. No automatic rollback was performed.\n' >&"$ERROR_UI"
+    printf 'Service diagnostics: journalctl -u fmheadendd -u fmheadend-muxd -n 50\n' >&"$ERROR_UI"
+    exit "$status"
+}
+
+run_step() {
+    local label=$1
+    shift
+    CURRENT_STEP=$label
+    ((STEP+=1))
+    printf '[%s/%s] %s...\n' "$STEP" "$TOTAL_STEPS" "$label" >&"$UI"
+    printf '\n[%s/%s] %s\n' "$STEP" "$TOTAL_STEPS" "$label" >>"$LOG_FILE"
+    # Do not put this invocation in an if/||: that disables errexit inside
+    # functions and could allow a failed command to be followed by mutations.
+    "$@" >>"$LOG_FILE" 2>&1
+    say '      OK'
+    CURRENT_STEP=
+}
 
 confirm() {
     local prompt=$1 default=${2:-no} answer
@@ -39,9 +105,9 @@ confirm() {
 }
 
 choose_number() {
-    local prompt=$1 default=$2 low=$3 high=$4
+    local prompt=$1 default=$2 low=$3 high=$4 name=$5
     while true; do
-        printf '%s [%s]: ' "$prompt" "$default" >&"$TTY"
+        printf '%s (default: %s - %s): ' "$prompt" "$default" "$name" >&"$TTY"
         IFS= read -r -u "$TTY" REPLY || die 'Terminal input ended; installation cancelled.'
         REPLY=${REPLY:-$default}
         if [[ $REPLY =~ ^[0-9]+$ && ${#REPLY} -le 3 ]] && ((10#$REPLY >= low && 10#$REPLY <= high)); then
@@ -78,9 +144,13 @@ preflight() {
         [[ -f $SOURCE_DIR/$path ]] || die "Incomplete source checkout: $path"
     done
     exec {TTY}<>/dev/tty || die 'Interactive installation requires a controlling terminal.'
+    # Headings and prompts stay together even when stdout/stderr are redirected.
+    # Color eligibility was decided from the original stdout in init_ui.
+    UI=$TTY ERROR_UI=$TTY
+    init_log
     WORK=$(mktemp -d /tmp/fmheadend-install.XXXXXX)
     local plan
-    plan=$(support hardware "$MODEL_FILE")
+    plan=$(support hardware "$MODEL_FILE" "$SPI_DEVICE" "$SPI_CLOCK_HZ")
     mapfile -t HARDWARE_PLAN <<< "$plan"
     MODEL=${HARDWARE_PLAN[0]}
     I2C_DEVICE=${HARDWARE_PLAN[1]}
@@ -97,6 +167,7 @@ detect_installation() {
         mapfile -t RUNTIME <<< "$settings"
         DATABASE=${RUNTIME[0]}; REGION=${RUNTIME[1]}; I2C_DEVICE=${RUNTIME[2]}
         EXISTING_PASSWD=${RUNTIME[3]}
+        HTTP_HOST=${RUNTIME[4]}; HTTP_PORT=${RUNTIME[5]}
         if [[ -n $EXISTING_PASSWD && ! -f $EXISTING_PASSWD ]]; then
             die "Configured password file is missing: $EXISTING_PASSWD; restore it before installation."
         fi
@@ -118,40 +189,94 @@ detect_installation() {
 }
 
 collect_configuration() {
-    say "Platform: $MODEL; installation mode: $MODE"
+    section 'System Detection'
+    say "Detected platform: $MODEL"
+    case $MODE in
+        fresh) INSTALLATION_LABEL='Fresh installation' ;;
+        upgrade) INSTALLATION_LABEL='Upgrade' ;;
+        partial) INSTALLATION_LABEL='Partial installation (existing files detected)' ;;
+    esac
+    say "Installation: $INSTALLATION_LABEL"
     if [[ $MODE == partial ]]; then
-        say "No database exists at $DATABASE. Existing files will be preserved."
+        say 'Existing installation files were detected, but no database was found.'
+        say "Expected database: $DATABASE"
+        say 'Existing files will be preserved; a new database needs your approval.'
         confirm 'Initialize a NEW database for this incomplete first installation?' no || die 'Stopped; restore the database if this was an upgrade.'
     fi
     if [[ $MODE != upgrade ]]; then
         if [[ $HAVE_ENV == no ]]; then
-            printf 'Region: 0 Expert, 1 Europe, 2 United States, 3 Japan\n' >&"$TTY"
-            choose_number Region 1 0 3
+            section 'FM Region'
+            say 'Select the FM frequency plan for your region.'
+            say ''
+            support regions >&"$UI"
+            choose_number Region 1 0 3 Europe
             REGION=$REPLY
         else
             say "Preserving existing region $REGION and backend arguments."
         fi
-        local catalog identifier name index=0 default=1
+        section 'Default Audio Profile'
+        say 'Basic presets use lightweight or partial audio processing.'
+        say 'They are suitable for lower-powered Raspberry Pi models.'
+        say ''
+        say 'Light and Moderate presets provide a more complete FM audio'
+        say 'processing chain, but require more CPU power, especially when'
+        say 'running multiple transmitters.'
+        say ''
+        say 'Not sure what to choose? You can change the default Audio Profile'
+        say 'anytime in the FMheadend WebUI.'
+        say ''
+        local catalog identifier name index=0 default=0 default_name=
         catalog=$(support profiles "$SOURCE_DIR/audio-profiles/default")
         PROFILE_IDS=()
+        PROFILE_NAMES=()
         while IFS=$'\t' read -r identifier name; do
             PROFILE_IDS+=("$identifier"); ((index+=1))
+            PROFILE_NAMES+=("$name")
             if [[ $identifier == "$RECOMMENDED_PROFILE" ]]; then
-                default=$index; name="$name (recommended)"
+                default=$index; default_name=$name
             fi
-            printf '%s) %s\n' "$index" "$name" >&"$TTY"
+            printf '  %s) %s\n' "$index" "$name" >&"$UI"
+            case $identifier in
+                default/basic_limiter.json) say '     Default for Pi Zero 2 W (provisional)' ;;
+                default/basic_wideband.json) say '     Default for Pi 2-3 (64-bit models)' ;;
+                default/moderate_loud.json) say '     Default for Pi 4-5' ;;
+            esac
         done <<< "$catalog"
-        choose_number 'Default Audio Profile' "$default" 1 "$index"
+        ((default > 0)) || die 'Platform default Audio Profile is missing from the menu.'
+        say ''
+        choose_number 'Default Audio Profile' "$default" 1 "$index" "$default_name"
         DEFAULT_PROFILE=${PROFILE_IDS[REPLY-1]}
+        DEFAULT_PROFILE_NAME=${PROFILE_NAMES[REPLY-1]}
+        section 'WebUI Authentication'
+        say 'HTTP Basic Authentication protects access to the FMheadend WebUI.'
+        say ''
         if [[ $HAVE_ENV == no ]]; then
-            if confirm 'Enable HTTP Basic Authentication?' no; then AUTH=yes; fi
+            if confirm 'Enable authentication?' no; then
+                AUTH=yes
+                if [[ -e $PASSWD_FILE ]]; then
+                    say 'Existing WebUI credentials will be preserved.'
+                else
+                    say ''
+                    say 'Credential entry follows the system dependencies and account setup,'
+                    say 'before native builds. This provides the required bcrypt dependency.'
+                fi
+            fi
         else
             AUTH=preserve
+            say 'Existing authentication settings and credentials will be preserved.'
         fi
+        section 'Raspberry Pi Hardware'
         if [[ $HAVE_ENV == no ]]; then
-            say "${HARDWARE_PLAN[3]}; ${HARDWARE_PLAN[4]}"
-            say 'SPI0 /dev/spidev0.0; 25 MHz; SPI buffer 8192 bytes; i2c-dev on boot.'
-            if confirm 'Let setup_pi.py configure the Raspberry Pi hardware?' yes; then
+            say 'Detected platform:'
+            say "  $MODEL"
+            say ''
+            say 'Proposed configuration:'
+            say ''
+            printf '%s\n' "${HARDWARE_PLAN[@]:5}" >&"$UI"
+            say ''
+            say 'These settings may require a reboot.'
+            say ''
+            if confirm 'Configure Raspberry Pi hardware automatically?' yes; then
                 HARDWARE=yes
             else
                 MANUAL_PENDING=yes
@@ -160,16 +285,35 @@ collect_configuration() {
             say 'Existing startup configuration preserved; hardware setup is left unchanged.'
         fi
     fi
-    say "Database: $DATABASE"
-    if [[ $MODE == upgrade ]]; then
-        say 'Preserving database, environment files, credentials, custom profiles and boot settings.'
-    else
-        say "Region: $REGION; default Audio Profile: $DEFAULT_PROFILE; authentication: $AUTH"
-        say "Backend I2C device: $I2C_DEVICE (Controller address default 0x62); hardware setup: $HARDWARE"
+    section 'Installation Summary'
+    local region_name authentication hardware_label
+    local -a region_names=(Expert Europe 'United States' Japan)
+    region_name=${region_names[REGION]}
+    authentication=Disabled
+    [[ $AUTH != yes && -z ${EXISTING_PASSWD:-} ]] || authentication=Enabled
+    hardware_label='Preserved'
+    if [[ $MODE != upgrade && $HAVE_ENV == no ]]; then
+        hardware_label=Manual
+        [[ $HARDWARE != yes ]] || hardware_label=Automatic
     fi
-    say 'HTTP defaults: port 8080, all interfaces for a new service configuration.'
-    say 'Use HTTPS or a trusted encrypted transport for credentials across untrusted networks.'
-    say "WebUI: $SHARE_DIR/webui; GStreamer plugins: $GST_PLUGINS_REVISION"
+    printf '%-19s %s\n' 'Platform:' "$MODEL" 'Installation:' "$INSTALLATION_LABEL" \
+        'Region:' "$region_name" 'Default profile:' "${DEFAULT_PROFILE_NAME:-Preserved}" \
+        'Authentication:' "$authentication" 'Hardware setup:' "$hardware_label" \
+        'WebUI port:' "$HTTP_PORT" 'HTTP bind:' "$HTTP_HOST" >&"$UI"
+    say ''
+    if [[ $MODE == upgrade ]]; then
+        say 'Preserving database, environment files, credentials, custom profiles'
+        say 'and boot settings.'
+    fi
+    if [[ $MODE == partial ]]; then
+        say 'A new database will be initialized. Existing configuration, credentials,'
+        say 'and custom profiles are preserved. Boot changes follow your hardware choice.'
+    fi
+    if [[ -n $LOG_FILE ]]; then
+        printf '\nConfiguration: mode=%s model=%s region=%s profile=%s auth=%s hardware=%s\nDatabase: %s\nWebUI: %s/webui\nI2C: %s\nHTTP: %s:%s\n' \
+            "$MODE" "$MODEL" "$REGION" "${DEFAULT_PROFILE:-preserved}" "$AUTH" "$HARDWARE" \
+            "$DATABASE" "$SHARE_DIR" "$I2C_DEVICE" "$HTTP_HOST" "$HTTP_PORT" >>"$LOG_FILE"
+    fi
     confirm 'Proceed with installation?' no || die 'Installation cancelled.'
 }
 
@@ -199,7 +343,7 @@ stop_services() {
 
 install_dependencies() {
     apt-get update
-    apt-get install -y git ca-certificates build-essential cmake pkg-config python3-dev python3-venv \
+    apt-get install -y git ca-certificates build-essential cmake pkg-config python3-dev python3-venv python3-bcrypt \
         libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
         python3-gi python3-gst-1.0 gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 \
         gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
@@ -219,12 +363,18 @@ install_account() {
     install -d -m 0755 "$(dirname "$VENV")" "$CONFIG_DIR" "$SHARE_DIR" "$SHARE_DIR/audio-profiles/default"
 }
 
-install_software() {
+install_backend() {
     python3 -m venv --system-site-packages "$VENV"
     "$VENV/bin/python" -m pip install --upgrade "$SOURCE_DIR/daemon"
+}
+
+install_mux() {
     cmake -S "$SOURCE_DIR/muxd" -B "$WORK/mux-build" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
     cmake --build "$WORK/mux-build" --parallel 1
     cmake --install "$WORK/mux-build"
+}
+
+install_plugins() {
     git init -q "$WORK/plugins"
     git -C "$WORK/plugins" remote add origin "$GST_PLUGINS_URL"
     git -C "$WORK/plugins" fetch --depth 1 origin "$GST_PLUGINS_REVISION"
@@ -259,9 +409,16 @@ install_webui() {
 configure_password() {
     [[ $AUTH == yes && $MODE != upgrade ]] || return 0
     if [[ ! -e $PASSWD_FILE ]]; then
-        "$VENV/bin/python" "$SOURCE_DIR/tools/create_passwd.py" --file "$PASSWD_FILE"
+        section 'WebUI Authentication - Credentials'
+        say 'Please enter a username and password for the FMheadend WebUI.'
+        say ''
+        # System bcrypt was installed with the prerequisites. Neither prompts
+        # nor credential utility output pass through the installation log.
+        python3 "$SOURCE_DIR/tools/create_passwd.py" --file "$PASSWD_FILE" --quiet >&"$UI"
         chown root:fmheadend "$PASSWD_FILE"
         chmod 0640 "$PASSWD_FILE"
+        say ''
+        say 'WebUI credentials configured successfully.'
     else
         say "Preserving existing password file: $PASSWD_FILE"
     fi
@@ -277,7 +434,7 @@ write_environment() {
         chmod 0644 "$CONFIG_DIR/fmheadendd.env"
     fi
     if [[ ! -e $CONFIG_DIR/muxd.env ]]; then
-        (set -o noclobber; printf 'MUXD_ARGS="--transport spidev --spi-device /dev/spidev0.0 --spi-clock-hz 25000000 --runtime-dir /run/fmheadend"\n' > "$CONFIG_DIR/muxd.env")
+        (set -o noclobber; printf 'MUXD_ARGS="--transport spidev --spi-device %s --spi-clock-hz %s --runtime-dir /run/fmheadend"\n' "$SPI_DEVICE" "$SPI_CLOCK_HZ" > "$CONFIG_DIR/muxd.env")
         chmod 0644 "$CONFIG_DIR/muxd.env"
     fi
 }
@@ -299,6 +456,7 @@ configure_hardware() {
     else
         say "$output"
         if [[ $output == *'--overwrite-existing'* ]]; then
+            section 'Raspberry Pi Hardware - Existing Settings'
             say 'setup_pi.py found existing relevant settings; no files were changed.'
             if confirm 'Permit setup_pi.py to replace those settings (with backups)?' no; then
                 output=$(python3 "$SOURCE_DIR/tools/setup_pi.py" --overwrite-existing)
@@ -331,11 +489,7 @@ install_services() {
 
 verify_installation() {
     [[ -s $SHARE_DIR/webui/index.html && -x $VENV/bin/fmheadendd && -x $MUX_BINARY ]] || die 'Required installed files are missing.'
-    if [[ $REBOOT_REQUIRED == yes ]]; then
-        say 'Installation complete. Reboot required; run sudo reboot when ready. No reboot was performed.'
-    elif [[ $MANUAL_PENDING == yes ]]; then
-        say 'Software installation complete. Prepare I2C/SPI, reboot if necessary, then start both services manually.'
-    else
+    if [[ $REBOOT_REQUIRED != yes && $MANUAL_PENDING != yes ]]; then
         systemctl is-active --quiet fmheadend-muxd.service
         systemctl is-active --quiet fmheadendd.service
         local settings attempt ready=no
@@ -346,9 +500,86 @@ verify_installation() {
             sleep 1
         done
         [[ $ready == yes ]] || die 'Backend HTTP did not become ready; inspect journalctl -u fmheadendd.service.'
-        say 'Installation complete; services running. Controller connectivity is not an installation prerequisite.'
-        say 'Check systemctl status and the WebUI System page for current Controller availability.'
+        local pid diagnostic
+        pid=$(systemctl show --property MainPID --value fmheadend-muxd.service)
+        if diagnostic=$(support realtime "$pid" 2>&1); then
+            say "$diagnostic"
+        else
+            say "WARNING: Could not verify mux realtime scheduling: $diagnostic"
+            say 'Expected SCHED_FIFO / 50. Inspect systemctl status fmheadend-muxd.'
+        fi
     fi
+}
+
+complete_installation() {
+    section 'FMheadend installation completed!'
+    say 'Installed systemd services:'
+    say ''
+    say '  fmheadendd.service'
+    say '    Backend, API and WebUI'
+    say ''
+    say '  fmheadend-muxd.service'
+    say '    SPI audio transport'
+    say ''
+    if [[ $REBOOT_REQUIRED == yes ]]; then
+        say 'Services: Enabled (will start after reboot)'
+        say ''
+        say 'WebUI access (available after reboot):'
+    elif [[ $MANUAL_PENDING == yes ]]; then
+        say 'Services: Enabled, stopped pending manual hardware preparation'
+        say 'Prepare I2C/SPI, then start both services. Reboot if necessary.'
+        say ''
+        say 'WebUI access (available after hardware preparation and service startup):'
+    else
+        say 'Services: Enabled and running; backend HTTP is ready'
+        say ''
+        say 'WebUI access (services running; subject to your network/firewall rules):'
+    fi
+    local settings urls
+    settings=$(support runtime "$CONFIG_DIR/fmheadendd.env" "$DATABASE")
+    mapfile -t RUNTIME <<< "$settings"
+    if urls=$(support urls "${RUNTIME[4]}" "${RUNTIME[5]}" 2>&1); then
+        say "$urls"
+    else
+        printf '%s\n' "$urls" >>"$LOG_FILE"
+        say '  Network addresses could not be inspected. Check your HTTP bind and IPs.'
+    fi
+    say ''
+    say 'Useful commands:'
+    say ''
+    say '  systemctl status fmheadendd fmheadend-muxd'
+    say ''
+    say '  journalctl -fu fmheadendd -u fmheadend-muxd'
+    say ''
+    say '  sudo systemctl restart fmheadendd fmheadend-muxd'
+    say ''
+    say 'Check the WebUI System page for Controller availability.'
+    if [[ -n ${RUNTIME[3]} ]]; then
+        say 'Use HTTPS or an encrypted tunnel for authentication on untrusted networks.'
+    fi
+    say "Installation log: $LOG_FILE"
+}
+
+offer_reboot() {
+    [[ $REBOOT_REQUIRED == yes ]] || return 0
+    say ''
+    say 'A reboot is required to activate the new I2C/SPI configuration.'
+    say ''
+    if confirm 'Reboot now?' no; then
+        say 'Rebooting now...'
+        if ! systemctl reboot; then
+            say 'WARNING: Installation succeeded, but the reboot request failed.'
+            say 'Reboot when ready: sudo systemctl reboot'
+        fi
+    else
+        say 'Reboot when ready: sudo systemctl reboot'
+    fi
+}
+
+configure_application() {
+    write_environment
+    initialize_database
+    configure_hardware
 }
 
 cleanup() {
@@ -356,24 +587,33 @@ cleanup() {
 }
 
 main() {
+    init_ui
     parse_arguments "$@"
     trap cleanup EXIT
-    trap 'printf "Installation failed near line %s. Services may remain stopped; no automatic rollback was performed.\n" "$LINENO" >&2' ERR
+    trap 'failure "$?" "$LINENO"' ERR
+    trap 'printf "\nInstallation cancelled. No reboot was requested.\n" >&"$ERROR_UI"; exit 130' INT
     preflight
     detect_installation
     collect_configuration
-    backup_existing
-    stop_services
-    install_dependencies
-    install_account
-    install_software
-    install_webui
+    section 'Installing FMheadend'
+    say 'Builds can take several minutes. Command output is saved to the log.'
+    run_step 'Backing up existing installation' backup_existing
+    run_step 'Installing system dependencies' install_dependencies
+    run_step 'Preparing system account' install_account
+    CURRENT_STEP='Configuring WebUI credentials'
     configure_password
-    write_environment
-    initialize_database
-    configure_hardware
-    install_services
-    verify_installation
+    CURRENT_STEP=
+    # Credentials are collected before downtime and all native builds.
+    run_step 'Stopping services for update' stop_services
+    run_step 'Installing Python backend' install_backend
+    run_step 'Building SPI multiplexer' install_mux
+    run_step 'Installing FM DSP plugins' install_plugins
+    run_step 'Installing WebUI' install_webui
+    run_step 'Applying configuration' configure_application
+    run_step 'Configuring services' install_services
+    run_step 'Verifying installation' verify_installation
+    complete_installation
+    offer_reboot
 }
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then main "$@"; fi
