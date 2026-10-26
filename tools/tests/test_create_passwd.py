@@ -48,7 +48,7 @@ def test_fully_interactive_default_username_and_redirected_stdin(tmp_path, monke
     path = tmp_path / 'htpasswd'
     assert create_passwd.main(['--file', str(path)]) == 0
     check_record(path)
-    assert writer.getvalue() == 'Username [admin]: '
+    assert writer.getvalue() == 'Username (press Enter for default: admin): '
     assert prompts == ['Password: ', 'Confirm password: ']
     assert redirected.tell() == 0
     expected = ['CONIN$', 'CONOUT$'] if os.name == 'nt' else ['/dev/tty', '/dev/tty']
@@ -94,15 +94,88 @@ def test_both_cli_values_need_no_terminal_and_keep_secure_permissions(tmp_path, 
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
-def test_confirmation_mismatch_creates_no_file(tmp_path, monkeypatch, terminal, capsys):
-    answers = iter(['private-first', 'private-second'])
+def test_confirmation_mismatch_retries(tmp_path, monkeypatch, terminal, capsys):
+    answers = iter(['private-first', 'private-second', 'test-password', 'test-password'])
     monkeypatch.setattr(create_passwd.getpass, 'getpass', lambda *a, **k: next(answers))
     path = tmp_path / 'htpasswd'
-    assert create_passwd.main(['--file', str(path)]) == 1
+    assert create_passwd.main(['--file', str(path)]) == 0
     output = capsys.readouterr()
-    assert 'Passwords do not match' in output.err
-    assert 'private-' not in output.out + output.err
+    assert 'Passwords do not match. Please try again.' in terminal[1].getvalue()
+    assert 'private-' not in output.out + output.err + terminal[1].getvalue()
+    check_record(path)
+
+
+@pytest.mark.parametrize('invalid', ['', 'x' * 73, '\u00e9' * 37])
+def test_invalid_interactive_password_retries_without_confirmation(tmp_path, monkeypatch, terminal, invalid):
+    answers = iter([invalid, 'test-password', 'test-password'])
+    prompts = []
+    def hidden(prompt, **kwargs):
+        prompts.append(prompt)
+        return next(answers)
+    monkeypatch.setattr(create_passwd.getpass, 'getpass', hidden)
+    path = tmp_path / 'htpasswd'
+    assert create_passwd.main(['--file', str(path)]) == 0
+    check_record(path)
+    assert prompts == ['Password: ', 'Password: ', 'Confirm password: ']
+    assert 'Please try again.' in terminal[1].getvalue()
+    if invalid:
+        assert invalid not in terminal[1].getvalue()
+
+
+def test_invalid_interactive_username_retries(tmp_path, terminal):
+    reader, writer, _, _ = terminal
+    reader.seek(0)
+    reader.truncate()
+    reader.write('bad:user\n\n')
+    reader.seek(0)
+    path = tmp_path / 'htpasswd'
+    assert create_passwd.main(['--file', str(path)]) == 0
+    check_record(path)
+    assert 'Please try again.' in writer.getvalue()
+
+
+@pytest.mark.parametrize('exception', [KeyboardInterrupt, EOFError])
+def test_user_cancellation_creates_no_file(tmp_path, monkeypatch, terminal, capsys, exception):
+    def cancel(*args, **kwargs):
+        raise exception
+    monkeypatch.setattr(create_passwd.getpass, 'getpass', cancel)
+    path = tmp_path / 'htpasswd'
+    assert create_passwd.main(['--file', str(path)]) == 1
     assert not path.exists()
+    assert 'cancelled' in capsys.readouterr().err
+
+
+@pytest.mark.parametrize('args', [['--password', ''], ['--user', 'bad:user']])
+def test_invalid_explicit_argument_never_prompts(tmp_path, monkeypatch, args):
+    monkeypatch.setattr(create_passwd, 'open', lambda *a, **k: pytest.fail('Unexpected prompt'), raising=False)
+    with pytest.raises(SystemExit) as exc:
+        create_passwd.main(['--file', str(tmp_path / 'htpasswd'), *args])
+    assert exc.value.code == 2
+
+
+def test_real_filesystem_error_does_not_reprompt(tmp_path, monkeypatch, terminal, capsys):
+    def denied(*args, **kwargs):
+        raise PermissionError('permission denied')
+    monkeypatch.setattr(create_passwd.os, 'open', denied)
+    assert create_passwd.main(['--file', str(tmp_path / 'htpasswd')]) == 1
+    output = capsys.readouterr()
+    assert 'Cannot write' in output.err and 'test-password' not in output.err
+    assert 'Please try again' not in terminal[1].getvalue()
+
+
+def test_bcrypt_exactly_72_utf8_bytes_is_accepted(tmp_path):
+    path = tmp_path / 'htpasswd'
+    password = '\u00e9' * 36
+    assert create_passwd.main(['--file', str(path), '--user', 'admin', '--password', password]) == 0
+    check_record(path, password=password)
+
+
+def test_quiet_mode_keeps_hidden_prompts_without_success_details(tmp_path, terminal, capsys):
+    path = tmp_path / 'htpasswd'
+    assert create_passwd.main(['--file', str(path), '--quiet']) == 0
+    check_record(path)
+    assert 'Username (press Enter for default: admin)' in terminal[1].getvalue()
+    assert capsys.readouterr().out == ''
 
 
 def test_no_controlling_terminal_fails_clearly(tmp_path, monkeypatch, capsys):

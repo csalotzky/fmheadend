@@ -14,7 +14,9 @@ The WebUI is served by `fmheadendd`; Node.js is needed to **build** it, not to r
 `install.sh` installs or updates FMheadend on **Raspberry Pi OS Lite (64-bit)** from
 a source checkout and a local, prebuilt WebUI archive. It builds the backend, mux
 and FMheadend GStreamer plugins; Node.js and npm are not needed on the Pi.
-**The installer has automated coverage but still requires real Raspberry Pi validation.**
+The first fresh installation succeeded on a Raspberry Pi 4 Model B running
+Raspberry Pi OS Lite (64-bit), including effective `SCHED_FIFO / 50` scheduling.
+The refined wizard and completion flow still need validation on real hardware.
 
 Install Git if necessary, clone the desired FMheadend revision, then run:
 
@@ -32,12 +34,37 @@ workflow. Download its artifact and unpack the artifact ZIP to obtain
 CSS and `assets/` at its root. Use trusted source code and archives: installation
 runs as root. There is no bootstrap launcher or automatic release download yet.
 
-On a fresh installation, numbered menus select the region and default Audio
-Profile. All bundled profiles are available; the recommendation is **Basic
-Limiter** on Pi Zero/Zero 2 W and Pi 1–3, or **Moderate Loud** on Pi 4/5.
-This is a starting recommendation, not a DSP performance guarantee.
-Optional password protection uses the existing Python tool's hidden credential
-prompts. All prompts use a controlling terminal, including with redirected stdin.
+On a fresh installation, separate sections explain the region, default Audio
+Profile, authentication and hardware choices, followed by a confirmation summary.
+Enter accepts the value shown in each prompt. Invalid menu input is retried.
+Region frequency limits and raster come directly from `daemon/regions.py`;
+Expert mode uses the connected Controller's capabilities.
+
+The Audio Profile menu omits names containing `[TX Soft Clip ON]` and renumbers
+the remaining ten profiles. **All bundled profiles are installed and remain
+available in the WebUI.** The menu labels every platform default:
+
+| Platform | Default Audio Profile |
+|---|---|
+| Pi Zero 2 W | Basic Limiter (provisional, pending performance testing) |
+| Pi 2–3, when running the required 64-bit OS | Basic Wideband |
+| Pi 4–5 | Moderate Loud |
+
+Original Pi Zero and Pi 1 cannot run this installer's required 64-bit OS.
+Defaults are starting points, not DSP performance guarantees. You can select
+another profile in the wizard or change the default later in the WebUI.
+
+Optional authentication is configured immediately after system dependencies
+(including system `python3-bcrypt`) and service-account preparation, **before
+service downtime and native builds**. The wizard announces this sequence.
+The existing password utility uses hidden terminal input, confirms passwords,
+and retries empty passwords, mismatches, passwords over bcrypt's 72 UTF-8 byte
+limit and invalid usernames. Ctrl+C cancels; filesystem failures stop installation.
+Explicit invalid CLI values fail without prompting. Credentials are never passed
+by the installer through arguments, environment files or logs. New password files
+are created with mode 0600, then installed as `root:fmheadend`, mode 0640.
+Existing credentials are preserved. All prompts use a controlling terminal,
+including with redirected stdin and command output redirected to a log.
 
 The installer shows the model-specific `setup_pi.py` proposal and asks before
 configuring hardware. Replacing conflicting boot settings requires separate,
@@ -60,13 +87,71 @@ approving a new one. Ambiguous environment files or customized service startup
 directives require manual review. A failed installation stops with a diagnostic;
 services may remain stopped. No automatic rollback is performed.
 
+Each installation operation shows a numbered progress line and an `OK` when it
+finishes. Native builds can take several minutes. Complete command output is saved
+to an exclusive, root-owned mode-0600 `/var/tmp/fmheadend-install.*.log` file;
+the console shows its exact location. Failures show the current operation, recent
+command output and the log path. Logs persist for troubleshooting; remove them
+when no longer needed. Redirected output is plain text; `NO_COLOR` and `TERM=dumb`
+also disable heading colors. No terminal UI dependencies are needed.
+
 Services are enabled but left stopped when a reboot or manual hardware preparation
-is pending. **Reboot when requested; the installer never reboots automatically.**
+is pending. A required reboot is offered only after successful verification and
+the completion screen. **`Reboot now? [y/N]` defaults to No; only explicit Yes
+runs `systemctl reboot`.** No reboot is offered after a failure, or when none
+is needed. Declining exits successfully with a command to reboot later.
 After an interrupted run, complete any previously requested reboot/hardware work
 before starting services. Otherwise, software and HTTP availability are checked
 after service startup; disconnected Controller hardware is reported separately.
+The mux main process is also checked for effective `SCHED_FIFO / 50`; a mismatch
+or inspection failure produces a warning with diagnostics, without changing its
+scheduling configuration. This check is skipped while services await hardware
+preparation or reboot.
 The installer sends no START commands and performs no firmware updates. Existing
 saved transmission selections retain their normal daemon startup behavior.
+
+The completion screen lists both services, their running/pending state and useful
+status, journal and restart commands. It inspects active Ethernet, Wi-Fi, VPN and
+other interfaces dynamically, excludes unusable addresses, brackets IPv6 URLs,
+and respects the actual HTTP bind and port from the preserved configuration.
+`0.0.0.0` advertises IPv4; `::` advertises IPv6. An explicit bind advertises only
+matching assigned addresses. Loopback-only binds and missing addresses get an
+explanation instead of guessed network URLs. Network/firewall rules still apply.
+
+Example terminal output (plain text, abbreviated):
+
+```text
+----------------------------------------
+FM Region
+----------------------------------------
+
+Select the FM frequency plan for your region.
+
+  1) Europe
+     87.5-108.0 MHz | 100 kHz raster
+
+Region (default: 1 - Europe):
+Default Audio Profile (default: 9 - Moderate Loud):
+
+[5/11] Installing Python backend...
+      OK
+[6/11] Building SPI multiplexer...
+      OK
+
+----------------------------------------
+FMheadend installation completed!
+----------------------------------------
+
+Services: Enabled (will start after reboot)
+
+WebUI access (available after reboot):
+  enp1s0       http://192.168.1.42:8080
+  tailscale0   http://100.83.12.5:8080
+
+A reboot is required to activate the new I2C/SPI configuration.
+
+Reboot now? [y/N]:
+```
 
 The following sections remain available as a manual installation fallback.
 
@@ -80,7 +165,11 @@ The following sections remain available as a manual installation fallback.
 | Controller | FMheadend Controller connected through I²C and SPI |
 | Optional sources | Network, local storage and/or ALSA devices as needed |
 
-Development currently takes place on a **Raspberry Pi 3B**. Testing on Pi 4 and Zero 2 W is planned; Pi 5 has not been tested. Actual capacity depends on the number of active channels and DSP workload, not just I²C/SPI compatibility.
+Development currently takes place on a **Raspberry Pi 3B**. A fresh Pi 4
+installation has succeeded; Zero 2 W and Pi 5 still need performance testing.
+Actual capacity depends on active channels and DSP workload, not just I²C/SPI
+compatibility. Only Pi 2 variants capable of running the required 64-bit OS are
+eligible for this installer.
 
 ## 3. System dependencies
 
@@ -449,5 +538,6 @@ Open `http://<pi-address>:8080/` to access the WebUI. Create Sources and configu
 
 For protocol diagnostics, see the [Controller protocol](controller-protocol.md). For SWD provisioning or I²C firmware updates, see the [RP2354 firmware update guide](rp2354-firmware-update.md).
 
-The manual installation procedure and interactive installer still require complete
-clean-system qualification. Automatic GitHub Release downloads are not implemented.
+The manual installation procedure and refined interactive installer still need
+broader clean-system qualification. Automatic GitHub Release downloads are not
+implemented.

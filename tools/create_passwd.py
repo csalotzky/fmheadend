@@ -14,6 +14,18 @@ import bcrypt
 DEFAULT_FILE = Path("/var/lib/fmheadend/htpasswd")
 
 
+def _username_error(user):
+    if not user or any(ord(ch) < 32 or ord(ch) > 126 or ch == ':' for ch in user):
+        return 'Use a nonempty ASCII username without colons or control characters.'
+
+
+def _password_error(password):
+    if not password:
+        return 'Password cannot be empty.'
+    if len(password.encode('utf-8')) > 72:
+        return "Password exceeds bcrypt's 72-byte limit (UTF-8 bytes)."
+
+
 def _credentials(user, password):
     if user is not None and password is not None:
         return user, password
@@ -26,21 +38,33 @@ def _credentials(user, password):
         except OSError as exc:
             raise ValueError('Interactive credentials require a terminal; supply --user and --password for noninteractive use') from exc
         if user is None:
-            writer.write('Username [admin]: ')
-            writer.flush()
-            entered = reader.readline()
-            if not entered:
-                raise EOFError
-            user = entered.strip() or 'admin'
+            while True:
+                writer.write('Username (press Enter for default: admin): ')
+                writer.flush()
+                entered = reader.readline()
+                if not entered:
+                    raise EOFError
+                user = entered.rstrip('\r\n') or 'admin'
+                error = _username_error(user)
+                if not error:
+                    break
+                writer.write(error + ' Please try again.\n\n')
         if password is None:
             # getpass normally falls back to echoed input if terminal control
             # fails. Treat that warning as an error before fallback can read.
             with warnings.catch_warnings():
                 warnings.simplefilter('error', getpass.GetPassWarning)
-                password = getpass.getpass('Password: ', stream=writer)
-                confirmation = getpass.getpass('Confirm password: ', stream=writer)
-            if password != confirmation:
-                raise ValueError('Passwords do not match')
+                while True:
+                    password = getpass.getpass('Password: ', stream=writer)
+                    error = _password_error(password)
+                    if not error:
+                        confirmation = getpass.getpass('Confirm password: ', stream=writer)
+                        if password != confirmation:
+                            error = 'Passwords do not match.'
+                    if not error:
+                        break
+                    writer.write(error + ' Please try again.\n\n')
+                    writer.flush()
     return user, password
 
 
@@ -54,10 +78,16 @@ def main(argv=None) -> int:
                         help="Password to hash (hidden prompt and confirmation when omitted)")
     parser.add_argument("--overwrite", action="store_true",
                         help="Replace existing file (deletes its existing users)")
+    parser.add_argument("--quiet", action="store_true",
+                        help="Omit the success message (prompts and errors remain visible)")
     args = parser.parse_args(argv)
 
-    if args.user is not None and (not args.user or any(ch in args.user for ch in (":", "\n", "\r"))):
-        parser.error("Invalid username")
+    if args.user is not None and _username_error(args.user):
+        parser.error('Invalid username. ' + _username_error(args.user))
+    # Explicit invalid arguments fail before opening a terminal, even if the
+    # other value was omitted. Only interactive input is retried.
+    if args.password is not None and _password_error(args.password):
+        parser.error(_password_error(args.password))
 
     output = args.file.expanduser()
     if os.path.lexists(output) and not args.overwrite:
@@ -68,16 +98,7 @@ def main(argv=None) -> int:
     except (ValueError, OSError, EOFError, KeyboardInterrupt, getpass.GetPassWarning) as exc:
         print(str(exc) or 'Credential entry cancelled.', file=sys.stderr)
         return 1
-    if not args.user or any(ch in args.user for ch in (":", "\n", "\r")):
-        parser.error("Invalid username")
-
-    if not args.password:
-        parser.error("Password must not be empty")
-
     raw = args.password.encode("utf-8")
-    if len(raw) > 72:
-        print("Password exceeds bcrypt's 72-byte limit.", file=sys.stderr)
-        return 1
 
     record = f"{args.user}:{bcrypt.hashpw(raw, bcrypt.gensalt()).decode('ascii')}\n"
 
@@ -94,7 +115,8 @@ def main(argv=None) -> int:
         print(f"Cannot write {output}: {exc}", file=sys.stderr)
         return 1
 
-    print(f"Created {output} for user {args.user} (mode 0600).")
+    if not args.quiet:
+        print(f"Created {output} for user {args.user} (mode 0600).")
     return 0
 
 
