@@ -63,6 +63,9 @@ init_log() {
 failure() {
     local status=$1 line=$2
     trap - ERR
+    # ERR is inherited by support() subshells and command substitutions. Let
+    # their failures propagate; only the parent installer reports the error.
+    if ((BASH_SUBSHELL > 0)); then exit "$status"; fi
     printf '\nInstallation failed%s (line %s, exit %s).\n' \
         "${CURRENT_STEP:+ during $CURRENT_STEP}" "$line" "$status" >&"$ERROR_UI"
     if [[ -n $LOG_FILE ]]; then
