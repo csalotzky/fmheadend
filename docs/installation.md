@@ -9,11 +9,66 @@ FMheadend runs as two services on a Raspberry Pi:
 
 The WebUI is served by `fmheadendd`; Node.js is needed to **build** it, not to run it. Controller firmware installation is covered in the [firmware update guide](rp2354-firmware-update.md).
 
-## 1. Automatic installer — planned
+## 1. Interactive installer
 
-A shell installer is planned for Raspberry Pi OS. It will download prebuilt components from **GitHub Releases**, install dependencies and configure the services, including the recommended FMheadend GStreamer plugins.
+`install.sh` installs or updates FMheadend on **Raspberry Pi OS Lite (64-bit)** from
+a source checkout and a local, prebuilt WebUI archive. It builds the backend, mux
+and FMheadend GStreamer plugins; Node.js and npm are not needed on the Pi.
+**The installer has automated coverage but still requires real Raspberry Pi validation.**
 
-**Not available yet.** There is no installer URL or supported `curl` command. The manual procedure below describes the current source-based installation.
+Install Git if necessary, clone the desired FMheadend revision, then run:
+
+```sh
+sudo apt update
+sudo apt install git
+git clone https://github.com/csalotzky/fmheadend.git
+cd fmheadend
+sudo ./install.sh --webui-archive /path/to/fmheadend-webui.tar.gz
+```
+
+Obtain the matching WebUI archive from the manual **Build WebUI** GitHub Actions
+workflow. Download its artifact and unpack the artifact ZIP to obtain
+`fmheadend-webui.tar.gz`. The tar archive must contain `index.html`, JavaScript,
+CSS and `assets/` at its root. Use trusted source code and archives: installation
+runs as root. There is no bootstrap launcher or automatic release download yet.
+
+On a fresh installation, numbered menus select the region and default Audio
+Profile. All bundled profiles are available; the recommendation is **Basic
+Limiter** on Pi Zero/Zero 2 W and Pi 1–3, or **Moderate Loud** on Pi 4/5.
+This is a starting recommendation, not a DSP performance guarantee.
+Optional password protection uses the existing Python tool's hidden credential
+prompts. All prompts use a controlling terminal, including with redirected stdin.
+
+The installer shows the model-specific `setup_pi.py` proposal and asks before
+configuring hardware. Replacing conflicting boot settings requires separate,
+explicit approval. Hardware configuration can be skipped for manual preparation.
+New services use the selected I²C device, Controller address `0x62`, SPI0 at
+25 MHz and HTTP port 8080 on all interfaces. Review the summary before confirming.
+Use HTTPS or a trusted encrypted transport for credentials on untrusted networks.
+
+Rerun the same command from the desired source revision to update. An existing
+database and service environment identify an upgrade: there is no fresh-install
+wizard or boot reconfiguration. The database, environment files, passwords,
+custom profiles and saved operating state are preserved. Before updating,
+SQLite's backup API creates a consistent database backup alongside copies of
+service configuration and credentials under `/var/backups/fmheadend/`.
+GStreamer plugins are built from the immutable revision pinned in `install.sh`.
+
+Incomplete installations preserve existing files. Initializing a missing database
+requires explicit confirmation; restore a missing upgrade database instead of
+approving a new one. Ambiguous environment files or customized service startup
+directives require manual review. A failed installation stops with a diagnostic;
+services may remain stopped. No automatic rollback is performed.
+
+Services are enabled but left stopped when a reboot or manual hardware preparation
+is pending. **Reboot when requested; the installer never reboots automatically.**
+After an interrupted run, complete any previously requested reboot/hardware work
+before starting services. Otherwise, software and HTTP availability are checked
+after service startup; disconnected Controller hardware is reported separately.
+The installer sends no START commands and performs no firmware updates. Existing
+saved transmission selections retain their normal daemon startup behavior.
+
+The following sections remain available as a manual installation fallback.
 
 ## 2. Requirements
 
@@ -394,4 +449,5 @@ Open `http://<pi-address>:8080/` to access the WebUI. Create Sources and configu
 
 For protocol diagnostics, see the [Controller protocol](controller-protocol.md). For SWD provisioning or I²C firmware updates, see the [RP2354 firmware update guide](rp2354-firmware-update.md).
 
-The manual installation procedure is undergoing clean-system validation. The automated GitHub Release installer is not yet available.
+The manual installation procedure and interactive installer still require complete
+clean-system qualification. Automatic GitHub Release downloads are not implemented.
