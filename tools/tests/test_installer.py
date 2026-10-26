@@ -781,3 +781,94 @@ offer_reboot
     assert 'Compiler diagnostic' in result.stderr and 'Full installation log' in result.stderr
     assert 'SHOULD_NOT_MUTATE' not in result.stdout + result.stderr
     assert 'Reboot now?' not in result.stdout
+
+
+@pytest.fixture
+def bare_checkout(tmp_path):
+    """Only source files: no site-packages, editable install or package metadata."""
+    checkout = tmp_path / 'bare-checkout'
+    for relative in ('tools/install_support.py', 'tools/setup_pi.py',
+                     'daemon/__init__.py', 'daemon/regions.py'):
+        destination = checkout / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / relative, destination)
+    model = checkout / 'model'
+    model.write_text('Raspberry Pi 4 Model B Rev 1.5')
+    shutil.copytree(ROOT / 'audio-profiles/default', checkout / 'profiles')
+    archive(checkout / 'webui.tar.gz')
+    (checkout / 'backend.env').write_text('FMHEADEND_ARGS="--region 1 --port 8080"\n')
+    return checkout
+
+
+def bare_python(checkout, *arguments):
+    env = dict(os.environ)
+    env.pop('PYTHONPATH', None)
+    env.pop('PYTHONHOME', None)
+    return subprocess.run([sys.executable, '-S', *arguments], cwd=checkout, env=env,
+                          capture_output=True, text=True, timeout=30)
+
+
+@pytest.mark.parametrize('operation,paths,expected', [
+    ('hardware', ['model'], 'default/moderate_loud.json'),
+    ('regions', [], '87.5-108.0 MHz | 100 kHz raster'),
+    ('profiles', ['profiles'], 'Moderate Loud'),
+    ('runtime', ['backend.env', 'new.db'], '8080'),
+    ('webui', ['webui.tar.gz', 'webui'], ''),
+])
+def test_preinstall_helpers_work_without_installed_backend(bare_checkout, operation, paths, expected):
+    # Prove the exact condition which the development venv used to mask.
+    probe = bare_python(bare_checkout, '-c', 'from importlib.metadata import version; version("fmheadendd")')
+    assert probe.returncode != 0 and 'PackageNotFoundError' in probe.stderr
+    paths = [str(bare_checkout / path) for path in paths]
+    result = bare_python(bare_checkout, '-m', 'tools.install_support', operation, *paths)
+    assert result.returncode == 0, result.stderr
+    assert expected in result.stdout
+    assert not result.stderr
+    if operation == 'webui':
+        assert (bare_checkout / 'webui/index.html').is_file()
+
+
+def test_command_substitution_failure_is_reported_once(tmp_path):
+    result = shell(tmp_path, '''
+init_ui
+LOG_FILE="$WORK/install.log" REBOOT_REQUIRED=yes
+trap 'failure "$?" "$LINENO"' ERR
+python3() { echo 'Bootstrap diagnostic' >&2; return 23; }
+plan=$(support hardware "$WORK/model")
+echo SHOULD_NOT_RUN
+offer_reboot
+''')
+    assert result.returncode == 23
+    assert 'Bootstrap diagnostic' in result.stderr
+    assert result.stderr.count('Installation failed (') == 1
+    assert result.stderr.count('Full installation log:') == 1
+    assert 'SHOULD_NOT_RUN' not in result.stdout
+    assert 'Reboot now?' not in result.stdout
+
+
+def test_source_wizard_runs_with_only_standard_library(tmp_path):
+    model = tmp_path / 'model'
+    model.write_text('Raspberry Pi 4 Model B Rev 1.5')
+    webui = archive(tmp_path / 'webui.tar.gz')
+    result = shell(tmp_path, '''
+init_ui
+exec {TTY}>&1
+''' + 'python3() { ' + shlex.quote(Path(sys.executable).as_posix()) + ''' -S "$@" | tr -d '\\r'; }
+''' + 'MODEL_FILE=' + shlex.quote(model.as_posix()) + '\n' + '''
+DATA_DIR="$WORK/not-installed" DATABASE="$WORK/not-installed/fmheadend.db"
+''' + 'parse_arguments --webui-archive ' + shlex.quote(webui.as_posix()) + '\n' + '''
+plan=$(support hardware "$MODEL_FILE" "$SPI_DEVICE" "$SPI_CLOCK_HZ")
+mapfile -t HARDWARE_PLAN <<< "$plan"
+MODEL=${HARDWARE_PLAN[0]} I2C_DEVICE=${HARDWARE_PLAN[1]} RECOMMENDED_PROFILE=${HARDWARE_PLAN[2]}
+support webui "$ARCHIVE" "$WORK/site"
+detect_installation
+ANSWERS=('' '' n y y) INDEX=0
+read() { if [[ ${2:-} == -u ]]; then printf -v "${@: -1}" '%s' "${ANSWERS[INDEX++]}"; else builtin read "$@"; fi; }
+collect_configuration
+printf 'WIZARD_COMPLETE:%s:%s:%s\n' "$MODE" "$REGION" "$DEFAULT_PROFILE"
+''')
+    assert result.returncode == 0, result.stderr
+    assert 'WIZARD_COMPLETE:fresh:1:default/moderate_loud.json' in result.stdout
+    assert 'Default Audio Profile (default: 9 - Moderate Loud):' in result.stdout
+    assert (tmp_path / 'work/site/index.html').is_file()
+    assert not (tmp_path / 'work/not-installed').exists()

@@ -9,6 +9,7 @@ import ipaddress
 import os
 from pathlib import Path, PurePosixPath
 import re
+import runpy
 import shlex
 import shutil
 import sqlite3
@@ -19,7 +20,11 @@ from urllib.error import HTTPError
 from urllib.request import urlopen
 
 from . import setup_pi
-from daemon.regions import PLANS
+
+# Preflight runs with system Python before the backend is installed. Importing
+# daemon.regions would execute daemon/__init__.py, which needs installed package
+# metadata. Load the shared, stdlib-only definitions directly from this checkout.
+PLANS = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'daemon' / 'regions.py'))['PLANS']
 
 
 def hardware_plan(model_path, spi_device='/dev/spidev0.0', spi_clock_hz=25000000):
