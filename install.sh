@@ -311,7 +311,7 @@ collect_configuration() {
             fi
             annotation=
             case $identifier in
-                default/basic_limiter.json) annotation=' (Default for Pi Zero 2 W)' ;;
+                default/basic_limiter.json) annotation=' (Default for Pi Zero 2)' ;;
                 default/basic_wideband.json) annotation=' (Default for Pi 2-3)' ;;
                 default/moderate_loud.json) annotation=' (Default for Pi 4-5)' ;;
             esac

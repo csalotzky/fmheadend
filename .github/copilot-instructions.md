@@ -3,7 +3,7 @@
 ## Canonical specification and scope
 
 - Read [`docs/fmheadend-software-architecture.md`](../docs/fmheadend-software-architecture.md) before making architectural or externally observable behavior decisions. It is the canonical V1 contract; milestone documents record implemented details and validation procedures.
-- This is an eight-channel FM headend for a Raspberry Pi Zero 2 W. Keep implementation choices suitable for that target, even when developing on a more capable host.
+- This is an eight-channel FM headend for Raspberry Pi.
 - Work one requested milestone at a time. Do not redesign the system or introduce Docker, Redis, message brokers, authentication, WebSockets, separate database servers, or speculative services unless explicitly requested.
 - Firmware changes are only in scope when explicitly requested. Its Linux-facing contracts are defined by the architecture document and [`docs/rp2354-protocol.md`](../docs/rp2354-protocol.md).
 

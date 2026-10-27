@@ -501,7 +501,7 @@ collect_configuration
         assert heading in result.stdout
     assert 'Region (default: 1 - Europe):' in result.stdout
     assert 'Default Audio Profile (default: 9 - Moderate Loud):' in result.stdout
-    for annotation in ('Basic Limiter (Default for Pi Zero 2 W)', 'Basic Wideband (Default for Pi 2-3)',
+    for annotation in ('Basic Limiter (Default for Pi Zero 2)', 'Basic Wideband (Default for Pi 2-3)',
                        'Moderate Loud (Default for Pi 4-5)'):
         assert annotation in result.stdout
     assert 'provisional' not in result.stdout and 'lower-powered' not in result.stdout

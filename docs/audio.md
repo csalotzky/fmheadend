@@ -216,8 +216,12 @@ Telemetry reads native stage meters and adds some processing overhead. A slow so
 
 ## 8. CPU performance
 
-**Complex processing profiles can consume substantial CPU time**, especially those using multiband dynamics, multiple native plugins or true-peak detection. Actual capacity depends on the Raspberry Pi model, the number of active Source pipelines and their chosen processing stages.
+**Raspberry Pi Zero 1:** Not recommended. At most one transmitter without DSP processing.
 
-The DSP runs **once per Source**, not once per transmitter. Eight Modulators sharing one Source need only one DSP chain; eight independent Sources may require eight. On less powerful Raspberry Pi models, eight independent Sources running complex profiles may overload the system. Use lighter profiles or shared Sources where appropriate.
+**Raspberry Pi 3B:** Eight transmitters run reliably with an AGC, wideband compression and limiting chain (Basic Wideband) at around 50% CPU. More demanding three-band multiband processing (Light/Moderate) raises CPU usage to roughly 80%, with reduced stability.
 
-No fixed Source count or Raspberry Pi model-specific performance guarantee is provided without reproducible benchmarks.
+**Raspberry Pi 4:** Eight transmitters run comfortably with three-band multiband processing (Light/Moderate) at around 50% CPU.
+
+These are approximate practical observations, not precise benchmarks or guaranteed performance figures.
+
+DSP runs **once per active Source**, not once per transmitter. Multiple transmitters may share one Source, so CPU usage depends on the number of independent audio pipelines and their processing complexity.
