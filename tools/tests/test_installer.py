@@ -204,7 +204,8 @@ RECOMMENDED_PROFILE=default/moderate_loud.json
 HARDWARE_PLAN=('Raspberry Pi 4' /dev/i2c-8 default/moderate_loud.json 'Software I2C' 'Fixed core clock')
 support() {
     if [[ $1 == regions ]]; then printf '  1) Europe\n';
-    else printf 'default/basic_limiter.json\tBasic Limiter\ndefault/moderate_loud.json\tModerate Loud\n'; fi
+    elif [[ $1 == profiles ]]; then printf 'default/basic_limiter.json\tBasic Limiter\ndefault/moderate_loud.json\tModerate Loud\n';
+    else (cd "$SOURCE_DIR"; python3 -m tools.install_support "$@"); fi
 }
 INDEX=0
 read() { if [[ ${2:-} == -u ]]; then printf -v "${@: -1}" '%s' "${ANSWERS[INDEX++]}"; else builtin read "$@"; fi; }
@@ -212,8 +213,8 @@ read() { if [[ ${2:-} == -u ]]; then printf -v "${@: -1}" '%s' "${ANSWERS[INDEX+
 
 
 @pytest.mark.parametrize('answers,expected', [
-    ("('' '' n y y)", 'RESULT:1:default/moderate_loud.json:no:yes'),
-    ("(2 1 y n y)", 'RESULT:2:default/basic_limiter.json:yes:no'),
+    ("('' '' n y '' '' y)", 'RESULT:1:default/moderate_loud.json:no:yes'),
+    ("(2 1 y n '' '' y)", 'RESULT:2:default/basic_limiter.json:yes:no'),
 ])
 def test_fresh_wizard_defaults_and_selections(tmp_path, answers, expected):
     result = shell(tmp_path, MENU + f'ANSWERS={answers}\n' + '''collect_configuration
@@ -223,6 +224,8 @@ printf 'RESULT:%s:%s:%s:%s\n' "$REGION" "$DEFAULT_PROFILE" "$AUTH" "$HARDWARE"
     assert expected in result.stdout
     assert 'Default Audio Profile (default: 2 - Moderate Loud):' in result.stdout
     assert '(recommended)' not in result.stdout
+    assert 'Credential entry follows' not in result.stdout
+    assert 'This provides the required bcrypt dependency' not in result.stdout
 
 
 def test_detect_upgrade_and_preserve_database_and_env(tmp_path):
@@ -488,18 +491,21 @@ def test_full_wizard_snapshot_and_platform_defaults(tmp_path):
 HAVE_ENV=no MODE=fresh
 HARDWARE_PLAN=('Raspberry Pi 4' /dev/i2c-8 default/moderate_loud.json unused unused '  I2C mode: Software I2C')
 RECOMMENDED_PROFILE=default/moderate_loud.json
-ANSWERS=('' '' n y y) INDEX=0
+ANSWERS=('' '' n y '' '' y) INDEX=0
 read() { if [[ ${2:-} == -u ]]; then printf -v "${@: -1}" '%s' "${ANSWERS[INDEX++]}"; else builtin read "$@"; fi; }
 collect_configuration
 ''')
     assert result.returncode == 0, result.stderr
     for heading in ('System Detection', 'FM Region', 'Default Audio Profile', 'WebUI Authentication',
-                    'Raspberry Pi Hardware', 'Installation Summary'):
+                    'Raspberry Pi Hardware', 'WebUI Network', 'Installation Summary'):
         assert heading in result.stdout
     assert 'Region (default: 1 - Europe):' in result.stdout
     assert 'Default Audio Profile (default: 9 - Moderate Loud):' in result.stdout
-    for annotation in ('Default for Pi Zero 2 W (provisional)', 'Default for Pi 2-3', 'Default for Pi 4-5'):
+    for annotation in ('Basic Limiter (Default for Pi Zero 2 W)', 'Basic Wideband (Default for Pi 2-3)',
+                       'Moderate Loud (Default for Pi 4-5)'):
         assert annotation in result.stdout
+    assert 'provisional' not in result.stdout and 'lower-powered' not in result.stdout
+    assert 'lower-performance Raspberry Pi models' in result.stdout
     assert '[TX Soft Clip ON]' not in result.stdout
     assert '30bd239' not in result.stdout and '/usr/share' not in result.stdout
     assert '\x1b' not in result.stdout
@@ -813,13 +819,15 @@ def bare_python(checkout, *arguments):
     ('regions', [], '87.5-108.0 MHz | 100 kHz raster'),
     ('profiles', ['profiles'], 'Moderate Loud'),
     ('runtime', ['backend.env', 'new.db'], '8080'),
+    ('validate-bind', ['::1'], '::1'),
     ('webui', ['webui.tar.gz', 'webui'], ''),
 ])
 def test_preinstall_helpers_work_without_installed_backend(bare_checkout, operation, paths, expected):
     # Prove the exact condition which the development venv used to mask.
     probe = bare_python(bare_checkout, '-c', 'from importlib.metadata import version; version("fmheadendd")')
     assert probe.returncode != 0 and 'PackageNotFoundError' in probe.stderr
-    paths = [str(bare_checkout / path) for path in paths]
+    if operation != 'validate-bind':
+        paths = [str(bare_checkout / path) for path in paths]
     result = bare_python(bare_checkout, '-m', 'tools.install_support', operation, *paths)
     assert result.returncode == 0, result.stderr
     assert expected in result.stdout
@@ -862,7 +870,7 @@ mapfile -t HARDWARE_PLAN <<< "$plan"
 MODEL=${HARDWARE_PLAN[0]} I2C_DEVICE=${HARDWARE_PLAN[1]} RECOMMENDED_PROFILE=${HARDWARE_PLAN[2]}
 support webui "$ARCHIVE" "$WORK/site"
 detect_installation
-ANSWERS=('' '' n y y) INDEX=0
+ANSWERS=('' '' n y '' '' y) INDEX=0
 read() { if [[ ${2:-} == -u ]]; then printf -v "${@: -1}" '%s' "${ANSWERS[INDEX++]}"; else builtin read "$@"; fi; }
 collect_configuration
 printf 'WIZARD_COMPLETE:%s:%s:%s\n' "$MODE" "$REGION" "$DEFAULT_PROFILE"
@@ -872,3 +880,127 @@ printf 'WIZARD_COMPLETE:%s:%s:%s\n' "$MODE" "$REGION" "$DEFAULT_PROFILE"
     assert 'Default Audio Profile (default: 9 - Moderate Loud):' in result.stdout
     assert (tmp_path / 'work/site/index.html').is_file()
     assert not (tmp_path / 'work/not-installed').exists()
+
+
+@pytest.mark.parametrize('port,host,expected_port,expected_host', [
+    ('', '', 8080, '0.0.0.0'),
+    ('8181', '127.0.0.1', 8181, '127.0.0.1'),
+    ('9090', '2001:4860:0000::1', 9090, '2001:4860::1'),
+    ('1', '::', 1, '::'),
+    ('65535', '192.168.1.42', 65535, '192.168.1.42'),
+    ('08080', '::1', 8080, '::1'),
+])
+def test_network_choices_persist_as_actual_backend_arguments(tmp_path, port, host, expected_port, expected_host):
+    answers = 'ANSWERS=(' + ' '.join(shlex.quote(value) for value in (port, host)) + ') INDEX=0\n'
+    result = shell(tmp_path, answers + '''
+read() { printf -v "${@: -1}" '%s' "${ANSWERS[INDEX++]}"; }
+collect_network_configuration
+AUTH=yes
+write_environment
+''')
+    assert result.returncode == 0, result.stderr
+    assert 'WebUI port (default: 8080):' in result.stdout
+    assert 'HTTP bind address (default: 0.0.0.0 - all interfaces):' in result.stdout
+    env_path = tmp_path / 'config/fmheadendd.env'
+    settings = support.runtime_settings(env_path, tmp_path / 'data/headend.db')
+    assert settings[4:] == [expected_host, str(expected_port)]
+    # Parse the same arguments systemd passes to the real application.
+    from fmheadendd.app import argument_parser
+    arguments = shlex.split(shlex.split(env_path.read_text().split('=', 1)[1])[0])
+    options = argument_parser().parse_args(arguments)
+    assert (options.host, options.port) == (expected_host, expected_port)
+    assert options.passwd_file == (tmp_path / 'data/htpasswd').as_posix()
+
+
+def test_network_questions_precede_summary_and_show_selected_values(tmp_path):
+    result = shell(tmp_path, MENU + '''
+ANSWERS=('' '' n y 8181 ::1 y)
+collect_configuration
+write_environment
+''')
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.index('HTTP bind address (default:') < result.stdout.index('Installation Summary')
+    summary = result.stdout.split('Installation Summary')[1]
+    assert 'WebUI port:         8181' in summary
+    assert 'HTTP bind:          ::1' in summary
+    assert support.runtime_settings(tmp_path / 'config/fmheadendd.env', tmp_path / 'data/headend.db')[4:] == ['::1', '8181']
+
+
+def test_network_invalid_inputs_retry_then_persist_valid_choices(tmp_path):
+    answers = ['0', '-1', '65536', '8080.5', '0x1F90', '99999999999999999999999', '8181',
+               'bad host', 'http://127.0.0.1', '127.0.0.999', '::g', '0.0.0.0/', '::1']
+    script = 'ANSWERS=(' + ' '.join(shlex.quote(value) for value in answers) + ') INDEX=0\n'
+    result = shell(tmp_path, script + '''
+read() { printf -v "${@: -1}" '%s' "${ANSWERS[INDEX++]}"; }
+collect_network_configuration
+write_environment
+''')
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.count('Enter a port from 1 to 65535.') == 6
+    assert result.stdout.count('Enter a valid IPv4 or IPv6 bind address.') == 5
+    assert support.runtime_settings(tmp_path / 'config/fmheadendd.env', tmp_path / 'data/headend.db')[4:] == ['::1', '8181']
+
+
+@pytest.mark.parametrize('value', ['0.0.0.0', '127.0.0.1', '192.168.1.42', '::', '::1', 'fd00::1'])
+def test_valid_bind_addresses(value):
+    assert support.validate_bind_address(value) == value
+
+
+@pytest.mark.parametrize('value', ['localhost', 'example.com', '256.0.0.1', '127.1', '[::1]', '::g',
+                                 '0.0.0.0/', '::1/128', 'fe80::1%eth0', '224.0.0.1', 'ff02::1',
+                                 '255.255.255.255', '" --port 80', '$(touch /tmp/never-run)', '::1\n'])
+def test_invalid_or_unsafe_bind_addresses_are_rejected(value):
+    with pytest.raises(ValueError):
+        support.validate_bind_address(value)
+
+
+@pytest.mark.parametrize('value', ['0.0.0.0/', '::1/128', '" --port 80'])
+def test_bind_validation_cli_preserves_raw_input(bare_checkout, value):
+    result = bare_python(bare_checkout, '-m', 'tools.install_support', 'validate-bind', value)
+    assert result.returncode == 2
+    assert 'Invalid bind address' in result.stderr and 'Traceback' not in result.stderr
+
+
+def test_network_validator_failure_aborts_instead_of_retrying_forever(tmp_path):
+    result = shell(tmp_path, '''
+ANSWERS=(8080 0.0.0.0) INDEX=0
+read() { printf -v "${@: -1}" '%s' "${ANSWERS[INDEX++]}"; }
+support() { return 1; }
+collect_network_configuration
+echo SHOULD_NOT_RUN
+''')
+    assert result.returncode != 0
+    assert 'Could not validate the HTTP bind address' in result.stderr
+    assert 'SHOULD_NOT_RUN' not in result.stdout
+
+
+def test_network_terminal_eof_cancels_before_configuration_is_written(tmp_path):
+    result = shell(tmp_path, 'read() { return 1; }; collect_network_configuration; write_environment')
+    assert result.returncode != 0 and 'Terminal input ended' in result.stderr
+    assert not (tmp_path / 'config/fmheadendd.env').exists()
+
+
+@pytest.mark.parametrize('mode', ['upgrade', 'partial'])
+def test_existing_network_configuration_is_preserved_without_prompts(tmp_path, mode):
+    shell(tmp_path, ':')
+    backend = tmp_path / 'config/fmheadendd.env'
+    backend.write_text('FMHEADEND_ARGS="--host 127.0.0.1 --port 8181 --region 2"\n')
+    (tmp_path / 'config/muxd.env').write_text('MUXD_ARGS="preserved"\n')
+    if mode == 'upgrade':
+        db = Database(tmp_path / 'data/headend.db')
+        db.close()
+    before = backend.read_bytes()
+    result = shell(tmp_path, '''
+detect_installation
+confirm() { return 0; }
+choose_number() { REPLY=1; }
+read() { if [[ ${2:-} == -u ]]; then exit 99; else builtin read "$@"; fi; }
+collect_configuration
+write_environment
+''')
+    assert result.returncode == 0, result.stderr
+    assert 'WebUI port (default:' not in result.stdout
+    assert 'HTTP bind address (default:' not in result.stdout
+    assert 'WebUI port:         8181' in result.stdout
+    assert 'HTTP bind:          127.0.0.1' in result.stdout
+    assert backend.read_bytes() == before

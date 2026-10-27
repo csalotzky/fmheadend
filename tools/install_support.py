@@ -124,6 +124,17 @@ def runtime_settings(path, default_database):
     return [values[key] for key in ('--database', '--region', '--i2c-device', '--passwd-file', '--host', '--port')]
 
 
+def validate_bind_address(value):
+    # Only IP literals go into new environment files: no shell/environment
+    # quoting, DNS resolution, or interface-dependent zone identifiers.
+    if '%' in value:
+        raise ValueError('Scoped addresses are not supported')
+    address = ipaddress.ip_address(value)
+    if address.is_multicast or str(address) == '255.255.255.255':
+        raise ValueError('A unicast or wildcard bind address is required')
+    return str(address)
+
+
 def webui_urls(interfaces, host, port):
     """Only advertise active, assigned addresses reachable through this bind.
 
@@ -289,9 +300,11 @@ def http_health(host, port):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=['hardware', 'regions', 'profiles', 'runtime', 'check-db', 'backup-db', 'webui', 'health', 'service-contract', 'urls', 'realtime'])
-    parser.add_argument('paths', nargs='*', type=Path)
+    parser.add_argument('operation', choices=['hardware', 'regions', 'profiles', 'runtime', 'validate-bind', 'check-db', 'backup-db', 'webui', 'health', 'service-contract', 'urls', 'realtime'])
+    parser.add_argument('paths', nargs='*')
     args = parser.parse_args()
+    if args.operation != 'validate-bind':
+        args.paths = [Path(path) for path in args.paths]
     try:
         if args.operation == 'hardware':
             print('\n'.join(hardware_plan(*args.paths)))
@@ -306,6 +319,13 @@ def main():
                 print(identifier + '\t' + name)
         elif args.operation == 'runtime':
             print('\n'.join(runtime_settings(*args.paths)))
+        elif args.operation == 'validate-bind':
+            if len(args.paths) != 1:
+                parser.error('validate-bind requires one address')
+            try:
+                print(validate_bind_address(args.paths[0]))
+            except ValueError as exc:
+                parser.exit(2, f'Invalid bind address: {exc}\n')
         elif args.operation == 'check-db':
             check_database(*args.paths)
         elif args.operation == 'backup-db':
