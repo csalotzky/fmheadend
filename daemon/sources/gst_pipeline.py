@@ -121,6 +121,7 @@ class GstPipeline:
         dsp_stages(check, profile)
 
     def __init__(self, source, *, profile=None, output=None, timeout_s=None, reconnect=True,
+                 telemetry_configured=False,
                  pcm_staging_buffer_ms=DEFAULT_STAGING_BUFFER_MS,
                  pcm_consumer_buffer_ms=DEFAULT_CONSUMER_BUFFER_MS,
                  pcm_staging_max_age_ms=DEFAULT_STAGING_MAX_AGE_MS,
@@ -140,6 +141,7 @@ class GstPipeline:
         self.output = output or PcmOutput(pcm_consumer_buffer_ms)
         self.timeout_s = timeout_s or min(30, max(1, source.config.get("connect_timeout_ms", 10000) / 1000))
         self.reconnect = reconnect
+        self.telemetry_configured = telemetry_configured
         self._audio_ready = threading.Event()
         pcm_capacity_bytes(pcm_staging_max_age_ms)
         self.staging = PcmQueue(max_bytes=pcm_capacity_bytes(pcm_staging_buffer_ms),
@@ -179,7 +181,7 @@ class GstPipeline:
     def request_telemetry(self, enabled, hz=50.0):
         """Control-thread request only; never touches native elements."""
         with self._lock:
-            request = (bool(enabled), hz)
+            request = (bool(enabled) and self.telemetry_configured, hz)
             if request == self._telemetry_request:
                 return
             self._telemetry_request = request
@@ -458,19 +460,21 @@ class GstPipeline:
         sink = self._make("appsink", caps=Gst.Caps.from_string(PCM_CAPS), emit_signals=True,
                           sync=True, max_buffers=2, drop=True, wait_on_eos=False, enable_last_sample=False)
         sink.connect("new-sample", self._sample)
-        input_peak = self._make('level', post_messages=False, interval=20_000_000, audio_level_meta=False)
-        output_peak = self._make('level', post_messages=False, interval=20_000_000, audio_level_meta=False)
-        self._peak_elements = dict(input=input_peak, output=output_peak)
+        input_peaks, output_peaks = [], []
+        if self.telemetry_configured:
+            input_peaks = [self._make('level', post_messages=False, interval=20_000_000, audio_level_meta=False)]
+            output_peaks = [self._make('level', post_messages=False, interval=20_000_000, audio_level_meta=False)]
+            self._peak_elements = dict(input=input_peaks[0], output=output_peaks[0])
         self._peak_state = None
         if self.profile:
             domain = self._make("capsfilter", caps=Gst.Caps.from_string(PROCESSING_CAPS))
             stages = dsp_stages(self._make, self.profile, on_stage=self._register_dsp)
             final_convert = self._make("audioconvert")
-            self._link(self._convert, resample, domain, input_peak, volume, *stages,
-                       final_convert, capsfilter, queue, output_peak, sink)
+            self._link(self._convert, resample, domain, *input_peaks, volume, *stages,
+                       final_convert, capsfilter, queue, *output_peaks, sink)
         else:
             domain = self._make('capsfilter', caps=Gst.Caps.from_string(PCM_CAPS))
-            self._link(self._convert, resample, domain, input_peak, volume, capsfilter, queue, output_peak, sink)
+            self._link(self._convert, resample, domain, *input_peaks, volume, capsfilter, queue, *output_peaks, sink)
         self.sink = sink
         config = self.source.config
         if self.source.type in (SourceType.LOCAL, SourceType.PODCAST):

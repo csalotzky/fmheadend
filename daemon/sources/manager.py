@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 class SourceManager:
     def __init__(self, database, pipeline_factory=MockPipeline, profile_files=None, *, clock=time.monotonic,
+                 telemetry_configured=False,
                  pcm_staging_buffer_ms=DEFAULT_STAGING_BUFFER_MS,
                  pcm_consumer_buffer_ms=DEFAULT_CONSUMER_BUFFER_MS,
                  pcm_staging_max_age_ms=DEFAULT_STAGING_MAX_AGE_MS):
@@ -24,6 +25,7 @@ class SourceManager:
         self.pcm_consumer_buffer_ms = pcm_consumer_buffer_ms
         self.database = database
         self.pipeline_factory = pipeline_factory
+        self.telemetry_configured = telemetry_configured
         self.profile_files = profile_files
         self.pipelines = {}
         self.consumers: dict[int, set[int]] = {}
@@ -145,6 +147,7 @@ class SourceManager:
         if source.type == 'PODCAST':
             kwargs['podcast_database_path'] = self.database.connection.execute('PRAGMA database_list').fetchone()[2]
         pipeline = self.pipeline_factory(source, profile=profile,
+            telemetry_configured=self.telemetry_configured,
             pcm_staging_buffer_ms=self.pcm_staging_buffer_ms,
             pcm_staging_max_age_ms=self.pcm_staging_max_age_ms,
             pcm_consumer_buffer_ms=self.pcm_consumer_buffer_ms, **kwargs)
@@ -355,6 +358,7 @@ class SourceManager:
         profile_id = self.effective_profile_id(source)
         factory = self.pipeline_factory
         options = dict(pcm_staging_buffer_ms=self.pcm_staging_buffer_ms,
+                       telemetry_configured=self.telemetry_configured,
                        pcm_staging_max_age_ms=self.pcm_staging_max_age_ms,
                        pcm_consumer_buffer_ms=self.pcm_consumer_buffer_ms,
                        reconnect=False)

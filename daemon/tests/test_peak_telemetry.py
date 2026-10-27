@@ -30,12 +30,14 @@ def pipeline(builtin=False, gain=0, trim=0, **kwargs):
         use_default_audio_profile=False,
         audio_profile_id='custom/peak-test.json' if builtin else 'default/bypass.json',
         config=dict(host='127.0.0.1', port=kwargs.pop('port', 12345), format='S16LE', sample_rate=48000, channels=2))
+    kwargs.setdefault('telemetry_configured', True)
     return GstPipeline(source, profile=profile(trim) if builtin else None, **kwargs)
 
 
 @pytest.mark.parametrize('builtin', [False, True])
-def test_endpoint_placement_before_source_gain_after_trim(builtin):
-    p = pipeline(builtin, gain=-6, trim=-3)
+@pytest.mark.parametrize('configured', [False, True])
+def test_endpoint_placement_before_source_gain_after_trim(builtin, configured):
+    p = pipeline(builtin, gain=-6, trim=-3, telemetry_configured=configured)
     p.Gst = SimpleNamespace(Pipeline=SimpleNamespace(new=lambda unused: Mock()),
                             Caps=SimpleNamespace(from_string=lambda value: value))
     made = []
@@ -48,8 +50,25 @@ def test_endpoint_placement_before_source_gain_after_trim(builtin):
     p._make, p._link = make, Mock()
     p._build()
     chain = p._link.call_args_list[0].args
-    raw, final = p._peak_elements['input'], p._peak_elements['output']
     source_gain = next(e for e in made if e.factory == 'volume')
+    assert source_gain.props['volume'] == pytest.approx(10**(-6/20))
+    assert sum(e.factory == 'level' for e in made) == (2 if configured else 0)
+    if not configured:
+        assert p._peak_elements == {}
+        assert chain[chain.index(source_gain)-1].factory == 'capsfilter'
+        assert [e.factory for e in chain[-3:]] == ['capsfilter', 'queue', 'appsink']
+        if builtin:
+            assert chain[chain.index(p._dsp_elements['output_trim'])+1].factory == 'audioconvert'
+        p.request_telemetry(True)
+        p._telemetry_tick()
+        p._peak_message(Mock())
+        assert not p.telemetry_snapshot()['telemetry_available']
+        p._invalidate_telemetry(discard=True)
+        made.clear()
+        p._build()  # Recovery/rebuild must not add meters.
+        assert all(e.factory != 'level' for e in made)
+        return
+    raw, final = p._peak_elements['input'], p._peak_elements['output']
     assert chain.index(raw) + 1 == chain.index(source_gain)
     assert chain[chain.index(raw)-1].factory == 'capsfilter'
     assert chain[-2] is final and chain[-1].factory == 'appsink'
@@ -61,6 +80,43 @@ def test_endpoint_placement_before_source_gain_after_trim(builtin):
     assert source_gain.props['volume'] == pytest.approx(10**(-6/20))
     assert raw.props['post-messages'] is final.props['post-messages'] is False
     assert raw.props['interval'] == final.props['interval'] == 20_000_000
+
+
+@pytest.mark.gstreamer
+@pytest.mark.parametrize('builtin', [False, True])
+@pytest.mark.parametrize('configured', [False, True])
+def test_native_level_topology(builtin, configured):
+    try:
+        Gst = load_gst()
+    except DependencyUnavailable as exc:
+        pytest.skip(str(exc))
+    p = pipeline(builtin, telemetry_configured=configured)
+    p.Gst = Gst
+    try:
+        p._build()
+        iterator = p._pipeline.iterate_recurse()
+        levels = []
+        while True:
+            result, element = iterator.next()
+            if result == Gst.IteratorResult.DONE:
+                break
+            assert result == Gst.IteratorResult.OK
+            factory = element.get_factory()
+            if factory and factory.get_name() == 'level':
+                levels.append(element)
+        assert len(levels) == (2 if configured else 0)
+        assert set(levels) == set(p._peak_elements.values())
+        assert p.sink.get_property('caps').to_string().startswith('audio/x-raw')
+        p.request_telemetry(True)
+        p._telemetry_tick()
+        assert all(e.get_property('post-messages') for e in levels)
+        p.request_telemetry(False)
+        p._telemetry_tick()
+        assert all(not e.get_property('post-messages') for e in levels)
+    finally:
+        if p._pipeline is not None:
+            p._pipeline.set_state(Gst.State.NULL)
+        p._invalidate_telemetry(discard=True)
 
 
 def test_peak_messages_cache_disable_fencing_and_expiry(monkeypatch):

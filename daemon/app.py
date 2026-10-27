@@ -63,6 +63,7 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
                 is_referenced=lambda path: any(s.audio_profile_id == path for s in database.list('sources')),
                 is_system_default=lambda path: database.get_system().default_audio_profile_id == path)
             sources = SourceManager(database, pipeline_factory, profile_files, clock=clock,
+                telemetry_configured=bool(settings.audio_telemetry_socket),
                 pcm_staging_buffer_ms=settings.pcm_staging_buffer_ms,
                 pcm_staging_max_age_ms=settings.pcm_staging_max_age_ms,
                 pcm_consumer_buffer_ms=settings.pcm_consumer_buffer_ms)

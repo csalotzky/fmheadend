@@ -206,6 +206,12 @@ Optional diagnostics can report input and output sample peaks, native LSP and FM
 
 Start `fmheadendd` with `--audio-telemetry-socket PATH` to enable a local Unix socket emitting newline-delimited JSON. The optional `--audio-telemetry-hz` accepts `10..100 Hz` (50 Hz when omitted). Telemetry is not part of the WebUI or REST API.
 
+Without a telemetry socket, Source pipelines omit both GStreamer `level` elements,
+avoiding their native signal-analysis work. Configuring the socket includes both
+meters; client connection and disconnection still control measurement activation
+without rebuilding the audio pipeline. Changing the socket setting requires a
+daemon restart.
+
 Telemetry reads native stage meters and adds some processing overhead. A slow socket client is disconnected rather than accumulating an output backlog. See [Configuration](configuration.md).
 
 ## 8. CPU performance

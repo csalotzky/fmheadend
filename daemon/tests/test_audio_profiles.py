@@ -220,7 +220,8 @@ def test_invalid_running_profile_reports_source_only(api):
 
 
 @pytest.mark.parametrize('builtin', [False, True])
-def test_actual_gst_builder_gains_and_json_stages(tmp_path, builtin):
+@pytest.mark.parametrize('telemetry_configured', [False, True])
+def test_actual_gst_builder_gains_and_json_stages(tmp_path, builtin, telemetry_configured):
     files = AudioProfileFiles(DEFAULT, tmp_path)
     doc = document()
     doc['stages']['input_gain']['implementations']['VOLUME']['gain_db'] = -3
@@ -229,7 +230,7 @@ def test_actual_gst_builder_gains_and_json_stages(tmp_path, builtin):
     db = Database(':memory:')
     source = db.save('sources', InputSourceConfig(**SOURCE, input_gain_db=-6,
         use_default_audio_profile=False, audio_profile_id=saved.path if builtin else 'default/bypass.json'))
-    manager = SourceManager(db, GstPipeline, files)
+    manager = SourceManager(db, GstPipeline, files, telemetry_configured=telemetry_configured)
     pipeline = manager._new_pipeline(source)
     class Element:
         def __init__(self, factory, props): self.factory, self.props = factory, props
@@ -242,11 +243,13 @@ def test_actual_gst_builder_gains_and_json_stages(tmp_path, builtin):
     pipeline._make = make
     pipeline._link = lambda *args: links.append(args)
     pipeline._build()
+    assert sum(e.factory == 'level' for e in elements) == (2 if telemetry_configured else 0)
     gains = [el.props['volume'] for el in elements if el.factory == 'volume']
     assert gains == pytest.approx([10 ** (-6/20)] + ([10 ** (-3/20), 1, 1] if builtin else [1, 1, 1]))
     if builtin:
         assert next(e for e in elements if e.factory == 'audiocheblimit').props['cutoff'] == 80
-        assert [e.factory for e in links[0]][3:7] == ['level', 'volume', 'volume', 'audiocheblimit']
+        chain = [e.factory for e in links[0] if e.factory != 'level']
+        assert chain[3:6] == ['volume', 'volume', 'audiocheblimit']
     else:
         assert not any(e.factory in ('audiocheblimit', 'lsp-plug-in-plugins-lv2-limiter-stereo') for e in elements)
     db.close()

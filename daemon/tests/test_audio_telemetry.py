@@ -8,11 +8,11 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from fmheadendd.app import argument_parser
+from fmheadendd.app import argument_parser, create_app
 from fmheadendd.audio_telemetry import AudioTelemetry
 from fmheadendd.audio_profile_files import AudioProfileFiles
 from fmheadendd.config import Settings
@@ -44,7 +44,7 @@ class Element:
 
 def pipeline():
     p = GstPipeline(InputSourceConfig(name='station', type='HTTP', config={'uri': 'http://localhost/test'},
-        use_default_audio_profile=False, audio_profile_id='default/bypass.json'))
+        use_default_audio_profile=False, audio_profile_id='default/bypass.json'), telemetry_configured=True)
     p.audio_profile_id = 'default/bypass.json'
     p._pipeline = Mock()
     return p
@@ -179,7 +179,7 @@ def test_agc_enable_restore_only_on_worker_and_null_invalidation(monkeypatch):
 
 
 def test_manager_current_wrapper_consumers_and_new_source_request():
-    manager = SourceManager(Mock(), pipeline_factory=GstPipeline, profile_files=profile_files())
+    manager = SourceManager(Mock(), pipeline_factory=GstPipeline, profile_files=profile_files(), telemetry_configured=True)
     first = pipeline()
     manager.pipelines[3] = first
     manager.consumers[3] = {7, 2}
@@ -195,6 +195,47 @@ def test_manager_current_wrapper_consumers_and_new_source_request():
     assert not manager.telemetry_snapshot()[0]['telemetry_available']
     manager.set_telemetry(False)
     assert replacement._telemetry_request[0] is False
+
+
+@pytest.mark.parametrize('configured', [False, True])
+def test_socket_configuration_reaches_pipeline_replacements_and_probes(tmp_path, monkeypatch, configured):
+    from fastapi.testclient import TestClient
+    from fmheadendd.tests.profile_support import profile_settings
+    from fmheadendd.tests.test_audio_profiles import FakePipeline
+
+    made = []
+    class CapturePipeline(FakePipeline):
+        def __init__(self, source, **kwargs):
+            super().__init__(source, **kwargs)
+            made.append(kwargs)
+
+        def probe_result(self):
+            return 'probe complete'
+
+    # Exercise application wiring without creating a Unix socket on Windows.
+    start = AsyncMock()
+    monkeypatch.setattr(AudioTelemetry, 'start', start)
+    monkeypatch.setattr(AudioTelemetry, 'close', AsyncMock())
+    settings = profile_settings(tmp_path / 'db',
+        audio_telemetry_socket=str(tmp_path / 'telemetry.sock') if configured else None)
+    app = create_app(settings, pipeline_factory=CapturePipeline)
+    with TestClient(app):
+        manager = app.state.services.sources
+        assert manager.telemetry_configured is configured
+        assert (app.state.services.audio_telemetry is not None) is configured
+        assert start.await_count == int(configured)
+
+        def construct():
+            source = InputSourceConfig(name='Test', type='HTTP', config={'uri': 'http://localhost/live'})
+            original = manager._new_pipeline(source)
+            replacement = manager._new_pipeline(source, output=original.output)
+            assert replacement.output is original.output
+            return manager.prepare_test(source)
+
+        probe = app.state.control.executor.submit(construct).result()
+        assert probe() == 'probe complete'
+        assert len(made) == 3
+        assert all(options['telemetry_configured'] is configured for options in made)
 
 
 @pytest.mark.skipif(os.name != 'posix', reason='asyncio AF_UNIX server is a Linux feature')
@@ -503,7 +544,7 @@ def test_close_owns_connected_client_and_is_bounded(tmp_path, race):
 
 
 def test_terminal_disable_fences_queued_enables_and_unpublished_wrapper():
-    manager = SourceManager(Mock(), pipeline_factory=GstPipeline, profile_files=profile_files())
+    manager = SourceManager(Mock(), pipeline_factory=GstPipeline, profile_files=profile_files(), telemetry_configured=True)
     manager.set_telemetry(True)
     pending = manager._new_pipeline(pipeline().source)
     assert pending._telemetry_request[0]
