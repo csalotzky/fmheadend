@@ -83,7 +83,7 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
             rds.suspended = True
             config = ConfigurationService(database, sources, modulators)
             status = StatusService(modulators, sources, rp_client, mux_client, clock, recovery,
-                                   config=config, profile_files=profile_files, radiotext=rt)
+                                   config=config, radiotext=rt)
             filesystem = FilesystemBrowser(settings.media_browser_roots)
             status.info.update(database_schema_version=SCHEMA_VERSION,
                                media_backend="MOCK" if getattr(pipeline_factory, "mocked", True) else "GStreamer")
@@ -116,7 +116,7 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
             # Observation errors must not retroactively fail a confirmed action.
             try:
                 interval = settings.controller_status_poll_interval_ms / 1000
-                services.status.publish(max_age_s=max(2.0, 2 * interval), configuration_changed=force)
+                services.status.publish(max_age_s=max(2.0, 2 * interval))
             except Exception:
                 services.status.publication_failed()
                 logger.exception('Status publication failed; retaining stale observation')
@@ -221,6 +221,7 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
                 if isinstance(services.rp, Rp2354Client):
                     cleanup('Controller', services.rp.close)
                 cleanup('Database', services.database.close)
+                cleanup('Audio Profile files', services.profile_files.close)
             try:
                 # Queue behind any shielded in-flight work, but never reject
                 # essential cleanup because the normal request queue is full.

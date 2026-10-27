@@ -23,16 +23,14 @@ def communication_state(error):
 
 class StatusService:
     def __init__(self, modulators, sources, rp, mux, clock=time.monotonic, recovery=None,
-                 config=None, profile_files=None, radiotext=None):
+                 config=None, radiotext=None):
         self.modulators, self.sources, self.rp, self.mux = modulators, sources, rp, mux
         self.radiotext = radiotext
         self.clock, self.started = clock, clock()
         self.host_metrics = HostMetrics(clock)
         self.spi_diagnostics = SpiDiagnostics(rp, clock)
         self.recovery = recovery
-        self.config, self.profile_files = config, profile_files
-        self._profile_list = None
-        self._profile_list_at = None
+        self.config = config
         self._publication_failed = False
         self._mux_state = None
         self._observed_at = None
@@ -44,7 +42,7 @@ class StatusService:
                      "modulator_count": None, "controller_capability_stale": True, "mocked": not self.real_rp}
         self.refresh()
 
-    def publish(self, *, max_age_s=2.0, configuration_changed=False):
+    def publish(self, *, max_age_s=2.0):
         """Control thread only. Build privately, then replace one owned snapshot.
 
         Readers never collect Source diagnostics or enter PCM/control locks.
@@ -64,17 +62,6 @@ class StatusService:
                 profile_errors=profile_errors).model_copy(deep=True) for s in configs}
             views = dict(sources=configs, modulators=[self._modulator_configs[i] for i in self.modulators.physical_ids],
                          info=dict(self.info), source_statuses=source_statuses)
-            now = self.clock()
-            if (configuration_changed or self._profile_list_at is None
-                    or now - self._profile_list_at >= 5.0):
-                try:
-                    self._profile_list = self.profile_files.list()
-                except DomainError as exc:
-                    # Preserve the endpoint's typed failure, not a fake empty list.
-                    self._profile_list = (exc.status, exc.error, exc.message)
-                self._profile_list_at = self.clock()
-            views['profiles'] = self._profile_list
-            views['profiles_observed_at'] = self._profile_list_at
         snapshot = self.snapshot(source_statuses).model_copy(deep=True)
         if self.radiotext is not None:
             modulator_configs = {config.id: config for config in views.get('modulators', ())}
@@ -88,17 +75,11 @@ class StatusService:
     def publication_failed(self):
         self._publication_failed = True
 
-    def publication_age(self, name=None):
-        published_at, _, _, views = self._published
-        if name == 'profiles':
-            published_at = views['profiles_observed_at']
-        return max(0, self.clock() - published_at)
+    def publication_age(self):
+        return max(0, self.clock() - self._published[0])
 
     def published_view(self, name):
-        value = self._published[3][name]
-        if name == 'profiles' and isinstance(value, tuple):
-            raise DomainError(*value)
-        return value
+        return self._published[3][name]
 
     def published_source(self, source_id):
         published_at, max_age_s, _, views = self._published
