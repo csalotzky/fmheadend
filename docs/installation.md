@@ -23,8 +23,8 @@ Run `sudo ./install.sh --webui-archive /path/to/fmheadend-webui.tar.gz` from the
 | Controller | FMheadend Controller connected through I²C and SPI |
 | Optional sources | Network, local storage and/or ALSA devices as needed |
 
-Development currently takes place on a **Raspberry Pi 3B**. A fresh Pi 4
-installation has succeeded; Zero 2 W and Pi 5 still need performance testing.
+Development has taken place on both Raspberry Pi 3B and Raspberry Pi 4.
+Raspberry Pi Zero 2 (W) and Pi 5 still need performance testing.
 Actual capacity depends on active channels and DSP workload, not just I²C/SPI
 compatibility. Only Pi 2 variants capable of running the required 64-bit OS are
 eligible for this installer.
