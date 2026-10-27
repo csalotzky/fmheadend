@@ -108,6 +108,35 @@ def test_publication_owns_source_models_and_mutations_are_immediately_visible(tm
         assert api.get(f'{P}/sources/999/status').status_code == 404
 
 
+@pytest.mark.parametrize('active', [False, True])
+def test_periodic_control_reads_execute_no_sql(tmp_path, active):
+    now = [0.0]
+    app = configured(tmp_path, lambda: now[0])
+    with TestClient(app) as api:
+        sid = start(api)
+        if not active:
+            assert api.post(P+'/modulators/stop-all').status_code == 200
+
+        def check():
+            services = app.state.services
+            services.status.refresh()
+            services.rt.effective(0)
+            queries = []
+            services.database.connection.set_trace_callback(queries.append)
+            try:
+                for _ in range(20):
+                    now[0] += .11
+                    services.rt.expire()
+                    services.rds.tick()
+                    services.status.refresh()
+                assert queries == []
+                assert services.status.published_source(sid).state == ('RUNNING' if active else 'IDLE')
+            finally:
+                services.database.connection.set_trace_callback(None)
+
+        app.state.control.executor.submit(check).result(timeout=10)
+
+
 def test_publication_failure_does_not_fail_confirmed_stop(tmp_path,monkeypatch):
     app=configured(tmp_path,lambda:0.0)
     with TestClient(app) as api:
@@ -221,6 +250,7 @@ def test_publication_reuses_inventory_and_observations_for_radiotext(tmp_path):
                 0: {'accepted_bytes': 100}, 1: {'accepted_bytes': 100}}}
             with patch.object(pipeline, 'snapshot', side_effect=lambda: dict(observed)), \
                     patch.object(pipeline, 'pcm_snapshot', create=True, side_effect=lambda: pcm):
+                services.status.publish()  # Load this committed configuration generation.
                 previous = None
                 for title, accepted in [('First track', 100), ('Next track', 200)]:
                     observed['stream_title'] = title
@@ -229,13 +259,15 @@ def test_publication_reuses_inventory_and_observations_for_radiotext(tmp_path):
                             patch.object(services.database, 'effective_rds_profile', wraps=services.database.effective_rds_profile) as resolve, \
                             patch.object(services.sources, 'status', wraps=services.sources.status) as status, \
                             patch.object(services.rt, 'effective', wraps=services.rt.effective) as effective:
-                        services.status.publish()
-                        # Only inventory reads remain: one TX lookup/resolution per TX.
-                        assert [c.args for c in get.call_args_list if c.args[0] == 'modulators'] == [
-                            ('modulators', tx) for tx in range(8)]
-                        assert resolve.call_count == 8
-                        # The source inventory plus three Follow-source resolutions.
-                        assert [c.args for c in get.call_args_list if c.args[0] == 'sources'] == [('sources', sid)] * 4
+                        queries = []
+                        services.database.connection.set_trace_callback(queries.append)
+                        try:
+                            services.status.publish()
+                        finally:
+                            services.database.connection.set_trace_callback(None)
+                        assert queries == []
+                        get.assert_not_called()
+                        resolve.assert_not_called()
                         status.assert_called_once()
                         assert status.call_args.args == (sid,) and 'source' in status.call_args.kwargs
                         assert effective.call_count == 8

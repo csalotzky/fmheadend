@@ -4,6 +4,21 @@ FMheadend separates media processing, real-time PCM transport, and hardware cont
 
 ## 1. System overview
 
+Configuration reads share a repository-owned, validated in-memory generation on
+the existing control executor. SQLite remains authoritative: its connection-local
+`total_changes` counter invalidates the generation after writes, including bulk TX
+changes and recovered stream URLs. Checking this counter executes no SQL. Reads
+inside a transaction bypass the cache; rollback cannot publish uncommitted values.
+Callers receive deep copies, and repository reads retain connection-thread ownership.
+The first read after a change reloads the requested configuration from SQLite.
+
+RDS ticks and status publication reuse unchanged configuration without SQL or
+revalidation. Stream metadata, RT override expiration, PCM observations and hardware
+status remain live. Revision checks for conditional URL recovery and durable podcast
+history still use SQLite. No polling worker or TTL-based configuration refresh is
+needed. Edit configuration through the API; direct database edits by another process
+require stopping and restarting the daemon. The cache is discarded on restart.
+
 ```mermaid
 flowchart TB
     subgraph Clients["Browser and external clients"]

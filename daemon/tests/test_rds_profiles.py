@@ -137,11 +137,14 @@ def test_active_override_and_selection_changes_are_hot_but_enable_is_hardware(li
 def test_failed_persistence_rolls_back_owned_profile(tmp_path):
     db = Database(tmp_path/'atomic.db')
     s = db.save('sources', source_config(rds_profile=RdsProfileConfig(rds_pi=1)))
+    db.save('modulators', ModulatorConfig(input_source_id=s.id, rds_follow_source=True), 0)
+    before_configs = db.list('sources'), db.list('modulators')
     before = [tuple(r) for r in db.connection.execute('SELECT * FROM rds_profiles')]
     db.connection.execute("CREATE TEMP TRIGGER fail_source BEFORE UPDATE ON sources BEGIN SELECT RAISE(ABORT, 'failed'); END")
     with pytest.raises(DomainError):
         db.save('sources', s.model_copy(update={'rds_profile': RdsProfileConfig(rds_pi=2)}), s.id)
     assert [tuple(r) for r in db.connection.execute('SELECT * FROM rds_profiles')] == before
+    assert (db.list('sources'), db.list('modulators')) == before_configs
     db.close()
 
 
