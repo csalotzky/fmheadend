@@ -61,7 +61,7 @@ def test_corrupt_selected_profile_does_not_hide_catalog_or_change_references(api
     services = api.app.state.services
     def corrupt_and_publish():
         services.profile_files._path(path).write_text('{bad', encoding='utf-8')
-        services.status.publish(configuration_changed=True)
+        services.status.publish()
     api.app.state.control.executor.submit(corrupt_and_publish).result()
     result = api.get(BASE.rstrip('/'))
     assert result.status_code == 200

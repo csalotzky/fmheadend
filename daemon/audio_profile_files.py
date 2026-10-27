@@ -8,11 +8,13 @@ from pathlib import Path
 import re
 import tempfile
 import unicodedata
+from threading import RLock
 
 from pydantic import ValidationError
 
 from .errors import DomainError
 from .models.audio_profile_file import AudioProfileFile, ProfileFileResult, ProfileFileSummary
+from .profile_changes import ProfileChanges
 
 MAX_PROFILE_BYTES = 65536
 logger = logging.getLogger(__name__)
@@ -35,6 +37,20 @@ class AudioProfileFiles:
         self.is_referenced = is_referenced
         self.is_system_default = is_system_default
         self.clock = clock
+        self._listing = None
+        self._changes = None  # Open notifications lazily, when the list is requested.
+        self._listing_lock = RLock()
+
+    def close(self):
+        with self._listing_lock:
+            if self._changes is not None:
+                self._changes.close()
+                self._changes = None
+            self._listing = None
+
+    def _invalidate_listing(self):
+        with self._listing_lock:
+            self._listing = None
 
     def _path(self, logical):
         if not re.fullmatch(r"(default|custom)/[a-zA-Z0-9_-]+\.json", logical):
@@ -77,6 +93,18 @@ class AudioProfileFiles:
                 kind=logical.split('/')[0], profile=profile, is_system_default=self.is_system_default(logical))
 
     def list(self):
+        with self._listing_lock:
+            if self._changes is None:
+                self._changes = ProfileChanges(self.roots.values())
+            if self._changes.changed():
+                self._listing = None
+            if self._listing is None:
+                self._listing = self._read_list()
+            # Default selection is configuration, not a filesystem event.
+            return [item.model_copy(deep=True, update={
+                'is_system_default': self.is_system_default(item.path)}) for item in self._listing]
+
+    def _read_list(self):
         result = []
         with storage_errors():
             for kind, root in self.roots.items():
@@ -130,6 +158,7 @@ class AudioProfileFiles:
                         return False
                 return True
             finally:
+                self._invalidate_listing()
                 Path(temporary).unlink(missing_ok=True)
 
     def create(self, data):
@@ -167,5 +196,6 @@ class AudioProfileFiles:
                 raise DomainError(409, "PROFILE_IN_USE", "Profile is the system default or referenced by a Source")
             try:
                 path.unlink()
+                self._invalidate_listing()
             except FileNotFoundError as exc:
                 raise DomainError(404, "PROFILE_NOT_FOUND", f"Profile not found: {logical}") from exc

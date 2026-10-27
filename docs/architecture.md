@@ -211,6 +211,26 @@ Status is assembled from configuration, Source/PCM diagnostics, mux counters and
 
 ## 4. Configuration, desired state and observations
 
+Audio Profile inventory is demand-driven, separate from periodic status publication.
+The list endpoint runs on the existing control executor, serialized with profile
+writes. On Linux, a nonblocking inotify descriptor invalidates validated summaries
+after file or directory changes; it is drained only when the list is requested.
+Ancestor watches detect creation or replacement of either profile root. Watch loss
+and queue overflow invalidate the inventory conservatively. There is no watcher
+thread, periodic directory scan, or timer-based profile-list refresh.
+
+API writes invalidate immediately. External edits and installed-default updates
+appear on the next list request, including requests from the open WebUI. Default
+selection flags are resolved from current configuration without rereading files.
+Individual profile loads and active-source validation retain their existing strict
+behavior; this optimization covers the inventory, not audio lifecycle validation.
+
+Without usable inotify, listings read fresh on demand rather than polling in the
+background. Cached summaries assume local Linux filesystem notification semantics;
+remote filesystem changes not reported by inotify require a restart. A cold listing
+can wait for the control executor and scans the complete inventory once. Invalid
+documents remain excluded and logged; storage failures remain explicit API errors.
+
 | Layer | Owner | Examples | Lifetime |
 |---|---|---|---|
 | Startup configuration | systemd environment / CLI | I2C device and address, HTTP listener, mux runtime directory, region | Process lifetime |

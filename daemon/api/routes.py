@@ -17,7 +17,7 @@ router = APIRouter(prefix="/api/v1", responses={
 def published_view(request, response, name):
     status = request.app.state.services.status
     response.headers['Cache-Control'] = 'no-store'
-    response.headers['X-Observation-Age-Seconds'] = f'{status.publication_age(name):.3f}'
+    response.headers['X-Observation-Age-Seconds'] = f'{status.publication_age():.3f}'
     return status.published_view(name)
 
 
@@ -102,8 +102,11 @@ async def source_status(id: int, request: Request):
 
 
 @router.get("/audio-profiles/files", response_model=list[ProfileFileSummary], tags=["audio profiles"])
-async def list_profile_files(request: Request, response: Response):
-    return published_view(request, response, 'profiles')
+@control_route
+def list_profile_files(request: Request, response: Response):
+    response.headers['Cache-Control'] = 'no-store'
+    response.headers['X-Observation-Age-Seconds'] = '0.000'
+    return request.app.state.services.profile_files.list()
 
 
 @router.post("/audio-profiles/files/custom", response_model=ProfileFileResult, status_code=201, tags=["audio profiles"])

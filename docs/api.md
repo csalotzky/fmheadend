@@ -327,6 +327,13 @@ restricted `.json` filename. Built-in profiles are read-only but clonable. A cus
 profile cannot be deleted while it is the system default or directly referenced by
 a Source.
 
+The list is refreshed on demand, independently of `/status`. On Linux, unchanged
+inventories reuse validated summaries until filesystem notifications or API writes
+invalidate them. External edits, renames and installed-default updates are visible
+on the next request. If notifications are unavailable, each list request reads fresh.
+The endpoint uses the control executor and returns `Cache-Control: no-store`;
+`X-Observation-Age-Seconds: 0.000` denotes a listing checked for changes for this request.
+
 Create and replace operations accept a complete Audio Profile document with
 `schema_version: 1`, `name`, `description` and exactly the twelve supported `stages`.
 Use `GET /audio-profiles/files/dsp` and the OpenAPI schema to construct it. The

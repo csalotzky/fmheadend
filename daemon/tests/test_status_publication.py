@@ -56,7 +56,7 @@ def test_all_periodic_reads_bypass_busy_control_and_audio_locks(tmp_path, monkey
                             m.setattr(obj, method, Mock(side_effect=AssertionError('poll touched owner')))
                         paths = ['/status', '/status', '/sources', '/modulators',
                                  f'/sources/{sid}/status', '/system/info',
-                                 '/audio-profiles/files', '/system/logs']
+                                 '/system/logs']
                         futures = [pool.submit(api.get, P+path) for path in paths]
                         replies = [f.result(timeout=3) for f in futures]
                         assert all(r.status_code == 200 for r in replies)
@@ -149,7 +149,7 @@ def test_publication_failure_does_not_fail_confirmed_stop(tmp_path,monkeypatch):
             assert api.get(P+'/status').json()['system']['snapshot_stale']
 
 
-def test_profile_list_bounded_reuse_and_typed_error_do_not_break_status(tmp_path,monkeypatch):
+def test_profile_listing_is_on_demand_and_failure_does_not_break_status(tmp_path,monkeypatch):
     now=[0.0]
     app=configured(tmp_path,lambda:now[0])
     with TestClient(app) as api:
@@ -158,17 +158,16 @@ def test_profile_list_bounded_reuse_and_typed_error_do_not_break_status(tmp_path
         with monkeypatch.context() as m:
             failure=Mock(side_effect=DomainError(422,'INVALID_PROFILE','Malformed JSON'))
             m.setattr(s.profile_files,'list',failure)
-            now[0]=4
-            app.state.control.executor.submit(publish).result()
-            assert api.get(P+'/audio-profiles/files').status_code == 200
-            assert float(api.get(P+'/audio-profiles/files').headers['X-Observation-Age-Seconds']) == 4
+            m.setattr(s.profile_files, 'get', Mock(side_effect=AssertionError('idle profile read')))
+            m.setattr(s.profile_files, 'validate', Mock(side_effect=AssertionError('idle validation')))
+            for elapsed in (1, 5, 60, 3600):
+                now[0] = elapsed
+                app.state.control.executor.submit(publish).result()
             failure.assert_not_called()
-            now[0]=5
-            app.state.control.executor.submit(publish).result()
             for _ in range(3):
                 result=api.get(P+'/audio-profiles/files')
                 assert result.status_code==422 and result.json()['error']=='INVALID_PROFILE'
-            failure.assert_called_once()
+            assert failure.call_count == 3
             assert api.get(P+'/status').status_code==200
 
 
