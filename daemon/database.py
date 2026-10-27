@@ -1,6 +1,9 @@
 """SQLite configuration and durable podcast play history; no runtime queues."""
 import json
 import sqlite3
+import threading
+from copy import deepcopy
+from functools import wraps
 from pathlib import Path
 
 from .errors import DomainError
@@ -19,8 +22,39 @@ SCHEMA_STATEMENTS = (
 RECORDS = {"sources": InputSource, "modulators": Modulator}
 
 
+def _configuration_read(method):
+    """Reuse validated configuration on the connection's owning control thread.
+
+    total_changes is an in-memory SQLite counter, not a query. Every repository
+    write (including bulk updates and radio URL compare-and-update) invalidates
+    the entire generation, including effective RDS profiles of source followers.
+    Uncommitted reads never enter the cache; rollback may invalidate harmlessly.
+    External configuration writers are unsupported while the daemon is running.
+    """
+    @wraps(method)
+    def read(self, *args, **kwargs):
+        if threading.get_ident() != self._owner_thread:
+            raise sqlite3.ProgrammingError('Configuration belongs to the database control thread')
+        generation = self.connection.total_changes  # Also rejects closed connections.
+        if generation != self._configuration_generation:
+            self._configuration_cache.clear()
+            self._configuration_generation = generation
+        if self.connection.in_transaction:
+            return method(self, *args, **kwargs)
+        key = (method.__name__, args, tuple(sorted(kwargs.items())))
+        if key not in self._configuration_cache:
+            self._configuration_cache[key] = method(self, *args, **kwargs)
+        # Models contain mutable dictionaries/lists. Callers and published status
+        # generations must never acquire ownership of the repository's copy.
+        return deepcopy(self._configuration_cache[key])
+    return read
+
+
 class Database:
     def __init__(self, path, *, initial_preemphasis_us=50):
+        self._owner_thread = threading.get_ident()
+        self._configuration_cache = {}
+        self._configuration_generation = None
         if str(path) != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.connection = sqlite3.connect(str(path))
@@ -113,10 +147,12 @@ class Database:
             raise DomainError(409, 'INVALID_RDS_PROFILE', 'Modulator override RDS profile is missing')
         return override
 
+    @_configuration_read
     def list(self, table):
         RECORDS[table]
         return [self.get(table, row[0]) for row in self.connection.execute(f'SELECT id FROM {table} ORDER BY id')]
 
+    @_configuration_read
     def get(self, table, record_id):
         model = RECORDS[table]
         row = self.connection.execute(f'SELECT * FROM {table} WHERE id=?', (record_id,)).fetchone()
@@ -216,6 +252,7 @@ class Database:
         except sqlite3.IntegrityError as exc:
             raise DomainError(409, 'RESOURCE_IN_USE', 'Resource is referenced by another configuration') from exc
 
+    @_configuration_read
     def get_system(self):
         return SystemConfig.model_validate_json(self.connection.execute("SELECT data FROM system_config WHERE id = 1").fetchone()[0])
 

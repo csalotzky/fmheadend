@@ -138,7 +138,7 @@ class RdsRefill:
                 if state.needs_clear and now >= state.retry_at:
                     self._clear(channel)
                 continue
-            text = self.radiotext.effective(channel).text
+            text = self.radiotext.effective(channel, config=config).text
             signature = config.model_dump(include=CONTENT_FIELDS)
             if not state.active or signature != state.signature:
                 state.scheduler.reset(config, text, now)

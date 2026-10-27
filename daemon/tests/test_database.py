@@ -1,6 +1,7 @@
 """First-release schema initialization, persistence, and integrity."""
 import json
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -215,5 +216,75 @@ def test_single_selection_transaction_rolls_back_all_tx_updates_on_system_write_
         db.select_single_modulator(1)
         assert [m.id for m in db.list('modulators') if m.enabled] == [1]
         assert db.get_system().global_stopped is False
+    finally:
+        db.close()
+
+
+def test_configuration_copies_and_thread_ownership(tmp_path):
+    db = Database(tmp_path / 'copies.db')
+    try:
+        source = db.save('sources', InputSourceConfig(name='Station', type='HTTP',
+            config={'uri': 'https://example.org/live'}))
+        db.list('sources')[0].config['uri'] = 'https://changed.org/'
+        db.get('modulators', 0).rds_ps[0].text = 'CHANGED'
+        db.get_system().global_stopped = True
+        assert db.get('sources', source.id) == source
+        assert db.get('modulators', 0).rds_ps[0].text == 'TX 0'
+        assert not db.get_system().global_stopped
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            for method, args in ((db.list, ('sources',)), (db.get, ('modulators', 0)),
+                                 (db.get_system, ())):
+                with pytest.raises(sqlite3.ProgrammingError):
+                    pool.submit(method, *args).result()
+    finally:
+        db.close()
+    with pytest.raises(sqlite3.ProgrammingError):
+        db.get_system()
+
+
+def test_uncommitted_configuration_is_never_cached(tmp_path):
+    db = Database(tmp_path / 'rollback.db')
+    try:
+        original = db.get_system()
+        db.connection.execute('UPDATE system_config SET data=?',
+            (original.model_copy(update={'global_stopped': True}).model_dump_json(),))
+        assert db.get_system().global_stopped
+        db.connection.rollback()
+        assert db.get_system() == original
+        # Commit failure after successful statements must not publish dirty data.
+        db.connection.set_authorizer(lambda action, arg, *_:
+            sqlite3.SQLITE_DENY if action == sqlite3.SQLITE_TRANSACTION and arg == 'COMMIT'
+            else sqlite3.SQLITE_OK)
+        with pytest.raises(sqlite3.DatabaseError):
+            db.save_system(original.model_copy(update={'global_stopped': True}))
+        db.connection.set_authorizer(None)
+        assert not db.connection.in_transaction
+        assert db.get_system() == original
+    finally:
+        db.close()
+
+
+def test_configuration_generation_tracks_bulk_and_url_updates(tmp_path):
+    db = Database(tmp_path / 'generation.db')
+    try:
+        uuid = '00000000-0000-0000-0000-000000000001'
+        source = db.save('sources', InputSourceConfig(name='Station', type='HTTP', config={
+            'uri': 'https://example.org/live', 'radio_browser_uuid': uuid}))
+        revision = db.source_revision(source.id)
+        db.list('sources')
+        assert db.replace_radio_browser_url(source.id, revision, uuid,
+            source.config['uri'], 'https://example.org/new') is not None
+        assert db.list('sources')[0].config['uri'] == 'https://example.org/new'
+        assert db.replace_radio_browser_url(source.id, revision, uuid,
+            source.config['uri'], 'https://example.org/stale') is None
+        assert db.get('sources', source.id).config['uri'] == 'https://example.org/new'
+        db.select_single_modulator(7)
+        assert [m.id for m in db.list('modulators') if m.enabled] == [7]
+        db.disable_absent_modulators(4)
+        assert not any(m.enabled for m in db.list('modulators'))
+        db.delete('sources', source.id)
+        assert db.list('sources') == []
+        with pytest.raises(DomainError):
+            db.get('sources', source.id)
     finally:
         db.close()

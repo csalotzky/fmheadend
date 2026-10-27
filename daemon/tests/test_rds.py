@@ -193,6 +193,53 @@ def test_shared_metadata_precedence_and_ttl(rig):
     assert r.db.get('modulators',0).rds_rt=='Fallback'
 
 
+@pytest.mark.parametrize('active', [False, True])
+def test_periodic_refill_has_no_configuration_sql_and_sees_changes(rig, active):
+    r = rig
+    on_air(r, [0] if active else [])
+    r.refill.tick()
+    # Warm source configuration too, including idle operation before enabling TX.
+    r.rt.effective(0)
+    queries = []
+    r.db.connection.set_trace_callback(queries.append)
+    try:
+        for _ in range(20):
+            r.clock.advance(.11)
+            r.refill.tick()
+        assert queries == []
+        changed = r.db.get('modulators', 0).model_copy(update={
+            'rds_pi': 0x4321, 'rds_pty': 5, 'rds_ecc': 225,
+            'rds_ps': [PsEntry(text='NEW FM')], 'rds_af_khz': [98700],
+            'rds_rt': 'New fallback', 'rds_rt_enabled': True})
+        r.db.save('modulators', changed, 0)
+        on_air(r, [0])
+        r.clock.advance(.11)
+        r.refill.tick()
+        scheduler = r.refill.channels[0].scheduler
+        for field in ('rds_pi', 'rds_pty', 'rds_ecc', 'rds_ps', 'rds_af_khz'):
+            assert getattr(scheduler.config, field) == getattr(changed, field)
+        assert scheduler.rt == rt_bytes('New fallback')
+        r.rt.set(0, RtOverride(text='Temporary', ttl_s=1))
+        queries.clear()
+        r.clock.advance(.11)
+        r.refill.tick()
+        assert r.refill.channels[0].scheduler.rt == rt_bytes('Temporary')
+        r.clock.advance(1.01)
+        r.refill.tick()
+        assert r.refill.channels[0].scheduler.rt == rt_bytes('New fallback')
+        r.sources.status = Mock(return_value=SimpleNamespace(stream_title='Live metadata'))
+        r.clock.advance(.11)
+        r.refill.tick()
+        assert r.refill.channels[0].scheduler.rt == rt_bytes('Live metadata')
+        assert queries == []
+        r.db.save('modulators', changed.model_copy(update={'rds_enabled': False}), 0)
+        r.clock.advance(.11)
+        r.refill.tick()
+        assert not r.refill.channels[0].active
+    finally:
+        r.db.connection.set_trace_callback(None)
+
+
 def test_all_eight_states_and_fifo_query_only(rig):
     r=rig;r.rp.get_status=Mock(side_effect=AssertionError('Full status is not a refill query'))
     r.refill.tick()
