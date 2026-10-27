@@ -1004,3 +1004,174 @@ write_environment
     assert 'WebUI port:         8181' in result.stdout
     assert 'HTTP bind:          127.0.0.1' in result.stdout
     assert backend.read_bytes() == before
+
+
+def test_heartbeat_reports_elapsed_minutes_at_60_second_intervals(tmp_path):
+    result = shell(tmp_path, '''
+LOG_FILE="$WORK/install.log" TICKS=0
+read() {
+    [[ $# == 3 && $1 == -r && $2 == -t && $3 == 60 ]] || exit 99
+    if ((TICKS == 3)); then return 1; fi
+    ((TICKS+=1))
+    SECONDS=$((SECONDS + 60))
+    return 142
+}
+heartbeat_loop
+printf 'LOG:\n'; cat "$LOG_FILE"
+''')
+    assert result.returncode == 0, result.stderr
+    console, log = result.stdout.split('LOG:\n')
+    for minute in (1, 2, 3):
+        line = f'      Still working ({minute} min elapsed)...\n'
+        assert console.count(line) == 1 and log.count(line) == 1
+    assert '4 min' not in console
+
+
+def test_dependency_substeps_keep_detailed_apt_output_in_log(tmp_path):
+    result = shell(tmp_path, '''
+init_ui
+LOG_FILE="$WORK/install.log" STEP=1
+apt-get() { printf 'APT detail: %s\n' "$*"; printf 'APT stderr\n' >&2; }
+run_step 'Installing system dependencies' install_dependencies
+printf 'LOG:\n'; cat "$LOG_FILE"
+''')
+    assert result.returncode == 0, result.stderr
+    console, log = result.stdout.split('LOG:\n')
+    assert '[2/11] Installing system dependencies...' in console
+    assert console.index('Updating package lists...') < console.index('Installing required packages...')
+    assert console.count('      OK\n') == 2
+    assert 'APT detail' not in console and 'APT stderr' not in console
+    assert 'APT detail: update' in log and 'APT detail: install -y' in log
+    assert 'lsp-plugins-lv2' in log and log.count('APT stderr') == 2
+
+
+def test_fast_step_closes_and_reaps_timer_without_waiting_a_minute(tmp_path):
+    result = shell(tmp_path, '''
+init_ui
+LOG_FILE="$WORK/install.log"
+operation() { TIMER=$HEARTBEAT_PID; echo 'Operation details'; }
+run_step 'Fast operation' operation
+[[ -z $HEARTBEAT_PID && -z $HEARTBEAT_INPUT && -z $HEARTBEAT_OUTPUT ]]
+if kill -0 "$TIMER" 2>/dev/null; then echo TIMER_LEAK; exit 99; fi
+echo TIMER_STOPPED
+''')
+    assert result.returncode == 0, result.stderr
+    assert 'TIMER_STOPPED' in result.stdout and 'Still working' not in result.stdout
+    assert 'Operation details' in (tmp_path / 'work/install.log').read_text()
+
+
+def test_live_heartbeat_uses_private_input_and_stops_before_success(tmp_path):
+    result = shell(tmp_path, '''
+init_ui
+LOG_FILE="$WORK/install.log" TICKS=0
+exec 0<<< 'terminal input must stay untouched'
+# Exercise a real timed read and coprocess, accelerating only the clock wait.
+read() {
+    local status
+    if builtin read -r -t 0.05; then return 0; else status=$?; fi
+    if ((status > 128)); then
+        ((TICKS+=1))
+        SECONDS=$((SECONDS + 60))
+        if ((TICKS == 3)); then : > "$WORK/three-ticks"; fi
+    fi
+    return "$status"
+}
+operation() {
+    TIMER=$HEARTBEAT_PID
+    for ((attempt=0; attempt<500; attempt++)); do
+        if [[ -f $WORK/three-ticks ]]; then break; fi
+        sleep 0.01
+    done
+    [[ -f $WORK/three-ticks ]] || return 98
+    echo 'Detailed command output'
+}
+run_step 'Slow operation' operation
+builtin read -r untouched
+[[ $untouched == 'terminal input must stay untouched' ]]
+if kill -0 "$TIMER" 2>/dev/null; then echo TIMER_LEAK; exit 99; fi
+echo COMPLETE
+''')
+    assert result.returncode == 0, result.stderr
+    for minute in (1, 2, 3):
+        assert f'Still working ({minute} min elapsed)...' in result.stdout
+    assert result.stdout.index('Still working (3 min elapsed)...') < result.stdout.index('      OK')
+    assert result.stdout.endswith('      OK\nCOMPLETE\n')
+    assert 'Detailed command output' not in result.stdout
+    assert 'Detailed command output' in (tmp_path / 'work/install.log').read_text()
+
+
+@pytest.mark.parametrize('operation,code', [('update', 19), ('install', 37)])
+def test_apt_failure_preserves_status_and_stops_heartbeat(tmp_path, operation, code):
+    result = shell(tmp_path, f'FAIL_OPERATION={operation} FAIL_CODE={code}\n' + '''
+init_ui
+LOG_FILE="$WORK/install.log" REBOOT_REQUIRED=yes
+trap 'failure "$?" "$LINENO"' ERR
+trap 'timer=$HEARTBEAT_PID; cleanup; if [[ -n $timer ]] && kill -0 "$timer" 2>/dev/null; then echo TIMER_LEAK; fi' EXIT
+apt-get() {
+    echo "APT_CALL:$1"
+    if [[ $1 == "$FAIL_OPERATION" ]]; then echo 'APT failed diagnostic' >&2; return "$FAIL_CODE"; fi
+}
+run_step 'Installing system dependencies' install_dependencies
+echo SHOULD_NOT_RUN
+offer_reboot
+''')
+    assert result.returncode == code
+    assert 'APT failed diagnostic' in result.stderr
+    assert result.stderr.count('Full installation log:') == 1
+    assert 'SHOULD_NOT_RUN' not in result.stdout and 'TIMER_LEAK' not in result.stdout
+    assert 'Still working' not in result.stdout and 'Reboot now?' not in result.stdout
+    log = (tmp_path / 'work/install.log').read_text()
+    if operation == 'update':
+        assert 'APT_CALL:install' not in log
+
+
+@pytest.mark.parametrize('signal,code', [('INT', 130), ('TERM', 143)])
+def test_interruption_cleans_up_heartbeat_without_reboot(tmp_path, signal, code):
+    result = shell(tmp_path, f'CANCEL_SIGNAL={signal}\n' + '''
+parse_arguments() { :; }
+preflight() {
+    LOG_FILE="$WORK/install.log"
+    trap 'timer=$HEARTBEAT_PID; cleanup; if [[ -n $timer ]] && kill -0 "$timer" 2>/dev/null; then echo TIMER_LEAK >&"$UI"; else echo TIMER_STOPPED >&"$UI"; fi' EXIT
+}
+detect_installation() { :; }; collect_configuration() { :; }; backup_existing() { :; }
+install_dependencies() { kill -"$CANCEL_SIGNAL" "$$"; }
+install_account() { echo SHOULD_NOT_RUN; }
+main
+''')
+    assert result.returncode == code, result.stderr
+    assert 'TIMER_STOPPED' in result.stdout and 'TIMER_LEAK' not in result.stdout
+    assert 'SHOULD_NOT_RUN' not in result.stdout and 'Reboot now?' not in result.stdout
+    assert 'Still working' not in result.stdout
+
+
+def test_interactive_hardware_configuration_has_no_heartbeat(tmp_path):
+    result = shell(tmp_path, '''
+init_ui
+LOG_FILE="$WORK/install.log"
+configure_application() { [[ -z $HEARTBEAT_PID ]]; echo HARDWARE_PROMPT_READY >&"$UI"; }
+run_step 'Applying configuration' configure_application
+''')
+    assert result.returncode == 0, result.stderr
+    assert 'HARDWARE_PROMPT_READY' in result.stdout
+
+
+@pytest.mark.parametrize('authentication', [False, True])
+def test_completion_http_notice_retains_authentication_condition(tmp_path, authentication):
+    shell(tmp_path, ':')
+    args = '--passwd-file /existing/htpasswd' if authentication else ''
+    (tmp_path / 'config/fmheadendd.env').write_text(f'FMHEADEND_ARGS="--host 127.0.0.1 {args}"\n')
+    result = shell(tmp_path, '''
+LOG_FILE="$WORK/install.log"
+complete_installation
+''')
+    assert result.returncode == 0, result.stderr
+    notice = 'WebUI uses HTTP. Direct exposure to the internet is not recommended.'
+    assert (notice in result.stdout) == authentication
+    assert 'Use HTTPS or an encrypted tunnel' not in result.stdout
+
+
+def test_dsp_step_label_and_step_count_are_preserved():
+    source = (ROOT / 'install.sh').read_text()
+    main = source[source.index('main() {'):]
+    assert "run_step 'Installing FMheadend DSP plugins' install_plugins" in main
+    assert main.count("    run_step '") == 11

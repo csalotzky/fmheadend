@@ -24,8 +24,10 @@ LOG_FILE= CURRENT_STEP= STEP=0 TOTAL_STEPS=11
 UI=1 ERROR_UI=2 COLOR= RESET=
 HTTP_HOST=0.0.0.0 HTTP_PORT=8080
 SPI_DEVICE=/dev/spidev0.0 SPI_CLOCK_HZ=25000000
+HEARTBEAT_PID= HEARTBEAT_INPUT= HEARTBEAT_OUTPUT=
 
 die() {
+    stop_heartbeat
     printf 'Error: %s\n' "$*" >&"$ERROR_UI"
     if [[ -n $LOG_FILE ]]; then
         printf 'Error: %s\n' "$*" >>"$LOG_FILE"
@@ -38,6 +40,45 @@ say() {
     if [[ -n $LOG_FILE ]]; then printf '%s\n' "$*" >>"$LOG_FILE"; fi
 }
 support() { (cd -- "$SOURCE_DIR"; python3 -m tools.install_support "$@"); }
+
+heartbeat_loop() {
+    local started=$SECONDS status elapsed
+    while true; do
+        # The coprocess owns a private input pipe. A timed Bash read needs no
+        # sleep child and never consumes terminal input. Closing the pipe stops it.
+        if IFS= read -r -t 60; then continue; else status=$?; fi
+        ((status > 128)) || return 0
+        elapsed=$(((SECONDS - started) / 60))
+        say "      Still working ($elapsed min elapsed)..."
+    done
+}
+
+start_heartbeat() {
+    coproc INSTALL_HEARTBEAT {
+        # The timer must never report installer errors or clean up its workspace.
+        trap - ERR EXIT INT TERM
+        heartbeat_loop
+    } >&"$UI"
+    HEARTBEAT_PID=$INSTALL_HEARTBEAT_PID
+    HEARTBEAT_INPUT=${INSTALL_HEARTBEAT[1]}
+    HEARTBEAT_OUTPUT=${INSTALL_HEARTBEAT[0]}
+}
+
+stop_heartbeat() {
+    local pid=$HEARTBEAT_PID
+    HEARTBEAT_PID=
+    if [[ -n $HEARTBEAT_INPUT ]]; then
+        exec {HEARTBEAT_INPUT}>&-
+        HEARTBEAT_INPUT=
+    fi
+    if [[ -n $HEARTBEAT_OUTPUT ]]; then
+        exec {HEARTBEAT_OUTPUT}<&-
+        HEARTBEAT_OUTPUT=
+    fi
+    # Closing the only writer wakes the timed read immediately, even if fewer
+    # than 60 seconds have passed. Reap the timer without changing command status.
+    if [[ -n $pid ]]; then wait "$pid" 2>/dev/null || :; fi
+}
 
 init_ui() {
     exec {UI}>&1 {ERROR_UI}>&2
@@ -66,6 +107,7 @@ failure() {
     # ERR is inherited by support() subshells and command substitutions. Let
     # their failures propagate; only the parent installer reports the error.
     if ((BASH_SUBSHELL > 0)); then exit "$status"; fi
+    stop_heartbeat
     printf '\nInstallation failed%s (line %s, exit %s).\n' \
         "${CURRENT_STEP:+ during $CURRENT_STEP}" "$line" "$status" >&"$ERROR_UI"
     if [[ -n $LOG_FILE ]]; then
@@ -87,9 +129,12 @@ run_step() {
     ((STEP+=1))
     printf '[%s/%s] %s...\n' "$STEP" "$TOTAL_STEPS" "$label" >&"$UI"
     printf '\n[%s/%s] %s\n' "$STEP" "$TOTAL_STEPS" "$label" >>"$LOG_FILE"
+    # Hardware conflict approval can wait for user input; keep that prompt quiet.
+    if [[ $1 != configure_application ]]; then start_heartbeat; fi
     # Do not put this invocation in an if/||: that disables errexit inside
     # functions and could allow a failed command to be followed by mutations.
     "$@" >>"$LOG_FILE" 2>&1
+    stop_heartbeat
     say '      OK'
     CURRENT_STEP=
 }
@@ -372,7 +417,10 @@ stop_services() {
 }
 
 install_dependencies() {
+    say '      Updating package lists...'
     apt-get update
+    say '      OK'
+    say '      Installing required packages...'
     apt-get install -y git ca-certificates build-essential cmake pkg-config python3-dev python3-venv python3-bcrypt \
         libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
         python3-gi python3-gst-1.0 gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 \
@@ -585,7 +633,7 @@ complete_installation() {
     say ''
     say 'Check the WebUI System page for Controller availability.'
     if [[ -n ${RUNTIME[3]} ]]; then
-        say 'Use HTTPS or an encrypted tunnel for authentication on untrusted networks.'
+        say 'WebUI uses HTTP. Direct exposure to the internet is not recommended.'
     fi
     say "Installation log: $LOG_FILE"
 }
@@ -613,6 +661,7 @@ configure_application() {
 }
 
 cleanup() {
+    stop_heartbeat
     if [[ $WORK =~ ^/tmp/fmheadend-install\.[A-Za-z0-9]+$ && -d $WORK && ! -L $WORK ]]; then rm -rf -- "$WORK"; fi
 }
 
@@ -622,6 +671,7 @@ main() {
     trap cleanup EXIT
     trap 'failure "$?" "$LINENO"' ERR
     trap 'printf "\nInstallation cancelled. No reboot was requested.\n" >&"$ERROR_UI"; exit 130' INT
+    trap 'exit 143' TERM
     preflight
     detect_installation
     collect_configuration
@@ -637,7 +687,7 @@ main() {
     run_step 'Stopping services for update' stop_services
     run_step 'Installing Python backend' install_backend
     run_step 'Building SPI multiplexer' install_mux
-    run_step 'Installing FM DSP plugins' install_plugins
+    run_step 'Installing FMheadend DSP plugins' install_plugins
     run_step 'Installing WebUI' install_webui
     run_step 'Applying configuration' configure_application
     run_step 'Configuring services' install_services
