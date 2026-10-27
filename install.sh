@@ -121,6 +121,32 @@ choose_number() {
     done
 }
 
+collect_network_configuration() {
+    local answer address status
+    while true; do
+        printf 'WebUI port (default: 8080): ' >&"$TTY"
+        IFS= read -r -u "$TTY" answer || die 'Terminal input ended; installation cancelled.'
+        answer=${answer:-8080}
+        if [[ $answer =~ ^[0-9]+$ && ${#answer} -le 5 ]] && ((10#$answer >= 1 && 10#$answer <= 65535)); then
+            HTTP_PORT=$((10#$answer))
+            break
+        fi
+        printf 'Enter a port from 1 to 65535.\n' >&"$TTY"
+    done
+    while true; do
+        printf 'HTTP bind address (default: 0.0.0.0 - all interfaces): ' >&"$TTY"
+        IFS= read -r -u "$TTY" answer || die 'Terminal input ended; installation cancelled.'
+        if address=$(support validate-bind "${answer:-0.0.0.0}" 2>/dev/null); then
+            HTTP_HOST=$address
+            break
+        else
+            status=$?
+            [[ $status == 2 ]] || die 'Could not validate the HTTP bind address.'
+        fi
+        printf 'Enter a valid IPv4 or IPv6 bind address.\n' >&"$TTY"
+    done
+}
+
 parse_arguments() {
     while (($#)); do
         case $1 in
@@ -219,7 +245,7 @@ collect_configuration() {
         fi
         section 'Default Audio Profile'
         say 'Basic presets use lightweight or partial audio processing.'
-        say 'They are suitable for lower-powered Raspberry Pi models.'
+        say 'They are suitable for lower-performance Raspberry Pi models.'
         say ''
         say 'Light and Moderate presets provide a more complete FM audio'
         say 'processing chain, but require more CPU power, especially when'
@@ -228,7 +254,7 @@ collect_configuration() {
         say 'Not sure what to choose? You can change the default Audio Profile'
         say 'anytime in the FMheadend WebUI.'
         say ''
-        local catalog identifier name index=0 default=0 default_name=
+        local catalog identifier name annotation index=0 default=0 default_name=
         catalog=$(support profiles "$SOURCE_DIR/audio-profiles/default")
         PROFILE_IDS=()
         PROFILE_NAMES=()
@@ -238,12 +264,13 @@ collect_configuration() {
             if [[ $identifier == "$RECOMMENDED_PROFILE" ]]; then
                 default=$index; default_name=$name
             fi
-            printf '  %s) %s\n' "$index" "$name" >&"$UI"
+            annotation=
             case $identifier in
-                default/basic_limiter.json) say '     Default for Pi Zero 2 W (provisional)' ;;
-                default/basic_wideband.json) say '     Default for Pi 2-3 (64-bit models)' ;;
-                default/moderate_loud.json) say '     Default for Pi 4-5' ;;
+                default/basic_limiter.json) annotation=' (Default for Pi Zero 2 W)' ;;
+                default/basic_wideband.json) annotation=' (Default for Pi 2-3)' ;;
+                default/moderate_loud.json) annotation=' (Default for Pi 4-5)' ;;
             esac
+            printf '  %s) %s%s\n' "$index" "$name" "$annotation" >&"$UI"
         done <<< "$catalog"
         ((default > 0)) || die 'Platform default Audio Profile is missing from the menu.'
         say ''
@@ -258,10 +285,6 @@ collect_configuration() {
                 AUTH=yes
                 if [[ -e $PASSWD_FILE ]]; then
                     say 'Existing WebUI credentials will be preserved.'
-                else
-                    say ''
-                    say 'Credential entry follows the system dependencies and account setup,'
-                    say 'before native builds. This provides the required bcrypt dependency.'
                 fi
             fi
         else
@@ -287,6 +310,10 @@ collect_configuration() {
         else
             say 'Existing startup configuration preserved; hardware setup is left unchanged.'
         fi
+    fi
+    if [[ $MODE != upgrade && $HAVE_ENV == no ]]; then
+        section 'WebUI Network'
+        collect_network_configuration
     fi
     section 'Installation Summary'
     local region_name authentication hardware_label
@@ -432,8 +459,8 @@ write_environment() {
     if [[ ! -e $CONFIG_DIR/fmheadendd.env ]]; then
         local authentication=
         if [[ $AUTH == yes ]]; then authentication=" --passwd-file $PASSWD_FILE"; fi
-        (set -o noclobber; printf 'FMHEADEND_ARGS="--host 0.0.0.0 --port 8080 --i2c-device %s --region %s --webui-dir %s/webui%s"\n' \
-            "$I2C_DEVICE" "$REGION" "$SHARE_DIR" "$authentication" > "$CONFIG_DIR/fmheadendd.env")
+        (set -o noclobber; printf 'FMHEADEND_ARGS="--host %s --port %s --i2c-device %s --region %s --webui-dir %s/webui%s"\n' \
+            "$HTTP_HOST" "$HTTP_PORT" "$I2C_DEVICE" "$REGION" "$SHARE_DIR" "$authentication" > "$CONFIG_DIR/fmheadendd.env")
         chmod 0644 "$CONFIG_DIR/fmheadendd.env"
     fi
     if [[ ! -e $CONFIG_DIR/muxd.env ]]; then
