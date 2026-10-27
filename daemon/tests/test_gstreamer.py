@@ -81,13 +81,15 @@ def assert_pcm(pipeline, gst):
     pytest.fail("No PCM reached the output consumer")
 
 
-def test_http_resamples_mono_44100_to_exact_caps(gst, http_files):
+@pytest.mark.parametrize('telemetry_configured', [False, True])
+def test_http_resamples_mono_44100_to_exact_caps(gst, http_files, telemetry_configured):
     require(gst, "souphttpsrc", "wavparse")
     folder, url = http_files
     with wave.open(str(folder / "test.wav"), "wb") as wav:
         wav.setparams((1, 2, 44100, 0, "NONE", "not compressed"))
         wav.writeframes(b"\0\0" * 44100 * 20)
-    pipeline = GstPipeline(config("HTTP", {"uri": url + "/test.wav"}), reconnect=False)
+    pipeline = GstPipeline(config("HTTP", {"uri": url + "/test.wav"}), reconnect=False,
+                           telemetry_configured=telemetry_configured)
     pipeline.output.attach(0)
     try:
         pipeline.start()
