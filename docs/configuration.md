@@ -93,7 +93,7 @@ not a `MUXD_ARGS` value or mux CLI option.
 | `--spi-device PATH` | `/dev/spidev0.0` | Linux SPI device for `spidev` transport. |
 | `--spi-clock-hz HZ` | `25000000` | Positive SPI clock in Hz for `spidev`; accepts an unsigned 32-bit integer. |
 | `--spi-mode MODE` | `0` | SPI mode `0` through `3`. |
-| `--ring-buffer-ms MS` | `300` | Positive PCM ring capacity per channel in milliseconds. |
+| `--ring-buffer-ms MS` | `500` | Positive PCM ring capacity per channel in milliseconds. |
 | `--timing-diagnostics` | Off | Collect detailed timing counters in the Unix socket `get_status` response. |
 | `--capture FILE` | Disabled | Bounded mock-transport frame capture file. Invalid with `spidev`. |
 | `--capture-frames COUNT` | `375` | Mock-capture frame limit, `1` through `100000`. |

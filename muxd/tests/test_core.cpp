@@ -107,7 +107,8 @@ void disconnect_test() {
     CHECK(std::all_of(out.begin() + 4, out.end(), [](auto v) { return v == 0; }));
 }
 void capacity_test() {
-    CHECK(RingBuffer().capacity() == 57600);
+    CHECK(RingBuffer().capacity() == 96000);
+    CHECK(RingBuffer(ring_capacity_bytes(300)).capacity() == 57600);
     CHECK(ring_capacity_bytes(100) == 19200);
     RingBuffer small(ring_capacity_bytes(1)), large(ring_capacity_bytes(200));
     CHECK(small.capacity() == 192 && large.capacity() == 38400);

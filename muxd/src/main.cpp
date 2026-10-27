@@ -33,7 +33,7 @@ int main(int argc, char** argv) {
             if (option == "--help") {
                 std::cout << "fmheadend-muxd --transport mock|spidev [--runtime-dir /run/fmheadend]\n"
                              "  [--spi-device /dev/spidev0.0] [--spi-clock-hz 25000000] [--spi-mode 0]\n"
-                             "  [--ring-buffer-ms 300] (positive integer ms of PCM per channel)\n"
+                             "  [--ring-buffer-ms 500] (positive integer ms of PCM per channel)\n"
                              "  [--timing-diagnostics] (detailed timing counters; default OFF)\n"
                              "  [--capture FILE --capture-frames 375] (bounded mock capture only)\n"
                              "  --version\n";
