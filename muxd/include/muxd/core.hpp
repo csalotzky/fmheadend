@@ -17,7 +17,7 @@ constexpr std::size_t spi_frame_bytes(std::size_t tx_count) {
 }
 constexpr std::size_t sample_rate = 48000;
 constexpr std::size_t pcm_bytes_per_second = sample_rate * stereo_bytes;
-constexpr std::uint64_t default_ring_buffer_ms = 300;
+constexpr std::uint64_t default_ring_buffer_ms = 500;
 std::size_t ring_capacity_bytes(std::uint64_t milliseconds);
 using Frame = std::array<std::uint8_t, frame_bytes>;
 

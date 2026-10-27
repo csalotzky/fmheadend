@@ -9,13 +9,13 @@ from pathlib import Path
 
 binary = sys.argv[1]
 help_text = subprocess.check_output([binary, '--help'], text=True)
-assert '--ring-buffer-ms 300' in help_text
+assert '--ring-buffer-ms 500' in help_text
 assert '--timing-diagnostics' in help_text
 for value in ('0', '-1', '1.5', 'bad', '18446744073709551615', '18446744073709551616'):
     result = subprocess.run([binary, '--transport', 'mock', '--ring-buffer-ms', value],
                             capture_output=True, text=True, timeout=2)
     assert result.returncode == 1, (value, result)
-for options, milliseconds in (([], 300), (['--ring-buffer-ms', '1'], 1), (['--ring-buffer-ms', '200'], 200), (['--timing-diagnostics'], 300)):
+for options, milliseconds in (([], 500), (['--ring-buffer-ms', '1'], 1), (['--ring-buffer-ms', '200'], 200), (['--ring-buffer-ms', '300'], 300), (['--timing-diagnostics'], 500)):
     with tempfile.TemporaryDirectory(prefix='mux-cli-') as directory:
         process = subprocess.Popen([binary, '--transport', 'mock', '--runtime-dir', directory, *options],
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
