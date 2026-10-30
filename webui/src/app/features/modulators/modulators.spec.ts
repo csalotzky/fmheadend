@@ -297,7 +297,7 @@ describe('Modulator configuration', () => {
     c.form.controls.frequency_khz.setValue(100700);
     expect(c.draft().frequency_khz).toBe(100700);
   });
-  it('offers exactly 16 relative RF levels without inventing an absolute value', async () => {
+  it('offers exactly 28 relative RF levels without inventing an absolute value', async () => {
     const f = await editor({ rf_attenuation_db: null }),
       c = f.componentInstance;
     expect(c.form.invalid).toBe(true);
@@ -306,22 +306,40 @@ describe('Modulator configuration', () => {
       '[formControlName="rf_attenuation_db"]',
     ) as HTMLSelectElement;
     expect(select.options[0].disabled).toBe(true);
-    expect(Array.from(select.options).filter((o) => !o.disabled)).toHaveLength(16);
+    const options = Array.from(select.options).filter((o) => !o.disabled);
+    expect(options).toHaveLength(28);
     expect(c.rfLevels[0]).toEqual({ value: 0, label: 'Maximum' });
     expect(c.rfLevels[1]).toEqual({ value: 1.5, label: '-1.5 dB' });
     expect(c.rfLevels[15]).toEqual({ value: 22.5, label: '-22.5 dB' });
-    c.rfLevels.forEach((o) => {
+    expect(c.rfLevels[27]).toEqual({ value: 40.5, label: '-40.5 dB' });
+    c.rfLevels.forEach((o, i) => {
+      expect(o.value).toBe(i * 1.5);
+      expect(o.label).toBe(i === 0 ? 'Maximum' : `-${(i * 1.5).toFixed(1)} dB`);
+      expect(options[i].textContent?.trim()).toBe(o.label);
       c.form.controls.rf_attenuation_db.setValue(o.value);
       expect(c.draft().rf_attenuation_db).toBe(o.value);
     });
+    for (const value of [-1.5, 0.1, 40.4, 42]) {
+      c.form.controls.rf_attenuation_db.setValue(value);
+      expect(() => c.draft()).toThrow('Select RF output');
+    }
     expect(f.nativeElement.textContent).not.toContain('dB\u00b5V');
+  });
+  it('loads the extended maximum into the RF output dropdown', async () => {
+    const f = await editor({ rf_attenuation_db: 40.5 });
+    const select = f.nativeElement.querySelector(
+      '[formControlName="rf_attenuation_db"]',
+    ) as HTMLSelectElement;
+    expect(f.componentInstance.form.controls.rf_attenuation_db.value).toBe(40.5);
+    expect(select.selectedOptions[0].textContent?.trim()).toBe('-40.5 dB');
+    expect(f.componentInstance.draft().rf_attenuation_db).toBe(40.5);
   });
   it('saves RF/audio/RDS with exact API names and returns to pristine', async () => {
     const f = await editor(),
       c = f.componentInstance;
     c.form.patchValue({
       frequency_khz: 100700,
-      rf_attenuation_db: 6,
+      rf_attenuation_db: 40.5,
       stereo: false,
       preemphasis_us: 75,
       pi: '0xb0d7',
@@ -336,7 +354,7 @@ describe('Modulator configuration', () => {
     expect(req.request.method).toBe('POST');
     expect(req.request.body).toMatchObject({
       frequency_khz: 100700,
-      rf_attenuation_db: 6,
+      rf_attenuation_db: 40.5,
       stereo: false,
       preemphasis_us: 75,
       rds_override_profile: {
@@ -359,6 +377,7 @@ describe('Modulator configuration', () => {
     });
     await pending;
     expect(c.form.pristine).toBe(true);
+    expect(c.form.controls.rf_attenuation_db.value).toBe(40.5);
     expect(c.form.controls.pi.value).toBe('B0D7');
     expect(shared.refreshAfterMutation).toHaveBeenCalledOnce();
   });

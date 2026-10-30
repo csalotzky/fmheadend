@@ -5,7 +5,7 @@ from pydantic import Field
 
 from .protocol import PROTOCOL_VERSION, SPI_DIAGNOSTIC_FIELDS
 from ..errors import DependencyUnavailable
-from ..models.configuration import Model, Modulator
+from ..models.configuration import Model, Modulator, RfAttenuationDb
 
 
 class TxConfig(Model):
@@ -13,7 +13,7 @@ class TxConfig(Model):
     analog_gain_db: float = Field(default=0.0, ge=-3276.8, le=3276.7, multiple_of=0.1, strict=True)
     soft_clipping: bool = Field(default=False, strict=True)
     frequency_khz: int
-    rf_attenuation_db: float | None = Field(default=None, ge=0, le=22.5, multiple_of=1.5, strict=True)
+    rf_attenuation_db: RfAttenuationDb | None = None
     stereo: bool
     preemphasis_us: int
     audio_mode: Literal["DIGITAL", "ANALOG", "SINE"]

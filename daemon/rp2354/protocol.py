@@ -159,7 +159,7 @@ def request(command: Command, target: int, payload: bytes = b"") -> bytes:
         raise ValueError("SET_TX_ENABLED must be 0 or 1")
     if command == Command.SET_TX_CONFIG:
         frequency, level, stereo, emphasis, mode, rds, gain, analog, trim, clipping = TX_CONFIG.unpack(payload)
-        if level > 225 or level % 15 != 0 or frequency == 0 or stereo not in (0, 1) or emphasis not in (50, 75) or mode not in (0, 1, 2) or rds not in (0, 1) or gain not in (0, 1) or trim not in (0, 1) or clipping not in (0, 1):
+        if level > 405 or frequency == 0 or stereo not in (0, 1) or emphasis not in (50, 75) or mode not in (0, 1, 2) or rds not in (0, 1) or gain not in (0, 1) or trim not in (0, 1) or clipping not in (0, 1):
             raise ValueError("Invalid SET_TX_CONFIG field value")
     body = bytes((command, target, len(payload))) + payload
     return body + struct.pack('<H', crc16(body))
@@ -197,8 +197,8 @@ def rf_attenuation_x10(value: float | None) -> int:
     if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError("Configure rf_attenuation_db explicitly")
     scaled = Decimal(str(value)) * 10
-    if not scaled.is_finite() or not 0 <= scaled <= 225 or scaled % 15 != 0:
-        raise ValueError("rf_attenuation_db must be 0..22.5 in steps of 1.5 dB")
+    if not scaled.is_finite() or not 0 <= scaled <= 405 or scaled != scaled.to_integral_value():
+        raise ValueError("rf_attenuation_db must be 0..40.5 in steps of 0.1 dB")
     return int(scaled)
 
 
@@ -313,7 +313,7 @@ def parse_status(payload: bytes) -> dict:
     for channel in range(8):
         # audio counts detected QN I2S underrun flags, not missing Linux PCM.
         tx, level, audio, rds, free, error, saturated = CHANNEL_STATUS.unpack_from(payload, GLOBAL_STATUS.size + channel * CHANNEL_STATUS.size)
-        if level != -32768 and (level < 0 or level > 225 or level % 15 != 0):
+        if level != -32768 and (level < 0 or level > 405):
             raise ProtocolError(f"Invalid RF attenuation: {level} (TX{channel}.rf_attenuation_db_x10)")
         if saturated not in (0, 1, 255):
             raise ProtocolError(f"Invalid input_saturated: {saturated} (TX{channel}.input_saturated)")

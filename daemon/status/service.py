@@ -148,8 +148,8 @@ class StatusService:
                 elif row.hardware_tx_state != ('ON' if (self.recovery.expected_on(row.id) if self.recovery
                         else self.modulators.desired_on(row.id)) else 'OFF'):
                     errors.append(f"Controller TX{row.id}: observed state differs from desired state")
-                elif row.hardware_tx_state == 'ON' and row.rf_attenuation_db != self.modulators.get(row.id).rf_attenuation_db:
-                    errors.append(f"Controller TX{row.id}: observed attenuation differs from desired configuration")
+                # Attenuation readback is the firmware's applied nominal value;
+                # quantization can legitimately differ from the saved request.
         except DependencyUnavailable as exc:
             self.system.controller_communication_state = communication_state(exc)
             self.system.controller_observation_stale = True

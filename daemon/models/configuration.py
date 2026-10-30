@@ -1,11 +1,12 @@
 from datetime import datetime, timezone
+from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, create_model, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, create_model, field_validator, model_validator
 
 from ..sources.local_media import LocalMediaConfig, LocalMediaMode, PlaybackOrder
 from ..sources.podcast import PodcastScheduleMode, valid_http_url
@@ -24,6 +25,18 @@ Name = Annotated[str, Field(min_length=1, max_length=200, pattern=r"\S")]
 Port = Annotated[int, Field(strict=True, ge=1, le=65535)]
 Rate = Annotated[int, Field(strict=True, gt=0)]
 JsonObject = dict[str, JsonValue]
+
+
+def _rf_attenuation_precision(value: float) -> float:
+    # Float multiple_of checks tolerate values the wire encoder cannot represent.
+    scaled = Decimal(str(value)) * 10
+    if scaled != scaled.to_integral_value():
+        raise ValueError('rf_attenuation_db must be representable in 0.1 dB steps')
+    return value
+
+
+RfAttenuationDb = Annotated[float, Field(ge=0, le=40.5, multiple_of=0.1, strict=True),
+                          AfterValidator(_rf_attenuation_precision)]
 
 
 class SourceType(StrEnum):
@@ -216,7 +229,7 @@ class ModulatorConfig(RdsProfileConfig):
     frequency_khz: int | None = Field(default=None, gt=0, strict=True)
     stereo: bool = True
     preemphasis_us: Literal[50, 75] = 50
-    rf_attenuation_db: float | None = Field(default=None, ge=0, le=22.5, multiple_of=1.5, strict=True)
+    rf_attenuation_db: RfAttenuationDb | None = None
     rds_enabled: bool = False
     rds_follow_source: bool = False
     rds_override_profile: RdsProfileConfig | None = None
