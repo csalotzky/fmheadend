@@ -99,7 +99,7 @@ export function decimal(
   return n;
 }
 
-export const rfOutputOptions = Array.from({ length: 16 }, (_, i) => ({
+export const rfOutputOptions = Array.from({ length: 28 }, (_, i) => ({
   value: (i * 15) / 10,
   label: i === 0 ? 'Maximum' : `-${Math.floor((i * 15) / 10)}.${(i * 15) % 10} dB`,
 }));

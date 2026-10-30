@@ -109,7 +109,7 @@ Physical TX target. **Request: 15 bytes. Response: empty ACK.**
 | Offset | Type | Field | Values |
 |---:|---|---|---|
 | 0 | `u32` | `frequency_khz` | Within GET_INFO limits and raster |
-| 4 | `u16` | `rf_attenuation_db_x10` | `0, 15, 30, …, 225` (0–22.5 dB) |
+| 4 | `u16` | `rf_attenuation_db_x10` | `0..405` (0–40.5 dB), step `1` (0.1 dB) |
 | 6 | `u8` | `stereo` | `0` mono, `1` stereo |
 | 7 | `u8` | `preemphasis_us` | `50` or `75` |
 | 8 | `u8` | `audio_mode` | `0` DIGITAL, `1` ANALOG, `2` SINE |
@@ -119,7 +119,9 @@ Physical TX target. **Request: 15 bytes. Response: empty ACK.**
 | 13 | `u8` | `digital_trim_db` | `0` or `1` |
 | 14 | `u8` | `soft_clipping` | `0` off, `1` on |
 
-RF attenuation is relative to the configured maximum, **not an absolute output-power value**. Reconfiguring an ON transmitter temporarily turns it off; it is re-enabled only on success. A failed hardware configuration can invalidate that TX's configured state.
+RF attenuation is relative to maximum RF output. The extended scale is nominal, based on an approximate hardware model, **not calibrated absolute RF output power**. The firmware rounds requests to the nearest of 28 nominal hardware levels: 0–40.5 dB in 1.5 dB steps. The host sends requests at 0.1 dB protocol resolution without implementing hardware gain selection.
+
+Reconfiguring an ON transmitter temporarily turns it off; it is re-enabled only on success. A failed hardware configuration can invalidate that TX's configured state.
 
 ### 4.3 SET_TX_ENABLED (`0x03`)
 
@@ -149,12 +151,14 @@ Global target. Empty request payload. **Response: 130 bytes.**
 | Record offset | Type | Field | Values / meaning |
 |---:|---|---|---|
 | 0 | `u8` | `tx_state` | `0` OFF, `1` ON, `2` ERROR |
-| 1 | `i16` | `rf_attenuation_db_x10` | `-32768` if unavailable |
+| 1 | `i16` | `rf_attenuation_db_x10` | Applied nominal attenuation: `0, 15, 30, …, 405`; `-32768` if unavailable |
 | 3 | `u32` | `audio_underrun_count` | Currently reported as `0` |
 | 7 | `u32` | `rds_underrun_count` | RDS starvation episodes |
 | 11 | `u16` | `rds_fifo_free` | Free capacity in complete groups |
 | 13 | `u8` | `last_error_code` | Latched TX error |
 | 14 | `u8` | `input_saturated` | `0` no, `1` yes, `255` unavailable |
+
+Attenuation status reports the applied nominal value after firmware quantization, which can differ from the requested value without indicating a configuration failure.
 
 Latched errors can remain after the current state returns to OK. Absent TX entries are zero-filled. Status is collected sequentially, not as an atomic snapshot across all transmitters.
 

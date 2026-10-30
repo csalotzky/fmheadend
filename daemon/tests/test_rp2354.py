@@ -495,19 +495,21 @@ def test_all_config_options_exact():
     config = CONFIG.model_copy(update={'stereo': False, 'preemphasis_us': 75, 'rds_enabled': True, 'audio_mode': 'ANALOG'})
     assert p.tx_config(config) == b'\x34\x7f\x01\x00\x3c\x00\0\x4b\x01\x01' + bytes(5)
 
-@pytest.mark.parametrize('level,wire', [(i * 1.5, i * 15) for i in range(16)])
+@pytest.mark.parametrize('level,wire', [(i * 1.5, i * 15) for i in range(28)])
 def test_rf_attenuation_steps(level, wire):
     config = CONFIG.model_copy(update={'rf_attenuation_db': level})
     data = p.tx_config(config)
     assert len(data) == 15 and data[4:6] == struct.pack('<H', wire)
 
 
-@pytest.mark.parametrize('level', [-0.1, 24, 1, float('nan'), float('inf'), True, '6'])
+@pytest.mark.parametrize('level', [-0.1, 40.6, 6553.6, 0.01, 40.49, 1.5000000000000002,
+                                  float('nan'), float('inf'), float('-inf'), True, '6'])
 def test_review_rf_model_validation(level):
     from pydantic import ValidationError
     from fmheadendd.models.configuration import ModulatorConfig
     with pytest.raises(ValidationError): ModulatorConfig(rf_attenuation_db=level)
     with pytest.raises(ValidationError): TxConfig(**(CONFIG.model_dump() | {'rf_attenuation_db': level}))
+    with pytest.raises(ValueError): p.tx_config(CONFIG.model_copy(update={'rf_attenuation_db': level}))
 
 
 def test_fifo_free_exact_request_response(calls):
@@ -575,14 +577,14 @@ def running_wire_backend(calls, tmp_path):
     for i in range(8):
         old = db.get('modulators', i)
         db.save('modulators', ModulatorConfig.model_validate(old.model_dump(exclude={'id', 'timestamp', 'rds_override_profile_id'}) | {
-            'audio_mode': 'ANALOG', 'frequency_khz': 87500, 'rf_attenuation_db': 22.5,
+            'audio_mode': 'ANALOG', 'frequency_khz': 87500, 'rf_attenuation_db': 40.4,
             'enabled': True, 'rds_enabled': True}), i)
     db.close()
     wire = SimpleNamespace(enabled=[False]*8, uptime=100000, info=INFO, state=0, faults=[], payload=b'', now=0., body_pending=False, corrupt_crc=False)
 
     def snapshot():
         return p.GLOBAL_STATUS.pack(wire.state, wire.uptime, 0, 0) + b''.join(
-            p.CHANNEL_STATUS.pack(int(on), 225, 0, 0, 41, 0, 255) for on in wire.enabled)
+            p.CHANNEL_STATUS.pack(int(on), 405, 0, 0, 41, 0, 255) for on in wire.enabled)
 
     def write(fd, packet):
         wire.body_pending = False
@@ -766,8 +768,10 @@ def test_read_failures_and_observations_never_trigger_global_restore(calls, runn
         services.status.refresh()
         assert services.recovery.ready and not services.rds.suspended
         assert all(packet[0] in (1, 4) for packet in packets(calls))
-        if failure in ('qn_fault', 'mismatch', 'attenuation', 'qn_response'):
+        if failure in ('qn_fault', 'mismatch', 'qn_response'):
             assert services.status.snapshot().system.system_state == 'DEGRADED'
+        if failure == 'attenuation':
+            assert services.status.snapshot().system.system_state == 'RUNNING'
         if failure == 'qn_response':
             assert services.status.snapshot().system.controller_communication_state == 'AVAILABLE'
             assert services.status.snapshot().system.controller_observation_stale
@@ -782,6 +786,28 @@ def test_read_failures_and_observations_never_trigger_global_restore(calls, runn
         assert all(packet[0] in (1, 4) for packet in sent)
         assert services.recovery.ready
         assert wire.enabled == ([True]*3 + [False] + [True]*4 if failure == 'mismatch' else [True]*8)
+    app.state.control.executor.submit(check).result()
+
+
+def test_quantized_readback_preserves_configuration_and_running_lifecycle(calls, running_wire_backend):
+    app, wire, _ = running_wire_backend
+    configs = [packet for packet in packets(calls) if packet[0] == p.Command.SET_TX_CONFIG]
+    assert len(configs) == 8
+    assert all(p.TX_CONFIG.unpack(packet[3:])[1] == 404 for packet in configs)
+
+    def check():
+        services = app.state.services
+        calls[0].write.reset_mock()
+        for _ in range(2):
+            services.status.refresh()
+            status = services.status.snapshot()
+            assert status.system.system_state == 'RUNNING'
+            assert status.system.last_error is None
+            assert [row.rf_attenuation_db for row in status.modulators] == [40.5] * 8
+            assert all(services.modulators.get(i).rf_attenuation_db == 40.4 for i in range(8))
+            assert services.recovery.ready and wire.enabled == [True] * 8
+        assert all(packet[0] == p.Command.GET_STATUS for packet in packets(calls))
+
     app.state.control.executor.submit(check).result()
 
 

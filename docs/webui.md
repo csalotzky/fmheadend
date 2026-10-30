@@ -121,7 +121,7 @@ status without replacing the saved form values.
 
 | Section | Principal controls |
 |---|---|
-| RF | Frequency, **RF output** (0–22.5 dB attenuation relative to maximum), Stereo/Mono and 50/75 microsecond pre-emphasis. |
+| RF | Frequency, **RF output** (28 nominal attenuation levels from 0–40.5 dB in 1.5 dB steps relative to maximum), Stereo/Mono and 50/75 microsecond pre-emphasis. |
 | Audio | **FMheadend audio** or **External line input**, Source or analog gain, **Gain control** and **Soft clipping**. |
 | RDS | **RDS enabled**, custom settings or **Follow source** for digital audio. |
 

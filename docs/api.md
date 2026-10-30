@@ -222,9 +222,15 @@ Principal Modulator configuration fields are:
 | `soft_clipping` | Controller-side transmitter soft-clipping selection. |
 | `stereo` | Stereo enable. |
 | `preemphasis_us` | `50` or `75`. |
-| `rf_attenuation_db` | `null` or `0`–`22.5` dB in `1.5` dB steps. |
+| `rf_attenuation_db` | `null` or `0`–`40.5` dB attenuation relative to maximum RF output, in `0.1` dB steps. |
 | `enabled` | Persistent per-Modulator selection; changed through lifecycle operations, not `PATCH`. |
 | `rds_enabled`, `rds_follow_source`, `rds_override_profile` | Persistent RDS enablement and profile selection. |
+
+The saved attenuation retains the requested value. Controller status reports the
+applied nominal attenuation after firmware rounding to the nearest 1.5 dB level;
+a difference is not a configuration failure. The nominal scale uses an approximate
+hardware model, not calibrated absolute RF output power. The WebUI dropdown offers
+all 28 nominal levels from 0 to 40.5 dB.
 
 Responses also project the effective RDS fields and return `id`, `timestamp` and
 `rds_override_profile_id`. A non-RDS `PATCH` requires confirmed RF OFF and released
