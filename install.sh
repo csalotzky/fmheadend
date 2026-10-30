@@ -39,7 +39,7 @@ say() {
     printf '%s\n' "$*" >&"$UI"
     if [[ -n $LOG_FILE ]]; then printf '%s\n' "$*" >>"$LOG_FILE"; fi
 }
-support() { (cd -- "$SOURCE_DIR"; python3 -m tools.install_support "$@"); }
+support() { (cd -- "$SOURCE_DIR"; python3 -B -m tools.install_support "$@"); }
 
 heartbeat_loop() {
     local started=$SECONDS status elapsed
@@ -443,7 +443,10 @@ install_account() {
 
 install_backend() {
     python3 -m venv --system-site-packages "$VENV"
-    "$VENV/bin/python" -m pip install --upgrade "$SOURCE_DIR/daemon"
+    # pip/setuptools build in place; keep root-owned artifacts out of the
+    # ordinary user's bootstrap source tree so it can be cleaned up afterward.
+    cp -a -- "$SOURCE_DIR/daemon" "$WORK/backend"
+    "$VENV/bin/python" -m pip install --upgrade "$WORK/backend"
 }
 
 install_mux() {

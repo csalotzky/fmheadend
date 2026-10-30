@@ -1175,3 +1175,38 @@ def test_dsp_step_label_and_step_count_are_preserved():
     main = source[source.index('main() {'):]
     assert "run_step 'Installing FMheadend DSP plugins' install_plugins" in main
     assert main.count("    run_step '") == 11
+
+
+def test_backend_build_artifacts_stay_in_installer_workspace(tmp_path):
+    result = shell(tmp_path, '''
+SOURCE_DIR="$WORK/source"
+mkdir -p "$SOURCE_DIR/daemon" "$VENV/bin"
+printf 'release source' > "$SOURCE_DIR/daemon/project"
+python3() { [[ $* == "-m venv --system-site-packages $VENV" ]]; }
+cat > "$VENV/bin/python" <<'STUB'
+#!/usr/bin/env bash
+set -eu
+[[ $# == 5 && $1 == -m && $2 == pip && $3 == install && $4 == --upgrade ]]
+[[ -f $5/project ]]
+mkdir -p "$5/build/lib" "$5/fmheadendd.egg-info"
+printf 'built' > "$5/build/lib/artifact"
+STUB
+chmod +x "$VENV/bin/python"
+install_backend
+[[ -f $WORK/backend/build/lib/artifact && -d $WORK/backend/fmheadendd.egg-info ]]
+[[ ! -e $SOURCE_DIR/daemon/build && ! -e $SOURCE_DIR/daemon/fmheadendd.egg-info ]]
+''')
+    assert result.returncode == 0, result.stderr
+
+
+def test_installer_support_does_not_write_bytecode_in_source(tmp_path):
+    result = shell(tmp_path, '''
+original=$SOURCE_DIR
+SOURCE_DIR="$WORK/source"
+mkdir -p "$SOURCE_DIR/tools" "$SOURCE_DIR/daemon"
+cp "$original/tools/install_support.py" "$original/tools/setup_pi.py" "$SOURCE_DIR/tools/"
+cp "$original/daemon/regions.py" "$SOURCE_DIR/daemon/"
+support regions
+[[ ! -e $SOURCE_DIR/tools/__pycache__ && ! -e $SOURCE_DIR/daemon/__pycache__ ]]
+''')
+    assert result.returncode == 0, result.stderr
