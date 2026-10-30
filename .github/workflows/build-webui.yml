@@ -2,6 +2,10 @@ name: Build WebUI
 
 on:
   workflow_dispatch:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-rc[0-9]+'
 
 permissions:
   contents: read
@@ -9,13 +13,35 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      prerelease: ${{ steps.version.outputs.prerelease }}
     defaults:
       run:
         working-directory: webui
     steps:
+      - name: Validate release tag
+        if: github.event_name == 'push'
+        id: version
+        working-directory: .
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc[0-9]+)?$ ]]; then
+            echo "::error::Unsupported release tag: $TAG"
+            exit 1
+          fi
+          if [[ "$TAG" == *-rc* ]]; then
+            echo 'prerelease=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'prerelease=false' >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Check out source
         uses: actions/checkout@v7
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Set up Node.js 24
@@ -58,3 +84,30 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
+
+  release:
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified WebUI archive
+        uses: actions/download-artifact@v8
+        with:
+          name: fmheadend-webui
+
+      - name: Create release and upload WebUI archive
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          PRERELEASE: ${{ needs.build.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          test -s fmheadend-webui.tar.gz
+          # Create fails for an existing release; never edit or overwrite assets.
+          gh release create "$TAG" fmheadend-webui.tar.gz \
+            --verify-tag --title "$TAG" --generate-notes \
+            --prerelease="$PRERELEASE"
