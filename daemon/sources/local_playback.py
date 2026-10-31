@@ -61,9 +61,12 @@ class LocalPlayback(SequencedPlayback):
                 raise job.error
             if generation == self.generation:
                 self.next_queue, self.next_revision = job.value, revision
-        # Request once per successful cycle, or retry failed discovery no faster
+        # Request near the end of a successful cycle, or retry discovery no faster
         # than five seconds. Existing media remains playable during either case.
-        wanted = self.catalog is None or (self.cycle is not None and self.cycle.played and not self.refresh_requested)
+        # Count the playback queue, excluding already selected/prefetched tickets.
+        wanted = self.catalog is None or (
+            self.cycle is not None and self.cycle.played and
+            self.queue.remaining <= 10 and not self.refresh_requested)
         if self.scan is None and wanted and self.clock() >= self.retry_at:
             resolver, config = self.resolver, self.config
 

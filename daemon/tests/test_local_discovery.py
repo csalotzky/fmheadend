@@ -55,7 +55,8 @@ class Sink:
 
 
 @pytest.mark.parametrize('mode', ['folder', 'playlist'])
-def test_blocked_refresh_keeps_pcm_and_other_source_running(tmp_path, pools, monkeypatch, mode):
+@pytest.mark.parametrize('count', [3, 24])
+def test_blocked_refresh_keeps_pcm_and_other_source_running(tmp_path, pools, monkeypatch, mode, count):
     entered, release = Event(), Event()
     calls = []
 
@@ -65,10 +66,15 @@ def test_blocked_refresh_keeps_pcm_and_other_source_running(tmp_path, pools, mon
         if len(calls) > 1:
             entered.set()
             assert release.wait(5)
-        return items('a', 'b', 'c')
+        return items(*(str(i) for i in range(count)))
 
     p = LocalPlayback(LocalMediaConfig(mode, tmp_path, order='random'), Event(), resolver=resolve, source_id=1)
-    initial(p); p.stream_start(); p.pcm(); p._service_jobs()
+    initial(p); p.stream_start(); p.pcm()
+    while p.queue.remaining > 10:
+        p.resume(failed=False)
+        p.stream_start(); p.pcm()
+        assert len(calls) == 1
+    p._service_jobs()
     assert entered.wait(2)
     scan = p.scan
     pipeline = GstPipeline(InputSourceConfig(name='local', type='LOCAL', config=dict(mode=mode, path=str(tmp_path))))

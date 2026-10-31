@@ -48,6 +48,61 @@ def test_cycle_rescan_and_real_pcm_success(tmp_path):
     assert p.prepared.uri.endswith('/new')
 
 
+@pytest.mark.parametrize('order', ['sequential', 'random'])
+def test_large_cycle_refresh_waits_for_remaining_queue_threshold(tmp_path, order):
+    candidates = items(*(str(i) for i in range(24)))
+    p, resolve = make(tmp_path, candidates, order=order, rng=random.Random(42))
+    try:
+        initial(p)
+        p.stream_start(); p.pcm()
+        settle(p)
+        assert p.queue.remaining == 22  # Current track and one prefetched ticket.
+        assert p.next_queue is not None  # Fallback is prepared without a rescan.
+        assert resolve.call_count == 1
+        while p.queue.remaining > 10:
+            p.service(None)
+            assert resolve.call_count == 1
+            p.resume(failed=False)
+            p.stream_start(); p.pcm()
+        assert p.queue.remaining == 10
+        resolve.return_value = items('new')
+        settle(p)
+        assert resolve.call_count == 2
+        cycle = p.cycle
+        # A refreshed catalog cannot replace the active queue mid-cycle.
+        while p.queue.remaining:
+            assert p.resume(failed=False) in [item.locator for item in candidates]
+            p.stream_start(); p.pcm()
+            settle(p)
+            assert p.cycle is cycle and resolve.call_count == 2
+        # The final old ticket is prefetched; only its successor uses the new catalog.
+        assert p.resume(failed=False) in [item.locator for item in candidates]
+        assert p.prepared.uri.endswith('/new')
+        assert resolve.call_count == 2
+        p.stream_start(); p.pcm()
+        assert p.resume(failed=False).endswith('/new')
+    finally:
+        p.close()
+
+
+@pytest.mark.parametrize('count', [1, 10])
+def test_small_cycle_refresh_requires_decoded_pcm(tmp_path, count):
+    p, resolve = make(tmp_path, items(*(str(i) for i in range(count))))
+    try:
+        initial(p)
+        p.stream_start()
+        settle(p)
+        assert resolve.call_count == 1
+        p.pcm()
+        settle(p)
+        assert resolve.call_count == 2
+        for _ in range(10):
+            p._service_jobs()
+        assert resolve.call_count == 2
+    finally:
+        p.close()
+
+
 def test_eos_fallback_keeps_unrendered_handoff_and_then_advances(tmp_path):
     p, _ = make(tmp_path, items('a', 'b', 'c'))
     initial(p); p.stream_start(); p.pcm()
