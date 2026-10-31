@@ -44,14 +44,14 @@ def shell(tmp_path, script):
         'SHARE_DIR': tmp_path / 'share', 'UNIT_DIR': tmp_path / 'units',
         'BACKUP_DIR': tmp_path / 'backups', 'WORK': tmp_path / 'work',
         'DATABASE': tmp_path / 'data/headend.db', 'PASSWD_FILE': tmp_path / 'data/htpasswd',
-        'VENV': tmp_path / 'venv', 'MUX_BINARY': tmp_path / 'muxd',
+        'USB_RULE': tmp_path / 'usb.rules', 'VENV': tmp_path / 'venv', 'MUX_BINARY': tmp_path / 'muxd',
     }
     prefix = 'source ' + shlex.quote((ROOT / 'install.sh').as_posix()) + '\n'
     prefix += '\n'.join(key + '=' + shlex.quote(path.as_posix()) for key, path in variables.items())
     prefix += '\npython3() { ' + shlex.quote(Path(sys.executable).as_posix()) + ' "$@" | tr -d "\\r"; }\n'
     prefix += "TTY=1 MODEL='Test Raspberry Pi' I2C_DEVICE=/dev/i2c-8 RECOMMENDED_PROFILE=default/basic_limiter.json\n"
     # Any unmocked privileged command is a test failure, even on a root CI runner.
-    for command in ('apt-get', 'systemctl', 'systemd-analyze', 'runuser', 'groupadd', 'useradd', 'usermod', 'chown'):
+    for command in ('apt-get', 'systemctl', 'systemd-analyze', 'runuser', 'groupadd', 'useradd', 'usermod', 'chown', 'udevadm', 'systemd-mount', 'lsblk', 'findmnt'):
         prefix += command + '() { echo "UNEXPECTED PRIVILEGED COMMAND" >&2; return 99; }\n'
     env = dict(os.environ)
     env.pop('BASH_ENV', None)
@@ -213,8 +213,8 @@ read() { if [[ ${2:-} == -u ]]; then printf -v "${@: -1}" '%s' "${ANSWERS[INDEX+
 
 
 @pytest.mark.parametrize('answers,expected', [
-    ("('' '' n y '' '' y)", 'RESULT:1:default/moderate_loud.json:no:yes'),
-    ("(2 1 y n '' '' y)", 'RESULT:2:default/basic_limiter.json:yes:no'),
+    ("('' '' n y '' '' '' y)", 'RESULT:1:default/moderate_loud.json:no:yes'),
+    ("(2 1 y n '' '' '' y)", 'RESULT:2:default/basic_limiter.json:yes:no'),
 ])
 def test_fresh_wizard_defaults_and_selections(tmp_path, answers, expected):
     result = shell(tmp_path, MENU + f'ANSWERS={answers}\n' + '''collect_configuration
@@ -491,13 +491,13 @@ def test_full_wizard_snapshot_and_platform_defaults(tmp_path):
 HAVE_ENV=no MODE=fresh
 HARDWARE_PLAN=('Raspberry Pi 4' /dev/i2c-8 default/moderate_loud.json unused unused '  I2C mode: Software I2C')
 RECOMMENDED_PROFILE=default/moderate_loud.json
-ANSWERS=('' '' n y '' '' y) INDEX=0
+ANSWERS=('' '' n y '' '' '' y) INDEX=0
 read() { if [[ ${2:-} == -u ]]; then printf -v "${@: -1}" '%s' "${ANSWERS[INDEX++]}"; else builtin read "$@"; fi; }
 collect_configuration
 ''')
     assert result.returncode == 0, result.stderr
     for heading in ('System Detection', 'FM Region', 'Default Audio Profile', 'WebUI Authentication',
-                    'Raspberry Pi Hardware', 'WebUI Network', 'Installation Summary'):
+                    'Raspberry Pi Hardware', 'WebUI Network', 'USB Storage', 'Installation Summary'):
         assert heading in result.stdout
     assert 'Region (default: 1 - Europe):' in result.stdout
     assert 'Default Audio Profile (default: 9 - Moderate Loud):' in result.stdout
@@ -870,7 +870,7 @@ mapfile -t HARDWARE_PLAN <<< "$plan"
 MODEL=${HARDWARE_PLAN[0]} I2C_DEVICE=${HARDWARE_PLAN[1]} RECOMMENDED_PROFILE=${HARDWARE_PLAN[2]}
 support webui "$ARCHIVE" "$WORK/site"
 detect_installation
-ANSWERS=('' '' n y '' '' y) INDEX=0
+ANSWERS=('' '' n y '' '' '' y) INDEX=0
 read() { if [[ ${2:-} == -u ]]; then printf -v "${@: -1}" '%s' "${ANSWERS[INDEX++]}"; else builtin read "$@"; fi; }
 collect_configuration
 printf 'WIZARD_COMPLETE:%s:%s:%s\n' "$MODE" "$REGION" "$DEFAULT_PROFILE"
@@ -914,7 +914,7 @@ write_environment
 
 def test_network_questions_precede_summary_and_show_selected_values(tmp_path):
     result = shell(tmp_path, MENU + '''
-ANSWERS=('' '' n y 8181 ::1 y)
+ANSWERS=('' '' n y 8181 ::1 '' y)
 collect_configuration
 write_environment
 ''')
@@ -1210,3 +1210,124 @@ support regions
 [[ ! -e $SOURCE_DIR/tools/__pycache__ && ! -e $SOURCE_DIR/daemon/__pycache__ ]]
 ''')
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize('answer,expected', [('yes', 'yes'), ('no', 'no')])
+def test_usb_fresh_choice(tmp_path, answer, expected):
+    result = shell(tmp_path, f'confirm() {{ [[ {answer} == yes ]]; }}; collect_usb_configuration; echo "USB:$USB_AUTOMOUNT"')
+    assert result.returncode == 0, result.stderr
+    assert f'USB:{expected}' in result.stdout
+    assert not (tmp_path / 'usb.rules').exists()
+
+
+def test_usb_legacy_current_and_unexpected_rules(tmp_path):
+    legacy = 'ACTION=="add", SUBSYSTEMS=="usb", SUBSYSTEM=="block", ENV{ID_FS_USAGE}=="filesystem", RUN{program}+="/usr/bin/systemd-mount --no-block --automount=yes --collect $devnode"'
+    rule = tmp_path / 'usb.rules'
+    rule.write_text(legacy + '\n')
+    result = shell(tmp_path, 'confirm() { exit 99; }; collect_usb_configuration; echo "$USB_RULE_STATE:$USB_AUTOMOUNT"')
+    assert result.returncode == 0, result.stderr
+    assert 'legacy:yes' in result.stdout
+    result = shell(tmp_path, 'usb_rule > "$USB_RULE"; usb_rule_state; echo "$USB_RULE_STATE"')
+    assert result.returncode == 0 and 'current' in result.stdout
+    rule.write_text('# user customization\n')
+    result = shell(tmp_path, 'usb_rule_state')
+    assert result.returncode != 0 and 'Unexpected USB' in result.stderr
+    assert rule.read_text() == '# user customization\n'
+
+
+def test_usb_disabled_persists_without_rule(tmp_path):
+    result = shell(tmp_path, 'USB_AUTOMOUNT=no; configure_usb_storage; confirm() { exit 99; }; collect_usb_configuration; echo "$USB_AUTOMOUNT"')
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / 'config/usb-automount.disabled').exists()
+    assert not (tmp_path / 'usb.rules').exists()
+
+
+def test_usb_candidates_exclude_mounted_and_non_usb_disks():
+    from tools.usb_storage import candidates
+    def disk(name, transport='usb', mounted=None):
+        return dict(name='/dev/'+name, type='disk', tran=transport, children=[
+            dict(name='/dev/'+name+'1', type='part', fstype='vfat', uuid='C033-D7F8', mountpoints=[mounted])])
+    assert list(candidates([disk('sda'), disk('sdb'), disk('mmcblk0', 'mmc'),
+                            disk('sdc', mounted='/'), disk('sdd', mounted='/user-mount')])) == ['/dev/sda1', '/dev/sdb1']
+    assert list(candidates([])) == []
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+def test_usb_install_idempotent_and_reloads_only_managed_rule(tmp_path, legacy):
+    if legacy:
+        (tmp_path / 'usb.rules').write_text('ACTION=="add", SUBSYSTEMS=="usb", SUBSYSTEM=="block", ENV{ID_FS_USAGE}=="filesystem", RUN{program}+="/usr/bin/systemd-mount --no-block --automount=yes --collect $devnode"\n')
+    script = r'''USB_AUTOMOUNT=yes
+systemd-mount() { if [[ $1 == --help ]]; then echo '--discover --automount --collect --no-block'; else echo "MOUNT:$*"; fi; }
+udevadm() { echo "UDEV:$*"; }
+lsblk() { echo '{"blockdevices":[]}'; }
+runuser() { [[ $* == '-u fmheadend -- test -r /media' || $* == '-u fmheadend -- test -x /media' ]]; }
+findmnt() { return 1; }
+install() { if [[ $* == '-d -m 0755 /media '* ]]; then mkdir -p "$(dirname "$USB_RULE")"; else command install "$@"; fi; }
+configure_usb_storage
+cp "$USB_RULE" "$WORK/first-rule"
+configure_usb_storage
+cmp "$USB_RULE" "$WORK/first-rule"
+'''
+    result = shell(tmp_path, script)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.count('UDEV:control --reload-rules') == 2
+    rule = (tmp_path / 'usb.rules').read_text()
+    assert '/media/usb-%E{ID_FS_UUID}' in rule
+    assert '--discover --automount=yes --collect' in rule
+    assert 'MOUNT:' not in result.stdout
+
+
+@pytest.mark.parametrize('mount', ['/', '/boot', '/boot/firmware'])
+def test_usb_system_disk_is_rejected(mount):
+    from tools.usb_storage import check_system_disks
+    with pytest.raises(ValueError, match='USB system/boot disk'):
+        check_system_disks([dict(tran='usb', children=[dict(mountpoints=[mount])])])
+    check_system_disks([dict(tran='mmc', children=[dict(mountpoints=[mount])])])
+
+
+def test_usb_connected_devices_uuid_paths_and_existing_mounts(tmp_path):
+    nodes = [dict(name='/dev/sda', type='disk', tran='usb', children=[
+        dict(name='/dev/sda1', type='part', fstype='vfat', uuid='C033-D7F8', mountpoints=[None])]),
+        dict(name='/dev/sdb', type='disk', tran='usb', children=[
+        dict(name='/dev/sdb1', type='part', fstype='vfat', uuid='SECOND', mountpoints=[None])])]
+    fixture = tmp_path / 'blocks.json'
+    fixture.write_text(json.dumps(dict(blockdevices=nodes)))
+    script = r'''USB_AUTOMOUNT=yes
+systemd-mount() { if [[ $1 == --help ]]; then echo '--discover --automount --collect --no-block'; else echo "MOUNT:$*"; fi; }
+udevadm() { if [[ $1 == info ]]; then printf 'ID_FS_USAGE=filesystem\nID_FS_UUID='; case "$*" in *sda1*|*sdc1*) echo C033-D7F8;; *) echo SECOND;; esac; fi; }
+lsblk() { cat "$CONFIG_DIR/../blocks.json"; }
+findmnt() { [[ $* == *'/dev/sdb1'* ]]; }
+runuser() { return 0; }
+install() { if [[ $* == '-d -m 0755 /media '* ]]; then mkdir -p "$(dirname "$USB_RULE")"; else command install "$@"; fi; }
+configure_usb_storage
+'''
+    first = shell(tmp_path, script)
+    assert first.returncode == 0, first.stderr
+    assert '/dev/sda1 /media/usb-C033-D7F8' in first.stdout
+    assert '/media/usb-SECOND' not in first.stdout
+    # Removal followed by reinsertion under a different device name retains UUID path.
+    nodes[0]['children'][0]['name'] = '/dev/sdc1'
+    fixture.write_text(json.dumps(dict(blockdevices=nodes)))
+    second = shell(tmp_path, script)
+    assert second.returncode == 0, second.stderr
+    assert '/dev/sdc1 /media/usb-C033-D7F8' in second.stdout
+    both = shell(tmp_path, script.replace("findmnt() { [[ $* == *'/dev/sdb1'* ]]; }", 'findmnt() { return 1; }'))
+    assert both.returncode == 0, both.stderr
+    assert '/media/usb-C033-D7F8' in both.stdout and '/media/usb-SECOND' in both.stdout
+
+
+def test_usb_missing_systemd_feature_does_not_write_rule(tmp_path):
+    result = shell(tmp_path, "USB_AUTOMOUNT=yes; systemd-mount() { echo '--automount'; }; configure_usb_storage")
+    assert result.returncode != 0 and 'lacks required option' in result.stderr
+    assert not (tmp_path / 'usb.rules').exists()
+
+
+def test_usb_system_disk_rejection_precedes_rule_installation(tmp_path):
+    result = shell(tmp_path, r'''USB_AUTOMOUNT=yes
+systemd-mount() { echo '--discover --automount --collect --no-block'; }
+udevadm() { :; }
+lsblk() { echo '{"blockdevices":[{"tran":"usb","children":[{"mountpoints":["/"]}]}]}'; }
+configure_usb_storage
+''')
+    assert result.returncode != 0 and 'USB system/boot disk' in result.stderr
+    assert not (tmp_path / 'usb.rules').exists()
