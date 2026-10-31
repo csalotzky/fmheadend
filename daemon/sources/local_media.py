@@ -178,6 +178,11 @@ class PlaybackQueue:
         self._position = 0
 
     @property
+    def remaining(self) -> int:
+        """Items not yet taken from this cycle, excluding prefetched tickets."""
+        return len(self._cycle) - self._position
+
+    @property
     def exhausted(self) -> bool:
         return self._position == len(self._cycle)
 

@@ -258,6 +258,20 @@ def test_builder_and_early_rebuild_have_no_filesystem_dependency():
         queue.rebuild(media('new'))
         assert consume(queue) == media('new')
 
+
+def test_queue_remaining_counts_unselected_items_and_resets_on_rebuild():
+    queue = PlaybackQueue(media('a', 'b', 'c'))
+    assert queue.remaining == 3
+    queue.next_item()
+    assert queue.remaining == 2
+    consume(queue)
+    assert queue.remaining == 0
+    assert queue.next_item() is None and queue.remaining == 0
+    queue.rebuild()
+    assert queue.remaining == 3
+    queue.rebuild([])
+    assert queue.remaining == 0
+
 @pytest.mark.parametrize('bom', [False, True])
 def test_vlc_legacy_comments_do_not_require_utf8(tmp_path, bom):
     playlist = tmp_path / 'vlc.m3u'
