@@ -426,6 +426,70 @@ def test_relative_enclosure_uses_redirect_base_but_original_feed_identity():
     assert e.feed_id == feed_identity(URL)
 
 
+@pytest.mark.parametrize('kind', ['rss', 'atom-html', 'atom-xhtml'])
+def test_feed_titles_remain_plain_without_html_postprocessing(monkeypatch, kind):
+    import feedparser.mixin
+
+    def unnecessary_processing(*args, **kwargs):
+        pytest.fail('Podcast parsing must skip HTML sanitization and HTML URI resolution')
+
+    monkeypatch.setattr(feedparser.mixin, '_sanitize_html', unnecessary_processing)
+    monkeypatch.setattr(feedparser.mixin, 'resolve_relative_uris', unnecessary_processing)
+    if kind == 'rss':
+        xml = rss(item(title='<![CDATA[<b>Actual</b> &amp; title]]>')).replace(
+            b'<title>Show &amp; Co</title>',
+            b'<title><![CDATA[<i>Show</i> &amp; Co]]></title>')
+        xml = xml.replace(b'</item>', b'<description><![CDATA[<p><a href="relative">Body</a>'
+                          b'</p>]]></description></item>')
+    else:
+        if kind == 'atom-html':
+            show = '<title type="html">&lt;i&gt;Show&lt;/i&gt; &amp;amp; Co</title>'
+            title = '<title type="html">&lt;b&gt;Actual&lt;/b&gt; &amp;amp; title</title>'
+        else:
+            show = '<title type="xhtml"><div xmlns="http://www.w3.org/1999/xhtml"><i>Show</i> &amp; Co</div></title>'
+            title = '<title type="xhtml"><div xmlns="http://www.w3.org/1999/xhtml"><b>Actual</b> &amp; title</div></title>'
+        xml = ('<feed xmlns="http://www.w3.org/2005/Atom">' + show + '<entry><id>one</id>'
+               + title + '<link rel="enclosure" type="audio/mpeg" href="audio/1"/>'
+               '<content type="html">&lt;a href="relative"&gt;Body&lt;/a&gt;</content>'
+               '</entry></feed>').encode()
+    feed = parse_feed(xml, URL, NOW)
+    assert feed.title == 'Show & Co'
+    assert feed.episodes[0].title == 'Actual & title'
+    assert feed.episodes[0].feed_title == feed.title
+
+
+@pytest.mark.parametrize('native_id', [None, 'stable-guid'])
+@pytest.mark.parametrize('media,expected', [
+    ('audio/1.mp3', 'https://cdn.example.org/shows/audio/1.mp3'),
+    ('../audio/1.mp3', 'https://cdn.example.org/audio/1.mp3'),
+    ('/audio/1.mp3', 'https://cdn.example.org/audio/1.mp3'),
+    ('//media.example.org/1.mp3', 'https://media.example.org/1.mp3'),
+])
+def test_refresh_redirect_resolves_enclosures_and_preserves_identity(native_id, media, expected):
+    final = 'https://cdn.example.org/shows/feed.xml'
+    def handler(request):
+        if str(request.url) == URL:
+            return httpx.Response(302, headers={'location': final})
+        assert str(request.url) == final
+        return httpx.Response(200, stream=httpx.ByteStream(rss(item(native_id, media=media))))
+
+    feed, = EpisodeCatalog().refresh(config(), fetcher(handler), NOW).feeds
+    episode, = feed.episodes
+    reference, = parse_feed(rss(item(native_id, media=expected)), URL, NOW).episodes
+    assert episode == reference
+    assert feed.feed_id == feed_identity(URL) and feed.url == URL
+    assert episode.published_at == NOW.replace(hour=10)
+
+
+def test_atom_relative_enclosure_keeps_xml_base_resolution():
+    xml = b'''<feed xmlns="http://www.w3.org/2005/Atom" xml:base="../media/">
+      <title>Show</title><entry xml:base="episodes/"><id>urn:one</id><title>Episode</title>
+      <link rel="enclosure" type="audio/ogg" href="one.ogg"/></entry></feed>'''
+    episode, = parse_feed(xml, URL, NOW,
+                         base_url='https://cdn.example.org/shows/feed.xml').episodes
+    assert episode.media_url == 'https://cdn.example.org/media/episodes/one.ogg'
+
+
 def test_feed_warnings_do_not_log_credentials(caplog):
     catalog = EpisodeCatalog()
     def fetch(url):
