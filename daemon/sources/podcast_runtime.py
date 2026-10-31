@@ -15,6 +15,7 @@ from ..errors import DependencyUnavailable, DomainError
 from .output import PCM_BYTES_PER_SECOND
 from .podcast import CatalogSnapshot, EpisodeCatalog, eligible_episodes
 from .podcast_fetch import FeedFetcher
+from .podcast_parser import shared_parser
 from .podcast_history import PodcastHistory, EpisodeHistory
 from .podcast_schedule import PodcastScheduler
 from .sequenced_playback import SequencedPlayback, Ticket
@@ -26,13 +27,14 @@ PLAYED_BYTES = 60 * PCM_BYTES_PER_SECOND
 class PodcastRuntime(SequencedPlayback):
     def __init__(self, config, wakeup, *, database_path=None, source_id=None,
                  history_factory=None, fetch_factory=FeedFetcher, clock=time.monotonic,
-                 now=lambda: datetime.now(timezone.utc), rng=None):
+                 now=lambda: datetime.now(timezone.utc), rng=None, parser=None):
         super().__init__(wakeup)
         self.config = config
         self.database_path, self.source_id = database_path, source_id
         self.history_factory = history_factory
         self.fetch_factory, self.clock, self.now = fetch_factory, clock, now
-        self.catalog = EpisodeCatalog()
+        self._parser = parser if parser is not None else shared_parser()
+        self.catalog = EpisodeCatalog(self._parser)
         self.catalog_view = self.catalog.snapshot()
         self.eligible_keys = frozenset()
         self.scheduler = PodcastScheduler(config.schedule_mode, rng=rng)
@@ -221,6 +223,6 @@ class PodcastRuntime(SequencedPlayback):
             self.failed.clear()
             self.history_state.clear()
             self.catalog_view = CatalogSnapshot()
-            self.catalog = EpisodeCatalog()
+            self.catalog = EpisodeCatalog(self._parser)
             self.eligible_keys = frozenset()
             self._sources.clear()
