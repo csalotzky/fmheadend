@@ -217,6 +217,10 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
 
             def shutdown():
                 cleanup('RF/recovery', services.recovery.shutdown)
+                # Wake queued parses before joining source I/O threads. Keep
+                # the shared parser closed until all sources/probes drain.
+                from .sources.podcast_parser import shared_parser
+                cleanup('Podcast parser', shared_parser().close)
                 cleanup('Sources', services.sources.close)
                 cleanup('Mux', services.mux.close)
                 if isinstance(services.rp, Rp2354Client):
@@ -250,6 +254,8 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
                 async with service_lifespan(app):
                     yield
             finally:
+                from .sources.podcast_parser import close_shared_parser
+                await asyncio.to_thread(close_shared_parser)
                 if auth is not None:
                     await auth.close()
 

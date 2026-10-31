@@ -70,10 +70,11 @@ def probe_podcast(config):
     """Independent catalog only: no shared scheduler, history, PCM or hardware."""
     from datetime import datetime, timezone
     from .podcast import EpisodeCatalog, eligible_episodes
+    from .podcast_parser import shared_parser
     from ..models.configuration import SourceTestResult, PodcastProbe, PodcastFeedProbe
 
     now = datetime.now(timezone.utc)
-    snapshot = EpisodeCatalog().refresh(config, FeedFetcher(), now)
+    snapshot = EpisodeCatalog(shared_parser()).refresh(config, FeedFetcher(), now)
     eligible = eligible_episodes(snapshot, config, now)
     # Per-feed counts are a grouping of the core's eligibility result, not a second filter.
     per_feed = Counter(e.feed_id for e in eligible)

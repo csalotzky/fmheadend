@@ -167,7 +167,8 @@ class EpisodeCatalog:
     Refresh calls serialize; readers only hold a short publication lock. The
     owner calls refresh when due; there is no new daemon worker or timer.
     """
-    def __init__(self):
+    def __init__(self, parser=parse_feed):
+        self._parse = parser
         self._snapshot = CatalogSnapshot()
         self._lock = Lock()
         self._refresh_lock = Lock()
@@ -190,7 +191,7 @@ class EpisodeCatalog:
                 old = previous.get(fid)
                 try:
                     response = fetch(configured.url)
-                    new = parse_feed(response.body, configured.url, now, base_url=response.url)
+                    new = self._parse(response.body, configured.url, now, base_url=response.url)
                     known = {e.episode_id: e for e in old.episodes} if old else {}
                     new = replace(new, episodes=tuple(replace(e,
                         discovered_at=known[e.episode_id].discovered_at) if e.episode_id in known else e
