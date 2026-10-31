@@ -387,3 +387,40 @@ For protocol diagnostics, see the [Controller protocol](controller-protocol.md).
 The manual installation procedure and refined interactive installer still need
 broader clean-system qualification. Automatic GitHub Release downloads are not
 implemented.
+
+
+## USB storage automount
+
+The installer offers **USB Storage** before its summary, enabled by default.
+It installs `/etc/udev/rules.d/90-fmheadend-usb-automount.rules` and reloads
+udev. USB filesystems with UUIDs become systemd automounts at
+`/media/usb-<UUID>/`, for example `/media/usb-C033-D7F8/`. Actual mounting
+occurs on first access. Multiple drives use their own UUID paths; cloned
+filesystems must have distinct UUIDs.
+
+Local Media already exposes `/media`; no backend arguments or source changes
+are needed. Existing Local Media configurations remain intact. Files and parent
+directories on POSIX filesystems must permit the `fmheadend` account to read and
+traverse them. The installer does not change ownership or permissions on media.
+Normally readable FAT/exFAT media uses the system mount defaults. Check a real
+file with `sudo -u fmheadend test -r /media/usb-C033-D7F8/example.mp3`.
+
+Reruns preserve enabled support or a recorded disabled choice. The installer
+replaces only the known earlier FMheadend rule that used `/run/media/system`;
+unexpected rule contents require manual review. Existing mounts are left in
+place during migration: reconnect the drive when convenient to obtain its new
+path, and update old source paths explicitly if desired. Already-connected
+unmounted USB filesystems are scheduled where possible; disks with any mounted
+partition and fstab-managed filesystems are skipped. No global udev add events
+are replayed. `/etc/fstab` and unrelated rules are unchanged.
+
+The supplied rule applies to USB filesystems on add events. The installer refuses to enable it when the current root or boot filesystem
+is on USB, because the generic rule cannot distinguish that filesystem during
+early boot. Choose Disabled on USB-boot systems. Reassess this setting before
+migrating an existing SD-card installation to USB boot.
+
+Target-device acceptance checks (not exercised by mocked installer tests):
+insert two USB drives, browse both UUID directories as `fmheadend`, remove them
+safely and reconnect them, and verify the same paths and readable content.
+Repeat after reboot and after upgrading the legacy rule. Systemd/udev must
+provide `systemd-mount --discover --automount --collect --no-block`.

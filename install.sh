@@ -24,6 +24,8 @@ LOG_FILE= CURRENT_STEP= STEP=0 TOTAL_STEPS=11
 UI=1 ERROR_UI=2 COLOR= RESET=
 HTTP_HOST=0.0.0.0 HTTP_PORT=8080
 SPI_DEVICE=/dev/spidev0.0 SPI_CLOCK_HZ=25000000
+USB_RULE=/etc/udev/rules.d/90-fmheadend-usb-automount.rules
+USB_AUTOMOUNT=no
 HEARTBEAT_PID= HEARTBEAT_INPUT= HEARTBEAT_OUTPUT=
 
 die() {
@@ -262,6 +264,88 @@ detect_installation() {
     done
 }
 
+usb_rule() {
+    printf '%s\n' 'ACTION=="add", SUBSYSTEMS=="usb", SUBSYSTEM=="block", ENV{ID_FS_USAGE}=="filesystem", ENV{ID_FS_UUID}!="", RUN{program}+="/usr/bin/systemd-mount --no-block --discover --automount=yes --collect $devnode /media/usb-%E{ID_FS_UUID}"'
+}
+
+usb_rule_state() {
+    local contents legacy
+    [[ ! -L $USB_RULE ]] || die "USB automount rule is a symlink; review $USB_RULE manually."
+    if [[ ! -e $USB_RULE ]]; then USB_RULE_STATE=absent; return; fi
+    [[ -f $USB_RULE ]] || die "USB automount rule is not a regular file: $USB_RULE"
+    contents=$(cat -- "$USB_RULE")
+    legacy='ACTION=="add", SUBSYSTEMS=="usb", SUBSYSTEM=="block", ENV{ID_FS_USAGE}=="filesystem", RUN{program}+="/usr/bin/systemd-mount --no-block --automount=yes --collect $devnode"'
+    if [[ $contents == "$(usb_rule)" ]]; then USB_RULE_STATE=current
+    elif [[ $contents == "$legacy" ]]; then USB_RULE_STATE=legacy
+    else die "Unexpected USB automount rule contents; review $USB_RULE manually. No rule was overwritten."
+    fi
+}
+
+collect_usb_configuration() {
+    section 'USB Storage'
+    say 'Automatically mount USB storage devices when connected.'
+    say 'Mounted drives will be available in the Local Media browser.'
+    say ''
+    usb_rule_state
+    if [[ $USB_RULE_STATE != absent ]]; then
+        USB_AUTOMOUNT=yes
+        say 'Preserving existing USB automount support.'
+    elif [[ -f $CONFIG_DIR/usb-automount.disabled ]]; then
+        USB_AUTOMOUNT=no
+        say 'Preserving disabled USB automount setting.'
+    elif confirm 'Enable USB automount?' yes; then
+        USB_AUTOMOUNT=yes
+    else
+        USB_AUTOMOUNT=no
+    fi
+}
+
+configure_usb_storage() {
+    local help option device properties uuid
+    usb_rule_state
+    if [[ $USB_AUTOMOUNT != yes ]]; then
+        [[ $USB_RULE_STATE == absent ]] || die 'USB rule changed during installation; refusing to disable it.'
+        install -d -m 0755 "$CONFIG_DIR"
+        printf '%s\n' 'USB automount disabled by the installer.' > "$CONFIG_DIR/usb-automount.disabled"
+        return
+    fi
+    for option in systemd-mount udevadm lsblk findmnt; do
+        command -v "$option" >/dev/null || die "USB automount requires $option."
+    done
+    help=$(systemd-mount --help)
+    for option in --discover --automount --collect --no-block; do
+        [[ $help == *"$option"* ]] || die "systemd-mount lacks required option $option."
+    done
+    udevadm control --ping
+    lsblk --json --paths --output NAME,TYPE,TRAN,FSTYPE,UUID,MOUNTPOINTS > "$WORK/usb-blocks.json"
+    python3 -B "$SOURCE_DIR/tools/usb_storage.py" "$WORK/usb-blocks.json" --check-system
+    install -d -m 0755 /media "$(dirname "$USB_RULE")"
+    if [[ $USB_RULE_STATE != current ]]; then
+        usb_rule > "$WORK/usb-automount.rules"
+        install -m 0644 "$WORK/usb-automount.rules" "$USB_RULE"
+    fi
+    udevadm control --reload-rules
+    # Never replay add events globally: they also invoke unrelated udev rules.
+    # Skip an entire disk if any of its filesystems is already mounted.
+    python3 -B "$SOURCE_DIR/tools/usb_storage.py" "$WORK/usb-blocks.json" > "$WORK/usb-candidates"
+    while IFS= read -r device; do
+        [[ -n $device ]] || continue
+        if findmnt --noheadings --source "$device" >/dev/null; then continue; fi
+        if findmnt --fstab --noheadings --evaluate --source "$device" >/dev/null; then continue; fi
+        properties=$(udevadm info --query=property --name="$device") || continue
+        [[ $'\n'$properties$'\n' == *$'\nID_FS_USAGE=filesystem\n'* ]] || continue
+        uuid=$(sed -n 's/^ID_FS_UUID=//p' <<< "$properties")
+        [[ $uuid =~ ^[A-Za-z0-9-]+$ ]] || continue
+        if findmnt --noheadings --mountpoint "/media/usb-$uuid" >/dev/null; then continue; fi
+        if ! systemd-mount --no-block --discover --automount=yes --collect "$device" "/media/usb-$uuid"; then
+            say "WARNING: Could not schedule $device; reconnect it after installation."
+        fi
+    done < "$WORK/usb-candidates"
+    runuser -u fmheadend -- test -r /media
+    runuser -u fmheadend -- test -x /media
+    say 'USB automount enabled; media must grant fmheadend read and directory traversal access.'
+}
+
 collect_configuration() {
     section 'System Detection'
     say "Detected platform: $MODEL"
@@ -360,6 +444,7 @@ collect_configuration() {
         section 'WebUI Network'
         collect_network_configuration
     fi
+    collect_usb_configuration
     section 'Installation Summary'
     local region_name authentication hardware_label
     local -a region_names=(Expert Europe 'United States' Japan)
@@ -375,6 +460,7 @@ collect_configuration() {
         'Region:' "$region_name" 'Default profile:' "${DEFAULT_PROFILE_NAME:-Preserved}" \
         'Authentication:' "$authentication" 'Hardware setup:' "$hardware_label" \
         'WebUI port:' "$HTTP_PORT" 'HTTP bind:' "$HTTP_HOST" >&"$UI"
+    if [[ $USB_AUTOMOUNT == yes ]]; then say 'USB automount: Enabled'; else say 'USB automount: Disabled'; fi
     say ''
     if [[ $MODE == upgrade ]]; then
         say 'Preserving database, environment files, credentials, custom profiles'
@@ -661,6 +747,7 @@ configure_application() {
     write_environment
     initialize_database
     configure_hardware
+    configure_usb_storage
 }
 
 cleanup() {
