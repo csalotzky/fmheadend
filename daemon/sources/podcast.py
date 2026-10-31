@@ -89,7 +89,9 @@ class PodcastFeed:
 def parse_feed(data: bytes, url: str, now: datetime, *, base_url: str | None = None) -> PodcastFeed:
     """feedparser handles RSS/Atom, encodings and dates; it never fetches URLs here."""
     now = utc(now)
-    parsed = feedparser.parse(data, response_headers={"content-location": base_url or url})
+    # Only titles and enclosure metadata are used; titles are made plain below.
+    parsed = feedparser.parse(data, response_headers={"content-location": base_url or url},
+                              sanitize_html=False, resolve_relative_uris=False)
     # Tolerate parser warnings on usable feeds, but do not replace a good catalog
     # with a truncated/ill-formed XML document or a non-feed HTTP response.
     from xml.sax import SAXException
