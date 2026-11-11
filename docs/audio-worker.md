@@ -1,5 +1,36 @@
 # Experimental HTTP audio worker (Phase 2A)
 
+## Phase 2B recovery
+
+The daemon's existing control-owned maintenance tick services `WorkerRecovery`.
+Only adapters exposing the HTTP worker recovery observation participate. No new
+heartbeat, scheduler thread, RF command or mux replacement is involved.
+
+`RecoveryPolicy` supplies injectable thresholds: 5 s without validated status,
+15 s without valid PCM while running, or 90 s while BUFFERING/CONNECTING.
+Times are parent monotonic observations; any valid PCM, including digital zero,
+counts as progress. Status changes and reconnect counters do not reset the PCM
+deadline. A responsive control thread therefore cannot hide a playback stall.
+These are internal policy settings, not new CLI/WebUI options. Detection runs
+on the existing maintenance cadence and can be delayed by unrelated control work.
+
+Crash, transport error or timeout requests bounded teardown on the existing
+owner. A replacement cannot start until `stop()` confirms actual reap. The
+replacement has fresh channels/generation and the identical parent `PcmOutput`.
+Automatic retries retain the applied source/profile snapshot. At most three
+restarts are requested within 300 s, with 1/2/4 s backoff; exhaustion is terminal
+ERROR until an explicit source/profile apply or stop/start. An explicit apply
+resets that source's budget. There is no implicit restart on intentional STOP.
+
+SourceManager retains pending cleanup, automatically completes removal after
+last-consumer STOP, and coalesces source/profile apply to the latest requested
+source. Existing save responses can still report `applied=false` with a pending
+message because native completion is asynchronous; no manual retry is required.
+Subsequent source status follows the new generation. Failed replacement remains
+ERROR. All callbacks/cache publication retain the Phase 2A generation checks.
+
+Native Pi validation and limitations are recorded in `tmp/audiod-phase2b/RESULTS.md`.
+
 **Phase 2A final gate: PASS.** The same owner now
 survives the cleanup deadline until a successful wait. All three earlier review
 corrections are retained. Fresh Mint validation: 68 focused tests, zero skips;
@@ -97,11 +128,9 @@ nor a native completion. Startup has a parent deadline of native timeout + 1 s.
 `stop()` sets terminal intent, clears the parent output and returns immediately
 with `DependencyUnavailable` while reaping is pending. A later `stop()` succeeds
 only after actual exit. The existing manager therefore retains ownership and
-cannot launch an overlapping replacement. No new completion dispatcher was
-added: **a STOP may report cleanup pending and require retry; saved source/profile
-application may report saved-but-not-applied and require reapplication after
-reap**. This deliberate experimental API limitation avoids disguising a blocking
-RPC as the existing synchronous method. All in-process lifecycle behavior stays
+cannot launch an overlapping replacement. The Phase 2B manager maintenance path
+automatically finishes pending STOP/apply; direct adapter callers still receive
+the pending exception. All in-process lifecycle behavior stays
 unchanged. Normal manager close initiates all stops. A small, strong-reference
 set retains active daemon owner threads' adapters independently of the manager
 registry; an entry is removed only after successful reaping and cleanup.
@@ -123,7 +152,7 @@ The guarantee has three distinct boundaries:
   Popen handle remain reachable until wait succeeds, even if SourceManager.close
   has cleared its registry. Later exit is reaped without another control call.
   The total late wait is intentionally unlimited, but only on a daemon thread;
-  there is no control-executor wait or automatic restart/completion dispatcher.
+  there is no control-executor process wait. Manager maintenance handles recovery.
 - **Graceful shutdown:** the application first stops submitting source work.
   An atexit hook closes admission, requests all owners to stop, and waits at most
   one shared 1.5 s budget, then attempts KILL on any still-pending handles.
@@ -147,8 +176,8 @@ native timeout + 1 s, and at most 1.8 s for cleanup. Active playback start/stop
 never use those waits on the global control executor.
 
 Worker crash/transport failure clears only its parent queues and metadata and
-publishes an error. Unrelated adapters keep running. No worker restart, RF
-operation, failover, or mux reset is performed. Tail audio already in muxd may
+publishes an error. Unrelated adapters keep running. Phase 2B restarts the worker
+within its budget, without an RF operation or mux reset. Tail audio already in muxd may
 play before its existing silence fill takes over.
 
 ## Deliberately deferred
@@ -161,9 +190,8 @@ play before its existing silence fill takes over.
   counters are internal diagnostics, not added to the public PCM status schema.
 - Native profile validation still uses the existing in-process validator, and
   other source types remain in-process. This is not total native crash isolation.
-- Automatic STOP/apply completion integration, crash budgets, heartbeat/no-PCM
-  classification, replacement recovery, checkpoint/resume, admission limits,
-  robust parent-death containment, richer error classification and rollout.
+- Checkpoint/resume, admission limits, robust parent-death containment, richer
+  error classification and production rollout.
 - PCM blocks exceeding 64 KiB, source/profile JSON exceeding 64 KiB, and buffer
   settings above 10000 ms are outside the PoC wire limits and fail explicitly.
 

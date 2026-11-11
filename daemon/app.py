@@ -126,6 +126,7 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
         next_poll = 0.0
         def tick():
             nonlocal next_poll
+            services.sources.worker_recovery.service()
             services.rt.expire()
             services.recovery.service()
             services.rds.tick()

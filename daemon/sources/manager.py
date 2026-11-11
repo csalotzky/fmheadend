@@ -43,6 +43,8 @@ class SourceManager:
         self._telemetry_request = (False, 50.0)
         self._telemetry_lock = Lock()
         self._telemetry_closed = False
+        from .worker_recovery import WorkerRecovery
+        self.worker_recovery = WorkerRecovery(self)
 
     def set_telemetry(self, enabled, hz=50.0):
         """Normal requests are control-owned; terminal disable may bypass control."""
@@ -227,6 +229,12 @@ class SourceManager:
         self.radio_recovery.invalidate(source_id)
         self._profile_observations.pop(source_id, None)
         old = self.pipelines[source_id]
+        if hasattr(old, 'recovery_observation'):
+            self.worker_recovery.request(source_id, source.model_copy(deep=True))
+            self.restart_errors[source_id] = 'HTTP source apply pending'
+            self.statuses[source_id] = InputSourceStatus(source_id=source_id,
+                state='CONNECTING', last_error='HTTP source apply pending', error_scope='INTERNAL')
+            return 'HTTP source apply pending'
         try:
             # Failed stop retains old ownership; never create a competing worker.
             old.stop()
@@ -250,6 +258,8 @@ class SourceManager:
             return str(exc)
 
     def acquire(self, source_id, modulator_id):
+        if source_id in self.worker_recovery.pending:
+            raise SourcePending('HTTP source cleanup/replacement pending')
         source = self.database.get("sources", source_id)
         # Joining an existing pipeline must validate too: a live worker with old
         # settings is not proof that its selected file remains usable.
@@ -273,6 +283,8 @@ class SourceManager:
             pipeline = None
             try:
                 pipeline = self._new_pipeline(source)
+                if hasattr(pipeline, 'recovery_observation'):
+                    pipeline.managed_recovery = True
                 # Track ownership before a potentially slow native start. If
                 # teardown fails, a future acquire must not create a duplicate.
                 self._publish_pipeline(source_id, pipeline, modulator_id)
@@ -325,6 +337,12 @@ class SourceManager:
             return
         pipeline = self.pipelines[source_id]
         if len(consumers) == 1:
+            if hasattr(pipeline, 'recovery_observation'):
+                with self._registry_lock:
+                    consumers.discard(modulator_id)
+                pipeline.output.detach(modulator_id)
+                self.worker_recovery.request(source_id)
+                return
             failed_start = (InputSourceStatus(source_id=source_id, **pipeline.snapshot())
                             if getattr(pipeline, 'startup_pending', False) and pipeline.fatal_error else None)
             self.radio_recovery.invalidate(source_id)
@@ -415,6 +433,7 @@ class SourceManager:
         return getattr(pipeline, "output", None)
 
     def close(self):
+        self.worker_recovery.pending.clear()
         self.radio_recovery.close()
         for pipeline in list(self.pipelines.values()):
             try:

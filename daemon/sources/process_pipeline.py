@@ -110,6 +110,23 @@ class ProcessPipeline:
         self.stale_messages = 0
         self.stale_pcm = 0
         self.accepted_request = 0
+        self.managed_recovery = False
+        self.recovery_exhausted = False
+        self._last_status = time.monotonic()
+        self._last_pcm = self._last_status
+
+    def recovery_observation(self):
+        with self._lock:
+            return self._last_status, self._last_pcm, self._status['state'], self._fatal_error, self._done.is_set()
+
+    def fresh(self):
+        from ..models.audio_profile_file import AudioProfileFile
+        profile = self._create['profile']
+        result = type(self)(self.source.model_copy(deep=True), output=self.output,
+            profile=AudioProfileFile.model_validate(profile) if profile else None,
+            **self._create['options'])
+        result.audio_profile_id = self.audio_profile_id
+        return result
 
     @property
     def fatal_error(self):
@@ -176,6 +193,8 @@ class ProcessPipeline:
         self.check_startup()
 
     def check_startup(self):
+        if self.managed_recovery and not self.recovery_exhausted and (self.fatal_error or self._stop.is_set()):
+            raise SourcePending('HTTP worker recovery pending')
         if self.fatal_error or self._done.is_set():
             raise SourceStartupFailed(self.fatal_error or 'Audio worker exited')
         if self._stop.is_set():
@@ -240,6 +259,7 @@ class ProcessPipeline:
                 self._status['last_error'] = None
                 self._probe = probe
                 self.output.publish(pcm)
+                self._last_pcm = time.monotonic()
                 self._has_pcm = True
                 if self.reconnect or (self._prepared and self._probe.ok):
                     self._ready.set()
@@ -252,6 +272,7 @@ class ProcessPipeline:
             elif kind == 'status' and set(payload) == {'status', 'staging', 'fatal_error'}:
                 status = InputSourceStatus(source_id=self.source_id, **payload['status']).model_dump(mode='json')
                 self._staging = PcmQueueStatus.model_validate(payload['staging']).model_dump()
+                self._last_status = time.monotonic()
                 # Metadata only advances with its corresponding PCM record.
                 for key in ('state', 'last_error', 'error_scope', 'reconnect_count'):
                     self._status[key] = status[key]

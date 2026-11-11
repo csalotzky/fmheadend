@@ -395,7 +395,7 @@ def test_simulated_manager_sharing_replacement_and_exit(simulated_process, tmp_p
         assert 'pending' in manager._restart_audio(first)
         assert manager.pipelines[first.id] is a
         assert a._done.wait(3)
-        assert manager._restart_audio(first) == 'HTTP audio worker preparation pending'
+        manager.worker_recovery.service()  # Apply completes without another API call.
         replacement = manager.pipelines[first.id]
         workers.append(replacement)
         assert replacement.output is output
@@ -491,6 +491,7 @@ def test_real_process_sharing_independence_and_crash(tmp_path):
         assert until(lambda: b.output.read(2)) == PCM
         assert b.process.poll() is None
         manager.release(first.id, 1)
+        manager.worker_recovery.service()
         assert first.id not in manager.pipelines
     finally:
         for pipeline in workers:
