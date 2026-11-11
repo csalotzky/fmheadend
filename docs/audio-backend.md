@@ -1,5 +1,9 @@
 # Audio backend contract (Phase 1)
 
+The opt-in Phase 2A HTTP process prototype and its asynchronous lifecycle/API
+limitations are documented in [audio-worker.md](audio-worker.md). The default
+in-process backend and the Phase 1 ownership rules below remain unchanged.
+
 `daemon/sources/pipeline.py` is the control-side contract. `GstPipeline`
 implements `MediaPipeline` directly and structurally: no wrapper, duplicated
 status cache, native-object interface or new lifecycle executor is introduced.

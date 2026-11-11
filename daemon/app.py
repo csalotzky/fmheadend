@@ -321,6 +321,8 @@ def argument_parser():
     parser.add_argument("--host", default="0.0.0.0", help="HTTP listen address")
     parser.add_argument("--port", type=int, default=8080, help="HTTP listen port")
     development.add_argument("--mock", action="store_true", help="Use mock sources, mux and Controller control")
+    development.add_argument("--experimental-http-worker", action="store_true",
+                             help="Experimental Linux HTTP audiod backend; other sources unchanged")
     development.add_argument("--mock-controller", action="store_true", help="Use the high-level mock Controller client")
     parser.add_argument("--i2c-device", default="/dev/i2c-1", help="Controller I2C device")
     parser.add_argument("--controller-i2c-address", type=lambda value: int(value, 0), default=0x62, help="7-bit Controller address, decimal or 0x hex (default: %(default)#x)")
@@ -352,6 +354,15 @@ def argument_parser():
 def main():
     parser = argument_parser()
     args = parser.parse_args()
+    pipeline_factory = MockPipeline if args.mock else GstPipeline
+    if args.experimental_http_worker:
+        if args.mock:
+            parser.error('--experimental-http-worker cannot be combined with --mock')
+        import sys
+        if sys.platform != 'linux':
+            parser.error('--experimental-http-worker requires Linux')
+        from .sources.process_pipeline import ExperimentalHttpFactory
+        pipeline_factory = ExperimentalHttpFactory()
     settings = Settings(args.database, args.region, args.webui_dir,
                         args.audio_profiles_default_dir, args.audio_profiles_custom_dir,
                         pcm_staging_buffer_ms=args.pcm_staging_buffer_ms,
@@ -373,7 +384,7 @@ def main():
     except ValueError as exc:
         parser.error(str(exc))
     uvicorn.run(
-        create_app(settings, rp=rp, pipeline_factory=MockPipeline if args.mock else GstPipeline, mux_factory=mux_factory),
+        create_app(settings, rp=rp, pipeline_factory=pipeline_factory, mux_factory=mux_factory),
         host=args.host,
         port=args.port,
         log_level=args.log_level.lower(),

@@ -15,6 +15,7 @@ def test_startup_defaults():
     assert args.log_level == 'INFO'
     assert args.i2c_timeout_ms == 200
     assert args.mux_runtime_dir == '/run/fmheadend'
+    assert not args.experimental_http_worker
 
 
 @pytest.mark.parametrize('option', ['--rp-i2c-address', '--mock-rp'])
@@ -27,7 +28,7 @@ def test_help_groups_and_displays_actual_defaults():
     parser = app.argument_parser()
     group = next(g for g in parser._action_groups if g.title == 'Development / Testing')
     assert [a.option_strings for a in group._group_actions] == [
-        ['--mock'], ['--mock-controller'], ['--mock-mux']]
+        ['--mock'], ['--experimental-http-worker'], ['--mock-controller'], ['--mock-mux']]
     text = ' '.join(parser.format_help().split())
     for action in parser._actions:
         if action.default is not None and action.dest != 'help':
