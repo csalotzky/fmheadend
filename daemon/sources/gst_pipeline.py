@@ -300,6 +300,15 @@ class GstPipeline:
         with self._lock:
             return dict(self._snapshot)
 
+    @property
+    def startup_pending(self):
+        """Cached startup observation for the control-side backend contract."""
+        return getattr(self, '_startup_pending', False)
+
+    def update_source_identity(self, source):
+        """Record the persisted Radio Browser identity, without native work."""
+        self.source = source
+
     def pcm_snapshot(self):
         return dict(staging=self.staging.snapshot(), consumers=self.output.snapshot())
 

@@ -5,6 +5,8 @@ import logging
 
 from ..errors import DomainError
 from ..radio_browser import http_url
+from ..models.configuration import InputSourceConfig
+from .pipeline import MediaPipeline
 
 log = logging.getLogger(__name__)
 COOLDOWN_SECONDS = 300
@@ -14,8 +16,8 @@ LOOKUP_DEADLINE_SECONDS = 60
 
 @dataclass
 class Ticket:
-    source: object
-    pipeline: object
+    source: InputSourceConfig
+    pipeline: MediaPipeline
     revision: tuple
     token: object = field(default_factory=object)
     persist_after: float = 0.0
@@ -73,8 +75,8 @@ class SourceRadioRecovery:
                     self.invalidate(source_id)
                     log.info('Radio Browser recovery superseded for Source %s', source_id)
                     continue
-                ticket.pipeline.source = ticket.source.model_copy(update={
-                    'config': ticket.source.config | {'uri': trial['uri']}, 'timestamp': timestamp})
+                ticket.pipeline.update_source_identity(ticket.source.model_copy(update={
+                    'config': ticket.source.config | {'uri': trial['uri']}, 'timestamp': timestamp}))
                 ticket.pipeline.radio_url.accept(ticket.token)
                 self.pending.pop(source_id)
                 self.cooldowns[source_id] = now + COOLDOWN_SECONDS

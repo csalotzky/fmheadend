@@ -35,6 +35,7 @@ class FakePipeline:
     def start(self): self.running=True
     def stop(self): self.running=False
     def snapshot(self): return dict(state='CONNECTING', reconnect_count=self.backoff.attempt)
+    def update_source_identity(self, source): self.source = source
     def fail(self):
         self.radio_url.failed()
         self.backoff.next_delay()

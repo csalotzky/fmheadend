@@ -1,10 +1,11 @@
 import logging
 import time
 from threading import Lock
+from typing import Callable
 from ..errors import DependencyUnavailable, DomainError, SourceUnavailable, SourcePending
 from ..models.configuration import InputSourceConfig, SourceTestResult
 from ..models.runtime_status import InputSourceStatus, SourceState
-from .pipeline import MockPipeline, probe
+from .pipeline import MediaPipeline, MediaPipelineFactory, SourcePipeline, MockPipeline, probe
 from .radio_recovery import SourceRadioRecovery
 from .output import DEFAULT_STAGING_BUFFER_MS, DEFAULT_CONSUMER_BUFFER_MS, DEFAULT_STAGING_MAX_AGE_MS, pcm_capacity_bytes
 
@@ -12,7 +13,9 @@ logger = logging.getLogger(__name__)
 
 
 class SourceManager:
-    def __init__(self, database, pipeline_factory=MockPipeline, profile_files=None, *, clock=time.monotonic,
+    def __init__(self, database,
+                 pipeline_factory: MediaPipelineFactory | Callable[[InputSourceConfig], SourcePipeline] = MockPipeline,
+                 profile_files=None, *, clock=time.monotonic,
                  telemetry_configured=False,
                  pcm_staging_buffer_ms=DEFAULT_STAGING_BUFFER_MS,
                  pcm_consumer_buffer_ms=DEFAULT_CONSUMER_BUFFER_MS,
@@ -27,7 +30,7 @@ class SourceManager:
         self.pipeline_factory = pipeline_factory
         self.telemetry_configured = telemetry_configured
         self.profile_files = profile_files
-        self.pipelines = {}
+        self.pipelines: dict[int, SourcePipeline | MediaPipeline] = {}
         self.consumers: dict[int, set[int]] = {}
         # Writers remain control-owned. Telemetry readers capture references and
         # consumer IDs here; never hold this across pipeline or cache operations.
@@ -135,7 +138,7 @@ class SourceManager:
         self._profile_observations[source.id] = (key, self.clock(), error)
         return error
 
-    def _new_pipeline(self, source, **kwargs):
+    def _new_pipeline(self, source, **kwargs) -> SourcePipeline | MediaPipeline:
         try:
             profile = self.validate_config(source)
         except DomainError as exc:
@@ -303,7 +306,7 @@ class SourceManager:
         else:
             pipeline = self.pipelines[source_id]
             error = self.restart_errors.get(source_id) or (
-                None if getattr(pipeline, '_startup_pending', False) else getattr(pipeline, 'fatal_error', None))
+                None if getattr(pipeline, 'startup_pending', False) else getattr(pipeline, 'fatal_error', None))
             if error:
                 scope = self.status(source_id).error_scope
                 raise (SourceUnavailable if scope == 'SOURCE' else DependencyUnavailable)(error)
@@ -323,7 +326,7 @@ class SourceManager:
         pipeline = self.pipelines[source_id]
         if len(consumers) == 1:
             failed_start = (InputSourceStatus(source_id=source_id, **pipeline.snapshot())
-                            if getattr(pipeline, '_startup_pending', False) and pipeline.fatal_error else None)
+                            if getattr(pipeline, 'startup_pending', False) and pipeline.fatal_error else None)
             self.radio_recovery.invalidate(source_id)
             # Retain ownership if native teardown fails; never replace a worker
             # that might still be alive with a second pipeline for this source.
