@@ -1,26 +1,22 @@
 """Source-owned Podcast policy over the common sequenced player.
 
 The source worker selects items. Serialized sink callbacks associate/count PCM.
-One I/O worker owns a separate SQLite connection, refresh and history writes;
-it publishes snapshots under the ticket lock, never calls native GStreamer.
+PodcastFeedService owns feed/history I/O and publishes detached snapshots.
+Playback owns scheduling and optimistic history; native callbacks never do I/O.
 """
 from collections import deque
 from datetime import datetime, timezone
-import logging
-from threading import Event, Thread
 import time
 
-from ..database import Database
-from ..errors import DependencyUnavailable, DomainError
+from ..errors import DependencyUnavailable
 from .output import PCM_BYTES_PER_SECOND
-from .podcast import CatalogSnapshot, EpisodeCatalog, eligible_episodes
+from .podcast import CatalogSnapshot, eligible_episodes
 from .podcast_fetch import FeedFetcher
-from .podcast_parser import shared_parser
-from .podcast_history import PodcastHistory, EpisodeHistory
+from .podcast_service import PodcastFeedService
+from .podcast_history import EpisodeHistory
 from .podcast_schedule import PodcastScheduler
 from .sequenced_playback import SequencedPlayback, Ticket
 
-log = logging.getLogger(__name__)
 PLAYED_BYTES = 60 * PCM_BYTES_PER_SECOND
 
 
@@ -30,12 +26,8 @@ class PodcastRuntime(SequencedPlayback):
                  now=lambda: datetime.now(timezone.utc), rng=None, parser=None):
         super().__init__(wakeup)
         self.config = config
-        self.database_path, self.source_id = database_path, source_id
-        self.history_factory = history_factory
-        self.fetch_factory, self.clock, self.now = fetch_factory, clock, now
-        self._parser = parser if parser is not None else shared_parser()
-        self.catalog = EpisodeCatalog(self._parser)
-        self.catalog_view = self.catalog.snapshot()
+        self.now = now
+        self.catalog_view = CatalogSnapshot()
         self.eligible_keys = frozenset()
         self.scheduler = PodcastScheduler(config.schedule_mode, rng=rng)
         self.revision = 0
@@ -44,74 +36,43 @@ class PodcastRuntime(SequencedPlayback):
         self.active = None
         self.error = 'PODCAST_REFRESH_PENDING'
         self.history_error = None
-        self._marks = deque()
         self._sources = deque(maxlen=32)
-        self._io_ready, self._io_stop = Event(), Event()
-        self._io_thread = None
-        self._next_refresh = float('-inf')
+        self._feed_revision = 0
+        self.feed_service = PodcastFeedService(config, database_path=database_path,
+            source_id=source_id, history_factory=history_factory, fetch_factory=fetch_factory,
+            clock=clock, now=now, parser=parser, on_snapshot=self.apply_snapshot,
+            on_error=self._io_error)
 
     def start(self):
-        if self.history_factory is None and not self.database_path:
-            raise DependencyUnavailable('Podcast playback requires a persisted source database')
-        if self._io_thread is None:
-            self._io_thread = Thread(target=self._run_io, name=f'podcast-{self.source_id}', daemon=True)
-            self._io_thread.start()
+        self.feed_service.start()
 
-    def _run_io(self):
-        database = None
-        try:
-            if self.history_factory is not None:
-                history = self.history_factory()
-            else:
-                database = Database(self.database_path)
-                history = PodcastHistory(database, self.source_id)
-            with self.lock:
-                self.history_state = history.snapshot()
-            while not self._io_stop.is_set():
-                self._io_ready.clear()
-                self.io_step(history)
-                self._io_ready.wait(max(0, self._next_refresh - self.clock()))
-            self._flush_marks(history)
-        except Exception:
-            # Exceptions can embed enclosure/feed credentials. Report a category.
-            with self.lock:
-                self.history_error = 'PODCAST_HISTORY_IO_ERROR'
-            log.error('Podcast history/refresh worker failed for source %s', self.source_id)
-            self.wakeup.set()
-        finally:
-            if database is not None:
-                database.close()
-
-    def _flush_marks(self, history):
-        while True:
-            with self.lock:
-                if not self._marks:
-                    return
-                episode, when = self._marks.popleft()
-            # Once per occurrence, never from a streaming callback. A repository
-            # failure is explicit and is not blindly retried (ambiguous commit).
-            history.mark_played(episode, when)
-
-    def io_step(self, history):
-        """One deterministic I/O turn; tests inject monotonic/UTC clocks."""
-        self._flush_marks(history)
-        if self._io_stop.is_set() or self.clock() < self._next_refresh:
-            return
-        fetch = self.fetch_factory()
-        def cancellable(url):
-            if self._io_stop.is_set():
-                raise DomainError(503, 'PODCAST_REFRESH_CANCELLED', 'Source stopped')
-            return fetch(url)
-        view = self.catalog.refresh(self.config, cancellable, self.now(), history=history)
-        keys = frozenset(e.key for e in eligible_episodes(view, self.config, self.now()))
+    def _io_error(self, error):
         with self.lock:
             if not self.closed:
-                self.catalog_view = view
-                self.eligible_keys = keys
-                self.revision += 1
-                succeeded = {r.feed_id for r in view.results if r.error is None}
-                self.failed = {key for key in self.failed if key[0] not in succeeded}
-        self._next_refresh = self.clock() + self.config.refresh_interval_minutes * 60
+                self.history_error = error
+        self.wakeup.set()
+
+    def apply_snapshot(self, snapshot):
+        """Merge durable state without undoing newer optimistic PCM accounting."""
+        keys = frozenset(e.key for e in
+            eligible_episodes(snapshot.catalog, self.config, self.now()))
+        with self.lock:
+            if self.closed or snapshot.revision <= self._feed_revision:
+                return
+            self._feed_revision = snapshot.revision
+            self.catalog_view = snapshot.catalog
+            self.eligible_keys = keys
+            for key, stored in snapshot.history.items():
+                old = self.history_state.get(key, EpisodeHistory())
+                def latest(a, b):
+                    return max(a, b) if a is not None and b is not None else a or b
+                self.history_state[key] = EpisodeHistory(
+                    max(old.play_count, stored.play_count),
+                    latest(old.last_played_at, stored.last_played_at),
+                    latest(old.last_seen_at, stored.last_seen_at))
+            self.revision += 1
+            succeeded = {r.feed_id for r in snapshot.catalog.results if r.error is None}
+            self.failed = {key for key in self.failed if key[0] not in succeeded}
         self.wakeup.set()
 
     def _candidate(self):
@@ -178,17 +139,15 @@ class PodcastRuntime(SequencedPlayback):
             self.active = ticket
             ticket.pcm_bytes += size
             if ticket.pcm_bytes >= PLAYED_BYTES and not ticket.marked:
-                if len(self._marks) >= 64:
+                episode, when = ticket.context, self.now()
+                if not self.feed_service.played(episode, when):
                     self.history_error = 'PODCAST_HISTORY_BACKLOG'
                     self.wakeup.set()
                     return
                 ticket.marked = True
-                episode, when = ticket.context, self.now()
                 old = self.history_state.get(episode.key, EpisodeHistory())
                 self.history_state[episode.key] = EpisodeHistory(old.play_count + 1, when, old.last_seen_at)
                 self.revision += 1
-                self._marks.append((episode, when))
-                self._io_ready.set()
                 self.wakeup.set()
 
     def resume(self, *, failed):
@@ -212,17 +171,11 @@ class PodcastRuntime(SequencedPlayback):
 
     def close(self):
         super().close()
-        self._io_stop.set()
-        self._io_ready.set()
-        if self._io_thread is not None:
-            self._io_thread.join(timeout=30)
-            if self._io_thread.is_alive():
-                raise DependencyUnavailable('Podcast refresh did not stop within its timeout')
+        self.feed_service.close()
         with self.lock:
             self.active = None
             self.failed.clear()
             self.history_state.clear()
             self.catalog_view = CatalogSnapshot()
-            self.catalog = EpisodeCatalog(self._parser)
             self.eligible_keys = frozenset()
             self._sources.clear()

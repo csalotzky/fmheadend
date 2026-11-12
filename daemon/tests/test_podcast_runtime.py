@@ -58,7 +58,7 @@ def rt(tmp_path):
 
 
 def begin(r):
-    r.p.io_step(r.history)
+    r.p.feed_service.io_step(r.history)
     uri = r.p.initial()
     r.p.stream_start()
     return uri
@@ -87,7 +87,7 @@ def test_actual_pcm_threshold_once(rt, seconds, expected):
     episode = rt.p.rendering.context
     rt.seconds[0] = 100000  # wall time alone is irrelevant
     rt.p.pcm(seconds * 192000)
-    rt.p._flush_marks(rt.history)
+    rt.p.feed_service._flush_marks(rt.history)
     assert rt.history.snapshot()[episode.key].play_count == expected
     assert PLAYED_BYTES == 11520000
 
@@ -97,18 +97,18 @@ def test_arbitrary_frame_aligned_boundaries_and_new_occurrence(rt):
     e = rt.p.rendering.context
     for size in (4, 8192, PLAYED_BYTES-8200):
         rt.p.pcm(size)
-    rt.p._flush_marks(rt.history)
+    rt.p.feed_service._flush_marks(rt.history)
     assert rt.history.snapshot()[e.key].play_count == 0
     rt.p.pcm(4)
     rt.p.pcm(PLAYED_BYTES)
-    rt.p._flush_marks(rt.history)
+    rt.p.feed_service._flush_marks(rt.history)
     assert rt.history.snapshot()[e.key].play_count == 1
     # Independent future occurrence of the same episode gets a fresh ticket.
     rt.p.prepared = None
     rt.p.scheduler = Mock()
     rt.p.scheduler.choose_next.return_value = e
     rt.p.resume(failed=False); rt.p.stream_start(); rt.p.pcm(PLAYED_BYTES)
-    rt.p._flush_marks(rt.history)
+    rt.p.feed_service._flush_marks(rt.history)
     assert rt.history.snapshot()[e.key].play_count == 2
 
 
@@ -119,7 +119,7 @@ def test_failure_suppresses_zero_partial_and_post_threshold(rt, size):
     rt.p.pcm(size)
     uri = rt.p.resume(failed=True)
     assert e.key in rt.p.failed and uri != e.media_url
-    rt.p._flush_marks(rt.history)
+    rt.p.feed_service._flush_marks(rt.history)
     assert rt.history.snapshot()[e.key].play_count == int(size >= PLAYED_BYTES)
 
 
@@ -128,7 +128,7 @@ def test_short_eos_or_failure_never_counts_as_played(rt, failed):
     begin(rt)
     rt.p.pcm(2*192000)
     rt.p.resume(failed=failed)
-    rt.p._flush_marks(rt.history)
+    rt.p.feed_service._flush_marks(rt.history)
     assert all(h.play_count == 0 for h in rt.history.snapshot().values())
 
 
@@ -157,13 +157,13 @@ def test_exhausted_waits_for_scheduled_successful_refresh(tmp_path, mode):
         assert r.p.error == 'PLAYBACK_EXHAUSTED'
         for _ in range(10):
             assert r.p.resume(failed=False) is None
-            r.p.io_step(r.history)
+            r.p.feed_service.io_step(r.history)
         assert len(r.calls) == 1 and not r.p.closed
         r.response[0] = DomainError(503, 'PODCAST_FETCH_FAILED', 'temporary')
-        r.seconds[0] = 60; r.p.io_step(r.history)
+        r.seconds[0] = 60; r.p.feed_service.io_step(r.history)
         assert r.p.resume(failed=False) is None  # failed RSS does not clear failures
         assert len(r.p.catalog_view.feeds[0].episodes) == 2
-        r.seconds[0] = 120; r.response[0] = rss(('New',)); r.p.io_step(r.history)
+        r.seconds[0] = 120; r.response[0] = rss(('New',)); r.p.feed_service.io_step(r.history)
         assert r.p.resume(failed=False).endswith('id=New&token=abc')
         assert not r.p.failed and len(r.calls) == 3
     finally:
@@ -172,12 +172,12 @@ def test_exhausted_waits_for_scheduled_successful_refresh(tmp_path, mode):
 
 def test_initial_failure_recovery_without_runtime_replacement(rt):
     rt.response[0] = DomainError(503, 'PODCAST_FETCH_FAILED', 'temporary')
-    rt.p.io_step(rt.history)
+    rt.p.feed_service.io_step(rt.history)
     assert rt.p.initial() is None
     assert rt.p.error == 'NO_PLAYABLE_EPISODES'
-    rt.seconds[0] = 59; rt.response[0] = rss(); rt.p.io_step(rt.history)
+    rt.seconds[0] = 59; rt.response[0] = rss(); rt.p.feed_service.io_step(rt.history)
     assert len(rt.calls) == 1
-    rt.seconds[0] = 60; rt.p.io_step(rt.history)
+    rt.seconds[0] = 60; rt.p.feed_service.io_step(rt.history)
     assert rt.p.resume(failed=False) is not None
 
 
@@ -185,7 +185,7 @@ def test_refresh_does_not_interrupt_active_but_invalidates_unsubmitted(rt):
     begin(rt); rt.p.pcm(4)
     active = rt.p.active
     rt.response[0] = rss(('New',)); rt.seconds[0] = 60
-    rt.p.io_step(rt.history)
+    rt.p.feed_service.io_step(rt.history)
     assert rt.p.active is active
     player=Mock(); rt.p.handoff(player)
     player.set_property.assert_not_called()  # obsolete prepared URI cannot escape
@@ -198,7 +198,7 @@ def test_refresh_does_not_interrupt_active_but_invalidates_unsubmitted(rt):
 def test_already_submitted_handoff_survives_refresh(rt):
     begin(rt); rt.p.pcm(4)
     rt.p.handoff(Mock()); submitted = rt.p.submitted[0]
-    rt.response[0] = rss(('New',)); rt.seconds[0] = 60; rt.p.io_step(rt.history)
+    rt.response[0] = rss(('New',)); rt.seconds[0] = 60; rt.p.feed_service.io_step(rt.history)
     rt.p.stream_start(); rt.p.pcm(4)
     assert rt.p.active is submitted
 
@@ -213,7 +213,7 @@ def test_pcm_threshold_and_transition_are_serialized(rt):
     for t in threads: t.start()
     gate.wait()
     for t in threads: t.join(2)
-    rt.p._flush_marks(rt.history)
+    rt.p.feed_service._flush_marks(rt.history)
     assert old.marked and rt.history.snapshot()[old.context.key].play_count == 1
 
 
@@ -222,9 +222,9 @@ def test_refresh_completion_after_stop_cannot_resurrect(rt):
     def fetch(url):
         entered.set(); assert release.wait(2)
         return FeedResponse(rss(), url)
-    rt.p.fetch_factory = lambda: fetch
+    rt.p.feed_service.fetch_factory = lambda: fetch
     history=Mock(); history.snapshot.return_value={}
-    thread=Thread(target=lambda:rt.p.io_step(history)); thread.start()
+    thread=Thread(target=lambda:rt.p.feed_service.io_step(history)); thread.start()
     assert entered.wait(2)
     rt.p.close(); release.set(); thread.join(2)
     assert not thread.is_alive() and rt.p.closed
@@ -248,7 +248,7 @@ def event(p, kind, **values):
 
 
 def test_rss_metadata_first_pcm_technical_tags_and_existing_rds(rt, tmp_path):
-    rt.p.io_step(rt.history); rt.p.initial()
+    rt.p.feed_service.io_step(rt.history); rt.p.initial()
     p=gst_metadata(rt)
     event(p,'start')
     expected=rt.p.rendering.context
@@ -282,7 +282,7 @@ def test_rss_metadata_first_pcm_technical_tags_and_existing_rds(rt, tmp_path):
 def test_missing_show_and_clean_eos_metadata(tmp_path):
     r=runtime(tmp_path,show='')
     try:
-        r.p.io_step(r.history); r.p.initial(); p=gst_metadata(r)
+        r.p.feed_service.io_step(r.history); r.p.initial(); p=gst_metadata(r)
         event(p,'start'); r.p.pcm(4); p._publish_local_metadata()
         assert p.snapshot()['artist'] is None
         assert p.snapshot()['stream_title']==p.snapshot()['title']
@@ -304,7 +304,7 @@ def test_smart_unsubmitted_choice_reconsiders_legitimate_play_history(tmp_path):
         r.p.pcm(PLAYED_BYTES)
         r.p.service(Mock())
         assert r.p.prepared.context.key!=old.context.key
-        r.p._flush_marks(r.history)
+        r.p.feed_service._flush_marks(r.history)
     finally: r.p.close();r.db.close()
 
 
@@ -315,7 +315,7 @@ def test_stale_source_error_and_queued_history_survive_transition(rt):
     rt.p.handoff(Mock()); rt.p.stream_start(); rt.p.pcm(4)
     assert rt.p.stale_error(element)
     assert not rt.p.stale_error(object())  # unassociated errors are not guessed away
-    rt.p._flush_marks(rt.history)
+    rt.p.feed_service._flush_marks(rt.history)
     assert rt.history.snapshot()[old.context.key].play_count==1
     assert rt.history.snapshot()[rt.p.active.context.key].play_count==0
 
@@ -326,8 +326,9 @@ def test_coherent_selection_while_refresh_is_blocked(rt):
     def fetch(url):
         entered.set();assert release.wait(2)
         return FeedResponse(rss(('New',)),url)
-    rt.p.fetch_factory=lambda:fetch;rt.seconds[0]=60
-    thread=Thread(target=lambda:rt.p.io_step(Mock()))
+    rt.p.feed_service.fetch_factory=lambda:fetch;rt.seconds[0]=60
+    history=Mock(); history.snapshot.return_value={}
+    thread=Thread(target=lambda:rt.p.feed_service.io_step(history))
     thread.start();assert entered.wait(2)
     try:
         assert rt.p._candidate().context.title in ('Episode A','Episode B')
@@ -350,16 +351,16 @@ def test_shared_manager_one_accounting_owner_and_restart_history(rt, tmp_path):
             self.policy.history_state=rt.history.snapshot()
             constructed.append(self)
         def start(self):
-            self.policy.io_step(rt.history);self.policy.initial();self.policy.stream_start()
+            self.policy.feed_service.io_step(rt.history);self.policy.initial();self.policy.stream_start()
         def stop(self):
-            self.policy._flush_marks(rt.history);self.policy.close()
+            self.policy.feed_service._flush_marks(rt.history);self.policy.close()
         def snapshot(self):return dict(state='RUNNING')
     manager=SourceManager(rt.db,profile_files=profile_store(tmp_path),pipeline_factory=Pipeline)
     try:
         manager.acquire(rt.source.id,0);manager.acquire(rt.source.id,1)
         assert len(constructed)==1
         p=constructed[0];e=p.policy.rendering.context
-        p.policy.pcm(PLAYED_BYTES);p.policy._flush_marks(rt.history)
+        p.policy.pcm(PLAYED_BYTES);p.policy.feed_service._flush_marks(rt.history)
         assert rt.history.snapshot()[e.key].play_count==1
         manager.release(rt.source.id,0)
         assert not p.policy.closed

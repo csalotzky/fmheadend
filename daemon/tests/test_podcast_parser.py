@@ -61,12 +61,12 @@ def test_sources_share_parser_and_source_close_does_not_close_pool():
     first = PodcastRuntime(config, Event())
     second = PodcastRuntime(config, Event())
     try:
-        assert first._parser is second._parser is module.shared_parser()
-        first.catalog.refresh(config, lambda url: FeedResponse(RSS, url), NOW)
-        executor = first._parser._executor
+        assert first.feed_service._parser is second.feed_service._parser is module.shared_parser()
+        first.feed_service.catalog.refresh(config, lambda url: FeedResponse(RSS, url), NOW)
+        executor = first.feed_service._parser._executor
         first.close()
-        second.catalog.refresh(config, lambda url: FeedResponse(ATOM, url), NOW)
-        assert second._parser._executor is executor
+        second.feed_service.catalog.refresh(config, lambda url: FeedResponse(ATOM, url), NOW)
+        assert second.feed_service._parser._executor is executor
         children = list(executor._processes.values())
     finally:
         second.close()

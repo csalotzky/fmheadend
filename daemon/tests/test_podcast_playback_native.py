@@ -115,9 +115,9 @@ def test_native_http_transitions_rss_identity_and_shared_cleanup(tmp_path,gst,fa
             else: assert p.handoffs>=2 and any(a==b and a for a,b in p.handoff_metadata)
             assert all(h.play_count==0 for h in PodcastHistory(db,s.id).snapshot().values())
             manager.release(s.id,0)
-            assert p._thread.is_alive() and runtime._io_thread.is_alive()
+            assert p._thread.is_alive() and runtime.feed_service._io_thread.is_alive()
             manager.release(s.id,1)
-            assert not p._thread.is_alive() and not runtime._io_thread.is_alive()
+            assert not p._thread.is_alive() and not runtime.feed_service._io_thread.is_alive()
             assert p.snapshot()['stream_title'] is None and runtime.active is None
             manager.acquire(s.id,0)
             assert manager.pipelines[s.id] is not p
@@ -161,14 +161,14 @@ def test_native_initial_failure_exhaustion_and_refresh_recovery(tmp_path,gst):
         try:
             p.start(); r=p._local
             wait_for(lambda:r.catalog_view.refreshed_at is not None)
-            assert p._thread.is_alive() and r._io_thread.is_alive()
+            assert p._thread.is_alive() and r.feed_service._io_thread.is_alive()
             assert p.snapshot()['stream_title'] is None
             state['fail_feed']=False;state['bad'].add('A')
-            tick[0]=61;r._io_ready.set()
+            tick[0]=61;r.feed_service._io_ready.set()
             wait_for(lambda: r.error=='PLAYBACK_EXHAUSTED')
             failed_requests=state['requests'].count('/media?id=A')
             assert failed_requests<=2 and not p.fatal_error
-            state['bad'].clear();tick[0]=122;r._io_ready.set()
+            state['bad'].clear();tick[0]=122;r.feed_service._io_ready.set()
             wait_for(lambda:p.snapshot()['stream_title']=='Example Podcast - Episode A')
             assert p._local is r and p.builds==1
             # A real bus error after some PCM is still a failed sub-threshold occurrence.
@@ -176,7 +176,7 @@ def test_native_initial_failure_exhaustion_and_refresh_recovery(tmp_path,gst):
             wait_for(lambda:r.error=='PLAYBACK_EXHAUSTED')
             assert p.snapshot()['stream_title'] is None
             assert all(h.play_count==0 for h in PodcastHistory(db,s.id).snapshot().values())
-            assert p._thread.is_alive() and r._io_thread.is_alive()
+            assert p._thread.is_alive() and r.feed_service._io_thread.is_alive()
         finally:
             p.stop();db.close()
-        assert not r._io_thread.is_alive()
+        assert not r.feed_service._io_thread.is_alive()
