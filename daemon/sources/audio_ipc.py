@@ -18,7 +18,7 @@ MAX_RECORD = 4 + MAX_JSON + MAX_PCM
 IO_TIMEOUT = 0.2
 PCM_MAX_AGE = 0.1
 KINDS = {'create', 'accepted', 'prepared', 'status', 'shutdown', 'terminated', 'pcm',
-         'local_request', 'local_response'}
+         'local_request', 'local_response', 'podcast_snapshot', 'podcast_played'}
 
 
 class ProtocolError(ValueError):

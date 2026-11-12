@@ -630,7 +630,7 @@ class GstPipeline:
             if self._local is not None:
                 self._local.pcm(size)
                 self._publish_local_metadata()
-                if self.source.type == SourceType.LOCAL and hasattr(self.output, 'capture'):
+                if self.source.type in (SourceType.LOCAL, SourceType.PODCAST) and hasattr(self.output, 'capture'):
                     data = self.output.capture(data)
             self.staging.put(data)
         elif size:

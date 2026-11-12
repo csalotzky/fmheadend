@@ -59,6 +59,13 @@ class PodcastFeedService:
         self._io_ready, self._io_stop = Event(), Event()
         self._io_thread = None
         self._next_refresh = float('-inf')
+        self._snapshot_requested = Event()
+
+    def request_snapshot(self):
+        """Refresh durable history on the I/O owner without refetching RSS."""
+        with self.lock:
+            self._snapshot_requested.set()
+            self._io_ready.set()
 
     def snapshot(self):
         """Last complete catalog and durable history, detached from SQLite."""
@@ -75,13 +82,20 @@ class PodcastFeedService:
             return True
 
     def start(self):
-        if self.closed:
-            raise DependencyUnavailable('Podcast feed service is closed')
-        if self.history_factory is None and not self.database_path:
-            raise DependencyUnavailable('Podcast playback requires a persisted source database')
-        if self._io_thread is None:
-            self._io_thread = Thread(target=self._run_io, name=f'podcast-{self.source_id}', daemon=True)
-            self._io_thread.start()
+        # Process launch and terminal cleanup have different parent threads.
+        # Publish/start the I/O owner atomically with respect to close intent.
+        with self.lock:
+            if self.closed:
+                raise DependencyUnavailable('Podcast feed service is closed')
+            if self.history_factory is None and not self.database_path:
+                raise DependencyUnavailable('Podcast playback requires a persisted source database')
+            if self._io_thread is None:
+                self._io_thread = Thread(target=self._run_io, name=f'podcast-{self.source_id}', daemon=True)
+                try:
+                    self._io_thread.start()
+                except RuntimeError:
+                    self._io_thread = None
+                    raise
 
     def _run_io(self):
         database = None
@@ -117,7 +131,14 @@ class PodcastFeedService:
     def io_step(self, history):
         """One I/O-owner turn; must not run concurrently with start()/another turn."""
         self._flush_marks(history)
-        if self._io_stop.is_set() or self.clock() < self._next_refresh:
+        if self._io_stop.is_set():
+            return
+        with self.lock:
+            requested = self._snapshot_requested.is_set()
+            self._snapshot_requested.clear()
+        if self.clock() < self._next_refresh:
+            if requested:
+                self._publish(self.catalog.snapshot(), history)
             return
         fetch = self.fetch_factory()
 
@@ -127,6 +148,10 @@ class PodcastFeedService:
             return fetch(url)
 
         view = self.catalog.refresh(self.config, cancellable, self.now(), history=history)
+        self._publish(view, history)
+        self._next_refresh = self.clock() + self.config.refresh_interval_minutes * 60
+
+    def _publish(self, view, history):
         state = dict(history.snapshot())
         with self.lock:
             if self.closed:
@@ -136,7 +161,6 @@ class PodcastFeedService:
             snapshot = self._snapshot
         # Playback callbacks must never execute while holding the service lock.
         self.on_snapshot(snapshot)
-        self._next_refresh = self.clock() + self.config.refresh_interval_minutes * 60
 
     def close(self):
         with self.lock:

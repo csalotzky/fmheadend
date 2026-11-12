@@ -1,4 +1,4 @@
-"""Experimental Linux HTTP/LOCAL MediaPipeline; parent output and cached state.
+"""Experimental Linux HTTP/LOCAL/PODCAST backend; parent output and cached state.
 
 start/stop initiate work and never wait for a child/native reply on the control
 executor. Pending STOP raises DependencyUnavailable, preserving SourceManager
@@ -73,9 +73,9 @@ class ProcessPipeline:
                  pcm_staging_buffer_ms=DEFAULT_STAGING_BUFFER_MS,
                  pcm_staging_max_age_ms=DEFAULT_STAGING_MAX_AGE_MS,
                  pcm_consumer_buffer_ms=DEFAULT_CONSUMER_BUFFER_MS,
-                 podcast_database_path=None):
-        if source.type not in ('HTTP', 'LOCAL'):
-            raise ValueError('audiod supports HTTP and LOCAL only')
+                 podcast_database_path=None, podcast_service=None):
+        if source.type not in ('HTTP', 'LOCAL', 'PODCAST'):
+            raise ValueError('audiod supports HTTP, LOCAL and PODCAST only')
         if sys.platform != 'linux':
             raise DependencyUnavailable('Experimental audiod requires Linux socketpair/pass_fds')
         self.source = source
@@ -115,7 +115,20 @@ class ProcessPipeline:
         self._last_status = time.monotonic()
         self._last_pcm = self._last_status
         self._local_waiting = False
+        self._podcast_service = podcast_service
+        self._podcast_database_path = podcast_database_path
+        self._service_cleanup = None
+        self._service_done = threading.Event()
+        self._service_done.set()
+        if source.type == 'PODCAST' and self._podcast_service is None:
+            from .podcast_service import PodcastFeedService
+            from ..models.configuration import PodcastConfig
+            self._podcast_service = PodcastFeedService(PodcastConfig.model_validate(source.config),
+                database_path=podcast_database_path, source_id=self.source_id)
         self._catalog = None
+        if source.type == 'PODCAST':
+            from .podcast_worker import ParentPodcast
+            self._catalog = ParentPodcast(self._podcast_service)
         if source.type == 'LOCAL':
             from .local_worker import ParentCatalog
             self._catalog = ParentCatalog(source)
@@ -127,13 +140,14 @@ class ProcessPipeline:
 
     def recovery_observation(self):
         with self._lock:
-            return self._last_status, self._last_pcm, self._status['state'], self._fatal_error, self._done.is_set()
+            return self._last_status, self._last_pcm, self._status['state'], self._fatal_error, self._done.is_set() and self._service_done.is_set()
 
     def fresh(self):
         from ..models.audio_profile_file import AudioProfileFile
         profile = self._create['profile']
         result = type(self)(self.source.model_copy(deep=True), output=self.output,
             profile=AudioProfileFile.model_validate(profile) if profile else None,
+            podcast_service=self._podcast_service, podcast_database_path=self._podcast_database_path,
             **self._create['options'])
         result.audio_profile_id = self.audio_profile_id
         return result
@@ -147,7 +161,7 @@ class ProcessPipeline:
     def startup_pending(self):
         with self._lock:
             return self._thread is not None and (not self._prepared or
-                (self.source.type == 'LOCAL' and not self._has_pcm))
+                (self.source.type in ('LOCAL', 'PODCAST') and not self._has_pcm))
 
     def snapshot(self):
         with self._lock:
@@ -213,7 +227,26 @@ class ProcessPipeline:
         if self.startup_pending:
             raise SourcePending('Audio worker preparation pending')
 
-    def stop(self):
+    def stop(self, *, retain_service=False):
+        if self._podcast_service is not None and not retain_service and self._service_cleanup is None:
+            self._service_done.clear()
+            def cleanup():
+                while True:
+                    try:
+                        self._podcast_service.close()
+                        break
+                    except DependencyUnavailable:
+                        continue
+                self._service_done.set()
+            self._service_cleanup = threading.Thread(target=cleanup, daemon=True,
+                name=f'podcast-close-{self.source_id}')
+            try:
+                self._service_cleanup.start()
+            except RuntimeError:
+                self._service_cleanup = None
+                self._service_done.set()  # Next stop() retries starting cleanup.
+                self._stop.set()
+                raise DependencyUnavailable('Podcast cleanup thread pending')
         self._stop.set()
         with self._lock:
             self.output.clear()
@@ -222,7 +255,7 @@ class ProcessPipeline:
         if not self.reconnect:
             # Only the existing inactive-probe discovery executor uses this mode.
             self._done.wait(1.8)
-        if not self._done.is_set():
+        if not self._done.is_set() or not self._service_done.is_set():
             raise DependencyUnavailable('Audio worker shutdown pending; retry after reap')
         if self.process is not None and self.process.poll() is None:
             raise DependencyUnavailable('Audio worker could not be reaped; ownership retained')
@@ -280,7 +313,7 @@ class ProcessPipeline:
                 self._prepared = True
                 if self.reconnect or (self._has_pcm and self._probe.ok):
                     self._ready.set()
-            elif kind == 'local_request' and self._catalog is not None:
+            elif kind == ('podcast_played' if self.source.type == 'PODCAST' else 'local_request') and self._catalog is not None:
                 self._catalog.accept(payload)
             elif kind == 'status' and set(payload) == ({'status', 'staging', 'fatal_error'} |
                     ({'local_waiting'} if self._catalog is not None else set())):
@@ -339,6 +372,8 @@ class ProcessPipeline:
         sockets = []
         reader = None
         try:
+            if self._podcast_service is not None:
+                self._podcast_service.start()
             control, child_control = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
             sockets.extend((control, child_control))
             pcm, child_pcm = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -373,7 +408,7 @@ class ProcessPipeline:
                     if data is not None:
                         request += 1
                         control.sendall(pack(envelope(self.source_id, self.generation,
-                            request, 'local_response', data)))
+                            request, 'podcast_snapshot' if self.source.type == 'PODCAST' else 'local_response', data)))
                 try:
                     self._accept('control', *receive(control))
                 except socket.timeout:
@@ -384,7 +419,7 @@ class ProcessPipeline:
                 control.sendall(pack(envelope(self.source_id, self.generation, request + 1, 'shutdown')))
             except OSError:
                 pass
-        except (OSError, EOFError, ValueError, TypeError, RuntimeError) as exc:
+        except (OSError, EOFError, ValueError, TypeError, RuntimeError, DependencyUnavailable) as exc:
             if not self._stop.is_set():
                 self._fail(exc)
         finally:
@@ -482,7 +517,7 @@ class ExperimentalHttpFactory:
 
 
 class ExperimentalAudioFactory(ExperimentalHttpFactory):
-    """Explicit HTTP + LOCAL opt-in; legacy HTTP-only option is unchanged."""
+    """Explicit HTTP/LOCAL/PODCAST opt-in; legacy HTTP-only option is unchanged."""
     def __call__(self, source, **options):
         from .gst_pipeline import GstPipeline
-        return (ProcessPipeline if source.type in ('HTTP', 'LOCAL') else GstPipeline)(source, **options)
+        return (ProcessPipeline if source.type in ('HTTP', 'LOCAL', 'PODCAST') else GstPipeline)(source, **options)

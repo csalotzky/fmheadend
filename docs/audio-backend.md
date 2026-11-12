@@ -1,5 +1,12 @@
 # Audio backend contract (Phase 1)
 
+Phase 4B2 adds PODCAST to the experimental audio factory. The parent adapter
+retains PodcastFeedService across worker recovery/profile changes; the child owns
+the existing scheduler and PCM-associated metadata. STOP includes asynchronous
+service cleanup. SQLite remains v1 and played notifications are one-way,
+best-effort. See audio-worker.md for limits and the focused Raspberry Pi native
+validation; sample-exact gaplessness and physical RF continuity remain unmeasured.
+
 Phase 3 extends the opt-in process backend to LOCAL via
 `--experimental-audio-worker`; the old HTTP-only switch is compatible. The
 manager, source-ID sharing and stable output ownership stay unchanged. LOCAL

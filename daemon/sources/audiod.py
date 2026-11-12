@@ -1,4 +1,4 @@
-"""Experimental HTTP/LOCAL child. Invoked by its owner with inherited socketpairs.
+"""Experimental HTTP/LOCAL/PODCAST child with inherited socketpairs.
 
 Native lifecycle runs on a daemon thread. The control thread can always observe
 parent EOF and exit without acquiring any native lock. No DB/TX/API ownership.
@@ -66,8 +66,8 @@ def serve(control, pcm, pipeline_factory=None):
         raise ProtocolError('Invalid CREATE payload')
     raw = payload['source']
     source = (InputSource if 'id' in raw else InputSourceConfig).model_validate(raw)
-    if source.type not in ('HTTP', 'LOCAL') or getattr(source, 'id', 0) != source_id:
-        raise ProtocolError('Worker only supports its assigned HTTP/LOCAL source')
+    if source.type not in ('HTTP', 'LOCAL', 'PODCAST') or getattr(source, 'id', 0) != source_id:
+        raise ProtocolError('Worker only supports its assigned HTTP/LOCAL/PODCAST source')
     profile = AudioProfileFile.model_validate(payload['profile']) if payload['profile'] else None
     options = payload['options']
     if not isinstance(options, dict) or set(options) != {
@@ -93,6 +93,11 @@ def serve(control, pcm, pipeline_factory=None):
         from .local_worker import WorkerCatalog
         catalog = WorkerCatalog()
         options = dict(options, local_playback_factory=catalog.playback)
+    if source.type == 'PODCAST':
+        from .podcast_worker import WorkerPodcast
+        from ..models.configuration import PodcastConfig
+        catalog = WorkerPodcast(PodcastConfig.model_validate(source.config))
+        options = dict(options, podcast_runtime_factory=catalog.playback)
     pipeline = pipeline_factory(source, profile=profile, output=output, **options)
     output.pipeline = pipeline
     prepared = threading.Event()
@@ -106,7 +111,7 @@ def serve(control, pcm, pipeline_factory=None):
             try:
                 pipeline.start()
             except SourcePending:
-                if source.type != 'LOCAL':
+                if source.type not in ('LOCAL', 'PODCAST'):
                     raise
             prepared.set()
             shutdown.wait()
@@ -156,7 +161,7 @@ def serve(control, pcm, pipeline_factory=None):
                 data = catalog.poll()
                 if data is None:
                     break
-                event('local_request', data)
+                event('podcast_played' if source.type == 'PODCAST' else 'local_request', data)
         status = dict(status=pipeline.snapshot(),
                              staging=pipeline.pcm_snapshot()['staging'],
                              fatal_error=pipeline.fatal_error)
@@ -172,7 +177,7 @@ def serve(control, pcm, pipeline_factory=None):
         if command['sequence'] <= request:
             raise ProtocolError('Invalid lifecycle command')
         request = command['sequence']
-        if command['kind'] == 'local_response' and catalog is not None and not shutdown.is_set():
+        if command['kind'] == ('podcast_snapshot' if source.type == 'PODCAST' else 'local_response') and catalog is not None and not shutdown.is_set():
             catalog.accept(command['payload'])
             continue
         if command['kind'] != 'shutdown' or command['payload']:

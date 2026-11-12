@@ -48,9 +48,21 @@ class WorkerRecovery:
             history.append(m.clock())
         self.pending[sid] = (old, desired, due, automatic)
         try:
-            old.stop()
+            self._stop(old, desired, automatic)
         except DependencyUnavailable:
             pass
+
+    @staticmethod
+    def _retain(old, desired, automatic):
+        return (getattr(old, '_podcast_service', None) is not None
+            and getattr(old, '_service_cleanup', None) is None) and (automatic or
+            (desired is not None and desired.type == 'PODCAST' and desired.config == old.source.config))
+
+    def _stop(self, old, desired, automatic):
+        if self._retain(old, desired, automatic):
+            old.stop(retain_service=True)
+        else:
+            old.stop()
 
     def service(self):
         m, p = self.manager, self.policy
@@ -66,7 +78,7 @@ class WorkerRecovery:
                     continue
                 # stop() confirms completion; never overlap a live generation.
                 try:
-                    old.stop()
+                    self._stop(old, desired, automatic)
                     if not m.consumers.get(sid):
                         with m._registry_lock:
                             m.pipelines.pop(sid)
@@ -74,7 +86,10 @@ class WorkerRecovery:
                         m.statuses[sid] = InputSourceStatus(source_id=sid)
                         self.attempts.pop(sid, None)
                     else:
-                        replacement = old.fresh() if automatic else m._new_pipeline(desired, output=old.output)
+                        options = dict(output=old.output)
+                        if self._retain(old, desired, automatic):
+                            options['podcast_service'] = old._podcast_service
+                        replacement = old.fresh() if automatic else m._new_pipeline(desired, **options)
                         if hasattr(replacement, 'recovery_observation'):
                             replacement.managed_recovery = True
                         m._publish_pipeline(sid, replacement)

@@ -1,10 +1,47 @@
-# Experimental HTTP / LOCAL audio worker
+# Experimental HTTP / LOCAL / PODCAST audio worker
+
+## Phase 4: PODCAST integration
+
+`--experimental-audio-worker` also routes PODCAST to audiod. The parent adapter
+owns one PodcastFeedService, SQLite v1 and the shared RSS parser. Worker restart
+and profile-only apply retain the service. Feed configuration changes and STOP
+close it on a daemon cleanup thread, retaining pending state until both service
+cleanup and child reap finish. A stalled fetch can outlive repeated 30-second
+close attempts; abrupt parent death is outside the graceful cleanup guarantee.
+
+The child injects WorkerPodcast into the existing PodcastRuntime, without starting
+a feed service, database connection or parser process. SMART/RANDOM, tickets,
+prefetch and the 60-second PCM threshold reuse the existing code. PODCAST PCM now
+carries its rendering metadata through staging using the LOCAL capture mechanism.
+
+Private v1 messages add `podcast_snapshot` and `podcast_played`. Catalog/history
+JSON is ASCII-encoded into chunks with revision, exact offset, text and final flag.
+Limits: 24,000 characters per chunk; 8 MiB per snapshot; 10,000 episodes and 10,000
+history rows; 500-character titles; 8192-character IDs/media URLs; 48,000 encoded
+characters per episode. Outer framing retains the 64 KiB JSON limit. Complete,
+validated snapshots publish atomically. Existing source/generation/sequence checks
+fence transport. Fresh workers request current durable history without refetching RSS.
+
+The child queues at most 64 played notifications and sends each once. The parent
+validates feed/episode data and queues the existing mark_played write. No played
+ACK, retry, occurrence ID, deduplication or schema change exists. Crash/uncertain
+send can lose an event. History snapshot merges retain optimistic maxima.
+
+Empty-feed waiting uses the short lease renewed by the progressing native idle
+loop. Active playback is still monitored during RSS refresh. Restart reconstructs
+a schedule without position resume. Windows tests cover policy, persistence and
+socket/lifecycle integration with simulated process handles. Raspberry Pi tests
+on GStreamer 1.26.2 passed eight distinct native cases across focused runs:
+MP3 multi-feed SMART/RANDOM playback, PCM metadata, limiter/clipper, the real
+60-second history threshold, crash/native-callback-stall recovery with HTTP/LOCAL
+siblings, profile apply and empty-feed refresh/source apply. These runs do not
+qualify sample-exact gaplessness, physical RF continuity or sustained load.
 
 ## Phase 3: LOCAL playback
 
 `--experimental-audio-worker` selects workers for HTTP and LOCAL. The existing
 `--experimental-http-worker` retains HTTP-only routing; neither is enabled by
-default. Both require Linux and reject `--mock`. PODCAST/ALSA/UDP/RTP are unchanged.
+default. Both require Linux and reject `--mock`. ALSA/UDP/RTP are unchanged.
 The Phase 2A text below records the original HTTP-only scope.
 
 The parent resolves LOCAL directory/M3U catalogs with the existing resolvers and

@@ -23,7 +23,7 @@ PLAYED_BYTES = 60 * PCM_BYTES_PER_SECOND
 class PodcastRuntime(SequencedPlayback):
     def __init__(self, config, wakeup, *, database_path=None, source_id=None,
                  history_factory=None, fetch_factory=FeedFetcher, clock=time.monotonic,
-                 now=lambda: datetime.now(timezone.utc), rng=None, parser=None):
+                 now=lambda: datetime.now(timezone.utc), rng=None, parser=None, feed_service=None):
         super().__init__(wakeup)
         self.config = config
         self.now = now
@@ -38,7 +38,7 @@ class PodcastRuntime(SequencedPlayback):
         self.history_error = None
         self._sources = deque(maxlen=32)
         self._feed_revision = 0
-        self.feed_service = PodcastFeedService(config, database_path=database_path,
+        self.feed_service = feed_service if feed_service is not None else PodcastFeedService(config, database_path=database_path,
             source_id=source_id, history_factory=history_factory, fetch_factory=fetch_factory,
             clock=clock, now=now, parser=parser, on_snapshot=self.apply_snapshot,
             on_error=self._io_error)
