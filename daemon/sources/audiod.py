@@ -1,4 +1,4 @@
-"""Experimental HTTP-only child. Invoked by its owner with inherited socketpairs.
+"""Experimental HTTP/LOCAL child. Invoked by its owner with inherited socketpairs.
 
 Native lifecycle runs on a daemon thread. The control thread can always observe
 parent EOF and exit without acquiring any native lock. No DB/TX/API ownership.
@@ -11,10 +11,14 @@ import time
 
 from ..models.configuration import InputSource, InputSourceConfig
 from ..models.audio_profile_file import AudioProfileFile
-from ..errors import SourceUnavailable
+from ..errors import SourceUnavailable, SourcePending
 from .audio_ipc import (PacketQueue, ProtocolError, configure,
                         envelope, pack, receive)
 from .output import PCM_CAPS
+
+
+class CapturedPcm(bytes):
+    """Worker-private bytes carrying the serialized sink metadata snapshot."""
 
 
 class TransportOutput:
@@ -24,11 +28,19 @@ class TransportOutput:
         self.sequence = 0
         self.pipeline = None
 
+    def capture(self, data):
+        # Carry the serialized sink identity *through* native staging. A later
+        # track's callback must not relabel an older queued PCM block at drain.
+        result = CapturedPcm(data)
+        result.status = self.pipeline.snapshot()
+        result.produced_ns = time.monotonic_ns()
+        return result
+
     def publish(self, data):
         # GstPipeline's existing staging/drain path calls this, never socket IO.
         self.sequence += 1
-        payload = dict(produced_ns=time.monotonic_ns(), format=PCM_CAPS,
-                       status=self.pipeline.snapshot(),
+        payload = dict(produced_ns=getattr(data, 'produced_ns', time.monotonic_ns()), format=PCM_CAPS,
+                       status=getattr(data, 'status', None) or self.pipeline.snapshot(),
                        probe=self.pipeline.probe_result().model_dump(mode='json'))
         self.queue.put(pack(envelope(self.source_id, self.generation,
                                     self.sequence, 'pcm', payload), data))
@@ -54,8 +66,8 @@ def serve(control, pcm, pipeline_factory=None):
         raise ProtocolError('Invalid CREATE payload')
     raw = payload['source']
     source = (InputSource if 'id' in raw else InputSourceConfig).model_validate(raw)
-    if source.type != 'HTTP' or getattr(source, 'id', 0) != source_id:
-        raise ProtocolError('Worker only supports its assigned HTTP source')
+    if source.type not in ('HTTP', 'LOCAL') or getattr(source, 'id', 0) != source_id:
+        raise ProtocolError('Worker only supports its assigned HTTP/LOCAL source')
     profile = AudioProfileFile.model_validate(payload['profile']) if payload['profile'] else None
     options = payload['options']
     if not isinstance(options, dict) or set(options) != {
@@ -76,6 +88,11 @@ def serve(control, pcm, pipeline_factory=None):
     source = source.model_copy(deep=True)
     source.config.pop('radio_browser_uuid', None)
     output = TransportOutput(source_id, generation)
+    catalog = None
+    if source.type == 'LOCAL':
+        from .local_worker import WorkerCatalog
+        catalog = WorkerCatalog()
+        options = dict(options, local_playback_factory=catalog.playback)
     pipeline = pipeline_factory(source, profile=profile, output=output, **options)
     output.pipeline = pipeline
     prepared = threading.Event()
@@ -86,7 +103,11 @@ def serve(control, pcm, pipeline_factory=None):
 
     def lifecycle():
         try:
-            pipeline.start()
+            try:
+                pipeline.start()
+            except SourcePending:
+                if source.type != 'LOCAL':
+                    raise
             prepared.set()
             shutdown.wait()
             pipeline.stop()
@@ -129,26 +150,40 @@ def serve(control, pcm, pipeline_factory=None):
         if prepared.is_set() and not announced:
             event('prepared', {'request': 1})
             announced = True
-        event('status', dict(status=pipeline.snapshot(),
+        if catalog is not None:
+            # Bounded local requests; callbacks only enqueue, never send/wait.
+            for _ in range(3):
+                data = catalog.poll()
+                if data is None:
+                    break
+                event('local_request', data)
+        status = dict(status=pipeline.snapshot(),
                              staging=pipeline.pcm_snapshot()['staging'],
-                             fatal_error=pipeline.fatal_error))
+                             fatal_error=pipeline.fatal_error)
+        if catalog is not None:
+            status['local_waiting'] = time.monotonic() < pipeline.local_wait_until
+        event('status', status)
         try:
             command, _ = receive(control)
         except socket.timeout:
             continue
         if command['source_id'] != source_id or command['generation'] != generation:
             continue
-        if (command['sequence'] <= request or command['kind'] != 'shutdown'
-                or command['payload']):
+        if command['sequence'] <= request:
             raise ProtocolError('Invalid lifecycle command')
         request = command['sequence']
+        if command['kind'] == 'local_response' and catalog is not None and not shutdown.is_set():
+            catalog.accept(command['payload'])
+            continue
+        if command['kind'] != 'shutdown' or command['payload']:
+            raise ProtocolError('Invalid lifecycle command')
         event('accepted', {'request': request})
         shutdown.set()
         # Parent owns the bounded grace/TERM/KILL deadline; no join here.
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Private fmheadendd HTTP audio worker')
+    parser = argparse.ArgumentParser(description='Private fmheadendd HTTP/LOCAL audio worker')
     parser.add_argument('--control-fd', type=int, required=True)
     parser.add_argument('--pcm-fd', type=int, required=True)
     args = parser.parse_args()

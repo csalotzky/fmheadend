@@ -27,6 +27,20 @@ class LocalJobs:
         self.active = {}
         self.lock = Lock()
 
+    def reserve(self, owner):
+        """A child-owned CPU job holds the same global slot until release/reap."""
+        with self.lock:
+            if owner in self.active or len(self.active) >= self.limit:
+                return None
+            job = Job()
+            self.active[owner] = job
+            return job
+
+    def release(self, owner, job):
+        with self.lock:
+            if self.active.get(owner) is job:
+                del self.active[owner]
+
     def submit(self, owner, operation, wakeup):
         with self.lock:
             if owner in self.active or len(self.active) >= self.limit:

@@ -125,8 +125,10 @@ class GstPipeline:
                  pcm_staging_buffer_ms=DEFAULT_STAGING_BUFFER_MS,
                  pcm_consumer_buffer_ms=DEFAULT_CONSUMER_BUFFER_MS,
                  pcm_staging_max_age_ms=DEFAULT_STAGING_MAX_AGE_MS,
-                 podcast_database_path=None, podcast_runtime_factory=None):
+                 podcast_database_path=None, podcast_runtime_factory=None, local_playback_factory=None):
         self._local = None
+        self._local_playback_factory = local_playback_factory or LocalPlayback
+        self.local_wait_until = 0.0  # Refreshed only by a progressing idle native loop.
         self._podcast_database_path = podcast_database_path
         self._podcast_runtime_factory = podcast_runtime_factory
         self._media_idle = False
@@ -432,7 +434,7 @@ class GstPipeline:
         Gst = self.Gst
         if self.source.type in (SourceType.LOCAL, SourceType.PODCAST):
             if self.source.type == SourceType.LOCAL:
-                self._local = LocalPlayback(LocalConfig.model_validate(self.source.config).to_core(), self._audio_ready,
+                self._local = self._local_playback_factory(LocalConfig.model_validate(self.source.config).to_core(), self._audio_ready,
                                             source_id=getattr(self.source, 'id', None))
             else:
                 from ..models.configuration import PodcastConfig
@@ -560,6 +562,7 @@ class GstPipeline:
     def _local_resume(self, *, failed):
         # Exceptional recovery only. Keep the same native elements, DSP chain,
         # PcmOutput and consumers; normal handoff never changes pipeline state.
+        self.local_wait_until = 0.0
         self._invalidate_telemetry()
         with self._uri_change_lock:
             self._pipeline.set_state(self.Gst.State.NULL)
@@ -627,6 +630,8 @@ class GstPipeline:
             if self._local is not None:
                 self._local.pcm(size)
                 self._publish_local_metadata()
+                if self.source.type == SourceType.LOCAL and hasattr(self.output, 'capture'):
+                    data = self.output.capture(data)
             self.staging.put(data)
         elif size:
             self._callback_error = "PCM buffer exceeds the bounded output block size or is not frame-aligned"
@@ -780,6 +785,7 @@ class GstPipeline:
                     self._prepared.set()
                     started = time.monotonic()
                 else:
+                    self.local_wait_until = time.monotonic() + 2.0
                     self._update(state='ERROR', last_error=self._local.error)
                     self._audio_ready.wait(1.0)
                 continue

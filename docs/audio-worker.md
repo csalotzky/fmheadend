@@ -1,9 +1,74 @@
-# Experimental HTTP audio worker (Phase 2A)
+# Experimental HTTP / LOCAL audio worker
+
+## Phase 3: LOCAL playback
+
+`--experimental-audio-worker` selects workers for HTTP and LOCAL. The existing
+`--experimental-http-worker` retains HTTP-only routing; neither is enabled by
+default. Both require Linux and reject `--mock`. PODCAST/ALSA/UDP/RTP are unchanged.
+The Phase 2A text below records the original HTTP-only scope.
+
+The parent resolves LOCAL directory/M3U catalogs with the existing resolvers and
+global eight-slot scan pool. The child runs the existing `LocalPlayback`,
+`PlaybackQueue` and `SequencedPlayback`: random/sequential selection, previous
+cycle avoidance, remaining-unselected <=10 refresh trigger, prebuilt fallback,
+prepared/submitted/rendering tickets, playbin3, about-to-finish, DSP and PCM.
+There is no copied playlist algorithm, database in the child or nested process.
+
+`local_request`/`local_response` extend the private v1 control channel. Requests
+are generation-scoped, increasing integers. A scan request is its catalog
+revision; only one scan and one cycle request can be outstanding per worker.
+Catalog chunks contain request, exact offset, typed path/URL entries and final
+flag. Completed snapshots publish atomically to the original LocalPlayback job;
+its existing revision/generation logic applies the next queue at a cycle boundary.
+Interrupted, repeated or out-of-order chunks cannot publish a partial catalog.
+The immutable source configuration is held in the parent; child requests cannot
+select another directory. Existing source/generation/channel-sequence checks run
+before dispatch. No native callback waits for these messages.
+
+Limits: 100,000 entries, 16 MiB cumulative UTF-8 locator bytes, 8192 characters
+per locator and 56,000 JSON-escaped bytes per entry. A frame holds at most 64
+entries and about 56 KiB of encoded entries, under the existing 64 KiB JSON cap.
+Exceeding a limit reports `LOCAL_CATALOG_LIMIT`, without partial playback input.
+Large directories still use the original resolver's transient full result in the
+scan job; this is not a streaming filesystem enumerator.
+
+Cycle computation stays inside the child but requires a lease in the parent's
+existing eight-slot CPU pool, shared with in-process work. The lease is released
+on completion or **after actual child reap**, never on a cleanup timeout.
+Cancelled filesystem work retains its scan slot/source key until the OS call
+returns, including across worker replacement. No waiter thread holds a lease.
+
+LOCAL PCM carries its serialized sink metadata snapshot through native staging
+before it is encoded for IPC. Prefetch and URI submission cannot relabel older
+staged PCM. Only PCM records publish rendered identity to the parent, not control
+status. First-block cached caps/probe fields may follow the first staging drain.
+Existing per-TX/mux buffering remains; this is not sample-exact RF/RDS timing.
+
+LOCAL start remains pending until valid PCM arrives. Worker `prepared` means
+native startup was scheduled, not that discovery or decoding has completed.
+The child control loop reports `local_waiting` only while the native idle loop
+has refreshed a two-second expiry. Missing/unreadable/empty catalogs retry with
+the existing five-second discovery delay; all-failed cycles are retired and
+rediscovered rather than exhausting the process restart budget. This is an
+explicit worker-only availability improvement; in-process error behavior is
+unchanged. Parent status/exit/fatal deadlines always remain active. Expected
+media waits suspend only the PCM deadline. Leaving the wait starts a bounded
+PCM grace; a native state-transition stall cannot indefinitely claim discovery
+progress. Last-rendered identity is retained until subsequent PCM or terminal
+error, while waiting/error state remains visible.
+
+Crash/stall recovery, asynchronous STOP/apply, shared output identity, generation
+flushing, actual reap-before-replacement and restart budgets reuse Phase 2B.
+Restart generates a fresh queue/cycle; neither position nor previous random-cycle
+history is restored. A failed source can have an audible interruption. No RF
+operation is introduced. No GStreamer patch is applied.
+
+Native evidence and exact qualification limits: `tmp/audiod-phase3/RESULTS.md`.
 
 ## Phase 2B recovery
 
 The daemon's existing control-owned maintenance tick services `WorkerRecovery`.
-Only adapters exposing the HTTP worker recovery observation participate. No new
+Only adapters exposing the worker recovery observation participate. No new
 heartbeat, scheduler thread, RF command or mux replacement is involved.
 
 `RecoveryPolicy` supplies injectable thresholds: 5 s without validated status,

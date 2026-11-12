@@ -1,5 +1,15 @@
 # Audio backend contract (Phase 1)
 
+Phase 3 extends the opt-in process backend to LOCAL via
+`--experimental-audio-worker`; the old HTTP-only switch is compatible. The
+manager, source-ID sharing and stable output ownership stay unchanged. LOCAL
+start is pending through discovery until first PCM. A cached expected-media-wait
+observation exempts legitimate native idle/discovery waits from the PCM deadline,
+but never from process/IPC failure detection. Parent catalog scans and CPU leases
+use the existing global pools; child sequencing and PCM-bound metadata reuse the
+existing LOCAL implementation. See [audio-worker.md](audio-worker.md) for limits,
+asynchronous completion and restart-from-new-cycle semantics.
+
 The opt-in Phase 2A HTTP process prototype and its asynchronous lifecycle/API
 limitations are documented in [audio-worker.md](audio-worker.md). The default
 in-process backend and the Phase 1 ownership rules below remain unchanged.

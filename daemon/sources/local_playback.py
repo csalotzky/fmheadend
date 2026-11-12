@@ -15,12 +15,14 @@ log = logging.getLogger(__name__)
 
 class LocalPlayback(SequencedPlayback):
     def __init__(self, config, wakeup, *, resolver=resolve_media, rng=None,
-                 source_id=None, clock=time.monotonic):
+                 source_id=None, clock=time.monotonic, jobs=None, retry_unavailable=False):
         super().__init__(wakeup)
         self.config, self.resolver = config, resolver
         self.rng = rng if rng is not None else random.Random()
         self.owner = source_id if source_id is not None else object()
         self.clock = clock
+        self.scan_jobs, self.cycle_jobs = jobs or (scan_jobs, cycle_jobs)
+        self.retry_unavailable = retry_unavailable
         self.queue = None
         self.cycle = None
         self.catalog = None
@@ -48,7 +50,8 @@ class LocalPlayback(SequencedPlayback):
                 if self.catalog is None:
                     if not isinstance(job.error, DomainError):
                         raise job.error
-                    raise LocalPlaybackError(self.error) from job.error
+                    if not self.retry_unavailable:
+                        raise LocalPlaybackError(self.error) from job.error
             else:
                 self.catalog = job.value
                 self.revision += 1
@@ -76,7 +79,7 @@ class LocalPlayback(SequencedPlayback):
                     raise DomainError(409, 'NO_PLAYABLE_TRACKS', 'No media candidates')
                 return items
 
-            self.scan = scan_jobs.submit(self.owner, resolve, self.wakeup)
+            self.scan = self.scan_jobs.submit(self.owner, resolve, self.wakeup)
             if self.scan is None:
                 self.error = 'LOCAL_DISCOVERY_BUSY'
                 self.retry_at = self.clock() + 5.0
@@ -86,7 +89,7 @@ class LocalPlayback(SequencedPlayback):
                 self.next_queue is None or self.next_revision != self.revision):
             items, order, rng = self.catalog, self.config.order, self.rng
             previous = self.queue.last_item if self.queue is not None else None
-            job = cycle_jobs.submit(self.owner,
+            job = self.cycle_jobs.submit(self.owner,
                 lambda: PlaybackQueue(items, order, rng=rng, previous=previous), self.wakeup)
             if job is not None:
                 self.build = job, self.generation, self.revision
@@ -120,6 +123,14 @@ class LocalPlayback(SequencedPlayback):
 
     def _unavailable(self):
         if self.cycle is not None and not self.cycle.played:
+            if self.retry_unavailable:
+                # All candidates failed (e.g. a removed USB drive). Retire this
+                # cycle, rediscover with the existing retry delay, never spin.
+                self.generation += 1
+                self.queue = self.cycle = self.catalog = self.next_queue = None
+                self.retry_at = self.clock() + 5.0
+                self.error = 'NO_PLAYABLE_TRACKS'
+                return None
             return super()._unavailable()
         return None  # The existing idle-player path resumes when a job wakes it.
 

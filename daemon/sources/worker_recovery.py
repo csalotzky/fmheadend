@@ -104,7 +104,8 @@ class WorkerRecovery:
             limit = p.buffering_timeout if state in ('BUFFERING', 'CONNECTING') else p.pcm_timeout
             reason = ('Worker exited' if done else fatal or
                 ('Worker status timeout' if now - status_at > p.status_timeout else
-                 'Worker PCM progress timeout' if now - pcm_at > limit else None))
+                 'Worker PCM progress timeout' if now - pcm_at > limit and
+                    not getattr(old, 'expected_media_wait', False) else None))
             if reason:
                 old._fail(reason)
                 self.request(sid, automatic=True)

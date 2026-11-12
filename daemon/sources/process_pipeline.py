@@ -1,8 +1,8 @@
-"""Experimental Linux HTTP MediaPipeline; parent-owned output and cached state.
+"""Experimental Linux HTTP/LOCAL MediaPipeline; parent output and cached state.
 
 start/stop initiate work and never wait for a child/native reply on the control
 executor. Pending STOP raises DependencyUnavailable, preserving SourceManager
-ownership until a subsequent stop confirms reap. No automatic restart policy.
+ownership until a subsequent stop confirms reap. WorkerRecovery owns restart policy.
 """
 from copy import deepcopy
 import atexit
@@ -74,8 +74,8 @@ class ProcessPipeline:
                  pcm_staging_max_age_ms=DEFAULT_STAGING_MAX_AGE_MS,
                  pcm_consumer_buffer_ms=DEFAULT_CONSUMER_BUFFER_MS,
                  podcast_database_path=None):
-        if source.type != 'HTTP':
-            raise ValueError('audiod PoC supports HTTP only')
+        if source.type not in ('HTTP', 'LOCAL'):
+            raise ValueError('audiod supports HTTP and LOCAL only')
         if sys.platform != 'linux':
             raise DependencyUnavailable('Experimental audiod requires Linux socketpair/pass_fds')
         self.source = source
@@ -114,6 +114,16 @@ class ProcessPipeline:
         self.recovery_exhausted = False
         self._last_status = time.monotonic()
         self._last_pcm = self._last_status
+        self._local_waiting = False
+        self._catalog = None
+        if source.type == 'LOCAL':
+            from .local_worker import ParentCatalog
+            self._catalog = ParentCatalog(source)
+
+    @property
+    def expected_media_wait(self):
+        with self._lock:
+            return self._local_waiting
 
     def recovery_observation(self):
         with self._lock:
@@ -136,7 +146,8 @@ class ProcessPipeline:
     @property
     def startup_pending(self):
         with self._lock:
-            return not self._prepared and self._thread is not None
+            return self._thread is not None and (not self._prepared or
+                (self.source.type == 'LOCAL' and not self._has_pcm))
 
     def snapshot(self):
         with self._lock:
@@ -159,7 +170,7 @@ class ProcessPipeline:
             return self._probe.model_copy(deep=True)
 
     def update_source_identity(self, source):
-        if source.type != 'HTTP' or getattr(source, 'id', 0) != self.source_id:
+        if source.type != self.source.type or getattr(source, 'id', 0) != self.source_id:
             raise ValueError('Cannot change worker source identity')
         self.source = source
 
@@ -194,13 +205,13 @@ class ProcessPipeline:
 
     def check_startup(self):
         if self.managed_recovery and not self.recovery_exhausted and (self.fatal_error or self._stop.is_set()):
-            raise SourcePending('HTTP worker recovery pending')
+            raise SourcePending('Audio worker recovery pending')
         if self.fatal_error or self._done.is_set():
             raise SourceStartupFailed(self.fatal_error or 'Audio worker exited')
         if self._stop.is_set():
             raise DependencyUnavailable('Audio worker shutdown pending')
         if self.startup_pending:
-            raise SourcePending('HTTP audio worker preparation pending')
+            raise SourcePending('Audio worker preparation pending')
 
     def stop(self):
         self._stop.set()
@@ -263,13 +274,24 @@ class ProcessPipeline:
                 self._has_pcm = True
                 if self.reconnect or (self._prepared and self._probe.ok):
                     self._ready.set()
-            elif kind == 'accepted' and set(payload) == {'request'} and type(payload['request']) is int and payload['request'] in (1, 2):
+            elif kind == 'accepted' and set(payload) == {'request'} and type(payload['request']) is int and payload['request'] >= 1:
                 self.accepted_request = payload['request']
             elif kind == 'prepared' and payload == {'request': 1}:
                 self._prepared = True
                 if self.reconnect or (self._has_pcm and self._probe.ok):
                     self._ready.set()
-            elif kind == 'status' and set(payload) == {'status', 'staging', 'fatal_error'}:
+            elif kind == 'local_request' and self._catalog is not None:
+                self._catalog.accept(payload)
+            elif kind == 'status' and set(payload) == ({'status', 'staging', 'fatal_error'} |
+                    ({'local_waiting'} if self._catalog is not None else set())):
+                if self._catalog is not None:
+                    if type(payload['local_waiting']) is not bool:
+                        raise ProtocolError('Invalid LOCAL waiting state')
+                    waiting = payload['local_waiting']
+                    if self._local_waiting and not waiting:
+                        # A fresh playable queue gets its own bounded PCM grace.
+                        self._last_pcm = time.monotonic()
+                    self._local_waiting = waiting
                 status = InputSourceStatus(source_id=self.source_id, **payload['status']).model_dump(mode='json')
                 self._staging = PcmQueueStatus.model_validate(payload['staging']).model_dump()
                 self._last_status = time.monotonic()
@@ -338,13 +360,20 @@ class ProcessPipeline:
                                       name=f'audiod-receive-{self.source_id}')
             reader.start()
             deadline = time.monotonic() + self.timeout_s + 1
+            request = 1
             while not self._stop.is_set():
                 with self._lock:
                     pcm_error = self._pcm_error
                 if pcm_error and time.monotonic() - pcm_error[0] > 0.3:
                     raise ProtocolError(pcm_error[1])
-                if self.startup_pending and time.monotonic() >= deadline:
+                if not self._prepared and time.monotonic() >= deadline:
                     raise TimeoutError('Audio worker startup deadline expired')
+                if self._catalog is not None:
+                    data = self._catalog.poll()
+                    if data is not None:
+                        request += 1
+                        control.sendall(pack(envelope(self.source_id, self.generation,
+                            request, 'local_response', data)))
                 try:
                     self._accept('control', *receive(control))
                 except socket.timeout:
@@ -352,7 +381,7 @@ class ProcessPipeline:
                         raise EOFError(f'Audio worker exit {self.process.returncode}')
                     continue
             try:
-                control.sendall(pack(envelope(self.source_id, self.generation, 2, 'shutdown')))
+                control.sendall(pack(envelope(self.source_id, self.generation, request + 1, 'shutdown')))
             except OSError:
                 pass
         except (OSError, EOFError, ValueError, TypeError, RuntimeError) as exc:
@@ -363,6 +392,8 @@ class ProcessPipeline:
             try:
                 if self.process is not None:
                     self._reap_child(sockets, reader)
+                if self._catalog is not None:
+                    self._catalog.close()
             finally:
                 self._close_transport(sockets, reader)
             with self._lock:
@@ -448,3 +479,10 @@ class ExperimentalHttpFactory:
         # Existing profile validation remains in-process until Phase 2B.
         from .gst_pipeline import GstPipeline
         GstPipeline.validate_profile(profile)
+
+
+class ExperimentalAudioFactory(ExperimentalHttpFactory):
+    """Explicit HTTP + LOCAL opt-in; legacy HTTP-only option is unchanged."""
+    def __call__(self, source, **options):
+        from .gst_pipeline import GstPipeline
+        return (ProcessPipeline if source.type in ('HTTP', 'LOCAL') else GstPipeline)(source, **options)
