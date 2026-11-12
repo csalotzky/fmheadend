@@ -1,5 +1,11 @@
 # Audio backend contract (Phase 1)
 
+Phase 5B extends the experimental audio factory to UDP/RTP, reusing the existing
+GStreamer receiver/caps/decode/DSP path in the child. With no independent packet
+progress signal, parent supervision applies a configurable 90-second network PCM
+idle deadline, while status/process failure detection remains unchanged. This is
+a bounded ambiguity policy, not packet-starvation versus deadlock classification.
+
 Phase 5A adds ALSA to the extended experimental factory, reusing GstPipeline's
 capture/normalization/DSP code inside audiod. Parent-side capture handles and new
 IPC operations are not introduced. Pi null-PCM validation is synthetic ALSA

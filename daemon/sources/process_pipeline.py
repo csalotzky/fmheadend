@@ -1,4 +1,4 @@
-"""Experimental Linux HTTP/LOCAL/PODCAST/ALSA backend; parent output and cached state.
+"""Experimental Linux HTTP/LOCAL/PODCAST/ALSA/UDP/RTP backend; parent output and cached state.
 
 start/stop initiate work and never wait for a child/native reply on the control
 executor. Pending STOP raises DependencyUnavailable, preserving SourceManager
@@ -74,8 +74,8 @@ class ProcessPipeline:
                  pcm_staging_max_age_ms=DEFAULT_STAGING_MAX_AGE_MS,
                  pcm_consumer_buffer_ms=DEFAULT_CONSUMER_BUFFER_MS,
                  podcast_database_path=None, podcast_service=None):
-        if source.type not in ('HTTP', 'LOCAL', 'PODCAST', 'ALSA'):
-            raise ValueError('audiod supports HTTP, LOCAL, PODCAST and ALSA only')
+        if source.type not in ('HTTP', 'LOCAL', 'PODCAST', 'ALSA', 'UDP', 'RTP'):
+            raise ValueError('audiod supports HTTP, LOCAL, PODCAST, ALSA, UDP and RTP only')
         if sys.platform != 'linux':
             raise DependencyUnavailable('Experimental audiod requires Linux socketpair/pass_fds')
         self.source = source
@@ -517,7 +517,7 @@ class ExperimentalHttpFactory:
 
 
 class ExperimentalAudioFactory(ExperimentalHttpFactory):
-    """Explicit HTTP/LOCAL/PODCAST/ALSA opt-in; legacy HTTP-only option is unchanged."""
+    """Explicit HTTP/LOCAL/PODCAST/ALSA/UDP/RTP opt-in; legacy HTTP-only option is unchanged."""
     def __call__(self, source, **options):
         from .gst_pipeline import GstPipeline
-        return (ProcessPipeline if source.type in ('HTTP', 'LOCAL', 'PODCAST', 'ALSA') else GstPipeline)(source, **options)
+        return (ProcessPipeline if source.type in ('HTTP', 'LOCAL', 'PODCAST', 'ALSA', 'UDP', 'RTP') else GstPipeline)(source, **options)

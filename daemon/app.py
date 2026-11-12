@@ -325,7 +325,7 @@ def argument_parser():
     development.add_argument("--experimental-http-worker", action="store_true",
                              help="Experimental Linux HTTP audiod backend; other sources unchanged")
     development.add_argument("--experimental-audio-worker", action="store_true",
-                             help="Experimental Linux HTTP, LOCAL, PODCAST and ALSA audiod backend")
+                             help="Experimental Linux HTTP, LOCAL, PODCAST, ALSA, UDP and RTP audiod backend")
     development.add_argument("--mock-controller", action="store_true", help="Use the high-level mock Controller client")
     parser.add_argument("--i2c-device", default="/dev/i2c-1", help="Controller I2C device")
     parser.add_argument("--controller-i2c-address", type=lambda value: int(value, 0), default=0x62, help="7-bit Controller address, decimal or 0x hex (default: %(default)#x)")

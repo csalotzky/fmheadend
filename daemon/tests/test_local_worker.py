@@ -238,4 +238,4 @@ def test_explicit_selection_preserves_http_only_option(monkeypatch):
     for kind in ('HTTP', 'LOCAL', 'PODCAST', 'ALSA', 'UDP', 'RTP'):
         source = SimpleNamespace(type=kind)
         assert legacy(source) == ('process' if kind == 'HTTP' else 'inprocess')
-        assert extended(source) == ('process' if kind in ('HTTP', 'LOCAL', 'PODCAST', 'ALSA') else 'inprocess')
+        assert extended(source) == ('process' if kind in ('HTTP', 'LOCAL', 'PODCAST', 'ALSA', 'UDP', 'RTP') else 'inprocess')

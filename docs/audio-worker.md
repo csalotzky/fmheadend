@@ -1,4 +1,33 @@
-# Experimental HTTP / LOCAL / PODCAST / ALSA audio worker
+# Experimental HTTP / LOCAL / PODCAST / ALSA / UDP / RTP audio worker
+
+## Phase 5B: UDP/RTP receivers
+
+The extended experimental switch routes UDP and RTP to audiod. Only the child
+constructs udpsrc and owns its receive socket. Config, raw PCM conversion, RTP
+depay/decode, 100 ms drop-on-latency jitterbuffer, multicast options, DSP and output
+are the existing GstPipeline implementation. There are no new codecs, RTP
+negotiation protocols or IPC messages; HTTP-only/default backend selection is
+unchanged. UDP accepts configured raw PCM; RTP supports L16 PCM, OPUS, MP3/MPA
+and MPEG4-GENERIC AAC with the existing explicit caps/config requirements.
+
+The receiver has no independent packet/socket-progress observation. Missing PCM
+cannot prove a native stall rather than sender starvation. WorkerRecovery uses
+an explicit `network_idle_timeout=90` seconds for UDP/RTP, regardless of cached
+RUNNING/CONNECTING state. Short idle does not replace a worker. After the bounded
+deadline the same existing budget/backoff/reap policy may replace it even if the
+sender is simply absent. Status/process/IPC deadlines remain active. This is a
+conservative bounded policy, not reliable classification or indefinite idle
+exemption. Valid silent PCM is progress. The native pipeline's existing audio
+timeout/reconnect behavior remains unchanged and may rebuild its receiver within
+the same process during longer idle, with its existing retry delays. Missing audio
+is visible as CONNECTING/error status; sender return can therefore incur reconnect
+delay. Permanent errors are bounded by the worker restart budget.
+Prolonged sender silence beyond 90 seconds can likewise trigger recovery and
+eventually exhaust that budget; explicit STOP/start or apply is then required.
+
+Multicast, packet loss/reordering resilience, sample-exact timing and physical RF
+continuity require separate qualification. Port rebind after actual child reap
+is tested with continuing loopback senders, not inferred from sent termination signals.
 
 ## Phase 5A: ALSA capture
 
@@ -7,7 +36,7 @@ device/channel-selection configuration and owns the stable PcmOutput; only the
 child constructs alsasrc, opens the capture device, converts, applies source DSP
 and produces S16LE/48 kHz/interleaved stereo PCM. There are no new IPC messages,
 device discovery workers or parent capture handles. The default in-process
-backend and legacy HTTP-only switch are unchanged; UDP/RTP are still in-process.
+backend and legacy HTTP-only switch are unchanged. UDP/RTP support is described above.
 
 The existing capture contract requests 48 kHz and one/two channels. Mono
 normalization and stereo/mono/left/right selection reuse alsa_capture.py. Hardware

@@ -11,6 +11,7 @@ class RecoveryPolicy:
     status_timeout: float = 5.0
     pcm_timeout: float = 15.0
     buffering_timeout: float = 90.0
+    network_idle_timeout: float = 90.0
     restart_limit: int = 3
     restart_window: float = 300.0
     backoff: float = 1.0
@@ -117,6 +118,12 @@ class WorkerRecovery:
                 continue
             status_at, pcm_at, state, fatal, done = old.recovery_observation()
             limit = p.buffering_timeout if state in ('BUFFERING', 'CONNECTING') else p.pcm_timeout
+            # There is no independent receive-progress observation in the
+            # existing udpsrc pipeline. Starvation and a blocked native path are
+            # indistinguishable here: use a bounded, slower progress deadline,
+            # never an indefinite idle exemption. Status/process checks remain.
+            if getattr(getattr(old, 'source', None), 'type', None) in ('UDP', 'RTP'):
+                limit = p.network_idle_timeout
             reason = ('Worker exited' if done else fatal or
                 ('Worker status timeout' if now - status_at > p.status_timeout else
                  'Worker PCM progress timeout' if now - pcm_at > limit and
