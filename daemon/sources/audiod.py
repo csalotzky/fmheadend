@@ -1,4 +1,4 @@
-"""Experimental HTTP/LOCAL/PODCAST child with inherited socketpairs.
+"""Experimental HTTP/LOCAL/PODCAST/ALSA child with inherited socketpairs.
 
 Native lifecycle runs on a daemon thread. The control thread can always observe
 parent EOF and exit without acquiring any native lock. No DB/TX/API ownership.
@@ -66,8 +66,8 @@ def serve(control, pcm, pipeline_factory=None):
         raise ProtocolError('Invalid CREATE payload')
     raw = payload['source']
     source = (InputSource if 'id' in raw else InputSourceConfig).model_validate(raw)
-    if source.type not in ('HTTP', 'LOCAL', 'PODCAST') or getattr(source, 'id', 0) != source_id:
-        raise ProtocolError('Worker only supports its assigned HTTP/LOCAL/PODCAST source')
+    if source.type not in ('HTTP', 'LOCAL', 'PODCAST', 'ALSA') or getattr(source, 'id', 0) != source_id:
+        raise ProtocolError('Worker only supports its assigned HTTP/LOCAL/PODCAST/ALSA source')
     profile = AudioProfileFile.model_validate(payload['profile']) if payload['profile'] else None
     options = payload['options']
     if not isinstance(options, dict) or set(options) != {

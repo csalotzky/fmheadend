@@ -1,4 +1,33 @@
-# Experimental HTTP / LOCAL / PODCAST audio worker
+# Experimental HTTP / LOCAL / PODCAST / ALSA audio worker
+
+## Phase 5A: ALSA capture
+
+The extended experimental switch includes ALSA. The parent sends the existing
+device/channel-selection configuration and owns the stable PcmOutput; only the
+child constructs alsasrc, opens the capture device, converts, applies source DSP
+and produces S16LE/48 kHz/interleaved stereo PCM. There are no new IPC messages,
+device discovery workers or parent capture handles. The default in-process
+backend and legacy HTTP-only switch are unchanged; UDP/RTP are still in-process.
+
+The existing capture contract requests 48 kHz and one/two channels. Mono
+normalization and stereo/mono/left/right selection reuse alsa_capture.py. Hardware
+requiring another rate must use ALSA plughw conversion; this phase does not relax
+raw hw negotiation or change DSP. Inventory discovery reads ALSA/proc metadata;
+it does not open capture PCM. Native telemetry remains unavailable on the process
+backend, as for the earlier sources.
+
+Missing devices retain the native error/status and existing retry delays
+(1, 2, 5, 10, then 30 seconds). Parent status/PCM monitoring and the existing
+three-restarts/300-second budget with 1/2/4-second backoff bound worker replacement.
+No missing-device exemption disables progress detection. Device return within
+the retry/restart window can recover; after budget exhaustion an explicit
+STOP/start or source/profile apply is required. This is not indefinite hotplug
+monitoring. Intentional STOP never schedules replacement; reap precedes apply.
+
+Pi validation uses real alsasrc with the synthetic ALSA null capture device and
+native mono/stereo channel tests. No physical capture card or ALSA loopback was
+available. Physical capture, unplug/replug, hardware sample-rate conversion and
+exclusive-device release remain unqualified. Valid silent PCM counts as progress.
 
 ## Phase 4: PODCAST integration
 

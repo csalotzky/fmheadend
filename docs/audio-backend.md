@@ -1,5 +1,10 @@
 # Audio backend contract (Phase 1)
 
+Phase 5A adds ALSA to the extended experimental factory, reusing GstPipeline's
+capture/normalization/DSP code inside audiod. Parent-side capture handles and new
+IPC operations are not introduced. Pi null-PCM validation is synthetic ALSA
+capture; physical device qualification remains outstanding. See audio-worker.md.
+
 Phase 4B2 adds PODCAST to the experimental audio factory. The parent adapter
 retains PodcastFeedService across worker recovery/profile changes; the child owns
 the existing scheduler and PCM-associated metadata. STOP includes asynchronous
