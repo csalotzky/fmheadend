@@ -7,6 +7,19 @@ from fmheadendd import app
 from fmheadendd.config import Settings
 
 
+@pytest.mark.parametrize('factory_name', ['ExperimentalHttpFactory', 'ExperimentalAudioFactory'])
+def test_callable_worker_factory_completes_real_application_lifespan(tmp_path, caplog, factory_name):
+    from fastapi.testclient import TestClient
+    from fmheadendd.sources import process_pipeline
+    from fmheadendd.tests.profile_support import profile_settings
+    factory=getattr(process_pipeline, factory_name)()
+    with caplog.at_level('INFO', logger='fmheadendd.app'):
+        with TestClient(app.create_app(profile_settings(tmp_path/'startup.db'), pipeline_factory=factory)) as client:
+            assert client.get('/api/v1/status').status_code == 200
+            assert not client.app.state.services.sources.pipelines
+    assert f'media backend: {factory_name}' in caplog.text
+
+
 def test_startup_defaults():
     args = app.argument_parser().parse_args([])
     assert (args.i2c_device, args.controller_i2c_address) == ('/dev/i2c-1', 0x62)

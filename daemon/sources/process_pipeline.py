@@ -17,7 +17,7 @@ import uuid
 from ..errors import DependencyUnavailable, SourcePending, SourceStartupFailed
 from ..models.configuration import SourceTestResult
 from ..models.runtime_status import InputSourceStatus, PcmQueueStatus
-from .audio_ipc import (PCM_MAX_AGE, ProtocolError, configure, envelope, pack, receive)
+from .audio_ipc import (PCM_MAX_AGE, PcmDecoder, ProtocolError, configure, envelope, pack, receive)
 from .output import (PCM_CAPS, PcmOutput, DEFAULT_STAGING_BUFFER_MS,
                      DEFAULT_STAGING_MAX_AGE_MS, DEFAULT_CONSUMER_BUFFER_MS)
 
@@ -64,7 +64,7 @@ atexit.register(_shutdown_owners)
 
 class ProcessPipeline:
     mocked = False
-    radio_url = None  # Radio Browser candidate/persistence IPC is deferred.
+    radio_url = None
     audio_profile_id = ''
     worker_module = 'fmheadendd.sources.audiod'
 
@@ -73,11 +73,29 @@ class ProcessPipeline:
                  pcm_staging_buffer_ms=DEFAULT_STAGING_BUFFER_MS,
                  pcm_staging_max_age_ms=DEFAULT_STAGING_MAX_AGE_MS,
                  pcm_consumer_buffer_ms=DEFAULT_CONSUMER_BUFFER_MS,
-                 podcast_database_path=None, podcast_service=None):
+                 podcast_database_path=None, podcast_service=None, direct_runtime=None):
         if source.type not in ('HTTP', 'LOCAL', 'PODCAST', 'ALSA', 'UDP', 'RTP'):
             raise ValueError('audiod supports HTTP, LOCAL, PODCAST, ALSA, UDP and RTP only')
         if sys.platform != 'linux':
             raise DependencyUnavailable('Experimental audiod requires Linux socketpair/pass_fds')
+        if direct_runtime is not None and source.type not in ("HTTP", "LOCAL", "PODCAST", "ALSA", "UDP", "RTP"):
+            raise ValueError("Unsupported direct source type")
+        self.direct_runtime = direct_runtime
+        from .worker_services import RemoteRadio
+        self.radio_url = RemoteRadio() if source.type == 'HTTP' and source.config.get('radio_browser_uuid') and reconnect else None
+        self.telemetry_configured = telemetry_configured
+        self._telemetry_request = (False, 50.0)
+        self._telemetry_revision = 0
+        self._telemetry_sent = 0
+        self._telemetry_cache = None
+        self._telemetry_at = 0
+        self._direct_intent = (0, None)
+        self._direct_intents = {}
+        self._direct_sent_channels = {}
+        self.direct_applied_channels = {}
+        self._direct_metadata_sequence = 0
+        self.direct_applied = (0, None)
+        self.direct_progress = {}
         self.source = source
         self.output = output if output is not None else PcmOutput(pcm_consumer_buffer_ms)
         self.generation = uuid.uuid4().hex
@@ -90,6 +108,10 @@ class ProcessPipeline:
                                 pcm_staging_buffer_ms=pcm_staging_buffer_ms,
                                 pcm_staging_max_age_ms=pcm_staging_max_age_ms,
                                 pcm_consumer_buffer_ms=pcm_consumer_buffer_ms))
+        if direct_runtime is not None:
+            self._create["direct_runtime"] = str(direct_runtime)
+        if telemetry_configured:
+            self._create['telemetry_configured'] = True
         # Validate size before launching a process.
         self._create_packet = pack(envelope(self.source_id, self.generation, 1, 'create', self._create))
         self._lock = threading.Lock()
@@ -107,7 +129,11 @@ class ProcessPipeline:
         self._has_pcm = False
         self._pcm_error = None
         self._sequences = {'control': 0, 'pcm': 0}
+        self.control_counts = {}
+        self._report_resync = threading.Event()
         self.stale_messages = 0
+        self._pcm_metadata_key = None
+        self._pcm_models = None
         self.stale_pcm = 0
         self.accepted_request = 0
         self.managed_recovery = False
@@ -148,7 +174,7 @@ class ProcessPipeline:
         result = type(self)(self.source.model_copy(deep=True), output=self.output,
             profile=AudioProfileFile.model_validate(profile) if profile else None,
             podcast_service=self._podcast_service, podcast_database_path=self._podcast_database_path,
-            **self._create['options'])
+            direct_runtime=self.direct_runtime, telemetry_configured=self.telemetry_configured, **self._create['options'])
         result.audio_profile_id = self.audio_profile_id
         return result
 
@@ -167,17 +193,34 @@ class ProcessPipeline:
         with self._lock:
             return deepcopy(self._status)
 
+    def current_stream_title(self):
+        """Read the immutable text from the latest accepted worker metadata."""
+        with self._lock:
+            return self._status.get('stream_title')
+
     def pcm_snapshot(self):
         with self._lock:
             staging = dict(self._staging)
-        return dict(staging=staging, consumers=self.output.snapshot())
+            consumers = dict(self.direct_progress.get('consumers', {})) if self.direct_runtime else None
+        return dict(staging=staging, consumers=consumers if consumers is not None else self.output.snapshot())
 
     def request_telemetry(self, enabled, hz=50.0):
-        # Explicitly unavailable in this PoC; never pretend native meters exist.
-        pass
+        from ..config import audio_telemetry_hz
+        request = (bool(enabled) and self.telemetry_configured, audio_telemetry_hz(hz))
+        with self._lock:
+            if request != self._telemetry_request:
+                self._telemetry_request = request
+                self._telemetry_revision += 1
+                self._telemetry_cache = None
 
     def telemetry_snapshot(self):
-        return dict(telemetry_available=False, generation=0)
+        with self._lock:
+            if (self._stop.is_set() or self._fatal_error or not self._telemetry_request[0]
+                    or time.monotonic() - self._telemetry_at > .5
+                    or (self._telemetry_cache and self._telemetry_cache.get('telemetry_available') and
+                        not 0 <= time.monotonic_ns() - self._telemetry_cache.get('sample_monotonic_ns', 0) <= 500_000_000)):
+                return dict(telemetry_available=False, generation=0)
+            return deepcopy(self._telemetry_cache or dict(telemetry_available=False, generation=0))
 
     def probe_result(self):
         with self._lock:
@@ -281,7 +324,42 @@ class ProcessPipeline:
             if self._stop.is_set() or self._fatal_error:
                 return
             kind, payload = message['kind'], message['payload']
+            if kind == 'radio_state' and self.radio_url is not None:
+                self.radio_url.update(payload)
+                return
+            if kind == 'telemetry':
+                if set(payload) != {'revision','sample'} or type(payload['revision']) is not int:
+                    raise ProtocolError('Invalid telemetry envelope')
+                sample = payload['sample']
+                if (not isinstance(sample, dict) or type(sample.get('telemetry_available')) is not bool
+                        or type(sample.get('generation')) is not int or sample['generation'] < 0):
+                    raise ProtocolError('Invalid telemetry sample')
+                if payload['revision'] == self._telemetry_revision and self._telemetry_request[0]:
+                    self._telemetry_cache = sample
+                    self._telemetry_at = time.monotonic()
+                return
+            if channel == 'control':
+                self.control_counts[kind] = self.control_counts.get(kind, 0) + 1
+            if kind in ('heartbeat', 'direct_state'):
+                from .worker_reporting import accept_report
+                accept_report(self, kind, payload)
+                return
+            if kind == 'output_applied' and self.direct_runtime is not None:
+                from .direct_pcm import validate_assignment
+                assignment = validate_assignment(payload)
+                ch = payload.get('channel', 0)
+                if assignment == self._direct_intents.get(ch, (0, None)):
+                    self.direct_applied_channels[ch] = assignment
+                    if ch == 0:
+                        self.direct_applied = assignment
+                return
+            if kind == 'direct_progress' and self.direct_runtime is not None:
+                from .direct_pcm import accept_progress
+                accept_progress(self, payload)
+                return
             if channel == 'pcm':
+                if self.direct_runtime is not None:
+                    raise ProtocolError('PCM forbidden in direct mode')
                 if kind != 'pcm' or set(payload) != {'produced_ns', 'format', 'status', 'probe'}:
                     raise ProtocolError('Invalid PCM header')
                 produced = payload['produced_ns']
@@ -293,10 +371,16 @@ class ProcessPipeline:
                 if not 0 <= age_ns <= int(PCM_MAX_AGE * 1_000_000_000):
                     self.stale_pcm += 1
                     return
-                status = InputSourceStatus(source_id=self.source_id, **payload['status'])
                 if payload['format'] != PCM_CAPS:
                     raise ProtocolError('Unsupported PCM format')
-                probe = SourceTestResult.model_validate(payload['probe'])
+                key = getattr(payload, 'metadata_key', None)
+                if key is not None and key == self._pcm_metadata_key:
+                    status, probe = self._pcm_models
+                else:
+                    status = InputSourceStatus(source_id=self.source_id, **payload['status'])
+                    probe = SourceTestResult.model_validate(payload['probe'])
+                    if key is not None:
+                        self._pcm_metadata_key, self._pcm_models = key, (status, probe)
                 for key in METADATA:
                     self._status[key] = getattr(status, key)
                 self._status['state'] = 'RUNNING'
@@ -354,11 +438,30 @@ class ProcessPipeline:
             else:
                 raise ProtocolError('Unexpected worker event')
 
+    def set_output_lease(self, revision, lease, channel=0):
+        with self._lock:
+            from .direct_pcm import validate_assignment
+            validate_assignment(dict(channel=channel, revision=revision, lease=lease))
+            if revision <= self._direct_intents.get(channel, (0, None))[0] or self._stop.is_set():
+                return
+            # A queued pre-grant heartbeat can precede the child's attach.
+            # Start the existing writer deadline at the first required grant,
+            # without refreshing it when additional TXs join an active writer.
+            if lease is not None and not any(v is not None for _, v in self._direct_intents.values()):
+                self._direct_writer_required_since = time.monotonic()
+            self._direct_intents[channel] = (revision, lease)
+            if channel == 0:
+                self._direct_intent = (revision, lease)
+
+    def request_state(self):
+        self._report_resync.set()
+
     def _read_pcm(self, sock):
+        decoder = PcmDecoder()
         try:
             while not self._stop.is_set():
                 try:
-                    self._accept('pcm', *receive(sock))
+                    self._accept('pcm', *receive(sock, pcm_decoder=decoder))
                 except socket.timeout:
                     continue
         except (OSError, EOFError, ValueError, TypeError) as exc:
@@ -376,33 +479,64 @@ class ProcessPipeline:
                 self._podcast_service.start()
             control, child_control = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
             sockets.extend((control, child_control))
-            pcm, child_pcm = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
-            sockets.extend((pcm, child_pcm))
+            pcm = child_pcm = None
+            if self.direct_runtime is None:
+                pcm, child_pcm = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+                sockets.extend((pcm, child_pcm))
             for sock in sockets:
                 configure(sock)
             if self._stop.is_set():
                 return
-            self.process = subprocess.Popen(
-                [sys.executable, '-m', self.worker_module, '--control-fd', str(child_control.fileno()),
-                 '--pcm-fd', str(child_pcm.fileno())],
-                pass_fds=(child_control.fileno(), child_pcm.fileno()), close_fds=True,
+            command = [sys.executable, '-m', self.worker_module, '--control-fd', str(child_control.fileno())]
+            inherited = (child_control.fileno(),)
+            if child_pcm is not None:
+                command += ['--pcm-fd', str(child_pcm.fileno())]
+                inherited += (child_pcm.fileno(),)
+            self.process = subprocess.Popen(command,
+                pass_fds=inherited, close_fds=True,
                 stdin=subprocess.DEVNULL)
             child_control.close()
-            child_pcm.close()
+            if child_pcm is not None:
+                child_pcm.close()
             log.info('audiod source=%s generation=%s pid=%s started', self.source_id, self.generation, self.process.pid)
             control.sendall(self._create_packet)
-            reader = threading.Thread(target=self._read_pcm, args=(pcm,), daemon=True,
-                                      name=f'audiod-receive-{self.source_id}')
-            reader.start()
+            if pcm is not None:
+                reader = threading.Thread(target=self._read_pcm, args=(pcm,), daemon=True,
+                                          name=f'audiod-receive-{self.source_id}')
+                reader.start()
             deadline = time.monotonic() + self.timeout_s + 1
             request = 1
             while not self._stop.is_set():
+                with self._lock:
+                    telemetry = (self._telemetry_revision, self._telemetry_request)
+                if telemetry[0] != self._telemetry_sent:
+                    request += 1
+                    control.sendall(pack(envelope(self.source_id, self.generation, request, 'telemetry_request',
+                        dict(revision=telemetry[0], enabled=telemetry[1][0], hz=telemetry[1][1]))))
+                    self._telemetry_sent = telemetry[0]
+                if self.radio_url is not None:
+                    for command in self.radio_url.drain():
+                        request += 1
+                        control.sendall(pack(envelope(self.source_id, self.generation, request, 'radio_command', command)))
+                if self._report_resync.is_set():
+                    self._report_resync.clear()
+                    request += 1
+                    control.sendall(pack(envelope(self.source_id, self.generation, request, 'state_request')))
                 with self._lock:
                     pcm_error = self._pcm_error
                 if pcm_error and time.monotonic() - pcm_error[0] > 0.3:
                     raise ProtocolError(pcm_error[1])
                 if not self._prepared and time.monotonic() >= deadline:
                     raise TimeoutError('Audio worker startup deadline expired')
+                if self.direct_runtime is not None:
+                    with self._lock:
+                        intents = dict(self._direct_intents)
+                    for ch, (revision, lease) in intents.items():
+                        if revision > self._direct_sent_channels.get(ch, 0):
+                            request += 1
+                            control.sendall(pack(envelope(self.source_id, self.generation, request,
+                                'output_lease', dict(channel=ch, revision=revision, lease=lease))))
+                            self._direct_sent_channels[ch] = revision
                 if self._catalog is not None:
                     data = self._catalog.poll()
                     if data is not None:

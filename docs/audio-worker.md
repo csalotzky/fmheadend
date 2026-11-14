@@ -1,5 +1,51 @@
 # Experimental HTTP / LOCAL / PODCAST / ALSA / UDP / RTP audio worker
 
+## Supported backend selection (Phase 6B.1)
+
+`--audio-backend audiod` selects independent direct-PCM workers for all six
+source types with ordinary controller and Unix mux sockets. It does not require
+`--mock-controller`; isolated tests may still use that switch. Linux is required;
+`--mock` and `--mock-mux` are rejected. `--audio-backend in-process` remains the
+default and rollback option. No database migration or service default changes
+are needed. Existing experimental switches remain compatibility paths; do not
+combine them or `FMHEADEND_DIRECT_*_PROTOTYPE` environment flags with the supported
+audiod selector. The historical phase descriptions below describe older states,
+not the current supported selection contract.
+
+Radio Browser lookup/persistence stays in the parent. Opaque ticket identities
+are mapped to generation-local wire tokens; native candidate retries and PCM
+confirmation remain in the child. Telemetry subscriptions travel over bounded
+control IPC and return real native cached samples only. Subscription revisions
+reject delayed samples; disabled, stopped, failed or stale (>500 ms) observations
+are unavailable. Slow/broken control connections terminate their worker generation
+under the existing timeout policy; no socket I/O was added to streaming callbacks.
+
+Default-backend promotion still requires the final integration results and
+physical ALSA/controller qualification recorded in the Phase 6B.1 report.
+
+## PCM hot path
+
+The private PCM channel also accepts a `PCM1` record: outer uint32 length,
+48-byte network-order `!4sQ16sQQI` header (marker, source ID, generation,
+sequence, produced monotonic nanoseconds, metadata length), complete JSON
+format/status/probe metadata, then frame-aligned PCM. Every record is self-contained,
+including after oldest-drop; no metadata ACK or side channel is needed.
+Control messages retain the existing JSON envelope. Parent/child use the same
+build; legacy JSON PCM is still accepted by the parent for existing fixtures.
+
+Unchanged metadata is JSON-encoded once and decoded/validated once per reader
+cache entry. Identity, generation, sequence, timestamp/age, length and format
+checks still apply to every record. The limits remain 64 KiB JSON and 64 KiB PCM,
+within the existing 131076-byte record-body cap; queues and stale dropping are
+unchanged. The receiver owns only the PCM bytes in fanout queues, so tiny PCM
+blocks cannot retain large metadata backing buffers. No coalescing delay is added.
+
+The worker caches serialized probe results by the captured rendering snapshot
+and independent ICY station name. It reuses the existing probe calculation;
+prefetch does not relabel staged PCM. Default in-process probes are unchanged.
+The PCM sender uses bounded condition notification, not a polling loop.
+These optimizations do not change 5 Hz status reporting or recovery deadlines.
+
 ## Phase 5B: UDP/RTP receivers
 
 The extended experimental switch routes UDP and RTP to audiod. Only the child
@@ -339,6 +385,37 @@ Worker crash/transport failure clears only its parent queues and metadata and
 publishes an error. Unrelated adapters keep running. Phase 2B restarts the worker
 within its budget, without an RF operation or mux reset. Tail audio already in muxd may
 play before its existing silence fill takes over.
+
+The private direct-PCM laboratory path also supports LOCAL with
+`FMHEADEND_DIRECT_LOCAL_PROTOTYPE=1 --experimental-audio-worker --mock-controller`
+and isolated mux sockets. This enables HTTP/LOCAL only, without changing defaults
+or the existing HTTP-only private switch. LOCAL keeps parent-owned discovery and
+the same sequencer; sink-captured metadata/timestamps cross native staging before
+the existing writer publishes identity on its first complete frame. No parent
+PCM socket is created in direct mode. PCM1 remains the fallback/comparison path.
+
+PODCAST has its own private laboratory opt-in,
+`FMHEADEND_DIRECT_PODCAST_PROTOTYPE=1 --experimental-audio-worker --mock-controller`.
+It reuses that captured-PCM direct path; feed refresh, the shared RSS parser and
+SQLite v1 stay in the parent. The existing 60-second decoded-PCM played event
+remains one-way and best-effort, without acknowledgements or retry. No default
+or history-schema change is involved.
+
+ALSA can use the same private direct path with
+`FMHEADEND_DIRECT_ALSA_PROTOTYPE=1 --experimental-audio-worker --mock-controller`.
+The child opens the configured device through the existing alsasrc/conversion/DSP
+pipeline. Capture properties, clocks, error/retry rules and worker supervision
+are unchanged. Native `device=null` testing qualifies transport and lifecycle,
+not physical input, exclusive hardware release or nonzero gain accuracy.
+Null capture can run much faster than wall-clock audio; its caps alone do not
+establish 192000 bytes/s or qualify real-time capture CPU performance.
+
+UDP and RTP share `FMHEADEND_DIRECT_NETWORK_PROTOTYPE=1` in the private
+`--experimental-audio-worker --mock-controller` laboratory mode. Existing raw
+PCM/RTP receiver configurations, payloads and jitterbuffer are reused unchanged.
+The 90-second network PCM-absence policy and 5-second status timeout still apply;
+packet starvation and native stalls are not independently classified. A long
+sender outage may therefore restart workers and exhaust the existing budget.
 
 ## Deliberately deferred
 

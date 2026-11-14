@@ -15,6 +15,7 @@ class StallingPipeline(GstPipeline):
         self.never = threading.Event()
         signal.signal(signal.SIGUSR1, lambda *unused: self.stall.set())
         super().__init__(*args, **kwargs)
+        signal.signal(signal.SIGUSR2, lambda *unused: self._update(stream_title='event-title'))
 
     def _sample(self, sink):
         if self.stall.is_set():
@@ -29,8 +30,11 @@ if __name__ == '__main__':
     args = parser.parse_args()
     code = 0
     try:
-        with socket.socket(fileno=args.control_fd) as control, socket.socket(fileno=args.pcm_fd) as pcm:
+        from contextlib import nullcontext
+        with socket.socket(fileno=args.control_fd) as control, (socket.socket(fileno=args.pcm_fd) if args.pcm_fd is not None else nullcontext()) as pcm:
             serve(control, pcm, StallingPipeline)
     except Exception:
+        import traceback
+        traceback.print_exc()
         code = 1
     os._exit(code)

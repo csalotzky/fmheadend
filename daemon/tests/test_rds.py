@@ -251,6 +251,63 @@ def test_all_eight_states_and_fifo_query_only(rig):
     assert all(r.refill.channels[i].scheduler.text_ab==0 for i in range(1,8))
 
 
+@pytest.mark.parametrize('enabled', [False, True])
+def test_refill_reuses_owned_configuration_for_all_eight(rig, enabled):
+    r = rig
+    if not enabled:
+        for c in r.db.list('modulators'):
+            r.db.save('modulators', c.model_copy(update={'rds_enabled': False}), c.id)
+    r.db.list = Mock(wraps=r.db.list)
+    r.refill.tick()
+    first = r.refill._configs
+    for _ in range(20):
+        r.clock.advance(.11); r.refill.tick()
+    r.db.list.assert_called_once_with('modulators')
+    assert r.refill._configs is first
+    detached = r.db.get('modulators', 0)
+    detached.rds_ps[0].text = 'MUTATED'
+    assert first[0].rds_ps[0].text == 'RADIO FM'
+    if enabled:
+        assert all(row.rds_groups_accepted > 0 for row in r.manager.statuses.values())
+    else:
+        assert not r.rp.rds_history
+
+
+def test_reused_configuration_does_not_cache_controller_availability(rig):
+    r = rig
+    r.refill.tick()
+    snapshot = r.refill._configs
+    r.refill.channel_available = lambda channel: channel < 4
+    r.clock.advance(.11); r.refill.tick()
+    assert r.refill._configs is snapshot
+    assert all(r.refill.channels[i].scheduler.config is None for i in range(4, 8))
+    assert all(r.manager.statuses[i].rds_state == 'DISABLED' for i in range(4, 8))
+    r.refill.channel_available = lambda channel: True
+    r.clock.advance(.11); r.refill.tick()
+    assert r.refill._configs is snapshot
+    assert all(c.active and c.scheduler.config is not None for c in r.refill.channels)
+
+
+def test_refill_transaction_snapshot_never_survives_rollback(rig):
+    import json
+    r = rig
+    r.refill.tick()
+    original = r.refill.channels[0].scheduler.config.rds_pi
+    c = r.db.connection
+    row = c.execute('SELECT data FROM rds_profiles WHERE id=(SELECT rds_override_profile_id FROM modulators WHERE id=0)').fetchone()
+    changed = json.loads(row[0]); changed['rds_pi'] = 0x4321
+    c.execute('UPDATE rds_profiles SET data=? WHERE id=(SELECT rds_override_profile_id FROM modulators WHERE id=0)', (json.dumps(changed),))
+    r.clock.advance(.11); r.refill.tick()
+    assert r.refill.channels[0].scheduler.config.rds_pi == 0x4321
+    assert r.refill._config_generation is None
+    generation = c.total_changes
+    c.rollback()
+    assert c.total_changes == generation  # A generation-only transaction cache would be stale.
+    r.clock.advance(.11); r.refill.tick()
+    assert r.refill.channels[0].scheduler.config.rds_pi == original
+    assert r.refill._configs[0].rds_pi == original
+
+
 @pytest.mark.parametrize('jitter', [0.0, 0.1, 0.25])
 @pytest.mark.parametrize('old_horizon', [False, True])
 def test_lookahead_survives_serialized_status_gap(rig, jitter, old_horizon):

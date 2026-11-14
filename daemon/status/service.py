@@ -57,9 +57,7 @@ class StatusService:
         self._modulator_configs = {c.id: c for c in self.modulators.list()}
         if self.config is not None:
             configs = self.config.list('sources')
-            profile_errors = {}  # One generation only; no mutable profile models.
-            source_statuses = {s.id: self.sources.status(s.id, source=s,
-                profile_errors=profile_errors).model_copy(deep=True) for s in configs}
+            source_statuses = {s.id: self.sources.status(s.id, source=s).model_copy(deep=True) for s in configs}
             views = dict(sources=configs, modulators=[self._modulator_configs[i] for i in self.modulators.physical_ids],
                          info=dict(self.info), source_statuses=source_statuses)
         snapshot = self.snapshot(source_statuses).model_copy(deep=True)

@@ -55,7 +55,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
     code = 0
     try:
-        with socket.socket(fileno=args.control_fd) as control, socket.socket(fileno=args.pcm_fd) as pcm:
+        from contextlib import nullcontext
+        with socket.socket(fileno=args.control_fd) as control, (socket.socket(fileno=args.pcm_fd) if args.pcm_fd is not None else nullcontext()) as pcm:
             serve(control, pcm, FakeDecoder)
     except Exception:
         code = 1

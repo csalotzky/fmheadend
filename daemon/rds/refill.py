@@ -35,6 +35,25 @@ class RdsRefill:
         self.channel_ready = lambda channel: True
         self.channel_available = lambda channel: True
         self.transport_retry_at = 0.0
+        self._config_generation = None
+        self._configs = ()
+
+    def _configurations(self):
+        """Control-owned detached models; runtime state is never cached here.
+
+        Reuse the repository's connection-local write generation. In-transaction
+        observations must not survive rollback (total_changes does not roll back).
+        """
+        connection = self.database.connection
+        if connection.in_transaction:
+            self._config_generation = None
+            return self.database.list('modulators')
+        generation = connection.total_changes
+        if generation != self._config_generation:
+            configs = tuple(self.database.list('modulators'))
+            self._configs = configs
+            self._config_generation = generation
+        return self._configs
 
     def suspend(self):
         self.suspended = True
@@ -119,7 +138,7 @@ class RdsRefill:
             return
         self.next_poll = now + POLL_SECONDS
         ready = []
-        for config in self.database.list('modulators'):
+        for config in self._configurations():
             if self.suspended or not self._transport_ready():
                 return
             channel = config.id

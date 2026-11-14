@@ -1,4 +1,4 @@
-﻿"""Unix mux control and PCM client. No SPI access or sample processing."""
+"""Unix mux control and PCM client. No SPI access or sample processing."""
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -25,7 +25,7 @@ class Producer:
     discarded_pending_bytes: int = 0
 
 
-class UnixMuxClient:
+class MuxPcmWriter:
     def __init__(self, output_provider: Callable[[int], PcmOutput | None], runtime_dir="/run/fmheadend"):
         self.output_provider = output_provider
         self.runtime_dir = Path(runtime_dir)
@@ -125,7 +125,10 @@ class UnixMuxClient:
             sent = producer.sock.send(memoryview(producer.pending)[producer.offset:])
             if sent == 0:
                 raise ConnectionError("Mux PCM socket closed")
+            previous = producer.offset
             producer.offset += sent
+            if previous < 4 <= producer.offset and hasattr(self, 'frame_sent'):
+                self.frame_sent(channel, producer.pending)
             if producer.offset == len(producer.pending):
                 producer.pending, producer.offset = b"", 0
                 self.last_error = None
@@ -167,6 +170,21 @@ class UnixMuxClient:
                                   discarded_pending_bytes=p.discarded_pending_bytes)
                     for channel, p in self.producers.items()}
 
+    def close(self):
+        self._stop.set()
+        self._work.set()
+        if self._thread:
+            self._thread.join(timeout=2)
+        with self._lock:
+            for producer in self.producers.values():
+                if producer.sock:
+                    producer.sock.close()
+            for channel, producer in self.producers.items():
+                producer.output.set_wakeup(channel, None)
+            self.producers.clear()
+
+
+class UnixMuxClient(MuxPcmWriter):
     def _request(self, command, **fields) -> dict:
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
@@ -229,16 +247,3 @@ class UnixMuxClient:
             return status
         except (OSError, ValueError, KeyError, TypeError) as exc:
             raise DependencyUnavailable(f"Mux control unavailable: {exc}") from exc
-
-    def close(self):
-        self._stop.set()
-        self._work.set()
-        if self._thread:
-            self._thread.join(timeout=2)
-        with self._lock:
-            for producer in self.producers.values():
-                if producer.sock:
-                    producer.sock.close()
-            for channel, producer in self.producers.items():
-                producer.output.set_wakeup(channel, None)
-            self.producers.clear()

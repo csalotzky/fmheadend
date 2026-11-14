@@ -127,6 +127,8 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
         def tick():
             nonlocal next_poll
             services.sources.worker_recovery.service()
+            if hasattr(services.mux, 'service'):
+                services.mux.service()
             services.rt.expire()
             services.recovery.service()
             services.rds.tick()
@@ -172,7 +174,7 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
         task = asyncio.create_task(maintenance())
         radio_recovery.start()
         logger.info("fmheadendd started; media backend: %s; Controller control: %s",
-                    pipeline_factory.__name__,
+                    getattr(pipeline_factory, '__name__', type(pipeline_factory).__name__),
                     {'Rp2354Client': 'ControllerClient', 'MockRp2354Client': 'MockControllerClient'}.get(
                         type(services.rp).__name__, type(services.rp).__name__))
         logger.info("PCM buffers: staging_capacity_ms=%s staging_stale_age_ms=%s consumer_buffer_ms=%s",
@@ -318,6 +320,8 @@ def argument_parser():
     parser = argparse.ArgumentParser(description="fmheadendd media and Controller control",
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     development = parser.add_argument_group("Development / Testing")
+    parser.add_argument('--audio-backend', choices=('in-process', 'audiod'), default='in-process',
+                        help='Audio backend; in-process remains the rollback/default')
     parser.add_argument("--database", default="/var/lib/fmheadend/fmheadend.db", help="SQLite configuration file")
     parser.add_argument("--host", default="0.0.0.0", help="HTTP listen address")
     parser.add_argument("--port", type=int, default=8080, help="HTTP listen port")
@@ -379,6 +383,30 @@ def main():
     logging.basicConfig(level=args.log_level, format="%(levelname)s %(name)s %(message)s")
     import uvicorn
     mux_factory = None if args.mock or args.mock_mux else lambda sources: UnixMuxClient(sources.output_for, args.mux_runtime_dir)
+    if args.audio_backend == 'audiod':
+        import sys
+        if sys.platform != 'linux' or args.mock or args.mock_mux:
+            parser.error('audiod requires Linux, native audio and mux sockets')
+        if args.experimental_audio_worker or args.experimental_http_worker:
+            parser.error('Do not combine --audio-backend with experimental worker switches')
+        from .sources.direct_pcm import DirectHttpFactory, DirectMux
+        pipeline_factory = DirectHttpFactory(args.mux_runtime_dir, local=True, podcast=True, alsa=True, network=True)
+        mux_factory = lambda sources: DirectMux(sources, args.mux_runtime_dir)
+    # Private laboratory-only mode; no installed/default backend change.
+    import os
+    direct_local = os.environ.get('FMHEADEND_DIRECT_LOCAL_PROTOTYPE') == '1'
+    direct_podcast = os.environ.get('FMHEADEND_DIRECT_PODCAST_PROTOTYPE') == '1'
+    direct_alsa = os.environ.get('FMHEADEND_DIRECT_ALSA_PROTOTYPE') == '1'
+    direct_network = os.environ.get('FMHEADEND_DIRECT_NETWORK_PROTOTYPE') == '1'
+    direct_audio = direct_local or direct_podcast or direct_alsa or direct_network
+    if args.audio_backend == 'audiod' and (direct_audio or os.environ.get('FMHEADEND_DIRECT_HTTP_PROTOTYPE') == '1'):
+        parser.error('Use --audio-backend audiod without legacy prototype environment switches')
+    if os.environ.get('FMHEADEND_DIRECT_HTTP_PROTOTYPE') == '1' or direct_audio:
+        if not (args.experimental_audio_worker if direct_audio else args.experimental_http_worker) or not args.mock_controller or args.mock_mux:
+            parser.error('Direct prototype requires its experimental worker switch, --mock-controller and real mux sockets')
+        from .sources.direct_pcm import DirectHttpFactory, DirectMux
+        pipeline_factory = DirectHttpFactory(args.mux_runtime_dir, local=direct_local, podcast=direct_podcast, alsa=direct_alsa, network=direct_network)
+        mux_factory = lambda sources: DirectMux(sources, args.mux_runtime_dir)
     try:
         rp = MockRp2354Client() if args.mock or args.mock_controller else Rp2354Client(
             args.i2c_device,

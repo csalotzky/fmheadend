@@ -1,5 +1,5 @@
 """Per-channel quota policy; speculative batches commit only after Controller ACK."""
-from copy import deepcopy
+from copy import copy
 from dataclasses import dataclass
 from .allocator import GroupAllocator, quotas
 from .characters import ps_bytes, rt_bytes
@@ -62,7 +62,14 @@ class Scheduler:
         return group
 
     def prepare(self, limit: int, now: float, horizon: float = LOOKAHEAD_SECONDS):
-        candidate = deepcopy(self)
+        # reset() owns a detached configuration snapshot. Preparation only reads
+        # it and immutable RT bytes; reset/update_rt replace those references.
+        # All speculative scalars live on the candidate, and allocator mappings
+        # must be independently owned until the candidate is committed by ACK.
+        candidate = copy(self)
+        candidate.allocator = copy(self.allocator)
+        candidate.allocator.weights = self.allocator.weights.copy()
+        candidate.allocator.credits = self.allocator.credits.copy()
         candidate.cursor = max(now, candidate.cursor)
         c = candidate.config
         if len(c.rds_ps) > 1 and now >= candidate.ps_since + c.rds_ps[candidate.ps_item].duration_s:

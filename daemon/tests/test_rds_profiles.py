@@ -93,6 +93,9 @@ def test_source_hot_profile_targets_followers_only_and_preserves_audio(live):
     assert {c.args[0] for c in services.rp.clear_rds.call_args_list} == {0, 2, 5}
     for tx in (0, 2, 5):
         assert api.get(f'/api/v1/modulators/{tx}').json()['rds_pi'] == 432
+        scheduler = services.rds.channels[tx].scheduler
+        assert scheduler.config.rds_pi == 432
+        assert scheduler.config.rds_rt == 'Changed'
     assert api.get('/api/v1/modulators/7').json()['rds_pi'] == 0xFFF7
     denied = api.patch(f"/api/v1/sources/{source['id']}", json={'rds_profile': None})
     assert denied.status_code == 409 and denied.json()['error'] == 'RDS_PROFILE_FOLLOWED'
@@ -156,7 +159,7 @@ def test_shared_profile_still_has_per_tx_rt_override_and_metadata_policy(tmp_pat
         db.save('modulators', db.get('modulators', tx).model_copy(update={
             'input_source_id': source.id, 'rds_follow_source': True}), tx)
     metadata = SimpleNamespace(stream_title='Artist - Title')
-    rt = RadioTextService(db, SimpleNamespace(status=lambda _: metadata))
+    rt = RadioTextService(db, SimpleNamespace(current_stream_title=lambda _: metadata.stream_title))
     assert rt.effective(0).text == rt.effective(1).text == 'Artist - Title'
     rt.set(0, RtOverride(text='Override'))
     assert rt.effective(0).text == 'Override' and rt.effective(1).text == 'Artist - Title'

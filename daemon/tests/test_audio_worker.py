@@ -124,6 +124,35 @@ def test_backpressure_queue_and_stale_drop(monkeypatch):
     assert queue.pop() is None and queue.dropped == 99
 
 
+def test_pcm_queue_wait_is_notified_without_lost_wakeup():
+    for queued_first in (False, True):
+        queue = ipc.PacketQueue()
+        ready = threading.Event()
+        received = []
+        if queued_first:
+            queue.put(b'pcm')
+        def consume():
+            ready.set()
+            received.append(queue.pop(timeout=1))
+        thread = threading.Thread(target=consume)
+        thread.start()
+        assert ready.wait(1)
+        if not queued_first:
+            queue.put(b'pcm')
+        thread.join(1)
+        assert not thread.is_alive() and received == [b'pcm']
+
+
+def test_pcm_queue_empty_wait_remains_bounded():
+    queue = ipc.PacketQueue()
+    started = time.monotonic()
+    assert queue.pop(timeout=0.02) is None
+    assert time.monotonic() - started < 1
+    queue.put(b'fresh')
+    queue.clear()
+    assert queue.pop() is None
+
+
 def test_blocked_socket_send_is_bounded():
     a, b = socket.socketpair()
     ipc.configure(a)

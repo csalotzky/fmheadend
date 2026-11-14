@@ -39,7 +39,6 @@ class SourceManager:
         self.restart_errors: dict[int, str] = {}
         self.clock = clock
         self.radio_recovery = SourceRadioRecovery(self)
-        self._profile_observations = {}
         self._telemetry_request = (False, 50.0)
         self._telemetry_lock = Lock()
         self._telemetry_closed = False
@@ -94,14 +93,26 @@ class SourceManager:
                 consumer_tx_ids=consumer_ids, **sample))
         return records
 
-    def status(self, source_id, *, source=None, profile_errors=None):
+    def current_stream_title(self, source_id):
+        """RDS needs metadata, not a rebuilt runtime/PCM status observation.
+
+        Production pipelines publish this string on metadata changes. Read it
+        afresh so track changes and metadata clearing need no additional cache
+        invalidation. Retain status semantics for restart errors, idle sources
+        and older injected backends (including missing-source validation).
+        """
+        pipeline = self.pipelines.get(source_id)
+        if source_id not in self.restart_errors and pipeline is not None:
+            read = getattr(pipeline, 'current_stream_title', None)
+            if read is not None:
+                return read()
+        return self.status(source_id).stream_title
+
+    def status(self, source_id, *, source=None):
+        """Observe applied runtime state; profile loads belong to configuration/start."""
         source = source if source is not None else self.database.get("sources", source_id)
         status = self.statuses.setdefault(source_id, InputSourceStatus(source_id=source_id))
         pipeline = self.pipelines.get(source_id)
-        if pipeline is not None:
-            error = self._observed_profile_error(source, profile_errors=profile_errors)
-            if error:
-                return InputSourceStatus(source_id=source_id, state=SourceState.ERROR, last_error=error, error_scope='INTERNAL')
         if source_id in self.restart_errors:
             return self.statuses[source_id]
         if pipeline is not None and not getattr(pipeline, "mocked", True):
@@ -109,36 +120,6 @@ class SourceManager:
                                       pcm=pipeline.pcm_snapshot() if hasattr(pipeline, 'pcm_snapshot') else None)
             self.statuses[source_id] = status
         return status
-
-    def _observed_profile_error(self, source, *, profile_errors=None):
-        """Bound read-only validation work, including repeated metadata lookups.
-
-        Only control-thread observations use this one-second cache. Starting,
-        joining, testing and saving audio still validate synchronously. Runtime
-        metadata and PCM counters are never taken from this validation cache.
-
-        A publication may pass its own dictionary to share fresh validation
-        outcomes by selection. It contains only immutable error strings/None,
-        never profile models, and is not retained here. Existing per-source TTL
-        hits must not seed it: another source may already need a fresh file read.
-        """
-        key = self.effective_profile_id(source)
-        now = self.clock()
-        previous = self._profile_observations.get(source.id)
-        if previous is not None and previous[0] == key and 0 <= now - previous[1] < 1.0:
-            return previous[2]
-        if profile_errors is not None and key in profile_errors:
-            error = profile_errors[key]
-        else:
-            error = None
-            try:
-                self.validate_config(source)
-            except DomainError as exc:
-                error = f'{exc.error}: {exc}'
-            if profile_errors is not None:
-                profile_errors[key] = error
-        self._profile_observations[source.id] = (key, self.clock(), error)
-        return error
 
     def _new_pipeline(self, source, **kwargs) -> SourcePipeline | MediaPipeline:
         try:
@@ -173,7 +154,6 @@ class SourceManager:
 
     def apply_default_profile(self, *, retry_failed_only=False):
         """Control-owned; only replace existing inheriting pipelines, once per Source."""
-        self._profile_observations.clear()
         errors = {}
         for source_id in list(self.pipelines):
             if retry_failed_only and source_id not in self.restart_errors:
@@ -198,7 +178,6 @@ class SourceManager:
         profile = self.profile_files.validate(data)
         self.validate_profile(profile)
         saved = self.profile_files.save(path, data)
-        self._profile_observations.clear()
         errors = {}
         for source_id in list(self.pipelines):
             source = self.database.get('sources', source_id)
@@ -227,7 +206,6 @@ class SourceManager:
         """One ownership-preserving audio replacement, shared by Source/profile Save."""
         source_id = source.id
         self.radio_recovery.invalidate(source_id)
-        self._profile_observations.pop(source_id, None)
         old = self.pipelines[source_id]
         if hasattr(old, 'recovery_observation'):
             self.worker_recovery.request(source_id, source.model_copy(deep=True))
@@ -271,7 +249,6 @@ class SourceManager:
             raise DependencyUnavailable(f'{exc.error}: {exc}') from exc
         with self._registry_lock:
             consumers = self.consumers.setdefault(source_id, set())
-        self._profile_observations.pop(source_id, None)
         if modulator_id in consumers:
             pipeline = self.pipelines[source_id]
             if hasattr(pipeline, 'check_startup'):
@@ -355,7 +332,6 @@ class SourceManager:
             self.statuses[source_id] = failed_start or InputSourceStatus(source_id=source_id)
             self.restart_errors.pop(source_id, None)
             logger.info("source %s stopped", source_id)
-            self._profile_observations.pop(source_id, None)
         with self._registry_lock:
             consumers.discard(modulator_id)
         if not getattr(pipeline, "mocked", True):
@@ -443,4 +419,3 @@ class SourceManager:
         with self._registry_lock:
             self.pipelines.clear()
             self.consumers.clear()
-        self._profile_observations.clear()

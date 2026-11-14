@@ -167,6 +167,7 @@ class GstPipeline:
         self._peak_values = {}
         self._peak_state = None
         self._peak_seqnum = None
+        self._snapshot_revision = 0
         self._snapshot = {"state": "IDLE", "codec": None, "input_sample_rate": None,
                           "input_channels": None, "bitrate_bps": None, "stream_title": None,
                           "artist": None, "title": None, "output_caps": None,
@@ -302,6 +303,28 @@ class GstPipeline:
         with self._lock:
             return dict(self._snapshot)
 
+    def current_stream_title(self):
+        """Read the immutable text from the latest published metadata."""
+        with self._lock:
+            return self._snapshot.get('stream_title')
+
+    @property
+    def status_revision(self):
+        return self._snapshot_revision
+
+    @property
+    def transport_revision(self):
+        return (self._snapshot_revision, self._caps, self._station_name)
+
+    def transport_snapshot(self):
+        """PCM-bound snapshot, including caps already validated by appsink.
+
+        The first block drains before _attempt updates its public state cache.
+        Worker PCM must not carry missing caps during that small startup window.
+        """
+        with self._lock:
+            return dict(self._snapshot, output_caps=self._caps or self._snapshot['output_caps'])
+
     @property
     def startup_pending(self):
         """Cached startup observation for the control-side backend contract."""
@@ -316,7 +339,9 @@ class GstPipeline:
 
     def _update(self, **values):
         with self._lock:
-            self._snapshot.update(values)
+            if any(self._snapshot.get(k) != v for k, v in values.items()):
+                self._snapshot.update(values)
+                self._snapshot_revision += 1
 
     def start(self):
         if self._thread is not None:
@@ -930,6 +955,26 @@ class GstPipeline:
         info = self.snapshot()
         with self._lock:
             station_name = self._station_name if info["state"] == "RUNNING" else None
+        return self._probe_from_snapshot(info, station_name)
+
+    def transport_probe(self, info):
+        """Source drain thread only: serialize a probe when its inputs change.
+
+        The supplied sink snapshot can belong to an older staged track. Use it,
+        rather than relabeling that PCM with the current/prefetched identity.
+        ICY station identity is independent of snapshot fields, so key it too.
+        This cache is unused by the default in-process backend.
+        """
+        with self._lock:
+            station_name = self._station_name if info['state'] == 'RUNNING' else None
+        key = (info, station_name)
+        if key != getattr(self, '_transport_probe_key', None):
+            value = self._probe_from_snapshot(info, station_name).model_dump(mode='json')
+            self._transport_probe_key = (dict(info), station_name)
+            self._transport_probe_value = value
+        return self._transport_probe_value
+
+    def _probe_from_snapshot(self, info, station_name):
         bitrate = info["bitrate_bps"]
         input_bitrate = bitrate if (self.source.type == SourceType.HTTP and
             info["state"] == "RUNNING" and info["output_caps"] is not None and

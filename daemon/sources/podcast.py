@@ -9,8 +9,6 @@ from html.parser import HTMLParser
 from threading import Lock
 from urllib.parse import urljoin, urlsplit
 
-import feedparser
-
 from ..errors import DomainError
 from .local_media import MediaItem
 
@@ -88,6 +86,8 @@ class PodcastFeed:
 
 def parse_feed(data: bytes, url: str, now: datetime, *, base_url: str | None = None) -> PodcastFeed:
     """feedparser handles RSS/Atom, encodings and dates; it never fetches URLs here."""
+    import feedparser
+
     now = utc(now)
     # Only titles and enclosure metadata are used; titles are made plain below.
     parsed = feedparser.parse(data, response_headers={"content-location": base_url or url},

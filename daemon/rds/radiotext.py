@@ -49,8 +49,9 @@ class RadioTextService:
         if config.rds_metadata_to_rt and config.input_source_id is not None:
             source = None if source_statuses is None else source_statuses.get(config.input_source_id)
             if source is None:
-                source = self.sources.status(config.input_source_id)
-            metadata = source.stream_title
+                metadata = self.sources.current_stream_title(config.input_source_id)
+            else:
+                metadata = source.stream_title
             if metadata:
                 return RtStatus(text=metadata[:64], origin="metadata")
         return RtStatus(text=config.rds_rt, origin="fallback")

@@ -200,23 +200,47 @@ def test_missing_invalid_profile_fail_closed_and_bypass_preserves_gain(api):
     assert api.app.state.services.sources.pipelines[bypass].source.input_gain_db == -9
 
 
-def test_invalid_running_profile_reports_source_only(api):
+def test_repeated_publication_never_reloads_running_profiles(api):
+    ids = [source(api) for _ in range(8)]
+    for tx, sid in enumerate(ids): start(api, sid, tx)
+    services = api.app.state.services
+    load = Mock(side_effect=AssertionError('Status must not reload an applied profile'))
+    previous = services.profile_files.get
+    def publish():
+        services.profile_files.get = load
+        try:
+            for _ in range(20): services.status.publish()
+        finally:
+            services.profile_files.get = previous
+    api.app.state.control.executor.submit(publish).result()
+    load.assert_not_called()
+    assert all(services.sources.pipelines[sid].running for sid in ids)
+
+
+@pytest.mark.parametrize('external', ['missing', 'json', 'settings'])
+def test_external_profile_edits_only_affect_next_load(api, external):
     path = api.post(BASE + 'custom', json=document()).json()['path']
     a = source(api, use_default_audio_profile=False, audio_profile_id=path)
     b = source(api)
     start(api, a, 0); start(api, b, 1)
-    api.app.state.services.profile_files._path(path).unlink()
-    # External file edits are observed at the bounded validation/publication cadence.
-    manager = api.app.state.services.sources
-    now = manager.clock()
-    manager.clock = lambda: now + 2
+    services = api.app.state.services
+    old = services.sources.pipelines[a]
+    file = services.profile_files._path(path)
+    if external == 'missing': file.unlink()
+    elif external == 'json': file.write_text('{bad')
+    else:
+        data = document(); data['stages']['input_gain']['implementations']['VOLUME']['gain_db'] = 999
+        import json
+        file.write_text(json.dumps(data))
     api.app.state.control.executor.submit(api.app.state.publish_status).result()
-    assert api.get(f'/api/v1/sources/{a}/status').json()['state'] == 'ERROR'
+    assert api.get(f'/api/v1/sources/{a}/status').json()['state'] == 'RUNNING'
     assert api.get(f'/api/v1/sources/{b}/status').json()['state'] == 'RUNNING'
-    api.patch('/api/v1/modulators/2', json={'input_source_id': a, 'frequency_khz': 98900})
-    assert api.post('/api/v1/modulators/2/start').status_code == 503
-    assert api.app.state.services.sources.consumers[a] == {0}
-    assert api.app.state.services.sources.pipelines[a].running
+    assert services.sources.pipelines[a] is old and old.running
+    assert api.post('/api/v1/modulators/0/stop').status_code == 200
+    assert api.post('/api/v1/modulators/0/start').status_code == 503
+    assert api.get(f'/api/v1/sources/{a}/status').json()['state'] == 'ERROR'
+    assert a not in services.sources.pipelines
+    assert services.sources.pipelines[b].running
 
 
 @pytest.mark.parametrize('builtin', [False, True])
