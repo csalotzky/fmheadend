@@ -7,6 +7,7 @@ export type ModulatorDraft = Omit<
   'id' | 'timestamp' | 'enabled' | keyof RdsProfile | 'rds_override_profile_id'
 >;
 export interface ModulatorSaveResult {
+  restart_pending?: boolean;
   saved: boolean;
   stop_confirmed: boolean;
   restarted: boolean;

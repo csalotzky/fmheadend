@@ -193,6 +193,12 @@ class Recovery:
         self.audio_pending[channel] = self.clock() + 5.0
         self._audio_config[channel] = configured
         row = self.modulators.statuses[channel]
+        row.start_pending = isinstance(error, SourcePending)
+        row.pending_message = str(error) if row.start_pending else None
+        if row.start_pending:
+            row.tx_state = TxState.STARTING
+            row.source_state, row.source_last_error = 'CONNECTING', None
+            return
         row.source_state = 'ERROR'
         row.source_last_error = str(error)
         row.source_error_scope = 'SOURCE' if isinstance(error, SourceUnavailable) else 'INTERNAL'
@@ -209,11 +215,12 @@ class Recovery:
                 row.source_state, row.source_last_error = 'ERROR', str(exc)
                 return False
             self.defer_audio(config.id, exc, configured=TxConfig.from_modulator(config))
-            if not isinstance(exc, SourceUnavailable):
+            if not isinstance(exc, (SourceUnavailable, SourcePending)):
                 logger.exception('TX%s internal audio startup failure', config.id)
             return False
         self.audio_pending.pop(config.id, None)
         row = self.modulators.statuses[config.id]
+        row.start_pending, row.pending_message = False, None
         row.source_last_error, row.source_error_scope = None, 'SOURCE'
         return True
 
@@ -242,6 +249,8 @@ class Recovery:
                 self.rds.stop(channel)
                 self.modulators.release_audio(channel)
             row = self.modulators.statuses[channel]
+            if not enabled:
+                row.start_pending, row.pending_message = False, None
             row.tx_state = TxState.ON if enabled else TxState.OFF
             row.last_error = None
 
@@ -264,6 +273,8 @@ class Recovery:
                         self.modulators._start(channel, retry_budget=[0])
                 else:
                     self.audio_pending.pop(channel, None)
+                    row = self.modulators.statuses[channel]
+                    row.start_pending, row.pending_message = False, None
             except DependencyUnavailable as exc:
                 self.command_failed(channel, Command.SET_TX_ENABLED, exc)
                 self.modulators.statuses[channel].last_error = str(exc)

@@ -540,7 +540,34 @@ describe('Modulator configuration', () => {
       'Configuration saved',
     );
   });
-  it('protects Cancel/navigation and browser unload', async () => {
+    it.each(['ready','failure'] as const)('keeps the editor open through a pending restart: %s', async (outcome) => {
+      vi.useFakeTimers();
+      const f = await editor(), c = f.componentInstance;
+      const pending = c.save();
+      const req = http.expectOne('/api/v1/modulators/0/save-and-resume');
+      const config = {...sample().modulators[0], ...req.request.body};
+      const data = sample();
+      data.modulators[0] = config;
+      Object.assign(data.status.modulators[0], {start_pending:true, tx_state:'STARTING', hardware_tx_state:'OFF', source_state:'CONNECTING'});
+      shared.channels.set(compose(data));
+      req.flush({saved:true, restarted:false, restart_pending:true, stop_confirmed:true, failed_stage:null, configuration:config, message:'Configuration saved — Preparing audio…'});
+      await pending; f.detectChanges();
+      expect(c.error()).toBe('');
+      expect(c.message()).toContain('Preparing audio');
+      Object.assign(data.status.modulators[0], {start_pending:false, tx_state:outcome==='ready'?'ON':'OFF', hardware_tx_state:outcome==='ready'?'ON':'OFF', source_state:outcome==='ready'?'RUNNING':'ERROR', source_last_error:outcome==='ready'?null:'Decoder failed'});
+      shared.channels.set(compose(data)); f.detectChanges();
+      if (outcome==='ready') {
+        expect(c.message()).toContain('restarted');
+        vi.advanceTimersByTime(3001);
+        expect(c.message()).toBe('');
+      } else {
+        expect(c.error()).toContain('Decoder failed');
+        vi.advanceTimersByTime(61000);
+        expect(c.error()).toContain('Decoder failed');
+      }
+      f.destroy(); vi.useRealTimers();
+    });
+    it('protects Cancel/navigation and browser unload', async () => {
     const f = await editor(),
       c = f.componentInstance;
     c.form.markAsDirty();

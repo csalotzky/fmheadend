@@ -8,6 +8,7 @@ import {
   HostListener,
   OnInit,
   computed,
+  effect,
   inject,
   signal,
 } from '@angular/core';
@@ -41,6 +42,38 @@ export class ModulatorEditor implements OnInit {
   readonly saving = signal(false);
   readonly error = signal('');
   readonly message = signal('');
+  private readonly monitoringRestart = signal(false);
+  private feedbackTimer?: ReturnType<typeof setTimeout>;
+  private restartTimestamp?: string;
+  constructor() {
+    this.rds.attach(this.form);
+    this.destroyRef.onDestroy(() => clearTimeout(this.feedbackTimer));
+    effect(() => {
+      if (!this.monitoringRestart()) return;
+      const channel = this.channel();
+      const row = channel?.runtime;
+      if (!row) return;
+      const fault = row.source_state === 'ERROR' || row.tx_state === 'ERROR' || !!row.last_error;
+      if (!channel?.desiredOn && !fault) {
+        this.monitoringRestart.set(false);
+        clearTimeout(this.feedbackTimer);
+        this.message.set('Configuration saved; start cancelled.');
+        return;
+      }
+      if (channel?.config?.timestamp !== this.restartTimestamp &&
+          !(fault && channel?.config?.input_source_id === this.form.controls.input_source_id.value)) return;
+      if (fault) {
+        this.message.set('');
+        this.error.set(row.source_last_error || row.last_error || 'TX restart failed.');
+      } else if (!row.start_pending && !channel?.observationStale && row.hardware_tx_state === 'ON' && row.tx_state === 'ON') {
+        this.monitoringRestart.set(false);
+        clearTimeout(this.feedbackTimer);
+        this.error.set('');
+        this.message.set('Configuration saved and TX restarted.');
+        this.feedbackTimer = setTimeout(() => this.message.set(''), 3000);
+      }
+    });
+  }
   private systemApi = inject(SystemApi);
   frequencies: { value: number; label: string }[] = [];
   plan: FrequencyPlan | null = null;
@@ -67,9 +100,6 @@ export class ModulatorEditor implements OnInit {
     soft_clipping: flag(),
     rds_enabled: flag(),
   });
-  constructor() {
-    this.rds.attach(this.form);
-  }
   get ps() {
     return this.form.controls.rds_ps;
   }
@@ -85,6 +115,8 @@ export class ModulatorEditor implements OnInit {
   }
   async loadConfig() {
     if (this.saving()) return;
+    this.monitoringRestart.set(false);
+    clearTimeout(this.feedbackTimer);
     const requestedId = this.id;
     this.loading.set(true);
     this.failed.set(false);
@@ -217,12 +249,27 @@ export class ModulatorEditor implements OnInit {
       return;
     }
     this.saving.set(true);
+    this.monitoringRestart.set(false);
+    clearTimeout(this.feedbackTimer);
     try {
       const result = await firstValueFrom(this.api.saveAndResume(this.id, body));
       if (result.saved && result.configuration) this.load(result.configuration);
       if (result.failed_stage) this.error.set(result.message);
-      else this.message.set(result.message);
+      else {
+        this.message.set(result.message);
+        if (result.restart_pending) this.shared.trackPendingStart(this.id);
+      }
       await this.shared.refreshAfterMutation();
+      if (result.restart_pending) {
+        this.restartTimestamp = result.configuration?.timestamp;
+        this.monitoringRestart.set(true);
+        this.feedbackTimer = setTimeout(() => {
+          this.monitoringRestart.set(false);
+          if (!this.error()) this.message.set('Configuration saved — Restart still pending; check TX status.');
+        }, 60000);
+      } else if (!result.failed_stage) {
+        this.feedbackTimer = setTimeout(() => this.message.set(''), 3000);
+      }
     } catch (e) {
       this.error.set(errorMessage(e));
     } finally {

@@ -84,8 +84,10 @@ def test_pending_local_start_retains_worker_and_rf_safety(tmp_path, monkeypatch,
         try:
             for channel in (0, 1):
                 response = api.post(f'/api/v1/modulators/{channel}/start')
-                assert response.status_code == 503
-                assert 'PENDING' in response.json()['message']
+                assert response.status_code == 200
+                assert response.json()['start_pending']
+                assert response.json()['source_state'] == 'CONNECTING'
+                assert response.json()['source_last_error'] is None
             assert entered.wait(2)
             assert len(instances) == 1 and len(scans.active) == 1
             pipeline = instances[0]

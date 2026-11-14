@@ -112,6 +112,9 @@ class SourceManager:
         """Observe applied runtime state; profile loads belong to configuration/start."""
         source = source if source is not None else self.database.get("sources", source_id)
         status = self.statuses.setdefault(source_id, InputSourceStatus(source_id=source_id))
+        pending = self.worker_recovery.pending.get(source_id)
+        if pending is not None and not pending[3] and source_id not in self.restart_errors:
+            return InputSourceStatus(source_id=source_id, state=SourceState.CONNECTING)
         pipeline = self.pipelines.get(source_id)
         if source_id in self.restart_errors:
             return self.statuses[source_id]

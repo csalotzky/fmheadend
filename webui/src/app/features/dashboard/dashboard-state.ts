@@ -37,13 +37,11 @@ export function compose(snapshot: Snapshot, previous?: Snapshot): ChannelView[] 
       ? 'Bypass'
       : snapshot.status.system.mux_state !== 'RUNNING'
         ? 'Unavailable'
-        : runtime?.tx_state === 'OFF'
-          ? 'Idle'
-          : !prior
+        : !prior
             ? 'Awaiting sample'
             : (runtime?.pcm_bytes_consumed ?? 0) > prior.pcm_bytes_consumed
               ? 'Flowing'
-              : 'No flow observed';
+              : runtime?.tx_state === 'OFF' ? 'Idle' : 'No flow observed';
     // Latched hardware_last_error alone is not an active fault (M4 semantics).
     const error =
       (runtime?.last_error_scope !== 'GLOBAL' ? runtime?.last_error : null) ||
@@ -118,6 +116,7 @@ export class DashboardState {
       expired: boolean;
       messageGeneration: number;
       commandConfirmed: boolean;
+      audioPending?: boolean;
     }
   >();
   private snapshotGeneration = 0;
@@ -216,6 +215,9 @@ export class DashboardState {
           return;
         }
         this.confirmObservations(snapshot, requestedAt);
+        for (const row of snapshot.status.modulators) {
+          if (row.start_pending && !this.confirmations.has(row.id)) this.trackPendingStart(row.id);
+        }
         this.channels.set(compose(snapshot, this.data() ?? undefined));
         if (snapshot.status.system.snapshot_stale !== true &&
             snapshot.status.system.controller_observation_stale === false &&
@@ -240,6 +242,15 @@ export class DashboardState {
   }
   private accelerating() {
     return [...this.confirmations.values()].some((c) => c.deadline > Date.now());
+  }
+  trackPendingStart(id: number) {
+    this.trackConfirmation(id, 'ON', this.messageGeneration, false);
+    const confirmation = this.confirmations.get(id)!;
+    confirmation.audioPending = true;
+    confirmation.deadline = Date.now() + 60000;
+    this.commandStates.update(v => ({...v, [id]: 'ON'}));
+    this.actionFeedback.update(v => ({...v, [id]: 'Preparing audio…'}));
+    this.nextRefreshAt = 0;
   }
   private expireConfirmations() {
     for (const [id, deadline] of this.feedbackExpiry) {
@@ -266,6 +277,16 @@ export class DashboardState {
     }
   }
   private confirmObservations(snapshot: Snapshot, requestedAt: number) {
+    for (const [id, c] of this.confirmations) {
+      const row = snapshot.status.modulators.find(r => r.id === id);
+      if (c.audioPending && row && !row.start_pending &&
+          (row.source_state === 'ERROR' || row.tx_state === 'ERROR' ||
+           snapshot.status.system.global_stopped || !snapshot.modulators.find(m => m.id === id)?.enabled)) {
+        this.confirmations.delete(id);
+        this.commandStates.update(v => { const next = {...v}; delete next[id]; return next; });
+        this.actionFeedback.update(v => ({...v, [id]: row.source_last_error || row.last_error || 'Start cancelled.'}));
+      }
+    }
     const system = snapshot.status.system;
     const age = system.controller_observation_age_s;
     if (
@@ -281,7 +302,8 @@ export class DashboardState {
       // network/serialization delay must never make an old observation look new.
       if (requestedAt - age * 1000 < c.receivedAt) continue;
       const row = snapshot.status.modulators.find((r) => r.id === id);
-      if (row?.hardware_tx_state !== c.state) continue;
+      if (row?.hardware_tx_state !== c.state || row.start_pending || row.last_error || row.source_last_error ||
+          (c.state === 'ON' && row.tx_state !== 'ON')) continue;
       this.confirmations.delete(id);
       this.commandStates.update((v) => {
         const next = { ...v };
@@ -369,6 +391,10 @@ export class DashboardState {
     if (commandConfirmed) this.commandStates.update((v) => ({ ...v, [id]: state }));
   }
   private acceptResult(result: ModulatorStatus, generation: number) {
+    if (result.start_pending) {
+      this.trackPendingStart(result.id);
+      return;
+    }
     // Only tx_state is command-confirmed; never copy RP readbacks or source state.
     if (result.tx_state === 'ON' || result.tx_state === 'OFF')
       this.trackConfirmation(result.id, result.tx_state, generation, true);
@@ -438,7 +464,7 @@ export class DashboardState {
         if (
           !result ||
           'error' in result ||
-          (result.tx_state !== 'ON' && result.tx_state !== 'OFF')
+          (!result.start_pending && result.tx_state !== 'ON' && result.tx_state !== 'OFF')
         ) {
           const message = !result
             ? 'No unique result returned.'

@@ -20,7 +20,15 @@ export class ChannelCard {
   readonly displayState = computed(() => {
     if (this.pending()) return this.pendingAction() === 'stop' ? 'Stopping...' : 'Starting...';
     if (this.reportedState() === 'ERROR') return 'ERROR';
-    return this.commandState() ? `${this.commandState()} (requested)` : this.reportedState();
+    return this.requestedState() ? `${this.requestedState()} (requested)` : this.reportedState();
+  });
+  readonly requestedState = computed(() => {
+    if (this.commandState()) return this.commandState();
+    if (this.channel().runtime?.start_pending) return 'ON';
+    if (this.channel().error || this.reportedState() === 'ERROR') return undefined;
+    if (this.channel().desiredOn && this.reportedState() !== 'ON') return 'ON';
+    if (this.channel().desiredOn === false && this.reportedState() === 'ON') return 'OFF';
+    return undefined;
   });
   readonly operate = output<'start' | 'stop'>();
   readonly attenuation = computed(() =>
@@ -35,7 +43,7 @@ export class ChannelCard {
       ['ON', 'STARTING'].includes(this.commandState() ?? this.channel().runtime?.tx_state ?? '') ||
       (this.commandState() !== 'OFF' && this.channel().desiredOn === true),
   );
-  readonly blocked = computed(() => this.stopping() && this.reportedState() !== 'ON');
+  readonly blocked = computed(() => this.pending() || !!this.requestedState());
   readonly reportedState = computed(() => {
     if (this.stale() || this.channel().observationStale) return 'UNKNOWN';
     const state = this.channel().runtime?.hardware_tx_state;

@@ -6,6 +6,34 @@ import { Snapshot } from '../../core/api/models';
 import { sample } from './test-fixtures';
 
 describe('Dashboard API composition and operations', () => {
+  it('tracks server/editor audio preparation until confirmed ON without masking a source fault', async () => {
+    const data = sample();
+    data.status.system.controller_observation_stale = false;
+    data.status.system.controller_observation_age_s = 0;
+    data.modulators[1].enabled = true;
+    Object.assign(data.status.modulators[1], {start_pending:true, tx_state:'STARTING', source_state:'CONNECTING', hardware_tx_state:'OFF'});
+    await load(data);
+    expect(state.commandStates()[1]).toBe('ON');
+    expect(state['accelerating']()).toBe(true);
+    Object.assign(data.status.modulators[1], {start_pending:false, tx_state:'ON', source_state:'RUNNING', hardware_tx_state:'ON'});
+    await load(data);
+    expect(state.commandStates()[1]).toBeUndefined();
+    expect(state['accelerating']()).toBe(false);
+  });
+  it('uses PCM counters even when the RF command cache says OFF', () => {
+    const previous = sample(), next = sample();
+    next.status.modulators[0].tx_state = 'OFF';
+    next.status.modulators[0].pcm_bytes_consumed = previous.status.modulators[0].pcm_bytes_consumed + 100;
+    expect(compose(next, previous)[0].pcm).toBe('Flowing');
+  });
+  it('bounds editor-initiated transition polling', () => {
+    vi.useFakeTimers();
+    state.trackPendingStart(1);
+    expect(state['accelerating']()).toBe(true);
+    vi.advanceTimersByTime(60001);
+    expect(state['accelerating']()).toBe(false);
+    expect(state.commandStates()[1]).toBe('ON'); // Timeout is not RF confirmation.
+  });
   it('shows the assigned source error without inventing a hardware fault', () => {
     const data = sample();
     data.status.system.system_state = 'RUNNING';

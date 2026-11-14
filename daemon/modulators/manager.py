@@ -145,8 +145,12 @@ class ModulatorManager:
             if resume:
                 stage = 'start'
                 self.bulk_stopped.discard(modulator_id)  # Only our temporary hold.
-                self._start(modulator_id, retry_budget)
-                result['restarted'] = True
+                started = self._start(modulator_id, retry_budget)
+                result['restart_pending'] = started.start_pending
+                result['restarted'] = not started.start_pending
+                if started.start_pending:
+                    result['message'] = 'Configuration saved — Preparing audio…'
+                    return result
             result['message'] = 'Configuration saved and TX restarted.' if resume else 'Configuration saved; TX remains stopped.'
         except (DomainError, DependencyUnavailable, ValueError, sqlite3.Error, OSError) as exc:
             result['failed_stage'] = stage
@@ -257,7 +261,9 @@ class ModulatorManager:
                 status.tx_state = previous_state
                 if self.recovery:
                     self.recovery.defer_audio(modulator_id, exc)
+                    return status
                 raise DomainError(503, "DEPENDENCY_UNAVAILABLE", str(exc)) from exc
+            status.start_pending, status.pending_message = False, None
             # An uncertain ON is retried as ON, never converted to an OFF cycle.
             rf_off = command is None or (not enable_attempted and execution_outcome(exc, command) != Outcome.AMBIGUOUS)
             if rf_off:
@@ -281,6 +287,7 @@ class ModulatorManager:
                 self.recovery.command_failed(modulator_id, command, exc)
             raise DomainError(503, "DEPENDENCY_UNAVAILABLE", status.last_error or str(exc)) from exc
         status.tx_state = TxState.ON
+        status.start_pending, status.pending_message = False, None
         status.source_last_error = None
         if self.recovery:
             self.recovery.pending.pop(modulator_id, None)
@@ -302,6 +309,7 @@ class ModulatorManager:
         if self.recovery:
             self.recovery.require_ready()
         status = self.statuses[modulator_id]
+        status.start_pending, status.pending_message = False, None
         try:
             self._lifecycle_command(Command.SET_TX_ENABLED, lambda: self.rp.set_tx_enabled(modulator_id, False), retry_budget)
         except DependencyUnavailable as exc:
@@ -417,6 +425,7 @@ class ModulatorManager:
         if self.recovery:
             self.recovery.audio_pending.pop(channel, None)
         row = self.statuses[channel]
+        row.start_pending, row.pending_message = False, None
         row.source_state, row.source_last_error, row.source_error_scope = 'ERROR', str(error), 'SOURCE'
         logger.error('TX%s source %s LOCAL startup failed; enable intent cleared: %s',
                      channel, config.input_source_id, error)

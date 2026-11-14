@@ -20,6 +20,7 @@ class TxState(StrEnum):
 
 
 class ModulatorSaveResult(Model):
+    restart_pending: bool = False
     saved: bool
     stop_confirmed: bool
     restarted: bool
@@ -69,6 +70,8 @@ class InputSourceStatus(Model):
 
 
 class ModulatorStatus(Model):
+    start_pending: bool = False
+    pending_message: str | None = None
     source_last_error: str | None = None
     source_error_scope: Literal['SOURCE', 'INTERNAL'] = 'SOURCE'
     pcm_staging: PcmQueueStatus | None = None
