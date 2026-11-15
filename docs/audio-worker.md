@@ -1,15 +1,24 @@
-# Experimental HTTP / LOCAL / PODCAST / ALSA / UDP / RTP audio worker
+# HTTP / LOCAL / PODCAST / ALSA / UDP / RTP audio workers
 
-## Supported backend selection (Phase 6B.1)
+## Developer/debug backend selection (v1.0.0)
 
-`--audio-backend audiod` selects independent direct-PCM workers for all six
+This is an internal implementation/testing reference, not a user configuration
+or operational rollback guide. Normal production operation uses audiod without
+a backend selector.
+
+On Linux production starts, omitting `--audio-backend` selects **audiod**.
+`--audio-backend audiod` explicitly selects independent direct-PCM workers for all six
 source types with ordinary controller and Unix mux sockets. It does not require
 `--mock-controller`; isolated tests may still use that switch. Linux is required;
-`--mock` and `--mock-mux` are rejected. `--audio-backend in-process` remains the
-default and rollback option. No database migration or service default changes
-are needed. Existing experimental switches remain compatibility paths; do not
+Explicit audiod rejects `--mock` and `--mock-mux`. When the backend option is
+omitted, those development modes retain MockPipeline and in-process audio,
+respectively. `--mock-controller` alone still selects default audiod on Linux.
+Non-Linux implicit starts retain the legacy path; explicit audiod requires Linux.
+`--audio-backend in-process` is a developer/debug override. No database migration
+or special audiod environment flag is needed. Existing experimental switches
+remain compatibility paths when no backend option is supplied; do not
 combine them or `FMHEADEND_DIRECT_*_PROTOTYPE` environment flags with the supported
-audiod selector. The historical phase descriptions below describe older states,
+backend selector, including explicit in-process. The historical phase descriptions below describe older states,
 not the current supported selection contract.
 
 Radio Browser lookup/persistence stays in the parent. Opaque ticket identities
@@ -20,8 +29,10 @@ reject delayed samples; disabled, stopped, failed or stale (>500 ms) observation
 are unavailable. Slow/broken control connections terminate their worker generation
 under the existing timeout policy; no socket I/O was added to streaming callbacks.
 
-Default-backend promotion still requires the final integration results and
-physical ALSA/controller qualification recorded in the Phase 6B.1 report.
+No automatic fallback occurs after startup failure. Backend overrides are for
+controlled development/debug comparisons, not a user-facing recovery procedure.
+Physical eight-worker ALSA/HTTP/RF/RDS and lifecycle feedback were validated by
+the operator before promotion; historical reports below retain their original limits.
 
 ## PCM hot path
 

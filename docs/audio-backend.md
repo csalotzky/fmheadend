@@ -1,5 +1,20 @@
 # Audio backend contract (Phase 1)
 
+## Internal backend selection reference
+
+Backend overrides are developer/debug facilities, not user-facing configuration
+or a documented operational rollback procedure.
+
+Linux production startup now defaults to independent **direct audiod workers**
+for HTTP, LOCAL, PODCAST, ALSA, UDP and RTP. No experimental flag or prototype
+environment variable is needed. `--audio-backend audiod` is also accepted;
+`--audio-backend in-process` selects the retained legacy backend for debugging.
+Mock/mocked-mux and historical opt-in test invocations preserve their earlier
+selection when the backend option is omitted. See [audio-worker.md](audio-worker.md)
+for the complete selection policy. There is no fallback after a startup failure.
+The Phase 1–5 descriptions below are historical, including references to the
+former in-process default; the ownership and safety contracts still apply.
+
 Phase 5B extends the experimental audio factory to UDP/RTP, reusing the existing
 GStreamer receiver/caps/decode/DSP path in the child. With no independent packet
 progress signal, parent supervision applies a configurable 90-second network PCM

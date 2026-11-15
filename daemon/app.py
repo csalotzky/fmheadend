@@ -320,8 +320,8 @@ def argument_parser():
     parser = argparse.ArgumentParser(description="fmheadendd media and Controller control",
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     development = parser.add_argument_group("Development / Testing")
-    parser.add_argument('--audio-backend', choices=('in-process', 'audiod'), default='in-process',
-                        help='Audio backend; in-process remains the rollback/default')
+    development.add_argument('--audio-backend', choices=('in-process', 'audiod'), default=None,
+                             help='Developer/debug backend override; production Linux defaults to audiod')
     parser.add_argument("--database", default="/var/lib/fmheadend/fmheadend.db", help="SQLite configuration file")
     parser.add_argument("--host", default="0.0.0.0", help="HTTP listen address")
     parser.add_argument("--port", type=int, default=8080, help="HTTP listen port")
@@ -358,9 +358,30 @@ def argument_parser():
     return parser
 
 
+def resolve_audio_backend(args, parser):
+    """Select before startup; never change backend after a startup failure.
+
+    None distinguishes an omitted selector from an explicit rollback request.
+    Legacy invocations retain their original factories and validation below.
+    """
+    import os
+    import sys
+    legacy = args.experimental_http_worker or args.experimental_audio_worker or any(
+        os.environ.get(f'FMHEADEND_DIRECT_{kind}_PROTOTYPE') == '1'
+        for kind in ('HTTP', 'LOCAL', 'PODCAST', 'ALSA', 'NETWORK'))
+    if args.audio_backend is not None:
+        if legacy:
+            parser.error('Do not combine --audio-backend with legacy experimental/prototype switches')
+        return args.audio_backend
+    if args.mock or args.mock_mux or legacy or sys.platform != 'linux':
+        return 'in-process'
+    return 'audiod'
+
+
 def main():
     parser = argument_parser()
     args = parser.parse_args()
+    args.audio_backend = resolve_audio_backend(args, parser)
     pipeline_factory = MockPipeline if args.mock else GstPipeline
     if args.experimental_http_worker or args.experimental_audio_worker:
         if args.mock:

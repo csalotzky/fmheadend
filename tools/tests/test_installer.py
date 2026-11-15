@@ -146,6 +146,23 @@ def test_archive_duplicates_and_parent_file_conflicts_rejected(tmp_path):
             support.extract_webui(path, tmp_path / 'stage')
 
 
+@pytest.mark.parametrize('selector', ['', '--audio-backend audiod', '--audio-backend in-process'])
+def test_runtime_environment_preserves_backend_selection(tmp_path, monkeypatch, selector):
+    from fmheadendd.app import argument_parser, resolve_audio_backend
+    env = tmp_path/'fmheadendd.env'
+    env.write_text(f'FMHEADEND_ARGS="--region 1 --port 8080 {selector}"\n')
+    original = env.read_bytes()
+    settings = support.runtime_settings(env, tmp_path/'config.db')
+    assert settings[1] == '1' and settings[-1] == '8080'
+    assert env.read_bytes() == original  # Installer reads, never rewrites a rollback selector.
+    monkeypatch.setattr(sys, 'platform', 'linux')
+    for kind in ('HTTP','LOCAL','PODCAST','ALSA','NETWORK'):
+        monkeypatch.delenv(f'FMHEADEND_DIRECT_{kind}_PROTOTYPE',raising=False)
+    parser = argument_parser()
+    args = parser.parse_args(shlex.split('--region 1 --port 8080 '+selector))
+    assert resolve_audio_backend(args, parser) == ('in-process' if 'in-process' in selector else 'audiod')
+
+
 def test_runtime_environment_is_data_not_executable_code(tmp_path):
     env = tmp_path / 'backend.env'
     db = tmp_path / 'custom.db'

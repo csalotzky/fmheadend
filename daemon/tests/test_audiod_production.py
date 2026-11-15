@@ -22,7 +22,7 @@ def test_real_controller_selection_without_experimental_flags(monkeypatch):
     assert isinstance(factory, DirectHttpFactory)
     assert factory.local and factory.podcast and factory.alsa and factory.network
     assert create.call_args.kwargs['mux_factory'] is not None
-    assert app.argument_parser().parse_args([]).audio_backend == 'in-process'
+    assert app.argument_parser().parse_args([]).audio_backend is None
 
 
 def test_radio_roundtrip_pcm_commit_and_stale_observations():

@@ -42,7 +42,7 @@ def test_help_groups_and_displays_actual_defaults():
     parser = app.argument_parser()
     group = next(g for g in parser._action_groups if g.title == 'Development / Testing')
     assert [a.option_strings for a in group._group_actions] == [
-        ['--mock'], ['--experimental-http-worker'], ['--experimental-audio-worker'], ['--mock-controller'], ['--mock-mux']]
+        ['--audio-backend'], ['--mock'], ['--experimental-http-worker'], ['--experimental-audio-worker'], ['--mock-controller'], ['--mock-mux']]
     text = ' '.join(parser.format_help().split())
     for action in parser._actions:
         if action.default is not None and action.dest != 'help':
