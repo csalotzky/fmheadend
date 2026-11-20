@@ -23,7 +23,7 @@ packages = ["fmheadendd", "fmheadendd.models", "fmheadendd.api", "fmheadendd.sou
 package-dir = {fmheadendd = "."}
 
 [tool.setuptools.package-data]
-"fmheadendd.sources" = ["lv2_lifecycle.c"]
+"fmheadendd.sources" = ["lv2_lifecycle.c", "rtp_pcm_aggregate.c"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

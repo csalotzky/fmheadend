@@ -585,9 +585,15 @@ class GstPipeline:
                 depay = self._make(factory)
                 decode = self._make("decodebin", caps=Gst.Caps.from_string("audio/x-raw"))
                 decode.connect("pad-added", self._decoded_pad)
-                self._link(src, jitter, depay, decode)
+                aggregation = []
+                if factory == 'rtpL16depay' and config['clock_rate'] >= 25:
+                    from .rtp_pcm_aggregate import register_rtp_pcm_aggregate
+                    if register_rtp_pcm_aggregate():
+                        aggregation.append(self._make('fmrtppcmaggregate'))
+                self._link(src, jitter, depay, *aggregation, decode)
         self._bus = self._pipeline.get_bus()
 
+    @observed('handoff', 'handoff')
     def _local_handoff(self, player):
         # State teardown must not race URI replacement. Never wait here: NULL
         # can be waiting for this very streaming thread to return.
