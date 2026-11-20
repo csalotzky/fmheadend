@@ -1,6 +1,14 @@
 <dialog #dialog aria-labelledby="podcast-browser-title" (cancel)="cancel($event)" (close)="close()">
   <header>
-    <h2 id="podcast-browser-title">Browse podcasts</h2>
+    <div>
+      <h2 id="podcast-browser-title">Browse podcasts</h2>
+      <p class="attribution">
+        Powered by Apple Podcasts
+        <a href="https://podcasts.apple.com/" target="_blank" rel="noopener noreferrer"
+          >(podcasts.apple.com)</a
+        >
+      </p>
+    </div>
     <button type="button" aria-label="Close Podcast Browser" (click)="close()">&#215;</button>
   </header>
   <div class="search">
@@ -48,7 +56,7 @@
             <p>{{ podcast.category }}</p>
           }
           @if (podcast.episode_count !== null) {
-            <p>Episodes (Apple catalog): {{ podcast.episode_count }}</p>
+            <p>Episodes: {{ podcast.episode_count }}</p>
           }
         </div>
         @let added = addedUrls().has(podcast.feed_url);

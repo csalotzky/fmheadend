@@ -95,6 +95,14 @@ describe('Podcast Browser picker', () => {
     expect(dialog.open).toBe(true);
     expect(document.activeElement).toBe(searchInput(f));
     expect(dialog.querySelectorAll('input, select')).toHaveLength(1);
+    const attribution = dialog.querySelector('.attribution')!;
+    expect(attribution.textContent.replace(/\s+/g, ' ').trim()).toBe(
+      'Powered by Apple Podcasts (podcasts.apple.com)',
+    );
+    const link = attribution.querySelector('a')!;
+    expect(link.href).toBe('https://podcasts.apple.com/');
+    expect(link.target).toBe('_blank');
+    expect(link.rel).toBe('noopener noreferrer');
     typeSearch(f, '   ');
     await vi.advanceTimersByTimeAsync(900);
     http.expectNone((r) => r.url === searchUrl);
@@ -143,28 +151,28 @@ describe('Podcast Browser picker', () => {
 
   it('renders catalog metadata, remote cover URLs, and missing or broken cover fallbacks', async () => {
     const f = picker();
-    const [first, second] = rows(2);
+    const [first, second, third] = rows(3);
     typeSearch(f, 'News');
     await vi.advanceTimersByTimeAsync(800);
     expectSearch(http, 'News').flush({
-      podcasts: [first, { ...second, artwork_url: null, episode_count: null }],
+      podcasts: [
+        first,
+        { ...second, episode_count: 406 },
+        { ...third, artwork_url: null, episode_count: null },
+      ],
     });
     f.detectChanges();
-    const [covered, noCover] = element(f).querySelectorAll('article');
+    const [covered, counted, noCover] = element(f).querySelectorAll('article');
     const image = covered.querySelector('img')!;
     expect(image.getAttribute('src')).toBe(first.artwork_url);
     expect(image.getAttribute('loading')).toBe('lazy');
     expect(image.getAttribute('referrerpolicy')).toBe('no-referrer');
-    for (const text of [
-      first.title,
-      first.publisher,
-      first.category,
-      'Episodes (Apple catalog): 0',
-    ]) {
+    for (const text of [first.title, first.publisher, first.category, 'Episodes: 0']) {
       expect(covered.textContent).toContain(text);
     }
     expect(noCover.textContent).toContain('No cover');
-    expect(noCover.textContent).not.toContain('Episodes (Apple catalog)');
+    expect(counted.textContent).toContain('Episodes: 406');
+    expect(noCover.textContent).not.toContain('Episodes:');
     image.dispatchEvent(new Event('error'));
     f.detectChanges();
     expect(covered.querySelector('img')).toBeNull();
@@ -312,11 +320,20 @@ describe('Podcast Browser in Source Editor', () => {
   const addButtons = (f: ComponentFixture<SourceEditor>) => [
     ...element(f).querySelectorAll<HTMLButtonElement>('article button'),
   ];
+  const feedTitles = (f: ComponentFixture<SourceEditor>) =>
+    [...element(f).querySelectorAll('.feed-card')].map(
+      (card) => card.querySelector('.feed-result-name')?.textContent.trim() ?? null,
+    );
 
   it('fills the starter row, marks the form dirty and keeps the picker open without Save or Test', async () => {
     const f = await editor();
     const c = f.componentInstance;
     const [podcast] = rows(1);
+    expect(element(f).querySelector('#podcast-feeds-help')).toBeNull();
+    expect(element(f).textContent).not.toContain('Episode age eligibility is set per feed');
+    expect(element(f).querySelector('.feed-list')?.getAttribute('aria-labelledby')).toBe(
+      'podcast-feeds-label',
+    );
     await browse(f, [podcast]);
     const button = addButtons(f)[0];
     button.click();
@@ -326,6 +343,9 @@ describe('Podcast Browser in Source Editor', () => {
     expect(c.feeds.at(0).controls.url.dirty).toBe(true);
     expect(c.podcast.dirty).toBe(true);
     expect(c.podcast.valid).toBe(true);
+    expect(feedTitles(f)).toEqual([podcast.title]);
+    const preview = element(f).querySelector('.feed-card .feed-result')!;
+    expect(preview.textContent.trim()).toBe(podcast.title);
     expect(element(f).querySelector('app-podcast-browser-picker dialog[open]')).not.toBeNull();
     expect(element(f).querySelector('.confirmation')!.textContent).toContain(
       'Podcast added to source',
@@ -333,6 +353,66 @@ describe('Podcast Browser in Source Editor', () => {
     expect(button.textContent.trim()).toBe('Added');
     expect(button.disabled).toBe(true);
     http.expectNone(() => true);
+  });
+
+  it('keeps preview titles with their URLs when rows move, are removed or are edited', async () => {
+    const f = await editor();
+    const c = f.componentInstance;
+    const [first, second, third] = rows(3);
+    await browse(f, [first, second, third]);
+    for (const button of addButtons(f)) button.click();
+    findButton(f, 'Close').click();
+    f.detectChanges();
+    expect(feedTitles(f)).toEqual([first.title, second.title, third.title]);
+
+    const last = c.feeds.at(2);
+    c.feeds.removeAt(2);
+    c.feeds.insert(0, last);
+    f.detectChanges();
+    expect(feedTitles(f)).toEqual([third.title, first.title, second.title]);
+
+    c.removeFeed(1);
+    f.detectChanges();
+    expect(feedTitles(f)).toEqual([third.title, second.title]);
+    const input = element(f).querySelector<HTMLInputElement>('input[aria-label="Feed 1 URL"]')!;
+    input.value = 'https://other.example.org/feed';
+    input.dispatchEvent(new Event('input'));
+    f.detectChanges();
+    expect(feedTitles(f)).toEqual([null, second.title]);
+    http.expectNone(() => true);
+  });
+
+  it('uses the tested feed title and diagnostics in place of the preview', async () => {
+    const f = await editor();
+    const [podcast] = rows(1);
+    await browse(f, [podcast]);
+    addButtons(f)[0].click();
+    findButton(f, 'Close').click();
+    f.detectChanges();
+    expect(feedTitles(f)).toEqual([podcast.title]);
+    http.expectNone(() => true);
+
+    const done = f.componentInstance.test();
+    const request = http.expectOne('/api/v1/sources/test');
+    expect(request.request.body.config.feeds).toEqual([feed(podcast.feed_url)]);
+    request.flush({
+      ok: true,
+      podcast: {
+        feeds_attempted: 1,
+        feeds_succeeded: 1,
+        discovered_episodes: 15,
+        eligible_episodes: 10,
+        feeds: [
+          { title: 'Title from RSS', error: null, discovered_episodes: 15, eligible_episodes: 10 },
+        ],
+      },
+    });
+    await done;
+    f.detectChanges();
+    expect(feedTitles(f)).toEqual(['Title from RSS']);
+    expect(element(f).querySelector('.feed-card .feed-result')?.textContent).toContain(
+      'OK: 15 discovered / 10 eligible',
+    );
   });
 
   it('fills the first blank row, preserves its limits and ordering, then appends to the unsaved draft', async () => {

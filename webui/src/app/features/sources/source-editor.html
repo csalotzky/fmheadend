@@ -181,11 +181,7 @@
             Browse podcasts
           </button>
         </div>
-        <p id="podcast-feeds-help" class="muted">
-          Episode age eligibility is set per feed with Max age.
-        </p>
-        <div class="feed-list" role="group" aria-labelledby="podcast-feeds-label" aria-describedby="podcast-feeds-help"
-          formArrayName="feeds">
+        <div class="feed-list" role="group" aria-labelledby="podcast-feeds-label" formArrayName="feeds">
           @for (feed of feeds.controls; track feed; let i = $index) {
           <div class="feed-card" [formGroupName]="i" role="group" [attr.aria-label]="'Feed ' + (i + 1)">
             <label class="feed-url">Feed URL
@@ -203,7 +199,9 @@
               <span class="feed-result-name" [attr.title]="probe.label">{{
                 probe.label
                 }}</span>
+              @if (probe.status) {
               <span [class.error]="!probe.ok">{{ probe.status }}</span>
+              }
             </div>
             }
             <div class="feed-limits">

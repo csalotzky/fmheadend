@@ -194,13 +194,17 @@ export class SourceEditor implements OnInit, OnDestroy {
   readonly controlError = controlError;
   readonly feedsError = feedsError;
   readonly testedFeeds = signal<string[]>([]);
+  private readonly podcastDirectoryTitles = new Map<string, string>();
   // Matches by tested URL (unique per source) so edits, adds and removes never show stale diagnostics.
-  feedResult(index: number): { label: string; ok: boolean; status: string } | null {
+  feedResult(index: number): { label: string; ok: boolean; status?: string } | null {
     const probe = this.result()?.podcast;
     const url = String(this.feeds.at(index)?.controls.url.value ?? '').trim();
     const at = this.testedFeeds().indexOf(url);
     const feed = at >= 0 ? probe?.feeds[at] : undefined;
-    if (!feed) return null;
+    if (!feed) {
+      const label = this.podcastDirectoryTitles.get(url);
+      return label ? { label, ok: true } : null;
+    }
     return feed.error
       ? {
           label: feed.title || FEED_TITLE_UNAVAILABLE,
@@ -344,6 +348,7 @@ export class SourceEditor implements OnInit, OnDestroy {
       if (this.feeds.length >= PODCAST_MAX_FEEDS) return;
       this.addFeed(url);
     }
+    this.podcastDirectoryTitles.set(url, podcast.title);
     this.podcastPicker?.confirmAdded(podcast.title);
   }
   private currentPodcastFeedUrls() {
@@ -432,6 +437,7 @@ export class SourceEditor implements OnInit, OnDestroy {
       void this.refreshAlsa();
     }
     this.podcast = buildPodcastForm(type === 'PODCAST' ? values : {});
+    this.podcastDirectoryTitles.clear();
     this.podcastFeedUrls.set(this.currentPodcastFeedUrls());
     this.testConfigInputs.add(this.config.valueChanges.subscribe(() => this.invalidateTest()));
     this.testConfigInputs.add(this.podcast.valueChanges.subscribe(() => this.invalidateTest()));
