@@ -8,6 +8,7 @@ from collections import deque
 from pathlib import Path
 from threading import Event, Lock, Thread
 import json
+import logging
 
 from ..errors import DomainError
 from ..models.configuration import LocalConfig
@@ -20,6 +21,7 @@ MAX_ITEMS = 100000
 MAX_CATALOG_BYTES = 16 * 1024 * 1024
 CHUNK_ITEMS = 64
 MAX_LOCATOR = 8192
+log = logging.getLogger(__name__)
 
 
 def item_wire(item):
@@ -48,6 +50,7 @@ class ParentCatalog:
         self.scan_request = self.cycle_request = 0
         self.last_request = 0
         self.transfer = None
+        self.last_scan_error = None
         self.wakeup = Event()
 
     def accept(self, data):
@@ -102,7 +105,12 @@ class ParentCatalog:
                 self.scan_request = 0
                 if not isinstance(job.error, DomainError):
                     raise job.error
-                return dict(op='error', request=request, error=job.error.error)
+                error = job.error.error
+                if error != self.last_scan_error:
+                    log.warning('source %s LOCAL discovery failed: %s', self.owner, error)
+                    self.last_scan_error = error
+                return dict(op='error', request=request, error=error)
+            self.last_scan_error = None
             items = job.value
 
             def chunks():

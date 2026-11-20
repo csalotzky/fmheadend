@@ -56,6 +56,12 @@ export class ChannelCard {
         ? this.channel().runtime?.hardware_last_error || 'Hardware/control error'
         : null),
   );
+  readonly pendingSourceMessage = computed(() => {
+    const { source, runtime } = this.channel();
+    if (this.stale() || this.commandState() === 'OFF' || this.pendingAction() === 'stop' ||
+        source?.type !== 'LOCAL' || !runtime?.start_pending || this.reportedError()) return null;
+    return runtime.pending_message;
+  });
   sourceState() {
     const channel = this.channel();
     if (!channel.config) return 'Unknown';

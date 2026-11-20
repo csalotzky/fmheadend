@@ -13,6 +13,14 @@ from ..models.runtime_status import HeadendStatus, SystemStatus, TxState, Writer
 
 logger = logging.getLogger(__name__)
 
+LOCAL_DISCOVERY_MESSAGES = {
+    'NO_PLAYABLE_TRACKS': 'No playable tracks found in the configured folder or playlist.',
+    'FOLDER_UNREADABLE': 'The configured audio folder could not be read.',
+    'PLAYLIST_UNREADABLE': 'The configured playlist could not be read.',
+    'INVALID_PLAYLIST_ENTRY': 'The configured playlist contains an invalid entry.',
+    'LOCAL_CATALOG_LIMIT': 'The audio catalog exceeds the supported size.',
+}
+
 
 def communication_state(error):
     if isinstance(error, IncompatibleProtocol):
@@ -53,14 +61,16 @@ class StatusService:
             self.info[key] = capabilities[key] if capabilities else None
         self.info['frequency_plan'] = effective_plan(self.modulators.settings.region, capabilities)
         source_statuses = {}
+        source_configs = {}
         views = {}
         self._modulator_configs = {c.id: c for c in self.modulators.list()}
         if self.config is not None:
             configs = self.config.list('sources')
+            source_configs = {s.id: s for s in configs}
             source_statuses = {s.id: self.sources.status(s.id, source=s).model_copy(deep=True) for s in configs}
             views = dict(sources=configs, modulators=[self._modulator_configs[i] for i in self.modulators.physical_ids],
                          info=dict(self.info), source_statuses=source_statuses)
-        snapshot = self.snapshot(source_statuses).model_copy(deep=True)
+        snapshot = self.snapshot(source_statuses, source_configs=source_configs).model_copy(deep=True)
         if self.radiotext is not None:
             modulator_configs = {config.id: config for config in views.get('modulators', ())}
             for row in snapshot.modulators:
@@ -197,7 +207,7 @@ class StatusService:
         if publish:
             self.publish()
 
-    def snapshot(self, source_statuses=None):
+    def snapshot(self, source_statuses=None, *, source_configs=None):
         # Control thread collection only: Source validation may access DB/files.
         system = self.system.model_copy(deep=True)
         system.global_stopped = self.modulators.global_stopped
@@ -211,6 +221,7 @@ class StatusService:
         system.uptime_s = max(0, self.clock() - self.started)
         rows = []
         source_statuses = {} if source_statuses is None else dict(source_statuses)
+        source_configs = source_configs or {}
         writers = self.mux.pcm_snapshot() if hasattr(self.mux, 'pcm_snapshot') else {}
         for status in self.modulators.statuses.values():
             if status.id not in self.modulators.physical_ids:
@@ -226,6 +237,16 @@ class StatusService:
                     row.source_state = source.state.value
                     row.source_last_error = source.last_error
                     row.source_error_scope = source.error_scope
+                elif row.start_pending and source.error_scope == 'SOURCE':
+                    source_config = source_configs.get(source_id)
+                    if source_config is not None and source_config.type == 'LOCAL':
+                        message = LOCAL_DISCOVERY_MESSAGES.get(source.last_error)
+                        if message:
+                            if (source.last_error == 'NO_PLAYABLE_TRACKS' and
+                                    source_config.config.get('mode') == 'folder' and
+                                    not source_config.config.get('recursive')):
+                                message += ' Enable recursive scanning to include subfolders.'
+                            row.pending_message = message
                 if source.pcm is not None:
                     row.pcm_staging = source.pcm.staging
                     row.pcm_consumer = source.pcm.consumers.get(row.id)

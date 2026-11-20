@@ -34,6 +34,7 @@ class LocalPlayback(SequencedPlayback):
         self.refresh_requested = False
         self.retry_at = 0.0
         self.error = 'LOCAL_DISCOVERY_PENDING'
+        self.last_scan_error = None
 
     def _service_jobs(self):
         """Source worker only: poll snapshots; never wait or enumerate here."""
@@ -43,7 +44,9 @@ class LocalPlayback(SequencedPlayback):
             job, self.scan = self.scan, None
             if job.error is not None:
                 self.error = job.error.error if isinstance(job.error, DomainError) else 'LOCAL_DISCOVERY_ERROR'
-                log.warning('source %s LOCAL refresh failed: %s', self.owner, self.error)
+                if self.error != self.last_scan_error:
+                    log.warning('source %s LOCAL refresh failed: %s', self.owner, self.error)
+                    self.last_scan_error = self.error
                 if not isinstance(job.error, DomainError):
                     log.error('LOCAL discovery raised an unexpected %s', type(job.error).__name__)
                 self.retry_at = self.clock() + 5.0
@@ -56,6 +59,7 @@ class LocalPlayback(SequencedPlayback):
                 self.catalog = job.value
                 self.revision += 1
                 self.error = None
+                self.last_scan_error = None
                 log.info('source %s LOCAL catalog resolved %s candidates', self.owner, len(self.catalog))
         if self.build is not None and self.build[0].done.is_set():
             job, generation, revision = self.build

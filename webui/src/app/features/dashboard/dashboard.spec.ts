@@ -121,6 +121,34 @@ describe('Operational display', () => {
       expect(state.channels()[0].pcm).toBe(expected);
     },
   );
+  it('shows LOCAL discovery detail as pending feedback with RF reported OFF', () => {
+    const state = setup();
+    const data = sample();
+    data.sources[0].type = 'LOCAL';
+    const row = data.status.modulators[0];
+    row.tx_state = 'STARTING';
+    row.hardware_tx_state = 'OFF';
+    row.source_state = 'CONNECTING';
+    row.start_pending = true;
+    row.pending_message = 'No playable tracks found. Enable recursive scanning to include subfolders.';
+    state.actionFeedback.set({ 0: 'Preparing audio…' });
+    state.channels.set(compose(data));
+    const fixture = TestBed.createComponent(Dashboard);
+    fixture.detectChanges();
+    const card = (fixture.nativeElement as HTMLElement).querySelectorAll('app-channel-card')[0];
+    expect(card.textContent).toContain('ON (requested)');
+    expect(card.textContent).toContain('Reported state: OFF');
+    expect(card.querySelector('.action-feedback')?.textContent).toContain(row.pending_message);
+    expect(card.querySelector('.card-error')).toBeNull();
+    expect(card.textContent).not.toContain('Preparing audio…');
+
+    state.channels.set(compose({ ...data, status: { ...data.status, modulators: [
+      { ...row, start_pending: false, pending_message: null, tx_state: 'ON', hardware_tx_state: 'ON' },
+      ...data.status.modulators.slice(1),
+    ] } }));
+    fixture.detectChanges();
+    expect(card.textContent).not.toContain('No playable tracks found');
+  });
   it('labels analog input as Audio rather than an idle digital path', () => {
     const state = setup();
     const data = sample();

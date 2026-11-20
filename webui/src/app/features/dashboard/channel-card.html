@@ -99,7 +99,10 @@
   @if (reportedError()) {
     <p class="card-error" role="status">{{ reportedError() }}</p>
   }
-  @if (feedback()) {
+  @if (pendingSourceMessage(); as message) {
+    <p class="action-feedback" role="status">{{ message }}</p>
+  }
+  @if (feedback() && (!pendingSourceMessage() || feedback() !== 'Preparing audio…')) {
     <p class="action-feedback" role="status">{{ feedback() }}</p>
   }
   <div class="channel-control">
