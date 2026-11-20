@@ -381,6 +381,31 @@ describe('Modulator configuration', () => {
     expect(c.form.controls.pi.value).toBe('B0D7');
     expect(shared.refreshAfterMutation).toHaveBeenCalledOnce();
   });
+  it('saves a source-only switch without changing the running TX RDS selection', async () => {
+    const f = await editor({ rds_follow_source: false }),
+      c = f.componentInstance;
+    const data = sample();
+    data.sources.push({ ...data.sources[0], id: 2, name: 'New source',
+      rds_profile: c.draft().rds_override_profile });
+    shared.data.set(data);
+    shared.channels.set(compose(data));
+    c.form.controls.input_source_id.setValue(2);
+    c.changeSource();
+    expect(c.form.controls.rds_follow_source.value).toBe(false);
+    const trackPendingStart = vi.spyOn(shared, 'trackPendingStart');
+    c.form.markAsDirty();
+    const pending = c.save();
+    const req = http.expectOne('/api/v1/modulators/0/save-and-resume');
+    expect(req.request.body).toMatchObject({ input_source_id: 2, rds_follow_source: false });
+    req.flush({ saved: true, stop_confirmed: false, restarted: false, failed_stage: null,
+      message: 'Source assignment saved. RF remains on.',
+      configuration: { ...data.modulators[0], input_source_id: 2, rds_follow_source: false } });
+    await pending;
+    expect(c.form.pristine).toBe(true);
+    expect(c.form.controls.input_source_id.value).toBe(2);
+    expect(c.message()).toBe('Source assignment saved. RF remains on.');
+    expect(trackPendingStart).not.toHaveBeenCalled();
+  });
   it('preserves edits on active save rejection and never issues lifecycle requests', async () => {
     const f = await editor(),
       c = f.componentInstance;

@@ -60,6 +60,28 @@ def test_ledger_timeout_never_grants_until_actual_reap(tmp_path):
     mux.detach(0)
 
 
+def test_stop_cancels_selected_source_while_revoke_is_in_flight(tmp_path):
+    from threading import Event
+
+    def worker():
+        return SimpleNamespace(_stop=Event(), _done=Event(), direct_applied=(0, None),
+                               direct_runtime=str(tmp_path), set_output_lease=Mock())
+
+    old, candidate = worker(), worker()
+    mux = DirectMux(SimpleNamespace(pipelines={1: old, 2: candidate},
+                                    output_for=lambda _: None), tmp_path, clock=lambda: 0)
+    mux.attach(0, 1)
+    mux.select_source(0, 2)
+    mux.service()
+    assert old.set_output_lease.call_args.args == (2, None, 0)
+    candidate.set_output_lease.assert_not_called()
+    mux.detach(0)
+    old.direct_applied = (2, None)
+    mux.service()
+    candidate.set_output_lease.assert_not_called()
+    assert mux.owner is None
+
+
 @pytest.mark.skipif(sys.platform != 'linux', reason='Linux subprocess/pass_fds')
 def test_real_child_direct_socket_revoke_and_reap(tmp_path):
     listener=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)

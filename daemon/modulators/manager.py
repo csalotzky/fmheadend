@@ -7,6 +7,7 @@ from ..models.configuration import ModulatorConfig, RDS_FIELDS
 from ..models.runtime_status import ModulatorStatus, TxState
 from ..rp2354.client import TxConfig
 from ..rp2354.protocol import Command, Outcome, RpResponseError, IncompatibleProtocol, execution_outcome, validate_frequency
+from ..sources.direct_pcm import DirectMux
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +116,8 @@ class ModulatorManager:
         """One control-executor operation; temporary OFF never changes desired enabled."""
         self.require_available(modulator_id)
         config = self._edited_config(modulator_id, patch)  # Validate before RF action.
-        if self._rds_only(self.get(modulator_id), config, patch):
+        old = self.get(modulator_id)
+        if self._rds_only(old, config, patch):
             saved = self.update(modulator_id, patch)
             return dict(saved=True, stop_confirmed=False, restarted=False, failed_stage=None,
                         message='RDS configuration saved; RF and audio unchanged.', configuration=saved)
@@ -124,6 +126,11 @@ class ModulatorManager:
             if modulator_id in self.recovery.pending:
                 raise DomainError(409, 'MODULATOR_UNCERTAIN', 'Target TX reconciliation pending')
         resume = self.statuses[modulator_id].tx_state == TxState.ON and self.desired_on(modulator_id)
+        ignored = {'id', 'timestamp', 'rds_override_profile_id', 'input_source_id'}
+        if (resume and isinstance(self.mux, DirectMux) and old.audio_mode == 'DIGITAL'
+                and old.input_source_id != config.input_source_id
+                and old.model_dump(exclude=ignored) == config.model_dump(exclude=ignored)):
+            return self._save_source_assignment(modulator_id, old.input_source_id, config)
         if not resume:
             self._require_configurable(modulator_id)
         result = dict(saved=False, stop_confirmed=not resume, restarted=False,
@@ -160,6 +167,38 @@ class ModulatorManager:
             result['message'] = f'{prefix}: {exc}'
             logger.warning('TX%s save-and-resume: %s', modulator_id, result['message'])
         return result
+
+    def _save_source_assignment(self, channel, old_source, config):
+        source = config.input_source_id
+        result = dict(saved=False, stop_confirmed=False, restarted=False,
+                      failed_stage='start', configuration=None)
+        if (self.statuses[channel].hardware_tx_state != 'ON' or not self.recovery.capability_current
+                or self.active_sources.get(channel) != old_source):
+            return dict(result, message='The existing RF/audio assignment is not confirmed; source not changed.')
+        try:
+            try:
+                self.sources.acquire(source, channel)
+            except SourcePending:
+                # Startup may retain the consumer without producing audio yet.
+                # Cleanup of an earlier generation may instead leave no owner.
+                if channel not in self.sources.consumers.get(source, ()):
+                    raise
+            result['failed_stage'] = 'save'
+            saved = self.database.save('modulators', config, channel)
+        except (DomainError, DependencyUnavailable, ValueError, sqlite3.Error, OSError) as exc:
+            self.sources.release(source, channel)
+            return dict(result, message=f'Source assignment not changed: {exc}')
+
+        # The control executor serializes this with STOP and subsequent saves.
+        # DirectMux revokes the previous lease before granting the saved source.
+        self.active_sources[channel] = source
+        self.mux.select_source(channel, source)
+        self.sources.release(old_source, channel)
+        if self.rds:
+            self.rds.profile_changed(channel)
+        logger.info('TX%s changed audio source from %s to %s', channel, old_source, source)
+        return dict(saved=True, stop_confirmed=False, restarted=False, failed_stage=None,
+                    message='Source assignment saved. RF remains on.', configuration=saved)
 
     def start(self, modulator_id):
         self.require_available(modulator_id)

@@ -182,7 +182,10 @@ export class ModulatorEditor implements OnInit {
     );
   }
   changeSource() {
-    this.form.controls.rds_follow_source.setValue(this.canFollowSource());
+    const canFollow = this.canFollowSource();
+    if (!canFollow || this.channel()?.runtime?.tx_state !== 'ON') {
+      this.form.controls.rds_follow_source.setValue(canFollow);
+    }
   }
   syncGain() {
     const manual = this.form.controls.gain_mode.value === 'MANUAL';

@@ -273,10 +273,14 @@ class DirectMux(UnixMuxClient):
         if type(channel) is not int or not 0 <= channel < 8:
             raise DependencyUnavailable('Direct PCM channel must be 0..7')
         entry = self.channels[channel]
-        entry.desired = source_id
+        self.select_source(channel, source_id)
         self.service()
         if entry.owner is not self.sources.pipelines.get(source_id) or entry.revoking:
             raise SourcePending('Direct PCM ownership transfer pending')
+
+    def select_source(self, channel, source_id):
+        """Record the desired source for the existing lease service cycle."""
+        self.channels[channel].desired = source_id
 
     def detach(self, channel):
         if type(channel) is not int or not 0 <= channel < 8:
