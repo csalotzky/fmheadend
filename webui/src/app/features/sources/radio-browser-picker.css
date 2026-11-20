@@ -1,40 +1,6 @@
 @import '../../shared/checkbox-control.css';
+@import './directory-picker.css';
 
-dialog {
-  position: fixed;
-  inset: 0;
-  width: 100vw;
-  height: 100dvh;
-  max-width: none;
-  max-height: none;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  color: var(--text);
-  background: var(--surface);
-}
-dialog[open] {
-  display: flex;
-  flex-direction: column;
-}
-dialog::backdrop {
-  background: var(--background);
-}
-header,
-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 12px 20px;
-}
-header {
-  border-bottom: 1px solid var(--border);
-}
-h2 {
-  font-size: 18px;
-  margin: 0;
-}
 .attribution {
   margin: 4px 0 0;
   color: var(--muted);
@@ -43,15 +9,14 @@ h2 {
 .attribution a {
   color: inherit;
 }
-header button {
-  font-size: 20px;
-  padding: 3px 9px;
-}
 .filters {
   display: grid;
-  grid-template-columns: 2fr 1fr 1fr;
+  grid-template-columns: minmax(0, 2fr) repeat(2, minmax(0, 1fr));
+  flex-shrink: 0;
+  max-height: 45dvh;
+  overflow: auto;
   gap: 12px;
-  padding: 16px 20px;
+  padding: 16px var(--directory-gutter);
   border-bottom: 1px solid var(--border);
 }
 label {
@@ -80,17 +45,12 @@ select:focus-visible {
 .checkbox {
   grid-column: 1 / -1;
 }
-.results {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  padding: 12px 20px;
-  overscroll-behavior: contain;
-}
 .station {
   display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  align-items: center;
   width: 100%;
-  gap: 6px;
+  gap: 12px;
   margin-bottom: 8px;
   padding: 12px;
   text-align: left;
@@ -102,6 +62,10 @@ select:focus-visible {
 }
 .station strong {
   font-size: 16px;
+}
+.station-info {
+  display: grid;
+  gap: 6px;
 }
 .station span,
 .station small {
@@ -115,8 +79,25 @@ select:focus-visible {
   border-color: var(--warning);
   background: var(--hover);
 }
-footer {
-  border-top: 1px solid var(--border);
+.station-logo {
+  display: grid;
+  grid-template: 100% / 100%;
+  width: 56px;
+  height: 56px;
+  place-items: center;
+  overflow: hidden;
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: 11px;
+}
+.station-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+}
+.station-logo img:not([hidden]) + .logo-placeholder {
+  display: none;
 }
 .details {
   min-width: 0;
@@ -139,17 +120,14 @@ footer {
 @media (max-width: 620px) {
   .filters {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    padding: 12px;
+    padding: 12px var(--directory-gutter);
     gap: 8px;
   }
   .station-search {
     grid-column: 1 / -1;
   }
-  header,
-  footer,
-  .results {
-    padding: 12px;
-  }
+}
+@media (max-width: 620px) and (min-height: 481px) {
   footer {
     align-items: stretch;
     flex-direction: column;
@@ -159,20 +137,25 @@ footer {
     justify-content: flex-end;
   }
 }
-
-header,
-footer {
-  flex-shrink: 0;
+@media (max-height: 480px) {
+  .filters {
+    max-height: 24dvh;
+    padding-block: 6px;
+    gap: 6px;
+  }
+  .details {
+    max-height: 14dvh;
+  }
 }
-.filters {
-  max-height: 45dvh;
-  overflow: auto;
-  flex-shrink: 0;
-}
-
-.load-more {
-  display: flex;
-  justify-content: center;
-  padding: 6px 12px;
-  flex-shrink: 0;
+@media (min-width: 621px) and (max-height: 480px) {
+  .filters {
+    grid-template-columns: minmax(0, 2fr) repeat(2, minmax(0, 1fr)) auto;
+    align-items: end;
+  }
+  .checkbox {
+    grid-column: auto;
+  }
+  .filters .error {
+    grid-column: 1 / -1;
+  }
 }

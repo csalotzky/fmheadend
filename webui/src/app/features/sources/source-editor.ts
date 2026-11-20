@@ -1,5 +1,7 @@
 import { RadioBrowserPicker } from './radio-browser-picker';
 import { RadioBrowserApi, RadioStation } from './radio-browser-api';
+import { PodcastBrowserPicker } from './podcast-browser-picker';
+import { PodcastSearchResult } from './podcast-browser-api';
 import { InputSource } from '../../core/api/models';
 import { rdsText } from '../modulators/values';
 import { RdsProfileForm } from '../../shared/rds-profile-editor/rds-profile-form';
@@ -50,6 +52,7 @@ import {
   newFeedGroup,
   podcastConfig,
   scheduleDescriptions,
+  validHttpUrl,
 } from './podcast-form';
 import { TestResult } from './test-result';
 import { errorMessage } from '../../core/api/headend-api';
@@ -57,7 +60,14 @@ import { DashboardState } from '../dashboard/dashboard-state';
 @Component({
   host: { class: 'page-content editor-page' },
   selector: 'app-source-editor',
-  imports: [ReactiveFormsModule, RouterLink, TestResult, RdsProfileEditor, RadioBrowserPicker],
+  imports: [
+    ReactiveFormsModule,
+    RouterLink,
+    TestResult,
+    RdsProfileEditor,
+    RadioBrowserPicker,
+    PodcastBrowserPicker,
+  ],
   templateUrl: './source-editor.html',
   styleUrl: './sources.css',
 })
@@ -65,6 +75,7 @@ export class SourceEditor implements OnInit, OnDestroy {
   @ViewChild('pathPicker') pathPicker?: ElementRef<HTMLDialogElement>;
   private api = inject(SourceApi);
   @ViewChild(RadioBrowserPicker) radioPicker?: RadioBrowserPicker;
+  @ViewChild(PodcastBrowserPicker) podcastPicker?: PodcastBrowserPicker;
   openRadioBrowser() {
     if (!this.saving() && !this.testing()) this.radioPicker?.open();
   }
@@ -303,15 +314,44 @@ export class SourceEditor implements OnInit, OnDestroy {
   });
   config = new FormGroup<Record<string, FormControl<string | boolean>>>({});
   podcast: PodcastForm = buildPodcastForm();
+  readonly podcastFeedUrls = signal<readonly string[]>([]);
   get feeds() {
     return this.podcast.controls.feeds;
   }
   scheduleMode(): ScheduleMode {
     return this.podcast.controls.schedule_mode.value;
   }
-  addFeed() {
+  openPodcastBrowser() {
+    if (!this.saving() && !this.testing()) this.podcastPicker?.open();
+  }
+  addPodcastFeed(podcast: PodcastSearchResult) {
+    const url = podcast.feed_url.trim();
+    if (
+      this.form.controls.type.value !== 'PODCAST' ||
+      this.saving() ||
+      this.testing() ||
+      !validHttpUrl(url)
+    )
+      return;
+    const urls = this.currentPodcastFeedUrls();
+    if (urls.includes(url)) return;
+    const emptyIndex = urls.indexOf('');
+    if (emptyIndex >= 0) {
+      const control = this.feeds.at(emptyIndex).controls.url;
+      control.setValue(url);
+      control.markAsDirty();
+    } else {
+      if (this.feeds.length >= PODCAST_MAX_FEEDS) return;
+      this.addFeed(url);
+    }
+    this.podcastPicker?.confirmAdded(podcast.title);
+  }
+  private currentPodcastFeedUrls() {
+    return this.feeds.controls.map((feed) => feed.controls.url.value.trim());
+  }
+  addFeed(url = '') {
     if (this.feeds.length >= PODCAST_MAX_FEEDS) return;
-    this.feeds.push(newFeedGroup());
+    this.feeds.push(newFeedGroup(url));
     this.feeds.markAsDirty();
   }
   removeFeed(index: number) {
@@ -392,8 +432,12 @@ export class SourceEditor implements OnInit, OnDestroy {
       void this.refreshAlsa();
     }
     this.podcast = buildPodcastForm(type === 'PODCAST' ? values : {});
+    this.podcastFeedUrls.set(this.currentPodcastFeedUrls());
     this.testConfigInputs.add(this.config.valueChanges.subscribe(() => this.invalidateTest()));
     this.testConfigInputs.add(this.podcast.valueChanges.subscribe(() => this.invalidateTest()));
+    this.testConfigInputs.add(
+      this.feeds.valueChanges.subscribe(() => this.podcastFeedUrls.set(this.currentPodcastFeedUrls())),
+    );
     this.testedFeeds.set([]);
   }
   visibleFields() {

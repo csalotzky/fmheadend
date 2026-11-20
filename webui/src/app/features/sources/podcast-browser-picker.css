@@ -1,0 +1,92 @@
+@import './directory-picker.css';
+
+.search {
+  flex-shrink: 0;
+  padding: 12px var(--directory-gutter);
+  border-bottom: 1px solid var(--border);
+}
+.search label {
+  display: block;
+  max-width: 32rem;
+  color: var(--muted);
+  font-size: 12px;
+}
+.search input {
+  display: block;
+  width: 100%;
+  margin-top: 7px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--background);
+  color: var(--text);
+  font: 14px var(--sans);
+}
+.search input:focus-visible {
+  outline: 2px solid var(--warning);
+  outline-offset: 2px;
+}
+.podcast {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--background);
+}
+.cover {
+  display: grid;
+  width: 64px;
+  height: 64px;
+  place-items: center;
+  overflow: hidden;
+  border-radius: var(--radius);
+  background: var(--hover);
+  color: var(--muted);
+  font-size: 11px;
+}
+.cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.metadata h3 {
+  margin: 0;
+  font-size: 16px;
+}
+.metadata,
+footer div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+footer > div {
+  max-height: 25dvh;
+  overflow: auto;
+}
+.metadata p,
+footer p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+@media (max-width: 620px) {
+  .podcast {
+    grid-template-columns: 64px minmax(0, 1fr);
+    gap: 8px;
+  }
+  .podcast button {
+    grid-column: 2;
+    justify-self: start;
+  }
+}
+@media (max-height: 480px) {
+  .search {
+    padding-block: 6px;
+  }
+  footer > div {
+    max-height: 17dvh;
+  }
+}

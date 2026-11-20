@@ -1,0 +1,88 @@
+dialog {
+  --directory-gutter: 20px;
+  position: fixed;
+  inset: 0;
+  width: 90vw;
+  height: 90dvh;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100dvh - 16px);
+  margin: auto;
+  padding: 0;
+  overflow: hidden;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+dialog::backdrop {
+  background: rgb(0 0 0 / 65%);
+}
+header,
+footer {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px var(--directory-gutter);
+}
+header {
+  border-bottom: 1px solid var(--border);
+}
+footer {
+  border-top: 1px solid var(--border);
+}
+h2 {
+  margin: 0;
+  font-size: 18px;
+}
+header button {
+  padding: 3px 9px;
+  font-size: 20px;
+  line-height: 1;
+}
+.results {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px var(--directory-gutter);
+  overscroll-behavior: contain;
+}
+.load-more {
+  display: flex;
+  flex-shrink: 0;
+  justify-content: center;
+  padding: 6px var(--directory-gutter);
+}
+@media (max-width: 620px) {
+  dialog {
+    --directory-gutter: 12px;
+    width: calc(100vw - 16px);
+  }
+}
+@media (max-height: 480px) {
+  header,
+  footer {
+    padding-block: 6px;
+  }
+  .results,
+  .load-more {
+    padding-block: 4px;
+  }
+}
+@media (max-height: 360px) {
+  dialog {
+    height: calc(100dvh - 16px);
+  }
+  header,
+  footer {
+    padding-block: 4px;
+  }
+  .load-more button {
+    padding-block: 4px;
+  }
+}

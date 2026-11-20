@@ -367,6 +367,33 @@ describe('Radio Browser modal', () => {
     );
     expect(use.disabled).toBe(true);
   });
+  it('renders remote logos and keeps fixed placeholders available for missing and failed images', async () => {
+    const logo = 'https://logos.example.org/wide.png';
+    const f = await picker([
+      { ...station, favicon: logo },
+      { ...station, stationuuid: 'broken-logo', favicon: 'https://logos.example.org/missing.png' },
+      { ...station, stationuuid: 'no-logo' },
+    ]);
+    const cards = (f.nativeElement as HTMLElement).querySelectorAll<HTMLButtonElement>('.station');
+    const image = cards[0].querySelector('img')!;
+    expect(image.getAttribute('src')).toBe(logo);
+    expect(image.alt).toBe('');
+    expect(image.getAttribute('loading')).toBe('lazy');
+    expect(image.getAttribute('referrerpolicy')).toBe('no-referrer');
+    expect(cards[0].querySelector('.station-logo')?.getAttribute('aria-hidden')).toBe('true');
+    expect(cards[2].querySelector('.station-logo img')).toBeNull();
+    expect(cards[2].querySelector('.logo-placeholder')?.textContent).toBe('No logo');
+
+    const broken = cards[1].querySelector('img')!;
+    broken.dispatchEvent(new Event('error'));
+    f.detectChanges();
+    expect(broken.hidden).toBe(true);
+    expect(image.hidden).toBe(false);
+    expect(cards[1].querySelector('.logo-placeholder')?.textContent).toBe('No logo');
+    cards[1].click();
+    expect(f.componentInstance.selected()?.stationuuid).toBe('broken-logo');
+    http.expectNone((r) => r.url.startsWith('https://logos.example.org/'));
+  });
   it('reports independent country/tag failures and cancels outstanding requests on close', async () => {
     const f = TestBed.createComponent(RadioBrowserPicker);
     f.detectChanges();

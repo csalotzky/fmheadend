@@ -68,25 +68,41 @@
         [attr.aria-pressed]="selected()?.stationuuid === station.stationuuid"
         (click)="selected.set(station)"
       >
-        <strong>{{ station.name || 'Unnamed station' }}</strong>
-        <span
-          >{{ station.country || countryName(station.countrycode) }}
-          @if (station.codec) {
-            &middot; {{ station.codec }}
+        <span class="station-logo" aria-hidden="true">
+          @if (station.favicon; as favicon) {
+            <img
+              #logo
+              [src]="favicon"
+              alt=""
+              loading="lazy"
+              decoding="async"
+              referrerpolicy="no-referrer"
+              (error)="logo.hidden = true"
+            />
           }
-          @if (station.bitrate) {
-            &middot; {{ station.bitrate }} kb/s
+          <span class="logo-placeholder">No logo</span>
+        </span>
+        <span class="station-info">
+          <strong>{{ station.name || 'Unnamed station' }}</strong>
+          <span
+            >{{ station.country || countryName(station.countrycode) }}
+            @if (station.codec) {
+              &middot; {{ station.codec }}
+            }
+            @if (station.bitrate) {
+              &middot; {{ station.bitrate }} kb/s
+            }
+            @if (station.hls) {
+              &middot; HLS
+            }
+          </span>
+          @if (station.tags.length) {
+            <small>{{ station.tags.join(', ') }}</small>
           }
-          @if (station.hls) {
-            &middot; HLS
+          @if (station.lastcheckok === false) {
+            <small class="warning">Reported broken</small>
           }
         </span>
-        @if (station.tags.length) {
-          <small>{{ station.tags.join(', ') }}</small>
-        }
-        @if (station.lastcheckok === false) {
-          <small class="warning">Reported broken</small>
-        }
       </button>
     }
     @if (loading() && !stations().length) {

@@ -14,7 +14,9 @@ from starlette.exceptions import HTTPException
 from . import __version__
 from .diagnostics import RecentLogs
 from .api.routes import router
+from .api.podcast_browser import router as podcast_browser_router
 from .api.radio_browser import router as radio_browser_router
+from .podcast_browser import PodcastBrowserClient
 from .radio_browser import RadioBrowserClient
 from .sources.radio_recovery import RadioRecoveryTask
 from .config import Settings, audio_telemetry_hz, DEFAULT_PASSWD_FILE
@@ -46,7 +48,8 @@ from .status.service import StatusService
 logger = logging.getLogger(__name__)
 
 
-def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipeline, clock=time.monotonic, mux_factory=None, radio_browser_client=None):
+def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipeline, clock=time.monotonic,
+               mux_factory=None, radio_browser_client=None, podcast_browser_client=None):
     settings = settings or Settings()
     auth = None
     if settings.passwd_file is not None:
@@ -103,6 +106,7 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
         discovery = DiscoveryExecutor()
         app.state.discovery = discovery
         services.radio_browser = radio_browser_client or RadioBrowserClient()
+        services.podcast_browser = podcast_browser_client or PodcastBrowserClient()
         radio_recovery = RadioRecoveryTask(control, services.sources.radio_recovery, services.radio_browser)
         services.audio_telemetry = (AudioTelemetry(settings.audio_telemetry_socket,
             settings.audio_telemetry_hz, control, services.sources) if settings.audio_telemetry_socket else None)
@@ -211,6 +215,7 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
             for name, operation in (
                 ('Radio Browser recovery', radio_recovery.close),
                 ('Radio Browser client', services.radio_browser.close),
+                ('Podcast Browser client', services.podcast_browser.close),
             ):
                 try:
                     await operation()
@@ -267,7 +272,8 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
 
     @app.exception_handler(DomainError)
     async def domain_error(request, exc):
-        return JSONResponse(status_code=exc.status, content={"error": exc.error, "message": exc.message})
+        return JSONResponse(status_code=exc.status, headers=exc.headers,
+                            content={"error": exc.error, "message": exc.message})
 
     async def validation_error(request, exc):
         messages = [f"{'.'.join(map(str, item['loc']))}: {item['msg']}" for item in exc.errors()]
@@ -288,6 +294,7 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
 
     app.include_router(router)
     app.include_router(radio_browser_router)
+    app.include_router(podcast_browser_router)
     if settings.webui_dir is not None:
         mount_webui(app, settings.webui_dir)
     if auth is not None:

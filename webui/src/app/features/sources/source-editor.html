@@ -175,7 +175,12 @@
       }
       @if (form.controls.type.value === 'PODCAST') {
       <div class="podcast-config" [formGroup]="podcast">
-        <div id="podcast-feeds-label" class="podcast-label">Feeds</div>
+        <div class="stream-label-row">
+          <div id="podcast-feeds-label" class="podcast-label">Feeds</div>
+          <button type="button" class="text-action" aria-haspopup="dialog" (click)="openPodcastBrowser()">
+            Browse podcasts
+          </button>
+        </div>
         <p id="podcast-feeds-help" class="muted">
           Episode age eligibility is set per feed with Max age.
         </p>
@@ -363,6 +368,9 @@
 </form>
 @if (form.controls.type.value === 'HTTP') {
 <app-radio-browser-picker (chosen)="useRadioStation($event)" />
+}
+@if (form.controls.type.value === 'PODCAST') {
+<app-podcast-browser-picker [feedUrls]="podcastFeedUrls()" (addRequested)="addPodcastFeed($event)" />
 }
 @if (form.controls.type.value === 'LOCAL') {
 <dialog #pathPicker class="media-path-picker" aria-labelledby="media-path-picker-title" (close)="browserOpen.set(false)"

@@ -1,9 +1,10 @@
 ﻿class DomainError(Exception):
-    def __init__(self, status: int, error: str, message: str):
+    def __init__(self, status: int, error: str, message: str, *, headers: dict[str, str] | None = None):
         super().__init__(message)
         self.status = status
         self.error = error
         self.message = message
+        self.headers = headers
 
 
 class DependencyUnavailable(Exception):
