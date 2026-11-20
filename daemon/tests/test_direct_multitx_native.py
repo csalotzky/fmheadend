@@ -72,7 +72,7 @@ def test_native_eight_output_recovery_and_independent_consumers(gst,http_files,t
     a=db.save('sources',source().model_copy(update={'config':{'uri':url+'/multi.wav'},
         'use_default_audio_profile':False,'audio_profile_id':profile.path}))
     mux=DirectMux(m,tmp_path); retired=[]
-    m.worker_recovery.policy=RecoveryPolicy(pcm_timeout=5,buffering_timeout=10,backoff=.05)
+    m.worker_recovery.policy=RecoveryPolicy(pcm_timeout=5,buffering_timeout=10)
     def step(predicate):
         def check():m.worker_recovery.service(); mux.service(); return predicate()
         return until(check,timeout=18)

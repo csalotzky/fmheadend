@@ -14,6 +14,7 @@ class WorkerReporter:
         self.next_heartbeat = 0
         self.radio_key = None
         self.next_telemetry = 0
+        self.next_diagnostic = 0
 
     def poll(self, force=False):
         p = self.pipeline
@@ -35,10 +36,16 @@ class WorkerReporter:
         fallback = p.snapshot() if revision is None else None
         key = (revision if revision is not None else fallback, p.fatal_error, waiting)
         if force or key != self.key:
-            value = dict(status=fallback if fallback is not None else p.snapshot(),
-                         staging=p.pcm_snapshot()['staging'], fatal_error=p.fatal_error)
+            item_status = getattr(p, 'sequenced_worker_status', None) if self.catalog is not None else None
+            if item_status is not None:
+                status, item_start_ns = item_status()
+            else:
+                status = fallback if fallback is not None else p.snapshot()
+            value = dict(status=status, staging=p.pcm_snapshot()['staging'], fatal_error=p.fatal_error)
             if self.catalog is not None:
                 value['local_waiting'] = waiting
+                if item_status is not None:
+                    value['item_start_ns'] = item_start_ns
             self.emit('status', value)
             self.key = key
         if self.output is not None:
@@ -46,14 +53,52 @@ class WorkerReporter:
             if changes is not None:
                 self.emit('direct_state', changes)
         now = self.clock()
+        diagnostics = getattr(p, 'diagnostic_events', None)
+        if diagnostics is not None and now >= self.next_diagnostic:
+            self.next_diagnostic = now + 1
+            event = diagnostics.poll()
+            if event is not None:
+                self.emit('diagnostic', event)
         if now >= self.next_heartbeat:
-            self.emit('heartbeat', self.output.heartbeat() if self.output is not None else {})
+            heartbeat = self.output.heartbeat() if self.output is not None else {}
+            health = getattr(p, 'native_health', None)
+            if health is not None:
+                heartbeat['health'] = health.snapshot()
+            idle_at = getattr(p, 'network_idle_at', 0.0)
+            if idle_at:
+                heartbeat['network_idle_at'] = idle_at
+            alsa_retry = getattr(p, 'alsa_retry', None)
+            if alsa_retry is not None:
+                heartbeat['alsa_retry'] = alsa_retry
+            self.emit('heartbeat', heartbeat)
             self.next_heartbeat = now + 1.0
 
 
 def accept_report(parent, kind, value):
     now = time.monotonic()
     if kind == 'heartbeat':
+        health=value.get('health')
+        health_present = 'health' in value
+        parent._http_retry_valid_at=None
+        if 'health' in value:
+            value = {k:v for k,v in value.items() if k != 'health'}
+        if 'network_idle_at' in value:
+            value = dict(value)
+            idle_at = value.pop('network_idle_at')
+            if (parent.source.type not in ('UDP', 'RTP')
+                    or type(idle_at) not in (int, float) or not 0 < idle_at <= now):
+                raise ProtocolError('Invalid network idle observation')
+        else:
+            idle_at = 0.0
+        alsa_retry = None
+        if 'alsa_retry' in value:
+            value = dict(value)
+            marker = value.pop('alsa_retry')
+            if (parent.source.type != 'ALSA' or not isinstance(marker, (list, tuple))
+                    or len(marker) != 2 or any(type(at) not in (int, float) for at in marker)
+                    or not 0 < marker[0] <= now or not marker[0] < marker[1] <= marker[0] + 30):
+                raise ProtocolError('Invalid ALSA retry observation')
+            alsa_retry = tuple(marker)
         if parent.direct_runtime is None:
             if value:
                 raise ProtocolError('Unexpected PCM1 heartbeat fields')
@@ -74,11 +119,22 @@ def accept_report(parent, kind, value):
                     raise ProtocolError('Invalid PCM clock')
                 parent._last_pcm = value['produced_ns']/1e9
                 parent._has_pcm = True
+                if getattr(parent, '_diagnostic_outage_since', None) is not None:
+                    from .diagnostic_events import audio_recovered
+                    audio_recovered(parent)
                 if parent.reconnect or (parent._prepared and parent._probe.ok):
                     parent._ready.set()
             parent.direct_progress = dict(previous, **value)
         parent._last_status = now
-        return
+        from .native_health import accept
+        valid_health = accept(parent, health, now)
+        if idle_at:
+            parent.network_idle_at = max(parent.network_idle_at, idle_at)
+        if alsa_retry is not None and (parent.alsa_retry is None or alsa_retry[0] > parent.alsa_retry[0]):
+            parent.alsa_retry = alsa_retry
+        # Legacy/injected decoders may omit native health. Malformed optional
+        # health remains shadow data, but cannot establish the first handshake.
+        return not health_present or valid_health
     if parent.direct_runtime is None or set(value) != {'probe','metadata','bindings','connections','consumers','writer'}:
         raise ProtocolError('Invalid direct state')
     for field in ('connections','consumers','writer'):

@@ -4,6 +4,7 @@ import sys
 import signal
 import subprocess
 import time
+from threading import Event
 
 import pytest
 
@@ -65,7 +66,7 @@ def test_native_podcast_recovery(gst, tmp_path, fault, http_files):
     with server({'A': wav(tmp_path/'a.wav', 3), 'B': wav(tmp_path/'b.wav', 3)}) as (url, state):
         db = Database(tmp_path/'recover.db')
         manager = SourceManager(db, pipeline_factory=RecordingWorker, profile_files=profile_store(tmp_path))
-        manager.worker_recovery.policy = RecoveryPolicy(pcm_timeout=1, buffering_timeout=3, backoff=.05)
+        manager.worker_recovery.policy = RecoveryPolicy(pcm_timeout=1, buffering_timeout=3)
         podcast = source(db, url)
         sibling_source = db.save('sources', InputSourceConfig(name='local sibling', type='LOCAL',
             config={'mode': 'folder', 'path': str(tmp_path)}))
@@ -149,11 +150,20 @@ def test_native_empty_wait_refresh_and_source_apply(gst, tmp_path):
     from fmheadendd.sources.worker_recovery import RecoveryPolicy
     from fmheadendd.tests.profile_support import profile_store
     require(gst, 'playbin3', 'wavparse')
+    advance_feed_clock = Event()
+
+    class ClockedPipeline(ProcessPipeline):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            service = self._podcast_service
+            interval = service.config.refresh_interval_minutes * 60
+            service.clock = lambda: time.monotonic() + (interval if advance_feed_clock.is_set() else 0)
+
     with server({'A': wav(tmp_path/'a.wav', 3)}) as (url, state):
         state['names'] = []
         db = Database(tmp_path/'empty.db')
-        m = SourceManager(db, pipeline_factory=ProcessPipeline, profile_files=profile_store(tmp_path))
-        m.worker_recovery.policy = RecoveryPolicy(pcm_timeout=.5, buffering_timeout=2, backoff=0)
+        m = SourceManager(db, pipeline_factory=ClockedPipeline, profile_files=profile_store(tmp_path))
+        m.worker_recovery.policy = RecoveryPolicy(pcm_timeout=.5, buffering_timeout=2)
         s = source(db, url)
         owners = []
         try:
@@ -166,12 +176,13 @@ def test_native_empty_wait_refresh_and_source_apply(gst, tmp_path):
                 m.worker_recovery.service()
                 assert m.pipelines[s.id] is p and not m.worker_recovery.pending
                 time.sleep(.05)
+            service = p._podcast_service
+            until(lambda: service._next_refresh > time.monotonic())
             state['names'] = ['A']
-            p._podcast_service._next_refresh = 0
-            p._podcast_service._io_ready.set()
+            advance_feed_clock.set()
+            service.request_snapshot()
             until(lambda: p.output.read(0), timeout=15)
             assert m.pipelines[s.id] is p
-            service = p._podcast_service
             changed = s.model_copy(update={'config': dict(s.config, schedule_mode='SMART')})
             m._restart_audio(changed)
             def applied():

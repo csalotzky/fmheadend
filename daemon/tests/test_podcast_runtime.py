@@ -287,6 +287,7 @@ def test_missing_show_and_clean_eos_metadata(tmp_path):
         assert p.snapshot()['artist'] is None
         assert p.snapshot()['stream_title']==p.snapshot()['title']
         p._pipeline=Mock(); p._bus=Mock(); p.Gst.State=SimpleNamespace(NULL='NULL',PLAYING='PLAYING')
+        p.Gst.StateChangeReturn=SimpleNamespace(FAILURE='FAILURE')
         p._local_resume(failed=False)
         assert p.snapshot()['stream_title'] is None
         event(p,'start'); r.p.pcm(4); p._publish_local_metadata()

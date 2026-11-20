@@ -208,7 +208,7 @@ def test_shared_recovery_profile_apply_stop_and_sibling(simulated_process, tmp_p
     monkeypatch.setattr('fmheadendd.sources.podcast_service.shared_parser', lambda: parse_feed)
     db = Database(tmp_path/'managed.db')
     manager = SourceManager(db, pipeline_factory=ProcessPipeline, profile_files=profile_store(tmp_path))
-    manager.worker_recovery.policy = RecoveryPolicy(backoff=0)
+    manager.worker_recovery.policy = RecoveryPolicy()
     podcast = db.save('sources', InputSourceConfig(name='pod', type='PODCAST',
         config={'feeds': [{'url': URL}]}))
     http = db.save('sources', InputSourceConfig(name='http', type='HTTP', config={'uri': 'http://localhost/a'}))

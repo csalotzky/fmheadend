@@ -56,7 +56,7 @@ def test_native_direct_recovery_switch_apply(gst, http_files, tmp_path, fault):
         'config':{'uri':url+'/direct.wav'},'use_default_audio_profile':False,
         'audio_profile_id':saved.path})) for n in ('victim','next','sibling')]
     a,b,sibling=specs; mux=DirectMux(m,tmp_path); retired=[]
-    m.worker_recovery.policy=RecoveryPolicy(pcm_timeout=5,buffering_timeout=10,backoff=.05)
+    m.worker_recovery.policy=RecoveryPolicy(pcm_timeout=5,buffering_timeout=10)
     def step(predicate):
         def check():
             m.worker_recovery.service(); mux.service()

@@ -15,6 +15,7 @@ from ..models.configuration import SourceType, SourceTestResult, LocalConfig
 from .local_playback import LocalPlayback, LocalPlaybackError
 from .alsa_capture import link_alsa_capture
 from .http_recovery import HttpUrlRecovery
+from .native_health import NativeHealth, observed
 from .output import (PCM_CAPS, PcmQueue, PcmOutput, pcm_capacity_bytes,
                      DEFAULT_STAGING_BUFFER_MS, DEFAULT_CONSUMER_BUFFER_MS, DEFAULT_STAGING_MAX_AGE_MS)
 from .dsp import PROCESSING_CAPS
@@ -30,6 +31,10 @@ class PipelineConfigurationError(DependencyUnavailable):
 
 class MissingDecoderError(PipelineConfigurationError, SourceUnavailable):
     """Input format cannot be decoded; retain the permanent retry policy."""
+
+
+class AlsaDeviceUnavailable(SourceUnavailable):
+    """The capture element completed a transient device open/read failure."""
 
 
 def caps_structure(caps, index=0):
@@ -136,6 +141,9 @@ class GstPipeline:
         self._pending_metadata = None
         self._metadata_dirty = False
         self._uri_change_lock = threading.Lock()
+        self.native_health = NativeHealth()
+        from .diagnostic_events import DiagnosticEvents
+        self.diagnostic_events = DiagnosticEvents()
         self.source = source
         self.radio_url = HttpUrlRecovery(source.config['uri']) if source.type == SourceType.HTTP and source.config.get('radio_browser_uuid') and reconnect else None
         self._http_uri = source.config.get('uri')
@@ -168,6 +176,7 @@ class GstPipeline:
         self._peak_state = None
         self._peak_seqnum = None
         self._snapshot_revision = 0
+        self._item_start_ns = 0
         self._snapshot = {"state": "IDLE", "codec": None, "input_sample_rate": None,
                           "input_channels": None, "bitrate_bps": None, "stream_title": None,
                           "artist": None, "title": None, "output_caps": None,
@@ -303,6 +312,10 @@ class GstPipeline:
         with self._lock:
             return dict(self._snapshot)
 
+    def sequenced_worker_status(self):
+        with self._lock:
+            return dict(self._snapshot), self._item_start_ns
+
     def current_stream_title(self):
         """Read the immutable text from the latest published metadata."""
         with self._lock:
@@ -337,10 +350,13 @@ class GstPipeline:
     def pcm_snapshot(self):
         return dict(staging=self.staging.snapshot(), consumers=self.output.snapshot())
 
-    def _update(self, **values):
+    def _update(self, *, item_start_ns=None, **values):
         with self._lock:
-            if any(self._snapshot.get(k) != v for k, v in values.items()):
+            item_changed = item_start_ns is not None and item_start_ns != self._item_start_ns
+            if item_changed or any(self._snapshot.get(k) != v for k, v in values.items()):
                 self._snapshot.update(values)
+                if item_changed:
+                    self._item_start_ns = item_start_ns
                 self._snapshot_revision += 1
 
     def start(self):
@@ -377,6 +393,23 @@ class GstPipeline:
         self._startup_pending = False
         log.info('source %s LOCAL startup ready: decoded PCM available', getattr(self.source, 'id', 'probe'))
 
+    def _observe(self, lane, kind):
+        health = getattr(self, 'native_health', None)
+        return health.operation(lane, kind) if health is not None else nullcontext()
+
+    def _native_state(self, state):
+        with self._observe('source', 'state') as outcome:
+            result = self._pipeline.set_state(state)
+            if outcome is not None:
+                name = getattr(result, 'value_nick', 'unknown')
+                outcome[0] = name if name in ('success', 'async', 'failure', 'no-preroll') else 'unknown'
+            return result
+
+    def _native_uri(self, uri):
+        with self._observe('source', 'uri'):
+            return self._pipeline.set_property('uri', uri)
+
+    @observed('control', 'stop')
     def stop(self):
         if self.source.type == SourceType.PODCAST:
             # Serialize stop intent with buffering-driven state changes.
@@ -454,6 +487,7 @@ class GstPipeline:
         except Exception as exc:
             self._callback_error = str(exc)
 
+    @observed('source', 'build')
     def _build(self):
         self._invalidate_telemetry(discard=True)
         Gst = self.Gst
@@ -477,7 +511,7 @@ class GstPipeline:
             flags = 2 | (0x100 if self.source.type == SourceType.PODCAST else 0)
             self._pipeline.set_property('flags', flags)  # Audio, optional buffering; no soft volume.
             if uri is not None:
-                self._pipeline.set_property('uri', uri)
+                self._native_uri(uri)
             self._pipeline.connect('about-to-finish', self._local_handoff)
             self._pipeline.connect('source-setup', self._source_setup)
             self._element_parent = Gst.Bin.new(None)
@@ -531,6 +565,14 @@ class GstPipeline:
         else:
             src = self._make("udpsrc", address=config.get("multicast_group") or config["host"], port=config["port"])
             self._overrides(src, "source")
+            if self.reconnect:
+                # udpsrc posts a timeout only from its native receive loop.
+                # Keep the observation interval below the child audio deadline,
+                # including when a source override disables or lengthens it.
+                interval = int(min(2, self.timeout_s / 2) * 1e9)
+                configured = src.get_property("timeout")
+                src.set_property("timeout", min(configured or interval, interval))
+                self._network_receiver = src
             if self.source.type == SourceType.UDP:
                 src.set_property("caps", Gst.Caps.from_string(
                     f"audio/x-raw,format={config['format']},rate={config['sample_rate']},channels={config['channels']},layout=interleaved"))
@@ -584,13 +626,14 @@ class GstPipeline:
             self._metadata_dirty = True
         return self.Gst.PadProbeReturn.OK
 
+    @observed('source', 'resume')
     def _local_resume(self, *, failed):
         # Exceptional recovery only. Keep the same native elements, DSP chain,
         # PcmOutput and consumers; normal handoff never changes pipeline state.
         self.local_wait_until = 0.0
         self._invalidate_telemetry()
         with self._uri_change_lock:
-            self._pipeline.set_state(self.Gst.State.NULL)
+            self._native_state(self.Gst.State.NULL)
             self._buffering_paused = False
             self._bus.set_flushing(True)
             self._bus.set_flushing(False)
@@ -601,11 +644,16 @@ class GstPipeline:
             self._last_sample = 0
             self._media_idle = uri is None
             if self._media_idle:
-                self._update(state='ERROR', last_error=self._local.error)
+                self._update(state='ERROR', last_error=self._local.error, item_start_ns=0)
             else:
-                self._pipeline.set_property('uri', uri)
-                self._pipeline.set_state(self.Gst.State.PLAYING)
+                self._native_uri(uri)
+                item_start = time.monotonic_ns()
+                if self._native_state(self.Gst.State.PLAYING) != self.Gst.StateChangeReturn.FAILURE:
+                    # The supervisor measures startup from the last real PCM.
+                    # Publish the new state only once the native start returns.
+                    self._update(state='CONNECTING', last_error=None, item_start_ns=item_start)
 
+    @observed('source', 'buffering')
     def _buffering(self, percent):
         if self.source.type != SourceType.PODCAST:
             self._update(state="BUFFERING" if percent < 100 else "CONNECTING")
@@ -619,7 +667,7 @@ class GstPipeline:
             if paused == self._buffering_paused:
                 return
             state = self.Gst.State.PAUSED if paused else self.Gst.State.PLAYING
-            if self._pipeline.set_state(state) == self.Gst.StateChangeReturn.FAILURE:
+            if self._native_state(state) == self.Gst.StateChangeReturn.FAILURE:
                 raise DependencyUnavailable("GStreamer refused Podcast buffering state")
             self._buffering_paused = paused
             self._update(state="BUFFERING" if paused else "CONNECTING")
@@ -727,7 +775,13 @@ class GstPipeline:
         self._update(**self._formatted_metadata(self._tag_values(tags), self.snapshot()))
 
     def _bus_failure(self, message):
+        if getattr(self, 'native_health', None) is not None:
+            self.native_health.bus = (self.native_health.bus[0]+1, time.monotonic())
         error, debug = message.parse_error()
+        import re
+        code = re.search(r'\((\d{3})\)', debug or '')
+        self.diagnostic_events.error('http_' + code[1] if code else 'gstreamer_error', error.message)
+        self._attempt_error_reported = True
         log.warning('source %s GStreamer error: element=%s domain=%s code=%s message=%s debug=%s',
                     getattr(self.source, 'id', 'probe'), getattr(message, 'src', None),
                     getattr(error, 'domain', None), getattr(error, 'code', None), error.message, debug)
@@ -742,6 +796,11 @@ class GstPipeline:
             detail = f"ALSA capture {self.source.config['device']}: {error.message}"
             if self.source.config['device'].startswith('hw:'):
                 detail += ' Raw hw: capture requires a supported 48 kHz mono/stereo format; use plughw: for ALSA conversion.'
+            resource = Gst.ResourceError
+            if message.src == self._alsa_source and any(
+                    error.matches(resource.quark(), code)
+                    for code in (resource.NOT_FOUND, resource.BUSY, resource.OPEN_READ, resource.READ)):
+                return AlsaDeviceUnavailable(detail)
             return (SourceUnavailable if external else DependencyUnavailable)(detail)
         return (SourceUnavailable if external else DependencyUnavailable)(error.message)
 
@@ -752,6 +811,9 @@ class GstPipeline:
                         getattr(self.source, 'id', 'probe'), structure.to_string())
 
     def _attempt(self):
+        if getattr(self, 'native_health', None) is not None:
+            self.native_health.begin_attempt()
+        self._attempt_error_reported = False
         if self.radio_url is not None:
             self._http_uri = self.radio_url.begin_attempt()
         Gst = self.Gst
@@ -760,8 +822,10 @@ class GstPipeline:
         with self._lock:
             self._station_name = None
         self._last_sample = 0
+        self.network_idle_at = 0.0
+        self._network_receiver = None
         self._buffering_paused = False
-        self._update(state="CONNECTING", stream_title=None, artist=None, title=None,
+        self._update(state="CONNECTING", stream_title=None, artist=None, title=None, item_start_ns=0,
                      codec=None, bitrate_bps=None, input_sample_rate=None, input_channels=None, output_caps=None)
         try:
             self._build()
@@ -769,7 +833,7 @@ class GstPipeline:
             raise
         except Exception as exc:
             raise PipelineConfigurationError(str(exc)) from exc
-        state_change = self._pipeline.set_state(Gst.State.NULL if self._media_idle else Gst.State.PLAYING)
+        state_change = self._native_state(Gst.State.NULL if self._media_idle else Gst.State.PLAYING)
         if self._callback_error:
             raise PipelineConfigurationError(self._callback_error)
         if state_change == Gst.StateChangeReturn.FAILURE:
@@ -795,6 +859,8 @@ class GstPipeline:
         observed_input_caps = None
         input_fields = {}
         while not self._stop.is_set():
+            if getattr(self, 'native_health', None) is not None:
+                self.native_health.checkpoint()
             if self.radio_url is not None and self.radio_url.cancelled():
                 raise DependencyUnavailable('Radio Browser candidate cancelled by a configuration change')
             # Clear before inspecting work, so a concurrent callback cannot be
@@ -837,6 +903,12 @@ class GstPipeline:
                         break
                     raise SourceUnavailable("Source reached end of stream")
                 if message.type == Gst.MessageType.ELEMENT:
+                    if self._network_receiver is not None and message.src == self._network_receiver:
+                        structure = message.get_structure()
+                        if structure is not None and structure.has_name("GstUDPSrcTimeout"):
+                            self.network_idle_at = time.monotonic()
+                            self._update(state="CONNECTING", last_error=None)
+                            continue
                     self._missing_plugin_message(message)
                     self._peak_message(message)
                     self._station_headers(message)
@@ -846,7 +918,8 @@ class GstPipeline:
                     self._buffering(message.parse_buffering())
             if self._callback_error:
                 raise PipelineConfigurationError(self._callback_error)
-            if time.monotonic() - (self._last_sample or started) > self.timeout_s:
+            audio_progress = max(self._last_sample or started, self.network_idle_at)
+            if time.monotonic() - audio_progress > self.timeout_s:
                 if self._local is not None:
                     log.warning('Sequenced media item stalled; skipping')
                     self._local_resume(failed=True)
@@ -858,6 +931,10 @@ class GstPipeline:
                 if data is None:
                     break
                 self.output.publish(data)
+                # Forward the previous item's queued tail without using it to
+                # mark the newly selected item as RUNNING.
+                if self._local is not None and not self._last_sample:
+                    continue
                 if self.radio_url is not None:
                     self.radio_url.pcm()
                 if running_since is None:
@@ -896,7 +973,7 @@ class GstPipeline:
             # PCM and stop wake immediately. Avoid 100 Hz empty-bus polling
             # between 21-43 ms decoded blocks; this ceiling only bounds bus
             # observation when no PCM arrives, never the audio/stall deadline.
-            remaining = self.timeout_s - (time.monotonic() - (self._last_sample or started))
+            remaining = self.timeout_s - (time.monotonic() - max(self._last_sample or started, self.network_idle_at))
             self._audio_ready.wait(self._telemetry_wait(min(0.05, max(0.0, remaining))))
 
     def _run(self):
@@ -904,9 +981,14 @@ class GstPipeline:
         try:
             self.Gst = load_gst()
             while not self._stop.is_set():
+                alsa_unavailable = False
+                alsa_closed = False
                 try:
                     self._attempt()
                 except Exception as exc:
+                    alsa_unavailable = isinstance(exc, AlsaDeviceUnavailable)
+                    if not getattr(self, '_attempt_error_reported', False):
+                        self.diagnostic_events.error('media_error', str(exc))
                     self._failure = exc if isinstance(exc, DependencyUnavailable) else PipelineConfigurationError(str(exc))
                     trial = self.radio_url.observe()[1] if self.radio_url is not None else None
                     candidate = trial is not None and trial['state'] in ('trying', 'pcm')
@@ -925,8 +1007,10 @@ class GstPipeline:
                         self.radio_url.failed()
                     self._invalidate_telemetry(discard=True)
                     if self._pipeline is not None:
-                        with self._uri_change_lock:
-                            self._pipeline.set_state(self.Gst.State.NULL)
+                        with self._observe('source', 'teardown'), self._uri_change_lock:
+                            closed = self._native_state(self.Gst.State.NULL)
+                        if alsa_unavailable:
+                            alsa_closed = closed == self.Gst.StateChangeReturn.SUCCESS
                         self._pipeline = None
                     if self._local is not None:
                         self._local.close()
@@ -937,9 +1021,17 @@ class GstPipeline:
                 if self._stop.is_set() or not self.reconnect or self.fatal_error:
                     break
                 delay = self._backoff.next_delay()
+                if alsa_closed:
+                    completed = time.monotonic()
+                    self.alsa_retry = (completed, completed + delay)
                 if self.radio_url is not None:
                     self.radio_url.retry(self._backoff.attempt)
                 self._update(state="CONNECTING", stream_title=None, artist=None, title=None)
+                if getattr(self, 'native_health', None) is not None:
+                    if self.source.type == SourceType.HTTP:
+                        entered=time.monotonic()
+                        self.native_health.http_retry=(self.native_health.attempt,entered,entered+delay)
+                    self.native_health.checkpoint('backoff', time.monotonic()+delay, force=True)
                 if self._stop.wait(delay):
                     break
                 self._update(reconnect_count=self.snapshot()["reconnect_count"] + 1)
@@ -949,6 +1041,8 @@ class GstPipeline:
             self._update(state="ERROR", last_error=str(exc), error_scope='INTERNAL')
             log.exception('source %s internal worker failure', getattr(self.source, 'id', 'probe'))
         finally:
+            if getattr(self, 'native_health', None) is not None:
+                self.native_health.checkpoint('finished', force=True)
             self._finished.set()
 
     def probe_result(self):

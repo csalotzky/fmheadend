@@ -45,7 +45,10 @@ def test_private_network_selection_and_defaults(monkeypatch,enabled):
 @pytest.mark.parametrize('age,status_age,restart',[(89,0,False),(91,0,True),(1,6,True)])
 def test_direct_network_keeps_production_idle_and_status_deadlines(monkeypatch,tmp_path,kind,age,status_age,restart):
     monkeypatch.setattr(sys,'platform','linux')
-    p=DirectHttpFactory(tmp_path,network=True)(source(kind));now=time.monotonic()
+    p=DirectHttpFactory(tmp_path,network=True)(source(kind))
+    p._accept('control', envelope(p.source_id, p.generation, 1, 'heartbeat',
+        {'blocks':0, 'bytes':0, 'produced_ns':0, 'writer_at':time.monotonic()}))
+    now=time.monotonic()
     p._last_pcm=now-age;p._last_status=now-status_age;p._status['state']='RUNNING'
     m=SimpleNamespace(pipelines={p.source_id:p},consumers={p.source_id:{0}},clock=lambda:now)
     recovery=WorkerRecovery(m);recovery.request=Mock();recovery.service()

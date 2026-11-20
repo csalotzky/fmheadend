@@ -34,7 +34,7 @@ def test_native_recovery_shared_pcm_sibling_apply_stop(gst, http_files, tmp_path
     db = Database(tmp_path / 'native-recovery.db')
     m = SourceManager(db, pipeline_factory=NativeStallWorker, profile_files=profile_store(tmp_path))
     m.worker_recovery.policy = RecoveryPolicy(pcm_timeout=1, buffering_timeout=3,
-                                               status_timeout=2, backoff=0.05)
+                                               status_timeout=2)
     a, b = [db.save('sources', InputSourceConfig(name=n, type='HTTP',
         config={'uri': url + '/tone.wav'})) for n in ('victim', 'sibling')]
     retired = []

@@ -106,7 +106,7 @@ def test_native_idle_resume_recovery_rebind(gst,http_files,tmp_path,mode,fault):
         sender.set_state(gst.State.PAUSED);idle(2)
         sender.set_state(gst.State.PLAYING)
         until(lambda:old.output.read(0),timeout=15)
-        m.worker_recovery.policy=RecoveryPolicy(network_idle_timeout=3,backoff=.05)
+        m.worker_recovery.policy=RecoveryPolicy(network_idle_timeout=3)
         before=old.recovery_observation()[0]
         os.kill(old.process.pid,signal.SIGKILL if fault=='crash' else signal.SIGUSR1)
         if fault=='native-stall':until(lambda:old.recovery_observation()[0]>before)

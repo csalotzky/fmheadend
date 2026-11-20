@@ -61,7 +61,7 @@ def test_four_independent_workers(gst,http_files,tmp_path,fault):
         assert all(d['status']==d['direct_state']==d['direct_progress']==0 and d['heartbeat']>=2 for d in deltas)
         # One native failure: all other process identities and PCM keep going.
         old=workers[1];stable=old.output;before=list(sinks.counts)
-        m.worker_recovery.policy=RecoveryPolicy(pcm_timeout=5,buffering_timeout=10,backoff=.05)
+        m.worker_recovery.policy=RecoveryPolicy(pcm_timeout=5,buffering_timeout=10)
         status_at=old.recovery_observation()[0]
         os.kill(old.process.pid,signal.SIGKILL if fault=='crash' else signal.SIGUSR1)
         if fault=='native-stall':step(lambda:old.recovery_observation()[0]>status_at)

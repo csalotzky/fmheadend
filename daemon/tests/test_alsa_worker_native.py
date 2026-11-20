@@ -67,7 +67,7 @@ def test_native_capture_recovery(gst, tmp_path, http_files, fault):
     wav(folder/'sibling.wav', seconds=60)
     db = Database(tmp_path/'capture.db')
     m = SourceManager(db, pipeline_factory=RecordingWorker, profile_files=profile_store(tmp_path))
-    m.worker_recovery.policy = RecoveryPolicy(pcm_timeout=1, buffering_timeout=3, backoff=.05)
+    m.worker_recovery.policy = RecoveryPolicy(pcm_timeout=1, buffering_timeout=3)
     a = db.save('sources', InputSourceConfig(name='capture', type='ALSA', config={'device':'null'}))
     b = db.save('sources', InputSourceConfig(name='http', type='HTTP', config={'uri':url+'/sibling.wav'}))
     owners = []

@@ -122,6 +122,8 @@ def serve(control, pcm, pipeline_factory=None):
     if telemetry_configured:
         options = dict(options, telemetry_configured=True)
     pipeline = pipeline_factory(source, profile=profile, output=output, **options)
+    if getattr(pipeline, 'native_health', None) is not None:
+        pipeline.native_health.generation = generation
     output.pipeline = pipeline
     prepared = threading.Event()
     shutdown = threading.Event()
@@ -203,6 +205,11 @@ def serve(control, pcm, pipeline_factory=None):
         if command['sequence'] <= request:
             raise ProtocolError('Invalid lifecycle command')
         request = command['sequence']
+        if command['kind'] == 'source_progress_request' and not shutdown.is_set():
+            health = getattr(pipeline, 'native_health', None)
+            if health is not None:
+                health.receive_probe(command['payload'])
+            continue
         if command['kind'] == 'radio_command' and not shutdown.is_set():
             from .worker_services import radio_command
             radio_command(pipeline, command['payload'])
@@ -231,6 +238,8 @@ def serve(control, pcm, pipeline_factory=None):
         if command['kind'] != 'shutdown' or command['payload']:
             raise ProtocolError('Invalid lifecycle command')
         event('accepted', {'request': request})
+        if getattr(pipeline, 'native_health', None) is not None:
+            pipeline.native_health.invalidate_probe()
         if direct_runtime is not None:
             output.revoke()
         shutdown.set()

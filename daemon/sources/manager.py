@@ -413,6 +413,9 @@ class SourceManager:
 
     def close(self):
         self.worker_recovery.pending.clear()
+        self.worker_recovery.stability.clear()
+        self.worker_recovery.attempts.clear()
+        self.worker_recovery._reap_warning.clear()
         self.radio_recovery.close()
         for pipeline in list(self.pipelines.values()):
             try:

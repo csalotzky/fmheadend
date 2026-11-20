@@ -24,6 +24,9 @@ from .output import (PCM_CAPS, PcmOutput, DEFAULT_STAGING_BUFFER_MS,
 log = logging.getLogger(__name__)
 METADATA = ('stream_title', 'title', 'artist', 'codec', 'bitrate_bps',
             'input_sample_rate', 'input_channels', 'output_caps')
+# Cold Python/model initialization precedes the first control report. This
+# absolute, one-shot allowance is separate from runtime status supervision.
+STARTUP_TIMEOUT = 12.0
 
 # Strong references survive SourceManager.close() clearing its registry. These
 # are cleanup owners, not a restart supervisor. Only completed owners leave.
@@ -127,6 +130,9 @@ class ProcessPipeline:
         self._fatal_error = None
         self._prepared = False
         self._has_pcm = False
+        self._http_retry_evidence = None
+        self._http_retry_valid_at = None
+        self._http_pcm_produced_at = 0.0
         self._pcm_error = None
         self._sequences = {'control': 0, 'pcm': 0}
         self.control_counts = {}
@@ -137,10 +143,16 @@ class ProcessPipeline:
         self.stale_pcm = 0
         self.accepted_request = 0
         self.managed_recovery = False
-        self.recovery_exhausted = False
         self._last_status = time.monotonic()
         self._last_pcm = self._last_status
+        self.network_idle_at = 0.0
+        self.alsa_retry = None
+        self._startup_deadline = None
+        self._initial_liveness_at = None
+        self._startup_expired = False
         self._local_waiting = False
+        self._item_start_ns = 0
+        self._item_pcm_produced_ns = 0
         self._podcast_service = podcast_service
         self._podcast_database_path = podcast_database_path
         self._service_cleanup = None
@@ -164,9 +176,65 @@ class ProcessPipeline:
         with self._lock:
             return self._local_waiting
 
+    def alsa_retry_allows_wait(self, clock, buffering_timeout):
+        """Only a completed device retry extends the PCM decision."""
+        with self._lock:
+            if (self.alsa_retry is None or not self.reconnect or self._stop.is_set()
+                    or self._fatal_error or self._pcm_error or self._done.is_set()):
+                return False
+            completed, due = self.alsa_retry
+            # A newer PCM sample consumes the marker. No update can move the
+            # expiry for this completed cycle, including repeated heartbeats.
+            if self._has_pcm and self._last_pcm > completed:
+                return False
+            return completed <= clock() < due + buffering_timeout
+
     def recovery_observation(self):
         with self._lock:
-            return self._last_status, self._last_pcm, self._status['state'], self._fatal_error, self._done.is_set() and self._service_done.is_set()
+            state = self._status['state']
+            if state == 'RUNNING' and self._item_start_ns:
+                produced = (self._item_pcm_produced_ns if self.direct_runtime is None
+                            else self.direct_progress.get('produced_ns', 0))
+                if produced < self._item_start_ns:
+                    # RUNNING can arrive before the matching PCM or direct heartbeat.
+                    # Keep the existing startup limit on the unchanged PCM clock.
+                    state = 'CONNECTING'
+            return self._last_status, self._last_pcm, state, self._fatal_error, self._done.is_set() and self._service_done.is_set()
+
+    @property
+    def liveness_phase(self):
+        with self._lock:
+            return 'STARTUP' if self._initial_liveness_at is None else 'STEADY'
+
+    def _startup_timed_out_locked(self, now):
+        if (self._initial_liveness_at is None and self._startup_deadline is not None
+                and now >= self._startup_deadline):
+            self._startup_expired = True
+        return self._startup_expired
+
+    def status_timeout_reason(self, clock, runtime_timeout):
+        """Atomic STARTUP/STEADY decision; never acquire a native lock.
+
+        Latch startup expiry under the report lock so a late report cannot race
+        retirement and turn this generation back into a healthy one.
+        """
+        with self._lock:
+            now = clock()
+            if self._stop.is_set():
+                return None
+            if self._startup_timed_out_locked(now):
+                return 'Worker startup timeout'
+            if self._initial_liveness_at is not None and now-self._last_status > runtime_timeout:
+                return 'Worker status timeout'
+            return None
+
+    def _establish_liveness_locked(self, received_at):
+        if self._initial_liveness_at is None:
+            self._initial_liveness_at = received_at
+            started = (self._startup_deadline-STARTUP_TIMEOUT
+                       if self._startup_deadline is not None else received_at)
+            log.info('source=%s generation=%s category=worker_liveness phase=STEADY startup_elapsed_s=%.3f',
+                     self.source_id, self.generation, received_at-started)
 
     def fresh(self):
         from ..models.audio_profile_file import AudioProfileFile
@@ -176,6 +244,7 @@ class ProcessPipeline:
             podcast_service=self._podcast_service, podcast_database_path=self._podcast_database_path,
             direct_runtime=self.direct_runtime, telemetry_configured=self.telemetry_configured, **self._create['options'])
         result.audio_profile_id = self.audio_profile_id
+        result._diagnostic_outage_since = getattr(self, '_diagnostic_outage_since', None)
         return result
 
     @property
@@ -235,6 +304,8 @@ class ProcessPipeline:
         if self._thread is None:
             with self._lock:
                 self._status['state'] = 'CONNECTING'
+                if self._startup_deadline is None:
+                    self._startup_deadline = time.monotonic() + STARTUP_TIMEOUT
             # A late exit must retain its owner without holding interpreter exit
             # hostage. The registry and bounded atexit hook cover graceful exit.
             self._thread = threading.Thread(target=self._run, daemon=True,
@@ -261,7 +332,7 @@ class ProcessPipeline:
         self.check_startup()
 
     def check_startup(self):
-        if self.managed_recovery and not self.recovery_exhausted and (self.fatal_error or self._stop.is_set()):
+        if self.managed_recovery and (self.fatal_error or self._stop.is_set()):
             raise SourcePending('Audio worker recovery pending')
         if self.fatal_error or self._done.is_set():
             raise SourceStartupFailed(self.fatal_error or 'Audio worker exited')
@@ -271,6 +342,12 @@ class ProcessPipeline:
             raise SourcePending('Audio worker preparation pending')
 
     def stop(self, *, retain_service=False):
+        with self._lock:
+            self._http_retry_evidence=None
+            self._source_probe_cancelled = True
+            self._source_probe = None
+            self._source_probe_report = None
+            self._source_probe_sent = None
         if self._podcast_service is not None and not retain_service and self._service_cleanup is None:
             self._service_done.clear()
             def cleanup():
@@ -308,6 +385,8 @@ class ProcessPipeline:
             if self._fatal_error:
                 return  # Preserve the original categorized native failure on EOF.
             self._fatal_error = str(message)[:4096]
+            if getattr(self, '_diagnostic_outage_since', None) is None:
+                self._diagnostic_outage_since = time.monotonic()
             self._status = dict(state='ERROR', last_error=self._fatal_error, error_scope='INTERNAL')
             self._probe = SourceTestResult(ok=False, mocked=False, message=self._fatal_error)
             self.output.clear()
@@ -324,6 +403,17 @@ class ProcessPipeline:
             if self._stop.is_set() or self._fatal_error:
                 return
             kind, payload = message['kind'], message['payload']
+            # Arrival is measured under the same lock as the expiry decision.
+            # Only a fully validated status/heartbeat can commit this arrival.
+            if kind in ('status', 'heartbeat'):
+                received_at = time.monotonic()
+                if (self._startup_timed_out_locked(received_at)
+                        and not (kind == 'status' and payload.get('fatal_error') is not None)):
+                    return
+            if kind == 'diagnostic':
+                from .diagnostic_events import accept
+                accept(self, payload)
+                return
             if kind == 'radio_state' and self.radio_url is not None:
                 self.radio_url.update(payload)
                 return
@@ -342,7 +432,9 @@ class ProcessPipeline:
                 self.control_counts[kind] = self.control_counts.get(kind, 0) + 1
             if kind in ('heartbeat', 'direct_state'):
                 from .worker_reporting import accept_report
-                accept_report(self, kind, payload)
+                valid_liveness = accept_report(self, kind, payload)
+                if kind == 'heartbeat' and valid_liveness:
+                    self._establish_liveness_locked(received_at)
                 return
             if kind == 'output_applied' and self.direct_runtime is not None:
                 from .direct_pcm import validate_assignment
@@ -383,12 +475,21 @@ class ProcessPipeline:
                         self._pcm_metadata_key, self._pcm_models = key, (status, probe)
                 for key in METADATA:
                     self._status[key] = getattr(status, key)
-                self._status['state'] = 'RUNNING'
-                self._status['last_error'] = None
+                # A sequenced item's tail can arrive after its successor's
+                # CONNECTING report. Its source thread owns playback state.
+                if self._catalog is None:
+                    self._status['state'] = 'RUNNING'
+                    self._status['last_error'] = None
+                else:
+                    self._item_pcm_produced_ns = max(self._item_pcm_produced_ns, produced)
                 self._probe = probe
                 self.output.publish(pcm)
                 self._last_pcm = time.monotonic()
+                self._http_pcm_produced_at = max(getattr(self,'_http_pcm_produced_at',0),produced/1e9)
                 self._has_pcm = True
+                if getattr(self, '_diagnostic_outage_since', None) is not None:
+                    from .diagnostic_events import audio_recovered
+                    audio_recovered(self)
                 if self.reconnect or (self._prepared and self._probe.ok):
                     self._ready.set()
             elif kind == 'accepted' and set(payload) == {'request'} and type(payload['request']) is int and payload['request'] >= 1:
@@ -399,8 +500,11 @@ class ProcessPipeline:
                     self._ready.set()
             elif kind == ('podcast_played' if self.source.type == 'PODCAST' else 'local_request') and self._catalog is not None:
                 self._catalog.accept(payload)
-            elif kind == 'status' and set(payload) == ({'status', 'staging', 'fatal_error'} |
-                    ({'local_waiting'} if self._catalog is not None else set())):
+            elif kind == 'status' and set(payload) - ({'item_start_ns'} if self._catalog is not None else set()) == (
+                    {'status', 'staging', 'fatal_error'} | ({'local_waiting'} if self._catalog is not None else set())):
+                item_start_ns = payload.get('item_start_ns', 0)
+                if type(item_start_ns) is not int or not 0 <= item_start_ns <= time.monotonic_ns():
+                    raise ProtocolError('Invalid item start timestamp')
                 if self._catalog is not None:
                     if type(payload['local_waiting']) is not bool:
                         raise ProtocolError('Invalid LOCAL waiting state')
@@ -410,14 +514,18 @@ class ProcessPipeline:
                         self._last_pcm = time.monotonic()
                     self._local_waiting = waiting
                 status = InputSourceStatus(source_id=self.source_id, **payload['status']).model_dump(mode='json')
-                self._staging = PcmQueueStatus.model_validate(payload['staging']).model_dump()
+                staging = PcmQueueStatus.model_validate(payload['staging']).model_dump()
+                if payload['fatal_error'] is not None and not isinstance(payload['fatal_error'], str):
+                    raise ProtocolError('Invalid fatal error')
+                self._item_start_ns = item_start_ns
+                self._staging = staging
                 self._last_status = time.monotonic()
+                if not self._startup_expired:
+                    self._establish_liveness_locked(received_at)
                 # Metadata only advances with its corresponding PCM record.
                 for key in ('state', 'last_error', 'error_scope', 'reconnect_count'):
                     self._status[key] = status[key]
                 if payload['fatal_error'] is not None:
-                    if not isinstance(payload['fatal_error'], str):
-                        raise ProtocolError('Invalid fatal error')
                     self._fatal_error = payload['fatal_error'][:4096]
                     self._status = dict(state='ERROR', last_error=self._fatal_error,
                                         error_scope=status['error_scope'])
@@ -498,15 +606,25 @@ class ProcessPipeline:
             child_control.close()
             if child_pcm is not None:
                 child_pcm.close()
-            log.info('audiod source=%s generation=%s pid=%s started', self.source_id, self.generation, self.process.pid)
+            log.info('audiod source=%s generation=%s pid=%s started phase=STARTUP startup_deadline=%s',
+                     self.source_id, self.generation, self.process.pid, self._startup_deadline)
             control.sendall(self._create_packet)
             if pcm is not None:
                 reader = threading.Thread(target=self._read_pcm, args=(pcm,), daemon=True,
                                           name=f'audiod-receive-{self.source_id}')
                 reader.start()
-            deadline = time.monotonic() + self.timeout_s + 1
             request = 1
             while not self._stop.is_set():
+                with self._lock:
+                    probe = getattr(self, '_source_probe', None)
+                    sent = getattr(self, '_source_probe_sent', None)
+                if probe is not None and sent is None:
+                    request += 1
+                    sent_at = time.monotonic()
+                    control.sendall(pack(envelope(self.source_id, self.generation, request, 'source_progress_request', probe)))
+                    with self._lock:
+                        if getattr(self, '_source_probe', None) is probe:
+                            self._source_probe_sent = sent_at
                 with self._lock:
                     telemetry = (self._telemetry_revision, self._telemetry_request)
                 if telemetry[0] != self._telemetry_sent:
@@ -526,8 +644,13 @@ class ProcessPipeline:
                     pcm_error = self._pcm_error
                 if pcm_error and time.monotonic() - pcm_error[0] > 0.3:
                     raise ProtocolError(pcm_error[1])
-                if not self._prepared and time.monotonic() >= deadline:
-                    raise TimeoutError('Audio worker startup deadline expired')
+                with self._lock:
+                    initial = self._initial_liveness_at
+                    startup_expired = self._startup_timed_out_locked(time.monotonic())
+                if startup_expired:
+                    raise TimeoutError('Worker startup timeout')
+                if not self._prepared and initial is not None and time.monotonic() >= initial+self.timeout_s+1:
+                    raise TimeoutError('Audio worker preparation deadline expired')
                 if self.direct_runtime is not None:
                     with self._lock:
                         intents = dict(self._direct_intents)
@@ -611,7 +734,14 @@ class ProcessPipeline:
                 pass
             except Exception as exc:
                 self._fail(f'Audio worker reap error: {exc}')
+                if not getattr(self, '_diagnostic_reap_logged', False):
+                    self._diagnostic_reap_logged = True
+                    from .diagnostic_events import redact
+                    log.error('source=%s generation=%s category=reap_failure reason=%s',
+                              self.source_id, self.generation, redact(exc))
         self._fail('Audio worker survived KILL deadline; cleanup pending, owner retained')
+        log.error('source=%s generation=%s category=reap_failure pid=%s KILL deadline exceeded; owner retained',
+                  self.source_id, self.generation, self.process.pid)
         # Preserve the ordinary graceful protocol first, then retire transport
         # resources before a potentially very long late-exit wait.
         self._close_transport(sockets, reader)

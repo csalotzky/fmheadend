@@ -16,7 +16,7 @@ from fmheadendd.tests.test_audio_worker import simulated_process, source, until,
 def managed(simulated_process, tmp_path):
     db = Database(tmp_path / 'recovery.db')
     m = SourceManager(db, pipeline_factory=ProcessPipeline, profile_files=profile_store(tmp_path))
-    m.worker_recovery.policy = RecoveryPolicy(backoff=0)
+    m.worker_recovery.policy = RecoveryPolicy()
     a, b = [db.save('sources', source(name)) for name in ('one', 'two')]
     for sid, tx in ((a.id, 0), (a.id, 1), (b.id, 2)):
         try:
@@ -79,7 +79,10 @@ def test_status_loss_and_silent_pcm(managed):
     assert m.clock() - pcm_at < 1
     m.worker_recovery.service()
     assert a.id not in m.worker_recovery.pending
-    old.recovery_observation = lambda: (m.clock()-6, m.clock(), 'RUNNING', None, False)
+    # The phase-aware status decision now reads the adapter under its report
+    # lock; make the actual accepted-report clock stale, not only a tuple stub.
+    with old._lock:
+        old._last_status = m.clock()-6
     m.worker_recovery.service()
     assert a.id in m.worker_recovery.pending
 
@@ -112,7 +115,7 @@ def test_web_control_and_rf_unchanged_during_recovery(simulated_process, tmp_pat
         executor = api.app.state.control.executor
         sid = api.post('/api/v1/sources', json=source().model_dump(mode='json')).json()['id']
         def begin():
-            m.worker_recovery.policy = RecoveryPolicy(backoff=0)
+            m.worker_recovery.policy = RecoveryPolicy()
             try:
                 m.acquire(sid, 0)
             except SourcePending:
@@ -137,18 +140,18 @@ def test_web_control_and_rf_unchanged_during_recovery(simulated_process, tmp_pat
         until(lambda: sid not in m.pipelines)
 
 
-def test_backoff_budget_and_pending_reap_are_bounded(managed):
+def test_cooldown_and_pending_reap_are_bounded(managed):
     m, a, b = managed
     clock = [m.clock()]
     m.clock = lambda: clock[0]
-    m.worker_recovery.policy = RecoveryPolicy(backoff=2, restart_limit=1)
     old = m.pipelines[a.id]
     old.process.terminate()
     assert old._done.wait(3)
     m.worker_recovery.service()
     m.worker_recovery.service()
+    assert m.worker_recovery.pending[a.id][2] == clock[0] + 1
     assert m.pipelines[a.id] is old
-    clock[0] += 2
+    clock[0] += 1
     m.worker_recovery.service()
     new = m.pipelines[a.id]
     assert new is not old
@@ -156,12 +159,11 @@ def test_backoff_budget_and_pending_reap_are_bounded(managed):
     new.process.terminate()
     assert new._done.wait(3)
     m.worker_recovery.service()
-    assert new.recovery_exhausted
-    clock[0] += 1000
     m.worker_recovery.service()
-    assert m.pipelines[a.id] is new
-    assert 'budget' in m.status(a.id).last_error
-
+    assert m.worker_recovery.pending[a.id][2] == clock[0] + 2
+    clock[0] += 2
+    m.worker_recovery.service()
+    assert m.pipelines[a.id] is not new
 
 def test_pending_reap_never_launches_and_control_remains_responsive(managed):
     m, a, b = managed
@@ -181,7 +183,7 @@ def test_pending_reap_never_launches_and_control_remains_responsive(managed):
 def test_stop_cancels_queued_restart(managed):
     m, a, b = managed
     old = m.pipelines[a.id]
-    m.worker_recovery.policy = RecoveryPolicy(backoff=100)
+    m.worker_recovery.policy = RecoveryPolicy()
     old.process.terminate()
     assert old._done.wait(3)
     m.worker_recovery.service()
@@ -192,7 +194,7 @@ def test_stop_cancels_queued_restart(managed):
     assert a.id not in m.pipelines and a.id not in m.worker_recovery.pending
 
 
-def test_failed_replacement_publishes_error_without_retry_loop(managed, monkeypatch):
+def test_failed_replacement_publishes_error_without_rapid_retry_loop(managed, monkeypatch):
     m, a, b = managed
     old = m.pipelines[a.id]
     m._restart_audio(a)
@@ -203,3 +205,39 @@ def test_failed_replacement_publishes_error_without_retry_loop(managed, monkeypa
     assert 'invalid replacement profile' in m.status(a.id).last_error
     m.worker_recovery.service()
     assert m._new_pipeline.call_count == 1
+
+
+def test_api_stop_disables_tx_during_cooldown_and_new_start_has_no_inherited_delay(simulated_process, tmp_path):
+    from fastapi.testclient import TestClient
+    from fmheadendd.app import create_app
+    from fmheadendd.tests.profile_support import profile_settings
+    with TestClient(create_app(profile_settings(tmp_path / 'cooldown-api.db'), pipeline_factory=ProcessPipeline)) as api:
+        services=api.app.state.services;m=services.sources;executor=api.app.state.control.executor
+        sid=api.post('/api/v1/sources',json=source().model_dump(mode='json')).json()['id']
+        def acquire():
+            try:m.acquire(sid,0)
+            except SourcePending:pass
+        executor.submit(acquire).result(timeout=2)
+        old=m.pipelines[sid];until(lambda:old._has_pcm);until(lambda:not old.startup_pending)
+        assert api.patch('/api/v1/modulators/0',json={'input_source_id':sid,'frequency_khz':98100}).status_code==200
+        assert api.post('/api/v1/modulators/0/start').status_code==200
+        executor.submit(lambda:m.worker_recovery.attempts.update({sid:6})).result(timeout=2)
+        old.process.terminate();assert old._done.wait(3)
+        until(lambda:sid in m.worker_recovery.pending and m.worker_recovery.pending[sid][2] is not None)
+        assert m.worker_recovery.pending[sid][2]-m.clock()>119
+        assert api.post('/api/v1/modulators/0/stop').status_code==200
+        assert api.get('/api/v1/modulators/0').json()['enabled'] is False
+        until(lambda:sid not in m.pipelines)
+        def advance():
+            original=m.clock
+            try:
+                m.clock=lambda:original()+10000
+                m.worker_recovery.service()
+            finally:m.clock=original
+        executor.submit(advance).result(timeout=2)
+        assert sid not in m.pipelines and sid not in m.worker_recovery.pending
+        assert api.post('/api/v1/modulators/0/start').status_code==200
+        assert m.pipelines[sid] is not old and sid not in m.worker_recovery.pending
+        until(lambda:m.pipelines[sid]._has_pcm)
+        assert api.post('/api/v1/modulators/0/stop').status_code==200
+        until(lambda:sid not in m.pipelines)

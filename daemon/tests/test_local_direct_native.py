@@ -65,6 +65,12 @@ def test_local_two_transitions_pcm_and_metadata(gst,tmp_path,mode,monkeypatch):
             if mode=='D':mux.service()
             return predicate()
         return until(check,timeout=22)
+    def fourth_track_received():
+        if len(p.metadata)<4 or not sink.records:
+            return False
+        data=sink.records[-1][1]
+        left,right=struct.unpack_from('<hh',data,len(data)-4)
+        return abs(left-5000)<=2 and abs(right-5000)<=2
     try:
         try:m.acquire(s.id,0)
         except SourcePending:pass
@@ -72,7 +78,8 @@ def test_local_two_transitions_pcm_and_metadata(gst,tmp_path,mode,monkeypatch):
         step(lambda:p._has_pcm)
         try:mux.attach(0,s.id)
         except SourcePending:pass
-        step(lambda:len(p.metadata)>=4)
+        # Parent metadata can arrive before the PCM1 writer and receiver run.
+        step(fourth_track_received)
         assert [t for _,t in p.metadata[:4]]==['track1','track2','track3','track1']
         assert m.pipelines[s.id] is p and p.process.returncode is None and not m.worker_recovery.attempts
         if mode=='D':assert p._sequences['pcm']==0 and p.output.read(0) is None
@@ -119,27 +126,30 @@ def test_local_direct_missing_media_wait_and_stop(gst,tmp_path):
     require(gst,'playbin3','wavparse')
     media=tmp_path/'absent';db=Database(tmp_path/'wait.db')
     m=SourceManager(db,DirectHttpFactory(tmp_path,local=True),profile_files=profile_store(tmp_path))
-    m.worker_recovery.policy=RecoveryPolicy(pcm_timeout=5,buffering_timeout=10,backoff=0)
     a=db.save('sources',InputSourceConfig(name='missing',type='LOCAL',config={'mode':'folder','path':str(media)}))
     mux=DirectMux(m,tmp_path);sink=SocketSink(tmp_path);p=None
-    def step(predicate):
+    def step(predicate, timeout=15):
         def poll():m.worker_recovery.service();mux.service();return predicate()
-        return until(poll,timeout=15)
+        return until(poll,timeout=timeout)
     try:
         try:m.acquire(a.id,0)
         except SourcePending:pass
         try:mux.attach(0,a.id)
         except SourcePending:pass
         p=m.pipelines[a.id];step(lambda:p.expected_media_wait)
-        m.worker_recovery.policy=RecoveryPolicy(pcm_timeout=.5,buffering_timeout=2,backoff=0)
-        hb=p.control_counts.get('heartbeat',0);step(lambda:p.control_counts.get('heartbeat',0)>=hb+2)
+        pcm_at=p.recovery_observation()[1]
+        pcm_timeout=m.worker_recovery.policy.pcm_timeout
+        hb=p.control_counts.get('heartbeat',0)
+        # Cross the production PCM deadline without making it shorter than the
+        # direct worker's heartbeat interval during playback.
+        step(lambda:m.clock()-pcm_at>pcm_timeout and p.control_counts.get('heartbeat',0)>=hb+2,
+             timeout=pcm_timeout+5)
         assert m.pipelines[a.id] is p and not m.worker_recovery.attempts
         media.mkdir();wav(media/'returned.wav',8000,2)
-        step(lambda:p._has_pcm and bool(sink.records))
-        assert m.pipelines[a.id] is p
+        step(lambda:p._has_pcm and bool(sink.records) and mux.owner is p)
+        assert m.pipelines[a.id] is p and not m.worker_recovery.attempts
         mux.detach(0);m.release(a.id,0);step(lambda:not m.pipelines)
         # STOP during discovery on another missing source is also asynchronous.
-        m.worker_recovery.policy=RecoveryPolicy(pcm_timeout=5,buffering_timeout=10,backoff=0)
         b=db.save('sources',a.model_copy(update={'id':None,'config':{'mode':'folder','path':str(tmp_path/'never')}}))
         try:m.acquire(b.id,0)
         except SourcePending:pass
@@ -165,7 +175,7 @@ def test_local_direct_recovery_revoke_apply_and_boundary_stop(gst,http_files,tmp
     a=db.save('sources',InputSourceConfig(name='local',type='LOCAL',config={'mode':'folder','path':str(media),'order':'sequential'}))
     sibling=db.save('sources',InputSourceConfig(name='sibling',type='HTTP',config={'uri':url+'/sibling.wav'}))
     sink=SocketSink(tmp_path);mux=DirectMux(m,tmp_path);owners=[]
-    m.worker_recovery.policy=RecoveryPolicy(pcm_timeout=2,buffering_timeout=5,backoff=.05)
+    m.worker_recovery.policy=RecoveryPolicy(pcm_timeout=2,buffering_timeout=5)
     def step(predicate):
         def poll():m.worker_recovery.service();mux.service();return predicate()
         return until(poll,timeout=18)

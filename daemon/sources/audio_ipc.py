@@ -19,7 +19,7 @@ MAX_PCM = 65536
 MAX_RECORD = 4 + MAX_JSON + MAX_PCM
 IO_TIMEOUT = 0.2
 PCM_MAX_AGE = 0.1
-KINDS = {'create', 'accepted', 'prepared', 'status', 'shutdown', 'terminated', 'pcm',
+KINDS = {'create', 'accepted', 'prepared', 'status', 'shutdown', 'terminated', 'pcm', 'diagnostic', 'source_progress_request',
          'local_request', 'local_response', 'podcast_snapshot', 'podcast_played', 'output_lease', 'output_applied', 'direct_progress', 'heartbeat', 'direct_state', 'state_request', 'radio_command', 'radio_state', 'telemetry_request', 'telemetry'}
 # Private PCM v1 fast record: identity/ordering/time stay on every packet.
 # Complete metadata also stays on every packet, so oldest-drop needs no ACK or

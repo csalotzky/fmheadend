@@ -101,7 +101,7 @@ def test_native_missing_media_return_refresh_and_m3u(gst, tmp_path):
     usb = tmp_path / 'usb'
     db = Database(tmp_path / 'local.db')
     m = SourceManager(db, pipeline_factory=RecordingWorker, profile_files=profile_store(tmp_path))
-    m.worker_recovery.policy = RecoveryPolicy(pcm_timeout=0.5, buffering_timeout=3, backoff=0)
+    m.worker_recovery.policy = RecoveryPolicy(pcm_timeout=0.5, buffering_timeout=3)
     source = db.save('sources', InputSourceConfig(name='usb', type='LOCAL',
         config={'mode': 'playlist', 'path': str(usb / 'list.m3u')}))
     p = None
@@ -147,7 +147,7 @@ def test_native_local_recovery_sibling_and_apply(gst, http_files, tmp_path, faul
     wav(media / 'local.wav', seconds=2)
     db = Database(tmp_path / 'recover.db')
     m = SourceManager(db, pipeline_factory=RecordingWorker, profile_files=profile_store(tmp_path))
-    m.worker_recovery.policy = RecoveryPolicy(pcm_timeout=1, buffering_timeout=3, backoff=0.05)
+    m.worker_recovery.policy = RecoveryPolicy(pcm_timeout=1, buffering_timeout=3)
     local = db.save('sources', InputSourceConfig(name='local', type='LOCAL', config={'mode': 'folder', 'path': str(media)}))
     http = db.save('sources', InputSourceConfig(name='http', type='HTTP', config={'uri': url + '/http.wav'}))
     owners = []

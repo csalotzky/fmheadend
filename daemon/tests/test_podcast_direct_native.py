@@ -1,6 +1,7 @@
 """Loopback RSS, actual audiod/GStreamer, direct sockets and disposable SQLite v1."""
 import json,os,signal,struct,sys,time
 from datetime import datetime
+from threading import Event
 
 import pytest
 
@@ -222,9 +223,17 @@ def test_native_podcast_direct_recovery_apply_stop(gst,tmp_path,http_files,fault
 
 def test_native_podcast_direct_feed_wait_and_return(gst,tmp_path):
     require(gst,'playbin3','wavparse')
+    advance_feed_clock=Event()
+    class Factory(DirectHttpFactory):
+        def __call__(self,s,**kw):
+            pipeline=super().__call__(s,**kw)
+            service=pipeline._podcast_service
+            interval=service.config.refresh_interval_minutes*60
+            service.clock=lambda:time.monotonic()+(interval if advance_feed_clock.is_set() else 0)
+            return pipeline
     with server({'A':media_bytes(tmp_path/'a.wav')}) as (url,state):
         state['fail_feed']=True
-        db=Database(tmp_path/'wait.db');m=SourceManager(db,DirectHttpFactory(tmp_path,podcast=True),profile_files=profile_store(tmp_path))
+        db=Database(tmp_path/'wait.db');m=SourceManager(db,Factory(tmp_path,podcast=True),profile_files=profile_store(tmp_path))
         a=source(db,url);sink=SocketSink(tmp_path);mux=DirectMux(m,tmp_path);p=None
         def step(predicate):
             def poll():m.worker_recovery.service();mux.service();return predicate()
@@ -237,9 +246,16 @@ def test_native_podcast_direct_feed_wait_and_return(gst,tmp_path):
             p=m.pipelines[a.id];step(lambda:p.expected_media_wait)
             hb=p.control_counts.get('heartbeat',0);step(lambda:p.control_counts.get('heartbeat',0)>=hb+2)
             assert not m.worker_recovery.attempts and m.pipelines[a.id] is p
-            state['fail_feed']=False;p._podcast_service._next_refresh=0;p._podcast_service._io_ready.set()
-            step(lambda:p._has_pcm and bool(sink.records))
-            assert m.pipelines[a.id] is p
+            service=p._podcast_service
+            # The I/O owner schedules the retry after publishing the failed refresh.
+            step(lambda:service._next_refresh>time.monotonic())
+            assert state['requests'].count('/rss')==1
+            state['fail_feed']=False
+            advance_feed_clock.set()
+            service.request_snapshot()
+            step(lambda:p._has_pcm and bool(sink.records) and mux.owner is p)
+            assert state['requests'].count('/rss')==2
+            assert m.pipelines[a.id] is p and not m.worker_recovery.attempts
             mux.detach(0);m.release(a.id,0);step(lambda:not m.pipelines)
             assert not p._podcast_service._io_thread.is_alive()
         finally:

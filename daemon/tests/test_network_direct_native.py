@@ -116,10 +116,12 @@ def test_native_paced_network_pcm(gst,tmp_path,mode,backend):
             assert all(old!=new for old,new in zip(p.metadata_events,p.metadata_events[1:]))
         if backend=='D':assert p._sequences['pcm']==0 and p.output.read(0) is None
         if backend=='D' and mode in ('UDP','PCM'):
-            sender.set_state(gst.State.PAUSED);hb=p.control_counts['heartbeat']
-            step(m,mux,lambda:p.control_counts['heartbeat']>=hb+2)
+            sender.set_state(gst.State.PAUSED)
+            paused=time.monotonic()
+            step(m,mux,lambda:p.network_idle_at>paused and p.snapshot()['state']=='CONNECTING')
             frozen=p._last_pcm;count=received();hb=p.control_counts['heartbeat'];status=dict(p.control_counts)
-            step(m,mux,lambda:p.control_counts['heartbeat']>=hb+1)
+            step(m,mux,lambda:p.control_counts['heartbeat']>=hb+2)
+            assert p.network_idle_at>paused and p.snapshot()['state']=='CONNECTING'
             assert p._last_pcm==frozen and received()==count and m.pipelines[a.id] is p
             assert not m.worker_recovery.attempts and p.control_counts['status']==status['status']
             sender.set_state(gst.State.PLAYING);step(m,mux,lambda:received()>count+30000)
@@ -174,16 +176,21 @@ def test_native_network_default_timeout_recovery_and_lifecycle(gst,tmp_path,http
         def recovered():
             assert m.pipelines[c.id] is sibling and sibling.process.poll() is None
             assert time.monotonic()-sibling._last_pcm<2.5
+            assert m.pipelines[a.id] is current and current.process.poll() is None
             latest[0]=time.monotonic()
-            return m.pipelines[a.id] is not current and m.pipelines[b.id] is not victim
+            return m.pipelines[b.id] is not victim
         service(recovered,timeout=110)
         assert time.monotonic()-fault_at>=89 and sinks.counts[2]>siblings_before
-        for old,s in ((current,a),(victim,b)):
-            assert old._done.is_set()
-            with pytest.raises(ChildProcessError):os.waitpid(old.process.pid,os.WNOHANG)
-            assert m.pipelines[s.id].generation!=old.generation and m.pipelines[s.id].output is outputs[s.id]
-        udp_current=m.pipelines[a.id];rtp_current=m.pipelines[b.id];owners.extend((udp_current,rtp_current))
-        udp_sender.set_state(gst.State.PLAYING);service(lambda:udp_current._has_pcm and rtp_current._has_pcm)
+        assert victim._done.is_set()
+        with pytest.raises(ChildProcessError):os.waitpid(victim.process.pid,os.WNOHANG)
+        rtp_current=m.pipelines[b.id];owners.append(rtp_current)
+        assert rtp_current.generation!=victim.generation and rtp_current.output is outputs[b.id]
+        udp_current=current
+        assert udp_current.network_idle_at>fault_at and udp_current._last_pcm<fault_at+1
+        assert m.worker_recovery.attempts[a.id]==1  # Only the deliberate crash.
+        before_resume=sinks.counts[0]
+        udp_sender.set_state(gst.State.PLAYING)
+        service(lambda:sinks.counts[0]>before_resume+30000 and rtp_current._has_pcm)
         print('NETWORK_DEFAULT_RECOVERY',json.dumps(dict(seconds=time.monotonic()-fault_at,udp_old=current.process.pid,rtp_old=victim.process.pid,
             udp_new=udp_current.process.pid,rtp_new=rtp_current.process.pid,http_pid=sibling.process.pid)))
         # Profile apply and source-port replacement use the existing async owner path.
