@@ -97,7 +97,9 @@ def test_api_reconnect_preserves_config_and_stale_saturation(tmp_path, settings)
         original = api.get(prefix + "/modulators/0").json()
         assert "digital_trim_db" not in original
         assert api.patch(prefix + "/modulators/0", json={"digital_trim_db": 1}).status_code == 422
-        assert {key:original[key] for key in DEFAULTS} == DEFAULTS
+        # Fresh persisted records use MANUAL; DEFAULTS remains the explicit AUTO
+        # configuration exercised by settings0 below (not the database seed).
+        assert {key:original[key] for key in DEFAULTS} == DEFAULTS | {'gain_mode': 'MANUAL'}
         body = dict(audio_mode="ANALOG", frequency_khz=98100, rf_attenuation_db=6.0, rds_enabled=True, **settings)
         result = api.patch(prefix + "/modulators/0", json=body)
         assert result.status_code == 200

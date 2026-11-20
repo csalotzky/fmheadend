@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 from fmheadendd.app import create_app
 from fmheadendd.config import Settings
-from fmheadendd.errors import DomainError
+from fmheadendd.errors import DomainError, DependencyUnavailable
 from fmheadendd.sources.output import PcmOutput
 from fmheadendd.tests.test_audio_profiles import FakePipeline
 
@@ -172,24 +172,29 @@ def test_profile_listing_is_on_demand_and_failure_does_not_break_status(tmp_path
 
 
 def test_validation_cache_never_substitutes_for_join_validation(tmp_path,monkeypatch):
+    """Strict join validation cannot be replaced by read-only status success."""
     now=[0.0]
     app=configured(tmp_path,lambda:now[0])
     with TestClient(app) as api:
         sid=start(api)
         manager=app.state.services.sources
+        pipeline=manager.pipelines[sid]
         with monkeypatch.context() as m:
             validation=Mock(side_effect=DomainError(404,'PROFILE_NOT_FOUND','removed'))
             m.setattr(manager,'validate_config',validation)
-            # Read-only observations reuse the just-checked result for one second.
+            # Status observes applied state, with no profile validation or TTL.
             app.state.control.executor.submit(manager.status,sid).result()
             validation.assert_not_called()
             # Joining a running Source is still a synchronous strict boundary.
-            with pytest.raises(Exception,match='PROFILE_NOT_FOUND'):
+            with pytest.raises(DependencyUnavailable,match='PROFILE_NOT_FOUND'):
                 app.state.control.executor.submit(manager.acquire,sid,2).result()
             assert manager.consumers[sid]=={0,1}
             now[0]=1
             observed=app.state.control.executor.submit(manager.status,sid).result()
-            assert observed.state=='ERROR' and 'PROFILE_NOT_FOUND' in observed.last_error
+            assert observed.state=='RUNNING' and observed.last_error is None
+            validation.assert_called_once_with(pipeline.source)
+            assert manager.pipelines[sid] is pipeline and pipeline.running
+            assert manager.consumers[sid]=={0,1}
 
 
 def test_published_rt_uses_existing_selector_and_preserves_snapshot(tmp_path):
@@ -287,27 +292,47 @@ def test_publication_reuses_inventory_and_observations_for_radiotext(tmp_path):
 
 
 def test_publication_loads_shared_dsp_profile_once_per_due_generation(tmp_path):
+    """Publication no longer has a profile-validation generation or reload TTL."""
     now = [0.0]
     app = configured(tmp_path, lambda: now[0])
     with TestClient(app) as api:
+        profile=tmp_path/'custom/shared.json'
+        profile.parent.mkdir(exist_ok=True)
+        profile.write_bytes((DEFAULT/'light_normal.json').read_bytes())
+        source_ids=[]
         for tx in range(4):
             sid = api.post(P+'/sources', json={'name': f'Feed {tx}', 'type': 'HTTP',
                 'config': {'uri': 'http://localhost/live'}, 'use_default_audio_profile': False,
-                'audio_profile_id': 'default/light_normal.json'}).json()['id']
+                'audio_profile_id': 'custom/shared.json'}).json()['id']
+            source_ids.append(sid)
             assert api.patch(f'{P}/modulators/{tx}', json={
                 'input_source_id': sid, 'frequency_khz': 98100}).status_code == 200
             assert api.post(f'{P}/modulators/{tx}/start').status_code == 200
         services = app.state.services
 
         def check():
+            pipelines=dict(services.sources.pipelines)
+            consumers={sid:set(ids) for sid,ids in services.sources.consumers.items()}
             with patch.object(services.profile_files, 'get', wraps=services.profile_files.get) as get, \
                     patch.object(services.profile_files, 'validate', wraps=services.profile_files.validate) as validate:
                 for generation in (1, 2):
+                    if generation==1: profile.write_text('{broken')
+                    else: profile.unlink()
                     now[0] = float(generation)
                     services.status.publish()
-                    assert get.call_count == validate.call_count == generation
+                    get.assert_not_called()
+                    validate.assert_not_called()
                     assert all(row.source_state == 'RUNNING'
                                for row in services.status.published_snapshot().modulators[:4])
-                assert all(c.args == ('default/light_normal.json',) for c in get.call_args_list)
+                    assert services.sources.pipelines==pipelines
+                    assert services.sources.consumers==consumers
+                    assert all(p.running for p in pipelines.values())
+                    with pytest.raises(DependencyUnavailable):
+                        services.sources.acquire(source_ids[0],7)
+                    get.assert_called_once_with('custom/shared.json')
+                    assert services.sources.pipelines==pipelines
+                    assert services.sources.consumers==consumers
+                    assert all(p.running for p in pipelines.values())
+                    get.reset_mock();validate.reset_mock()
 
         app.state.control.executor.submit(check).result(timeout=10)

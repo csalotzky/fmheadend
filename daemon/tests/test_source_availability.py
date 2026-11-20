@@ -52,10 +52,24 @@ def test_offline_source_save_shared_start_resume_and_stop(native, tmp_path, body
         assert not old._ready.is_set() and not old.probe_result().ok
         assert old.output.read(0) is None  # no invented PCM
         spies = []
-        for name in ('set_tx_enabled', 'set_tx_config', 'clear_rds'):
+        for name in ('set_tx_enabled', 'set_tx_config'):
             spy = Mock(wraps=getattr(services.rp, name))
             setattr(services.rp, name, spy)
             spies.append(spy)
+        # RDS is enabled in the initial DB. Its serialized background refill
+        # may clear the newly active channels independently of this source save.
+        # Keep RF config/enable forbidden, and allow clears only from refill.
+        in_refill = [False]
+        clears = []
+        refill, clear = services.rds.tick, services.rp.clear_rds
+        def tick():
+            in_refill[0] = True
+            try: return refill()
+            finally: in_refill[0] = False
+        def record_clear(channel):
+            clears.append((channel, in_refill[0]))
+            return clear(channel)
+        services.rds.tick, services.rp.clear_rds = tick, record_clear
         result = api.patch(root+f'/sources/{sid}', json={'input_gain_db': -3})
         assert result.status_code == 200 and result.json()['saved'] and result.json()['applied']
         assert api.get(root+f'/sources/{sid}').json()['input_gain_db'] == -3
@@ -63,6 +77,7 @@ def test_offline_source_save_shared_start_resume_and_stop(native, tmp_path, body
         assert not old._thread.is_alive()
         assert services.sources.consumers[sid] == {0, 1}
         for spy in spies: spy.assert_not_called()
+        assert all(channel in (0, 1) and maintenance for channel, maintenance in clears)
         assert api.patch(root+f'/sources/{sid}', json={'config': {}}).status_code == 422
         # The reported Save -> TX restart failure must not recur with no PCM.
         result = api.post(root+'/modulators/0/save-and-resume', json={'frequency_khz': 98300})

@@ -24,11 +24,27 @@ def test_active_patch_is_atomic_and_stop_edit_start_is_explicit(tmp_path,mode):
         rp.set_tx_config=Mock(wraps=rp.set_tx_config)
         rp.set_tx_enabled=Mock(wraps=rp.set_tx_enabled)
         before=api.get(p).json()
-        for patch in ({'frequency_khz':99500},{'gain_mode':'MANUAL'},{'enabled':False}):
+        # Persistence seeds MANUAL, independently of the model's AUTO default.
+        # Exercise a real edit rather than assuming MANUAL differs from storage.
+        changed_gain = 'AUTO' if before['gain_mode'] == 'MANUAL' else 'MANUAL'
+        for patch in ({'frequency_khz':99500},{'gain_mode':changed_gain},
+                      {'rf_attenuation_db':9}, {'analog_gain_db':6}, {'enabled':False}):
             response=api.patch(p,json=patch)
             assert response.status_code==409
             assert response.json()['error'] in ('MODULATOR_ACTIVE', 'LIFECYCLE_REQUIRED')
             assert api.get(p).json()==before
+        # Identical non-RDS values do not change effective hardware behavior.
+        # The RDS-only/no-difference path may persist them without RF commands;
+        # timestamps are write metadata, not an applied TX setting.
+        pipeline = s.sources.pipelines.get(source['id'])
+        for patch in ({}, {'gain_mode':before['gain_mode']},
+                      {'frequency_khz':before['frequency_khz']}, {'enabled':True},
+                      {'frequency_khz':before['frequency_khz'], 'gain_mode':before['gain_mode']}):
+            response=api.patch(p,json=patch)
+            assert response.status_code==200
+            assert {k:v for k,v in response.json().items() if k!='timestamp'} == {
+                k:v for k,v in before.items() if k!='timestamp'}
+            assert s.sources.pipelines.get(source['id']) is pipeline
         rp.set_tx_config.assert_not_called();rp.set_tx_enabled.assert_not_called()
         assert rp.enabled[0]
         assert api.post(p+'/stop').status_code==200

@@ -74,6 +74,12 @@ def test_startup_loss_recovery_order_and_shutdown(tmp_path):
 @pytest.mark.parametrize('failure',['incompatible','config','clear','readback'])
 def test_failed_restore_never_claims_healthy(tmp_path,failure):
     path=tmp_path/'config.db';seed(path);rp=MockRp2354Client()
+    # Initial TXs now have RDS enabled even when RF is disabled. Keep an
+    # explicitly user-disabled RDS channel to test the distinct status branch.
+    db=Database(path)
+    config=db.get('modulators',2)
+    db.save('modulators',config.model_copy(update={'rds_enabled':False}),2)
+    db.close()
     if failure=='incompatible':
         rp.get_info=Mock(return_value={'rp_protocol_version':2,'modulator_count':8})
     elif failure=='config':
@@ -97,7 +103,11 @@ def test_failed_restore_never_claims_healthy(tmp_path,failure):
         assert app.state.services.rds.suspended
         if failure != 'incompatible':
             assert status['modulators'][0]['rds_state'] == 'SUSPENDED'
-            assert status['modulators'][1]['rds_state'] == 'DISABLED'
+            tx1=api.get(P+'/modulators/1').json()
+            assert tx1['rds_enabled'] and not tx1['enabled']
+            assert status['modulators'][1]['rds_state'] == 'SUSPENDED'
+            assert not api.get(P+'/modulators/2').json()['rds_enabled']
+            assert status['modulators'][2]['rds_state'] == 'DISABLED'
         assert not rp.rds_history
         if failure!='readback': assert not any(rp.enabled)
         if failure != 'incompatible':
