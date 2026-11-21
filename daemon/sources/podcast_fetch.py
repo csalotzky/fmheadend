@@ -1,7 +1,9 @@
 """Bounded feed-only HTTP transport. No audio downloads or implicit retries."""
+import asyncio
 import time
 import zlib
 from collections import Counter
+from contextlib import aclosing
 from dataclasses import dataclass
 from urllib.parse import urljoin
 
@@ -19,23 +21,50 @@ class FeedResponse:
 
 
 class FeedFetcher:
-    def __init__(self, *, timeout_s=5.0, budget_s=20.0, max_bytes=4 * 1024 * 1024,
+    def __init__(self, *, timeout_s=10.0, total_timeout_s=20.0, max_bytes=4 * 1024 * 1024,
                  clock=time.monotonic, transport=None):
         self.timeout_s, self.max_bytes = timeout_s, max_bytes
-        self.clock, self.deadline = clock, clock() + budget_s
+        self.clock, self.total_timeout_s = clock, total_timeout_s
         self.transport = transport
 
     def __call__(self, url: str) -> FeedResponse:
+        deadline = self.clock() + self.total_timeout_s
+        # The refresh and probe both run in synchronous worker threads. Closing
+        # this loop without joining its executor lets a timed-out OS DNS call
+        # finish separately, instead of delaying the next feed during teardown.
+        loop = asyncio.new_event_loop()
         try:
-            with httpx.Client(transport=self.transport, follow_redirects=False, trust_env=False,
-                              headers={"User-Agent": f"FMHeadend/{__version__} Podcast catalog",
-                                       "Accept-Encoding": "identity"}) as client:
+            return loop.run_until_complete(self._fetch(url, deadline))
+        except (TimeoutError, httpx.TimeoutException) as exc:
+            raise DomainError(503, "PODCAST_FETCH_TIMEOUT", "Feed request timed out") from exc
+        except (httpx.HTTPError, ValueError, zlib.error) as exc:
+            raise DomainError(503, "PODCAST_FETCH_FAILED", "Feed request failed") from exc
+        finally:
+            try:
+                loop.run_until_complete(loop.shutdown_asyncgens())
+            finally:
+                loop.close()
+
+    def _remaining(self, deadline):
+        remaining = deadline - self.clock()
+        if remaining <= 0:
+            raise TimeoutError("Feed download deadline exceeded")
+        return remaining
+
+    async def _fetch(self, url: str, deadline: float) -> FeedResponse:
+        # HTTPX limits each network operation. This outer timer also cancels
+        # an awaited operation when the feed's remaining time runs out.
+        async with asyncio.timeout(self._remaining(deadline)):
+            async with httpx.AsyncClient(
+                transport=self.transport, follow_redirects=False, trust_env=False,
+                headers={"User-Agent": f"FMHeadend/{__version__} Podcast catalog",
+                         "Accept-Encoding": "identity"},
+            ) as client:
                 for redirect in range(6):
                     valid_http_url(url)
-                    remaining = self.deadline - self.clock()
-                    if remaining <= 0:
-                        raise DomainError(503, "PODCAST_FETCH_TIMEOUT", "Feed refresh budget exhausted")
-                    with client.stream("GET", url, timeout=min(self.timeout_s, remaining)) as response:
+                    timeout = min(self.timeout_s, self._remaining(deadline))
+                    async with client.stream("GET", url, timeout=timeout) as response:
+                        self._remaining(deadline)
                         if response.is_redirect:
                             location = response.headers.get("location")
                             if redirect == 5 or not location:
@@ -48,22 +77,19 @@ class FeedFetcher:
                             raise DomainError(503, "PODCAST_ENCODING_ERROR", "Unsupported HTTP content encoding")
                         decoder = zlib.decompressobj(16 + zlib.MAX_WBITS) if encoding == "gzip" else None
                         body, wire_bytes = bytearray(), 0
-                        for chunk in response.iter_raw():
-                            if self.clock() >= self.deadline:
-                                raise DomainError(503, "PODCAST_FETCH_TIMEOUT", "Feed refresh budget exhausted")
-                            wire_bytes += len(chunk)
-                            if decoder:
-                                chunk = decoder.decompress(chunk, self.max_bytes - len(body) + 1)
-                            body.extend(chunk)
-                            if len(body) > self.max_bytes or wire_bytes > self.max_bytes:
-                                raise DomainError(503, "PODCAST_FEED_TOO_LARGE", "Feed exceeds response size limit")
+                        async with aclosing(response.aiter_raw()) as chunks:
+                            async for chunk in chunks:
+                                self._remaining(deadline)
+                                wire_bytes += len(chunk)
+                                if decoder:
+                                    chunk = decoder.decompress(chunk, self.max_bytes - len(body) + 1)
+                                body.extend(chunk)
+                                if len(body) > self.max_bytes or wire_bytes > self.max_bytes:
+                                    raise DomainError(503, "PODCAST_FEED_TOO_LARGE", "Feed exceeds response size limit")
+                        self._remaining(deadline)
                         if decoder and (not decoder.eof or decoder.unused_data):
                             raise DomainError(503, "PODCAST_ENCODING_ERROR", "Invalid compressed feed")
                         return FeedResponse(bytes(body), url)
-        except httpx.TimeoutException as exc:
-            raise DomainError(503, "PODCAST_FETCH_TIMEOUT", "Feed request timed out") from exc
-        except (httpx.HTTPError, ValueError, zlib.error) as exc:
-            raise DomainError(503, "PODCAST_FETCH_FAILED", "Feed request failed") from exc
 
 
 def probe_podcast(config):

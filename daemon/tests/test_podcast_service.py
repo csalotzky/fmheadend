@@ -3,14 +3,17 @@ from dataclasses import replace
 from threading import Event, Thread, get_ident
 from unittest.mock import Mock
 
+import httpx
 import pytest
 
 from fmheadendd.database import Database
-from fmheadendd.errors import DependencyUnavailable
-from fmheadendd.sources.podcast import parse_feed
-from fmheadendd.sources.podcast_history import PodcastHistory
+from fmheadendd.errors import DependencyUnavailable, DomainError
+from fmheadendd.models.configuration import PodcastConfig
+from fmheadendd.sources.podcast import eligible_episodes, parse_feed
+from fmheadendd.sources.podcast_fetch import FeedFetcher, FeedResponse
 from fmheadendd.sources.podcast_runtime import PLAYED_BYTES
 from fmheadendd.sources.podcast_service import PodcastFeedService
+from fmheadendd.tests.test_podcast import item, rss
 from fmheadendd.tests.test_podcast_runtime import runtime, begin, NOW
 
 
@@ -28,8 +31,7 @@ def test_complete_detached_snapshot_and_v1_history(rt):
     first = service.snapshot()
     e = rt.p.rendering.context
     assert first.revision == 1
-    assert set(first.history) == {e.key for f in first.catalog.feeds for e in f.episodes}
-    assert first.history[e.key].play_count == 0
+    assert not first.history
     with pytest.raises(TypeError):
         first.history[e.key] = None
     rt.p.pcm(PLAYED_BYTES)
@@ -38,8 +40,87 @@ def test_complete_detached_snapshot_and_v1_history(rt):
     service.io_step(rt.history)
     second = service.snapshot()
     assert second.revision == 2 and second.history[e.key].play_count == 1
-    assert first.history[e.key].play_count == 0
+    assert not first.history
     assert rt.db.connection.execute('PRAGMA user_version').fetchone()[0] == 1
+
+
+def test_large_refresh_keeps_full_catalog_without_history_writes(rt):
+    url = rt.p.config.feeds[0].url
+    config = PodcastConfig(feeds=[dict(url=url, max_age_days=1, max_episodes=1)])
+    body = rss(item('old', date='Thu, 01 Oct 2026 10:00:00 GMT'),
+               *(item(str(i)) for i in range(2000)))
+    service = PodcastFeedService(config, now=lambda: NOW, parser=parse_feed,
+                                 fetch_factory=lambda: lambda url: FeedResponse(body, url))
+    service.io_step(rt.history)
+    view = service.snapshot()
+    assert len(view.catalog.feeds[0].episodes) == view.catalog.results[0].discovered == 2001
+    assert len(eligible_episodes(view.catalog, config, NOW)) == 1
+    assert not view.history
+    assert not rt.db.connection.execute('SELECT * FROM podcast_history').fetchall()
+
+
+def test_failed_refresh_preserves_played_history_and_catalog(rt):
+    begin(rt)
+    service = rt.p.feed_service
+    first = service.snapshot().catalog
+    rt.p.pcm(PLAYED_BYTES)
+    service._flush_marks(rt.history)
+    before = rt.history.snapshot()
+    assert len(before) == 1
+    rt.seconds[0] = 60
+    rt.response[0] = DomainError(503, 'PODCAST_FETCH_TIMEOUT', 'Timeout')
+    service.io_step(rt.history)
+    view = service.snapshot()
+    assert view.catalog.results[0].error == 'PODCAST_FETCH_TIMEOUT'
+    assert view.catalog.feeds == first.feeds
+    assert view.history == rt.history.snapshot() == before
+
+
+def test_long_background_refresh_attempts_every_feed_and_retains_failed_catalog():
+    urls = [f'https://example.org/feed/{i}' for i in range(32)]
+    config = PodcastConfig(feeds=[{'url': url} for url in urls])
+    seconds = 0
+    attempts = []
+    fail = False
+
+    def download(request):
+        nonlocal seconds
+        url = str(request.url)
+        attempts.append(url)
+        assert request.extensions['timeout']['read'] == 10.0
+        seconds += 2
+        if fail and url == urls[13]:
+            raise httpx.ReadTimeout('temporary failure')
+        episode_id = 'second' if fail else 'first'
+        return httpx.Response(200, stream=httpx.ByteStream(rss(item(episode_id))))
+
+    def parse(body, url, now, *, base_url):
+        nonlocal seconds
+        seconds += 3
+        return parse_feed(body, url, now, base_url=base_url)
+
+    service = PodcastFeedService(config, clock=lambda: seconds, now=lambda: NOW, parser=parse,
+        fetch_factory=lambda: FeedFetcher(clock=lambda: seconds, transport=httpx.MockTransport(download)))
+    history = Mock()
+    history.snapshot.return_value = {}
+    service.io_step(history)
+    first = service.snapshot().catalog
+    assert seconds == 160
+    assert attempts == urls
+    assert len(first.feeds) == len(first.results) == 32
+    assert all(result.error is None for result in first.results)
+
+    fail = True
+    seconds += config.refresh_interval_minutes * 60
+    attempts.clear()
+    service.io_step(history)
+    second = service.snapshot().catalog
+    assert attempts == urls
+    assert len(second.feeds) == len(second.results) == 32
+    assert [r.error for r in second.results if r.error] == ['PODCAST_FETCH_TIMEOUT']
+    assert second.results[13].error == 'PODCAST_FETCH_TIMEOUT'
+    assert second.feeds[13] is first.feeds[13]
+    assert second.feeds[-1].episodes[0].episode_id != first.feeds[-1].episodes[0].episode_id
 
 
 @pytest.mark.parametrize('mode', ['SMART', 'RANDOM'])
@@ -51,11 +132,11 @@ def test_late_snapshot_preserves_optimistic_threshold_and_schedule(tmp_path, mod
         before = service.snapshot()
         episode = r.p.rendering.context
         r.p.pcm(PLAYED_BYTES - 4)
-        assert r.p.history_state[episode.key].play_count == 0
+        assert episode.key not in r.p.history_state
         r.p.pcm(4)
         optimistic = r.p.history_state[episode.key]
         assert optimistic.play_count == 1
-        assert r.history.snapshot()[episode.key].play_count == 0
+        assert not r.history.snapshot()
         r.p.apply_snapshot(replace(before, revision=before.revision + 1))
         assert r.p.history_state[episode.key] == optimistic
         r.p.service(Mock())
@@ -169,7 +250,7 @@ def test_notification_backlog_is_bounded(rt):
     rt.p.pcm(PLAYED_BYTES)
     assert rt.p.history_error == 'PODCAST_HISTORY_BACKLOG'
     assert not rt.p.rendering.marked
-    assert rt.p.history_state[episode.key].play_count == 0
+    assert episode.key not in rt.p.history_state
 
 
 def test_closed_runtime_rejects_snapshot_and_pcm(rt):

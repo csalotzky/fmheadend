@@ -181,11 +181,11 @@ class EpisodeCatalog:
         previous = self.snapshot().refreshed_at
         return previous is None or (utc(now) - previous).total_seconds() >= config.refresh_interval_minutes * 60
 
-    def refresh(self, config, fetch, now: datetime, *, history=None) -> CatalogSnapshot:
+    def refresh(self, config, fetch, now: datetime) -> CatalogSnapshot:
         now = utc(now)
         with self._refresh_lock:
             previous = {feed.feed_id: feed for feed in self.snapshot().feeds}
-            feeds, results, seen = [], [], []
+            feeds, results = [], []
             for configured in config.feeds:
                 fid = feed_identity(configured.url)
                 old = previous.get(fid)
@@ -197,7 +197,6 @@ class EpisodeCatalog:
                         discovered_at=known[e.episode_id].discovered_at) if e.episode_id in known else e
                         for e in new.episodes))
                     feeds.append(new)
-                    seen.extend(new.episodes)
                     results.append(FeedRefreshResult(fid, None, len(new.episodes), new.title or None))
                 except DomainError as exc:
                     # Codes and hashes only: feed URLs/errors can contain tokens.
@@ -205,8 +204,6 @@ class EpisodeCatalog:
                     results.append(FeedRefreshResult(fid, exc.error, 0))
                     if old:
                         feeds.append(old)
-            if history is not None:
-                history.observe(seen, now)
             snapshot = CatalogSnapshot(tuple(feeds), tuple(results), now)
             with self._lock:
                 self._snapshot = snapshot

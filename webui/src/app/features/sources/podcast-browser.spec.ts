@@ -94,6 +94,7 @@ describe('Podcast Browser picker', () => {
     const dialog = element(f).querySelector('dialog')!;
     expect(dialog.open).toBe(true);
     expect(document.activeElement).toBe(searchInput(f));
+    expect(searchInput(f).placeholder).toBe('Search podcasts');
     expect(dialog.querySelectorAll('input, select')).toHaveLength(1);
     const attribution = dialog.querySelector('.attribution')!;
     expect(attribution.textContent.replace(/\s+/g, ' ').trim()).toBe(

@@ -1,20 +1,43 @@
 """PODCAST snapshot transfer and one-way played notifications; no scheduler copy."""
-from collections import deque
-from dataclasses import asdict
+from collections import defaultdict, deque
+from dataclasses import asdict, replace
 from datetime import datetime
 import json
+import logging
 from threading import Lock
 from types import MappingProxyType
 
 from .audio_ipc import ProtocolError
 from .podcast import (CatalogSnapshot, PodcastEpisode, PodcastFeed, FeedRefreshResult,
-                      feed_identity, valid_http_url)
+                      eligible_episodes, feed_identity, valid_http_url)
 from .podcast_history import EpisodeHistory
 from .podcast_service import PodcastFeedSnapshot
 
 MAX_BYTES = 8 * 1024 * 1024
 MAX_EPISODES = 10000
 CHUNK = 24000  # ASCII JSON text; outer escaping stays below 64 KiB.
+logger = logging.getLogger(__name__)
+
+
+class PodcastSnapshotTooLarge(ProtocolError):
+    """The parent can skip this update while the worker keeps playing."""
+
+
+def playback_snapshot(snapshot, config, now):
+    episodes = eligible_episodes(snapshot.catalog, config, now)
+    if len(episodes) > MAX_EPISODES:
+        raise PodcastSnapshotTooLarge('Eligible podcast catalog exceeds 10,000 episodes')
+
+    by_feed = defaultdict(list)
+    history = {}
+    for episode in episodes:
+        by_feed[episode.feed_id].append(episode)
+        if episode.key in snapshot.history:
+            history[episode.key] = snapshot.history[episode.key]
+    # Keep feed metadata, refresh results and feed order for the worker.
+    feeds = tuple(replace(feed, episodes=tuple(by_feed.get(feed.feed_id, ())))
+                  for feed in snapshot.catalog.feeds)
+    return replace(snapshot, catalog=replace(snapshot.catalog, feeds=feeds), history=history)
 
 
 def stamp(value):
@@ -34,7 +57,7 @@ def encode(snapshot):
     value = json.dumps(data, default=lambda d: d.isoformat(), ensure_ascii=True,
                        separators=(',', ':'), allow_nan=False)
     if len(value) > MAX_BYTES:
-        raise ProtocolError('Podcast catalog exceeds 8 MiB')
+        raise PodcastSnapshotTooLarge('Podcast playback snapshot exceeds 8 MiB')
     return value
 
 
@@ -186,7 +209,14 @@ class ParentPodcast:
             snapshot = self.service.snapshot()
             if snapshot.revision <= self.revision:
                 return None
-            value = encode(snapshot)
+            try:
+                projected = playback_snapshot(snapshot, self.service.config, self.service.now())
+                value = encode(projected)
+            except PodcastSnapshotTooLarge as exc:
+                self.revision = snapshot.revision
+                logger.warning('Podcast source %s skipped snapshot revision %s: %s',
+                               self.service.source_id, snapshot.revision, exc)
+                return None
             decode(value, snapshot.revision, self.service.config)
             self.revision = snapshot.revision
             self.transfer = iter(dict(revision=self.revision, offset=i, text=value[i:i+CHUNK],

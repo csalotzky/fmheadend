@@ -1,4 +1,5 @@
 """Deterministic RSS, eligibility, scheduling, transport and durable history."""
+import asyncio
 import gzip
 import random
 from dataclasses import replace
@@ -15,6 +16,7 @@ from fmheadendd.sources.podcast import (EpisodeCatalog, CatalogSnapshot, Podcast
 from fmheadendd.sources.podcast_fetch import FeedFetcher, FeedResponse
 from fmheadendd.sources.podcast_history import PodcastHistory, EpisodeHistory
 from fmheadendd.sources.podcast_schedule import PodcastScheduler
+from fmheadendd.sources.podcast_service import PodcastFeedService
 
 NOW = datetime(2026, 10, 4, 12, tzinfo=timezone.utc)
 URL = 'https://example.org/rss'
@@ -214,6 +216,18 @@ def test_smart_counts_then_oldest_play_then_newest():
     assert PodcastScheduler().choose_next([b,a], history, NOW) == a
 
 
+def test_smart_missing_history_ranks_like_explicit_zero_play_history():
+    a, b, played = episodes()
+    b = replace(b, feed_id=feed_identity(OTHER))
+    sparse = {played.key: EpisodeHistory(1, NOW-timedelta(hours=2))}
+    explicit = {**sparse, a.key: EpisodeHistory(last_seen_at=NOW),
+                b.key: EpisodeHistory(last_seen_at=NOW-timedelta(days=1))}
+    schedulers = PodcastScheduler(), PodcastScheduler()
+    for _ in range(6):
+        assert schedulers[0].choose_next((a, b, played), sparse, NOW) == (
+            schedulers[1].choose_next((a, b, played), explicit, NOW))
+
+
 def test_cooldown_soft_and_exact_boundary():
     a, b = episodes(2)
     history = {a.key: EpisodeHistory(1, NOW-timedelta(hours=1)), b.key: EpisodeHistory(2, NOW-timedelta(hours=24))}
@@ -230,27 +244,46 @@ def test_history_reopen_retention_and_source_namespace(tmp_path):
     sid = db.save('sources', cfg).id
     other_sid = db.save('sources', cfg).id
     h = PodcastHistory(db, sid)
-    e, = episodes(1)
-    h.observe([e], NOW)
-    assert h.snapshot()[e.key] == EpisodeHistory(0, None, NOW)
+    e, unplayed = episodes(2)
+    with db.connection:
+        db.connection.execute(
+            'INSERT INTO podcast_history (source_id, feed_id, episode_id, last_seen_at) VALUES (?, ?, ?, ?)',
+            (sid, *unplayed.key, NOW.isoformat()))
+    assert not h.snapshot()
     h.mark_played(e, NOW)
     h.mark_played(e, NOW+timedelta(hours=2))
-    h.observe([], NOW+timedelta(days=1))
-    assert not PodcastHistory(db, other_sid).snapshot()
+    other_history = PodcastHistory(db, other_sid)
+    assert not other_history.snapshot()
+    other_history.mark_played(e, NOW)
     db.close()
     db = Database(path)
     h = PodcastHistory(db, sid)
-    assert h.snapshot()[e.key] == EpisodeHistory(2, NOW+timedelta(hours=2), NOW)
-    catalog = EpisodeCatalog()
-    # Same GUID reconnects after absence; refresh observes even ineligible entries.
-    c = PodcastConfig(feeds=[dict(url=URL, max_episodes=0)])
-    catalog.refresh(c, lambda u: FeedResponse(rss(item('0', media='https://cdn.example.org/0')), u),
-                    NOW+timedelta(days=3), history=h)
-    assert h.snapshot()[e.key].play_count == 2
-    assert h.snapshot()[e.key].last_seen_at == NOW+timedelta(days=3)
+    later = NOW + timedelta(days=3)
+    expected = {e.key: EpisodeHistory(2, NOW+timedelta(hours=2), NOW)}
+
+    def refresh(*feeds):
+        c = PodcastConfig(feeds=feeds)
+        body = rss(item('0', media='https://cdn.example.org/moved'), item('1'))
+        service = PodcastFeedService(c, fetch_factory=lambda: lambda u: FeedResponse(body, u),
+                                     now=lambda: later, parser=parse_feed)
+        service.io_step(h)
+        view = service.snapshot()
+        assert view.history == expected
+        return eligible_episodes(view.catalog, c, later)
+
+    assert e.key not in {entry.key for entry in refresh(dict(url=OTHER))}
+    assert not refresh(dict(url=URL, max_age_days=1))
+    assert not refresh(dict(url=URL, max_episodes=0))
+    assert e.key in {entry.key for entry in refresh(dict(url=URL))}
+    legacy = db.connection.execute(
+        'SELECT play_count, last_seen_at FROM podcast_history WHERE source_id = ? AND feed_id = ? AND episode_id = ?',
+        (sid, *unplayed.key)).fetchone()
+    assert tuple(legacy) == (0, NOW.isoformat())
     assert db.connection.execute('PRAGMA user_version').fetchone()[0] == 1
     db.delete('sources', sid)
     assert not h.snapshot()
+    assert not db.connection.execute('SELECT 1 FROM podcast_history WHERE source_id = ?', (sid,)).fetchone()
+    assert PodcastHistory(db, other_sid).snapshot() == {e.key: EpisodeHistory(1, NOW, NOW)}
     db.close()
 
 
@@ -290,11 +323,120 @@ def test_transport_failures_are_bounded_and_sanitized(kind):
     assert 'secret-token' not in str(exc.value)
 
 
-def test_expired_refresh_budget_does_not_issue_request():
-    ticks = iter([0, 21])
+def test_http_operation_timeout_defaults_and_fresh_budget_after_redirects():
+    now = 0
+    calls = []
+
+    def handler(request):
+        nonlocal now
+        calls.append((request.url.path, request.extensions['timeout']))
+        now += 8
+        return httpx.Response(302, headers={'location': '/redirected'})
+
+    fetch = fetcher(handler, clock=lambda: now)
     with pytest.raises(DomainError) as exc:
-        fetcher(lambda r: pytest.fail('network after deadline'), clock=lambda: next(ticks))(URL)
+        fetch(URL)
     assert exc.value.error == 'PODCAST_FETCH_TIMEOUT'
+    assert [path for path, _ in calls] == ['/rss', '/redirected', '/redirected']
+    for (_, timeout), expected in zip(calls, [10.0, 10.0, 4.0], strict=True):
+        assert timeout == dict(connect=expected, read=expected, write=expected, pool=expected)
+
+    calls.clear()
+    with pytest.raises(DomainError) as exc:
+        fetch(OTHER)
+    assert exc.value.error == 'PODCAST_FETCH_TIMEOUT'
+    assert calls[0][1]['connect'] == 10.0
+    assert len(calls) == 3
+
+
+@pytest.mark.parametrize('phase', ['headers', 'body'])
+def test_total_deadline_interrupts_an_awaited_network_operation(phase):
+    interrupted = []
+
+    async def blocked_read():
+        try:
+            await asyncio.sleep(1)
+            pytest.fail('Network operation outlived the feed deadline')
+        except asyncio.CancelledError:
+            interrupted.append(phase)
+            raise
+
+    class Stream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'first'
+            await blocked_read()
+
+    async def handler(request):
+        if phase == 'headers':
+            await blocked_read()
+        return httpx.Response(200, stream=Stream())
+
+    with pytest.raises(DomainError) as exc:
+        fetcher(handler, total_timeout_s=0.05)(URL)
+    assert exc.value.error == 'PODCAST_FETCH_TIMEOUT'
+    assert interrupted == [phase]
+
+
+def test_total_deadline_does_not_wait_for_blocked_os_dns(monkeypatch):
+    import socket
+    from threading import Event
+
+    entered, release, finished = Event(), Event(), Event()
+
+    def resolve(*args, **kwargs):
+        entered.set()
+        release.wait(2)  # Failsafe so a regression cannot leave a stuck executor thread.
+        finished.set()
+        raise socket.gaierror(socket.EAI_AGAIN, 'DNS unavailable')
+
+    async def handler(request):
+        await asyncio.get_running_loop().getaddrinfo(request.url.host, 443)
+        pytest.fail('DNS call unexpectedly completed')
+
+    monkeypatch.setattr(socket, 'getaddrinfo', resolve)
+    try:
+        with pytest.raises(DomainError) as exc:
+            fetcher(handler, total_timeout_s=0.2)(URL)
+        assert exc.value.error == 'PODCAST_FETCH_TIMEOUT'
+        assert entered.is_set()
+        assert not finished.is_set()
+    finally:
+        release.set()
+        if entered.is_set():
+            assert finished.wait(2)
+
+
+def test_podcast_probe_downloads_and_parses_all_feeds_after_twenty_seconds(monkeypatch):
+    from fmheadendd.sources import podcast_fetch, podcast_parser
+
+    urls = [f'{URL}/{i}' for i in range(32)]
+    attempts, parses = [], []
+    now = 0
+
+    def handler(request):
+        nonlocal now
+        attempts.append(str(request.url))
+        now += 2
+        if str(request.url) == urls[5]:
+            raise httpx.ReadTimeout('private URL')
+        return httpx.Response(200, stream=httpx.ByteStream(rss(item(date=None))))
+
+    def parse(body, url, when, *, base_url):
+        nonlocal now
+        parses.append(url)
+        now += 3
+        return parse_feed(body, url, when, base_url=base_url)
+
+    fetch = fetcher(handler, clock=lambda: now)
+    monkeypatch.setattr(podcast_fetch, 'FeedFetcher', lambda: fetch)
+    monkeypatch.setattr(podcast_parser, 'shared_parser', lambda: parse)
+    result = podcast_fetch.probe_podcast(PodcastConfig(feeds=[{'url': url} for url in urls]))
+    assert now > 20
+    assert attempts == urls
+    assert parses == urls[:5] + urls[6:]
+    assert result.podcast.feeds_attempted == 32
+    assert result.podcast.feeds_succeeded == 31
+    assert result.podcast.feeds[5].error == 'PODCAST_FETCH_TIMEOUT'
 
 
 def test_snapshot_is_not_partially_published_during_refresh():
@@ -405,14 +547,21 @@ def test_random_fixed_seed_is_reproducible_and_new_smart_item_visible():
 
 
 def test_timeout_while_streaming_and_truncated_gzip():
-    class Stream(httpx.SyncByteStream):
-        def __iter__(self):
-            yield b'first'
-            yield b'second'
-    ticks = iter([0, 0, 1, 21])
+    now = 0
+    received = []
+
+    class Stream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            nonlocal now
+            for i in range(5):
+                now += 7
+                received.append(i)
+                yield b'data'
+
     with pytest.raises(DomainError) as exc:
-        fetcher(lambda r: httpx.Response(200, stream=Stream()), clock=lambda: next(ticks))(URL)
+        fetcher(lambda r: httpx.Response(200, stream=Stream()), clock=lambda: now)(URL)
     assert exc.value.error == 'PODCAST_FETCH_TIMEOUT'
+    assert received == [0, 1, 2]
     with pytest.raises(DomainError) as exc:
         fetcher(lambda r: httpx.Response(200, stream=httpx.ByteStream(gzip.compress(b'body')[:-4]),
                                         headers={'content-encoding': 'gzip'}))(URL)
@@ -497,17 +646,3 @@ def test_feed_warnings_do_not_log_credentials(caplog):
     catalog.refresh(config(), fetch, NOW)
     assert 'secret' not in caplog.text and 'password' not in caplog.text
     assert 'PODCAST_FETCH_FAILED' in caplog.text
-
-
-def test_history_failed_refresh_does_not_change_last_seen(tmp_path):
-    db = Database(tmp_path/'failed.db')
-    sid = db.save('sources', InputSourceConfig(name='Podcast', type='PODCAST', config=config().model_dump(mode='json'))).id
-    history = PodcastHistory(db, sid)
-    catalog = EpisodeCatalog()
-    catalog.refresh(config(), lambda u: FeedResponse(rss(item()),u), NOW, history=history)
-    before = history.snapshot()
-    def failed(url):
-        raise DomainError(503, 'PODCAST_FETCH_TIMEOUT', 'Timeout')
-    catalog.refresh(config(), failed, NOW+timedelta(days=1), history=history)
-    assert history.snapshot() == before
-    db.close()

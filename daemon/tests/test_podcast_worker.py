@@ -1,5 +1,6 @@
 """Portable worker policy, transfer and parent persistence tests."""
 from dataclasses import replace
+from datetime import timedelta
 from threading import Event
 from unittest.mock import Mock
 import json
@@ -8,7 +9,10 @@ import pytest
 
 from fmheadendd.sources import podcast_worker as wire
 from fmheadendd.sources.audio_ipc import ProtocolError, envelope, pack
+from fmheadendd.models.configuration import PodcastConfig
+from fmheadendd.sources.podcast import CatalogSnapshot, FeedRefreshResult, eligible_episodes, feed_identity
 from fmheadendd.sources.podcast_runtime import PLAYED_BYTES
+from fmheadendd.sources.podcast_service import PodcastFeedSnapshot
 from fmheadendd.sources.worker_recovery import WorkerRecovery
 from fmheadendd.tests.test_podcast_runtime import runtime, NOW
 from fmheadendd.tests.test_audio_worker import simulated_process, until, finish
@@ -55,7 +59,7 @@ def test_worker_scheduler_threshold_parent_persistence(pair, monkeypatch, mode):
     notification = worker.poll()
     assert notification and worker.poll() is None
     assert p.history_state[episode.key].play_count == 1
-    assert r.history.snapshot()[episode.key].play_count == 0
+    assert not r.db.connection.execute('SELECT * FROM podcast_history').fetchall()
     parent.accept(notification)
     r.p.feed_service._flush_marks(r.history)
     assert r.history.snapshot()[episode.key].play_count == 1
@@ -114,17 +118,128 @@ def test_restart_snapshot_reads_latest_history_without_rss_fetch(pair):
     assert next_worker.snapshot.history[episode.key].play_count == 1
 
 
+def test_large_catalog_projects_age_and_count_limits_with_original_order(pair):
+    r, _, _ = pair
+    original = r.p.feed_service.snapshot().catalog.feeds[0]
+    template = original.episodes[0]
+    feeds = []
+    for i in range(32):
+        url = f'https://example.org/feed/{i}'
+        fid = feed_identity(url)
+        episodes = tuple(replace(template, feed_id=fid, feed_url=url, episode_id=str(j),
+                                 published_at=NOW - timedelta(days=j))
+                         for j in reversed(range(313)))
+        feeds.append(replace(original, feed_id=fid, url=url, episodes=episodes))
+    # Even feeds are limited by age (2), odd feeds by count (1).
+    config = PodcastConfig(feeds=[dict(url=f.url, max_age_days=1, max_episodes=3 if i % 2 == 0 else 1)
+                                  for i, f in enumerate(feeds)])
+    results = tuple(FeedRefreshResult(f.feed_id, None, len(f.episodes), f.title) for f in feeds)
+    catalog = CatalogSnapshot(tuple(feeds), results, NOW)
+    service = Mock(config=config, now=lambda: NOW, error=None)
+    service.snapshot.side_effect = [PodcastFeedSnapshot(), PodcastFeedSnapshot(1, catalog)]
+    parent, worker = wire.ParentPodcast(service), wire.WorkerPodcast(config)
+    deliver(parent, worker)
+    projected = worker.snapshot.catalog
+    assert [f.feed_id for f in projected.feeds] == [f.feed_id for f in feeds]
+    assert [len(f.episodes) for f in projected.feeds] == [2, 1] * 16
+    assert eligible_episodes(projected, config, NOW) == eligible_episodes(catalog, config, NOW)
+    assert projected.results == results
+    assert sum(len(f.episodes) for f in catalog.feeds) == 10016
+
+
+def test_sqlite_history_is_projected_and_returns_when_episode_is_eligible(pair):
+    r, _, _ = pair
+    service = r.p.feed_service
+    catalog = service.snapshot().catalog
+    feed = catalog.feeds[0]
+    a, b = feed.episodes
+    when = NOW - timedelta(days=2)
+    for episode, count in ((a, 2), (b, 4)):
+        for _ in range(count):
+            r.history.mark_played(episode, when)
+    with r.db.connection:
+        r.db.connection.executemany(
+            'INSERT INTO podcast_history (source_id, feed_id, episode_id, play_count, last_played_at, last_seen_at) '
+            'VALUES (?, ?, ?, 1, ?, ?)',
+            ((r.source.id, a.feed_id, f'old-{i}', when.isoformat(), when.isoformat()) for i in range(10000)))
+
+    config = r.p.config.model_copy(update={'schedule_mode': 'SMART'})
+    service.config = config
+    parent, worker = wire.ParentPodcast(service), wire.WorkerPodcast(config)
+    p = worker.playback(config, Event())
+    service._publish(replace(catalog, feeds=(replace(feed, episodes=(a,)),)), r.history)
+    deliver(parent, worker)
+    assert len(service.snapshot().history) == 10002
+    assert set(worker.snapshot.history) == {a.key}
+    assert p.initial() == a.media_url
+    p.stream_start()
+
+    service._publish(catalog, r.history)
+    deliver(parent, worker)
+    assert set(worker.snapshot.history) == {a.key, b.key}
+    assert worker.snapshot.history[b.key].last_played_at == when
+    assert {key: h.play_count for key, h in p.history_state.items()} == {a.key: 2, b.key: 4}
+    p.service(Mock())
+    assert p.prepared.context.key == a.key
+    assert len(r.history.snapshot()) == 10002
+
+
+@pytest.mark.parametrize(('count', 'url_suffix', 'reason'), [
+    (10001, '', 'exceeds 10,000 episodes'),
+    (1100, 'x' * 8000, 'exceeds 8 MiB'),
+])
+def test_oversized_eligible_update_leaves_playback_running(pair, caplog, count, url_suffix, reason):
+    r, parent, worker = pair
+    service = r.p.feed_service
+    p = worker.playback(worker.config, Event())
+    deliver(parent, worker)
+    accepted = worker.snapshot
+    assert p.initial()
+    p.stream_start()
+    playing = p.rendering
+    catalog = service.snapshot().catalog
+    feed = catalog.feeds[0]
+    episodes = tuple(replace(playing.context, episode_id=str(i),
+                             media_url='https://example.org/' + url_suffix) for i in range(count))
+    service._publish(replace(catalog, feeds=(replace(feed, episodes=episodes),)), r.history)
+
+    assert parent.poll() is None
+    assert parent.poll() is None
+    assert caplog.text.count(reason) == 1
+    assert worker.snapshot is accepted
+    p.pcm(PLAYED_BYTES)
+    assert p.rendering is playing and p.active is playing
+    parent.accept(worker.poll())
+    service._flush_marks(r.history)
+    assert r.history.snapshot()[playing.context.key].play_count == 1
+    p.service(Mock())
+    player = Mock()
+    p.handoff(player)
+    player.set_property.assert_called_once()
+
+    service._publish(catalog, r.history)
+    deliver(parent, worker)
+    assert worker.snapshot.revision == accepted.revision + 2
+    assert worker.snapshot.history[playing.context.key].play_count == 1
+
+
 @pytest.mark.parametrize('mutation', ['url', 'count', 'date', 'feed'])
 def test_snapshot_validation(pair, mutation):
-    r, parent, worker = pair
-    value = json.loads(wire.encode(r.p.feed_service.snapshot()))
+    r, _, _ = pair
+    service = r.p.feed_service
+    episode = service.snapshot().catalog.feeds[0].episodes[0]
+    r.history.mark_played(episode, NOW)
+    service.request_snapshot()
+    service.io_step(r.history)
+    snapshot = service.snapshot()
+    value = json.loads(wire.encode(snapshot))
     e = value['catalog']['feeds'][0]['episodes'][0]
     if mutation == 'url': e['media_url'] = 'file:///etc/passwd'
     if mutation == 'count': value['history'][0][2]['play_count'] = -1
     if mutation == 'date': e['discovered_at'] = '2026-01-01'
     if mutation == 'feed': e['feed_id'] = 'wrong'
     with pytest.raises(ProtocolError):
-        wire.decode(json.dumps(value), 1, r.p.config)
+        wire.decode(json.dumps(value), snapshot.revision, r.p.config)
 
 
 def test_profile_reuses_service_but_source_change_does_not(pair):
@@ -145,7 +260,7 @@ def test_unknown_feed_with_null_url_cannot_persist_played_event(pair):
     with pytest.raises(ProtocolError):
         parent.accept(dict(episode=episode, when=NOW.isoformat()))
     assert not r.p.feed_service._marks
-    assert all(h.play_count == 0 for h in r.history.snapshot().values())
+    assert not r.db.connection.execute('SELECT * FROM podcast_history').fetchall()
 
 
 def test_generation_fences_played_and_factory_selection(pair, monkeypatch):

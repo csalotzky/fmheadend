@@ -147,7 +147,7 @@ class PodcastFeedService:
                 raise DomainError(503, 'PODCAST_REFRESH_CANCELLED', 'Source stopped')
             return fetch(url)
 
-        view = self.catalog.refresh(self.config, cancellable, self.now(), history=history)
+        view = self.catalog.refresh(self.config, cancellable, self.now())
         self._publish(view, history)
         self._next_refresh = self.clock() + self.config.refresh_interval_minutes * 60
 

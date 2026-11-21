@@ -88,7 +88,8 @@ def test_actual_pcm_threshold_once(rt, seconds, expected):
     rt.seconds[0] = 100000  # wall time alone is irrelevant
     rt.p.pcm(seconds * 192000)
     rt.p.feed_service._flush_marks(rt.history)
-    assert rt.history.snapshot()[episode.key].play_count == expected
+    rows = rt.db.connection.execute('SELECT feed_id, episode_id, play_count FROM podcast_history')
+    assert [tuple(row) for row in rows] == [(*episode.key, 1)] * expected
     assert PLAYED_BYTES == 11520000
 
 
@@ -98,7 +99,7 @@ def test_arbitrary_frame_aligned_boundaries_and_new_occurrence(rt):
     for size in (4, 8192, PLAYED_BYTES-8200):
         rt.p.pcm(size)
     rt.p.feed_service._flush_marks(rt.history)
-    assert rt.history.snapshot()[e.key].play_count == 0
+    assert not rt.history.snapshot()
     rt.p.pcm(4)
     rt.p.pcm(PLAYED_BYTES)
     rt.p.feed_service._flush_marks(rt.history)
@@ -120,7 +121,8 @@ def test_failure_suppresses_zero_partial_and_post_threshold(rt, size):
     uri = rt.p.resume(failed=True)
     assert e.key in rt.p.failed and uri != e.media_url
     rt.p.feed_service._flush_marks(rt.history)
-    assert rt.history.snapshot()[e.key].play_count == int(size >= PLAYED_BYTES)
+    rows = rt.db.connection.execute('SELECT feed_id, episode_id, play_count FROM podcast_history')
+    assert [tuple(row) for row in rows] == [(*e.key, 1)] * int(size >= PLAYED_BYTES)
 
 
 @pytest.mark.parametrize('failed', [False, True])
@@ -129,7 +131,7 @@ def test_short_eos_or_failure_never_counts_as_played(rt, failed):
     rt.p.pcm(2*192000)
     rt.p.resume(failed=failed)
     rt.p.feed_service._flush_marks(rt.history)
-    assert all(h.play_count == 0 for h in rt.history.snapshot().values())
+    assert not rt.history.snapshot()
 
 
 def test_short_stop_no_played_and_stale_callbacks_inert(rt):
@@ -141,7 +143,7 @@ def test_short_stop_no_played_and_stale_callbacks_inert(rt):
     player.set_property.assert_not_called()
     assert rt.p.active is None and rt.p.prepared is None and not rt.p.failed
     assert not rt.p.submitted and rt.p.rendering is None
-    assert all(h.play_count == 0 for h in rt.history.snapshot().values())
+    assert not rt.history.snapshot()
 
 
 @pytest.mark.parametrize('mode', ['SMART','RANDOM'])
@@ -318,7 +320,7 @@ def test_stale_source_error_and_queued_history_survive_transition(rt):
     assert not rt.p.stale_error(object())  # unassociated errors are not guessed away
     rt.p.feed_service._flush_marks(rt.history)
     assert rt.history.snapshot()[old.context.key].play_count==1
-    assert rt.history.snapshot()[rt.p.active.context.key].play_count==0
+    assert rt.p.active.context.key not in rt.history.snapshot()
 
 
 def test_coherent_selection_while_refresh_is_blocked(rt):

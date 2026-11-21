@@ -111,7 +111,9 @@ A Podcast Source accepts 1–32 unique HTTP or HTTPS RSS/Atom feed URLs. Each fe
 
 Feed downloads are bounded by request time, redirect and response-size limits. A failed feed is reported separately. If it has a previous successful catalog, that catalog remains available while other feeds can refresh normally. A Source with no eligible episodes stays idle until a later scheduled refresh can supply one.
 
-Playback history is stored per Source, feed and episode. An episode is marked played after 60 seconds of decoded PCM, not when it is merely selected; an episode that ends before that threshold is not marked played. Testing feeds does not change history. Deleting the Source deletes its history, while removing a feed from the Source does not erase that feed's historical records.
+RSS episode catalogs are held in memory. SQLite stores playback history per Source, feed and episode. Once an episode reaches 60 seconds of decoded PCM in a playback occurrence, the daemon creates its history record or increments its play count. Feed discovery, feed testing, selection and playback that ends below the threshold leave history untouched.
+
+Played history survives restarts, changes to eligibility limits and removal of episodes or feeds from the catalog. The stored `last_seen_at` records the latest RSS sighting carried by a qualifying playback, or a later sighting already stored under the old policy. Existing zero-play records remain in SQLite and are ignored when loading playback history. There is no automatic history pruning. Deleting the Source deletes its history.
 
 Episode and feed titles can be exposed as Source metadata for downstream RadioText behavior. Successful feed parsing does not prove that an enclosure can subsequently be downloaded or decoded.
 

@@ -27,16 +27,7 @@ class PodcastHistory:
             r['play_count'], datetime.fromisoformat(r['last_played_at']) if r['last_played_at'] else None,
             datetime.fromisoformat(r['last_seen_at']))
             for r in self.database.connection.execute(
-                'SELECT * FROM podcast_history WHERE source_id = ?', (self.source_id,))}
-
-    def observe(self, episodes, seen_at: datetime):
-        stamp = utc(seen_at).isoformat()
-        with self.database.connection:
-            self.database.connection.executemany(
-                'INSERT INTO podcast_history (source_id, feed_id, episode_id, last_seen_at) VALUES (?, ?, ?, ?) '
-                'ON CONFLICT(source_id, feed_id, episode_id) DO UPDATE SET '
-                'last_seen_at = MAX(last_seen_at, excluded.last_seen_at)',
-                [(self.source_id, e.feed_id, e.episode_id, stamp) for e in episodes])
+                'SELECT * FROM podcast_history WHERE source_id = ? AND play_count > 0', (self.source_id,))}
 
     def mark_played(self, episode, played_at: datetime):
         stamp = utc(played_at).isoformat()
