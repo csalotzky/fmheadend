@@ -11,10 +11,12 @@ from fmheadendd.sources import podcast_worker as wire
 from fmheadendd.sources.audio_ipc import ProtocolError, envelope, pack
 from fmheadendd.models.configuration import PodcastConfig
 from fmheadendd.sources.podcast import CatalogSnapshot, FeedRefreshResult, eligible_episodes, feed_identity
+from fmheadendd.sources.podcast_fetch import FeedResponse
 from fmheadendd.sources.podcast_runtime import PLAYED_BYTES
+from fmheadendd.sources.podcast_schedule import PodcastScheduler
 from fmheadendd.sources.podcast_service import PodcastFeedSnapshot
 from fmheadendd.sources.worker_recovery import WorkerRecovery
-from fmheadendd.tests.test_podcast_runtime import runtime, NOW
+from fmheadendd.tests.test_podcast_runtime import runtime, rss, NOW
 from fmheadendd.tests.test_audio_worker import simulated_process, until, finish
 
 
@@ -87,21 +89,47 @@ def test_chunks_atomic_stale_and_bad_offsets(pair, monkeypatch):
     assert worker.snapshot is old
 
 
-def test_refresh_does_not_undo_optimistic_history_or_prefetch(pair):
+@pytest.mark.parametrize('departed', [False, True])
+def test_play_during_refresh_preserves_optimistic_and_durable_history(pair, departed):
     r, parent, worker = pair
+    service = r.p.feed_service
     p = worker.playback(r.p.config, Event())
     deliver(parent, worker)
-    p.initial(); p.stream_start(); p.pcm(PLAYED_BYTES)
+    p.initial(); p.stream_start()
     episode = p.rendering.context
     old = p.identity_metadata()
     p.handoff(Mock())
     assert p.identity_metadata() == old
-    # The event remains unpersisted while a newer feed snapshot arrives.
+
+    def fetch_with_play_event(url):
+        p.pcm(PLAYED_BYTES)
+        parent.accept(worker.poll())
+        return FeedResponse(rss(('C',)) if departed else r.response[0], url)
+
+    # A mark queued after the I/O turn has drained the queue is persisted next turn.
+    fetch_factory = service.fetch_factory
+    service.fetch_factory = lambda: fetch_with_play_event
     r.seconds[0] = 60
-    r.p.feed_service.io_step(r.history)
+    service.io_step(r.history)
     deliver(parent, worker)
+    assert not r.history.snapshot() and not worker.snapshot.history
     assert p.history_state[episode.key].play_count == 1
     assert p.identity_metadata() == old
+    assert (episode.key in p.eligible_keys) is not departed
+
+    service.fetch_factory = fetch_factory
+    replacement = wire.ParentPodcast(service)
+    service.io_step(r.history)
+    replacement_worker = wire.WorkerPodcast(r.p.config)
+    deliver(replacement, replacement_worker)
+    assert len(r.calls) == 1
+    assert r.history.snapshot()[episode.key].play_count == 1
+    if departed:
+        assert not replacement_worker.snapshot.history
+        r.seconds[0] = 120
+        service.io_step(r.history)
+        deliver(replacement, replacement_worker)
+    assert replacement_worker.snapshot.history[episode.key].play_count == 1
 
 
 def test_restart_snapshot_reads_latest_history_without_rss_fetch(pair):
@@ -169,19 +197,25 @@ def test_sqlite_history_is_projected_and_returns_when_episode_is_eligible(pair):
     p = worker.playback(config, Event())
     service._publish(replace(catalog, feeds=(replace(feed, episodes=(a,)),)), r.history)
     deliver(parent, worker)
-    assert len(service.snapshot().history) == 10002
+    assert set(service.snapshot().history) == {a.key}
     assert set(worker.snapshot.history) == {a.key}
     assert p.initial() == a.media_url
     p.stream_start()
 
     service._publish(catalog, r.history)
     deliver(parent, worker)
+    assert set(service.snapshot().history) == {a.key, b.key}
     assert set(worker.snapshot.history) == {a.key, b.key}
     assert worker.snapshot.history[b.key].last_played_at == when
     assert {key: h.play_count for key, h in p.history_state.items()} == {a.key: 2, b.key: 4}
     p.service(Mock())
     assert p.prepared.context.key == a.key
-    assert len(r.history.snapshot()) == 10002
+    full_history = r.history.snapshot()
+    assert len(full_history) == 10002
+    targeted, baseline = PodcastScheduler(), PodcastScheduler()
+    for _ in range(3):
+        assert targeted.choose_next((a, b), service.snapshot().history, NOW) == (
+            baseline.choose_next((a, b), full_history, NOW))
 
 
 @pytest.mark.parametrize(('count', 'url_suffix', 'reason'), [
@@ -284,7 +318,7 @@ def test_service_start_and_close_are_serialized(pair):
     r, _, _ = pair
     for _ in range(10):
         history = Mock()
-        history.snapshot.return_value = {}
+        history.snapshot_for_episodes.return_value = {}
         service = PodcastFeedService(r.p.config, history_factory=lambda: history)
         # No RSS fetch is needed to exercise ownership publication.
         service._next_refresh = service.clock() + 3600

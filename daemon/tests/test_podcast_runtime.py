@@ -225,7 +225,7 @@ def test_refresh_completion_after_stop_cannot_resurrect(rt):
         entered.set(); assert release.wait(2)
         return FeedResponse(rss(), url)
     rt.p.feed_service.fetch_factory = lambda: fetch
-    history=Mock(); history.snapshot.return_value={}
+    history=Mock(); history.snapshot_for_episodes.return_value={}
     thread=Thread(target=lambda:rt.p.feed_service.io_step(history)); thread.start()
     assert entered.wait(2)
     rt.p.close(); release.set(); thread.join(2)
@@ -330,7 +330,7 @@ def test_coherent_selection_while_refresh_is_blocked(rt):
         entered.set();assert release.wait(2)
         return FeedResponse(rss(('New',)),url)
     rt.p.feed_service.fetch_factory=lambda:fetch;rt.seconds[0]=60
-    history=Mock(); history.snapshot.return_value={}
+    history=Mock(); history.snapshot_for_episodes.return_value={}
     thread=Thread(target=lambda:rt.p.feed_service.io_step(history))
     thread.start();assert entered.wait(2)
     try:

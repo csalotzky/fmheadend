@@ -68,7 +68,7 @@ class PodcastFeedService:
             self._io_ready.set()
 
     def snapshot(self):
-        """Last complete catalog and durable history, detached from SQLite."""
+        """Last complete catalog and its durable history, detached from SQLite."""
         with self.lock:
             return self._snapshot
 
@@ -152,7 +152,8 @@ class PodcastFeedService:
         self._next_refresh = self.clock() + self.config.refresh_interval_minutes * 60
 
     def _publish(self, view, history):
-        state = dict(history.snapshot())
+        state = history.snapshot_for_episodes(
+            episode.key for feed in view.feeds for episode in feed.episodes)
         with self.lock:
             if self.closed:
                 return

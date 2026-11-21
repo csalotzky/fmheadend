@@ -102,7 +102,7 @@ def test_long_background_refresh_attempts_every_feed_and_retains_failed_catalog(
     service = PodcastFeedService(config, clock=lambda: seconds, now=lambda: NOW, parser=parse,
         fetch_factory=lambda: FeedFetcher(clock=lambda: seconds, transport=httpx.MockTransport(download)))
     history = Mock()
-    history.snapshot.return_value = {}
+    history.snapshot_for_episodes.return_value = {}
     service.io_step(history)
     first = service.snapshot().catalog
     assert seconds == 160
@@ -168,7 +168,7 @@ def test_refresh_snapshot_racing_pcm_has_no_lock_inversion(rt):
     service.on_snapshot = delayed
     # The read is detached before the PCM callback updates optimistic history.
     history = Mock()
-    history.snapshot.return_value = rt.history.snapshot()
+    history.snapshot_for_episodes.return_value = rt.history.snapshot()
     rt.seconds[0] = 60
     thread = Thread(target=lambda: service.io_step(history))
     thread.start()

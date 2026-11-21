@@ -1,8 +1,14 @@
 """Persistent rotation history, using the repository's SQLite connection/owner."""
+from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
+from itertools import islice
 
 from .podcast import utc
+
+
+_EPISODE_BATCH_SIZE = 500
 
 
 @dataclass(frozen=True)
@@ -23,11 +29,49 @@ class PodcastHistory:
         self.database, self.source_id = database, source_id
 
     def snapshot(self) -> dict[tuple[str, str], EpisodeHistory]:
-        return {(r['feed_id'], r['episode_id']): EpisodeHistory(
-            r['play_count'], datetime.fromisoformat(r['last_played_at']) if r['last_played_at'] else None,
-            datetime.fromisoformat(r['last_seen_at']))
-            for r in self.database.connection.execute(
-                'SELECT * FROM podcast_history WHERE source_id = ? AND play_count > 0', (self.source_id,))}
+        rows = self.database.connection.execute(
+            'SELECT * FROM podcast_history WHERE source_id = ? AND play_count > 0', (self.source_id,))
+        return dict(self._entries(rows))
+
+    def snapshot_for_episodes(
+        self, keys: Iterable[tuple[str, str]],
+    ) -> dict[tuple[str, str], EpisodeHistory]:
+        """Read durable history for the supplied feed and episode identities."""
+        by_feed: dict[str, set[str]] = defaultdict(set)
+        for feed_id, episode_id in keys:
+            by_feed[feed_id].add(episode_id)
+        if not by_feed:
+            return {}
+
+        connection = self.database.connection
+        # SELECT does not open a persistent transaction in sqlite3's legacy
+        # transaction mode. Keep all batches on one read view.
+        own_transaction = not connection.in_transaction
+        if own_transaction:
+            connection.execute('BEGIN')
+        try:
+            state = {}
+            for feed_id, episode_ids in by_feed.items():
+                remaining = iter(episode_ids)
+                while batch := tuple(islice(remaining, _EPISODE_BATCH_SIZE)):
+                    placeholders = ', '.join('?' for _ in batch)
+                    rows = connection.execute(
+                        'SELECT * FROM podcast_history WHERE source_id = ? AND feed_id = ? '
+                        f'AND episode_id IN ({placeholders}) AND play_count > 0',
+                        (self.source_id, feed_id, *batch))
+                    state.update(self._entries(rows))
+            return state
+        finally:
+            if own_transaction:
+                connection.rollback()
+
+    @staticmethod
+    def _entries(rows):
+        for row in rows:
+            played_at = row['last_played_at']
+            yield (row['feed_id'], row['episode_id']), EpisodeHistory(
+                row['play_count'], datetime.fromisoformat(played_at) if played_at else None,
+                datetime.fromisoformat(row['last_seen_at']))
 
     def mark_played(self, episode, played_at: datetime):
         stamp = utc(played_at).isoformat()

@@ -268,13 +268,14 @@ def test_history_reopen_retention_and_source_namespace(tmp_path):
                                      now=lambda: later, parser=parse_feed)
         service.io_step(h)
         view = service.snapshot()
-        assert view.history == expected
-        return eligible_episodes(view.catalog, c, later)
+        return view.history, eligible_episodes(view.catalog, c, later)
 
-    assert e.key not in {entry.key for entry in refresh(dict(url=OTHER))}
-    assert not refresh(dict(url=URL, max_age_days=1))
-    assert not refresh(dict(url=URL, max_episodes=0))
-    assert e.key in {entry.key for entry in refresh(dict(url=URL))}
+    history, eligible = refresh(dict(url=OTHER))
+    assert not history and e.key not in {entry.key for entry in eligible}
+    assert refresh(dict(url=URL, max_age_days=1)) == (expected, ())
+    assert refresh(dict(url=URL, max_episodes=0)) == (expected, ())
+    history, eligible = refresh(dict(url=URL))
+    assert history == expected and e.key in {entry.key for entry in eligible}
     legacy = db.connection.execute(
         'SELECT play_count, last_seen_at FROM podcast_history WHERE source_id = ? AND feed_id = ? AND episode_id = ?',
         (sid, *unplayed.key)).fetchone()
@@ -285,6 +286,76 @@ def test_history_reopen_retention_and_source_namespace(tmp_path):
     assert not db.connection.execute('SELECT 1 FROM podcast_history WHERE source_id = ?', (sid,)).fetchone()
     assert PodcastHistory(db, other_sid).snapshot() == {e.key: EpisodeHistory(1, NOW, NOW)}
     db.close()
+
+
+def test_targeted_history_limits_queries_to_catalog_keys():
+    db = Database(':memory:')
+    try:
+        cfg = InputSourceConfig(name='Podcast', type='PODCAST', config=config().model_dump(mode='json'))
+        sid, other_sid = (db.save('sources', cfg).id for _ in range(2))
+        history = PodcastHistory(db, sid)
+        feed_a, feed_b = feed_identity(URL), feed_identity(OTHER)
+        stamp = NOW.isoformat()
+        first_feed = [(feed_a, f"episode'{i}") for i in range(501)]
+        second_feed = [(feed_b, first_feed[0][1]), (feed_b, 'zero-play')]
+        with db.connection:
+            db.connection.executemany(
+                'INSERT INTO podcast_history VALUES (?, ?, ?, ?, ?, ?)',
+                [(sid, *key, 1, stamp, stamp) for key in first_feed]
+                + [(sid, *second_feed[0], 2, stamp, stamp),
+                   (sid, *second_feed[1], 0, None, stamp),
+                   (sid, feed_a, 'absent', 1, stamp, stamp),
+                   (other_sid, *first_feed[0], 9, stamp, stamp),
+                   (other_sid, *second_feed[1], 4, stamp, stamp)])
+        statements = []
+        db.connection.set_trace_callback(statements.append)
+        assert history.snapshot_for_episodes(iter(())) == {}
+        assert statements == []
+
+        found = history.snapshot_for_episodes(iter(first_feed + second_feed))
+        assert found == ({key: EpisodeHistory(1, NOW, NOW) for key in first_feed}
+                         | {second_feed[0]: EpisodeHistory(2, NOW, NOW)})
+        assert statements[0] == 'BEGIN' and statements[-1] == 'ROLLBACK'
+        selects = statements[1:-1]
+        assert len(selects) == 3
+        assert all(f'WHERE source_id = {sid} AND feed_id = ' in sql
+                   and 'episode_id IN (' in sql and 'play_count > 0' in sql for sql in selects)
+        assert selects[0].count('episode\'\'') == 500
+        assert selects[1].count('episode\'\'') == 1
+        assert not db.connection.in_transaction
+    finally:
+        db.close()
+
+
+def test_targeted_history_batches_share_a_read_view(tmp_path):
+    path = tmp_path / 'history.db'
+    reader = Database(path)
+    reader.connection.execute('PRAGMA journal_mode=WAL').fetchone()
+    writer = Database(path)
+    try:
+        cfg = InputSourceConfig(name='Podcast', type='PODCAST', config=config().model_dump(mode='json'))
+        sid = reader.save('sources', cfg).id
+        stored, concurrent = PodcastHistory(reader, sid), PodcastHistory(writer, sid)
+        first, = episodes(1)
+        second = replace(first, feed_id=feed_identity(OTHER))
+        for episode in (first, second):
+            stored.mark_played(episode, NOW)
+        queries = []
+
+        def advance_writer(sql):
+            if sql.startswith('SELECT * FROM podcast_history'):
+                queries.append(sql)
+                if len(queries) == 2:
+                    concurrent.mark_played(second, NOW + timedelta(hours=1))
+
+        reader.connection.set_trace_callback(advance_writer)
+        view = stored.snapshot_for_episodes((first.key, second.key))
+        assert len(queries) == 2
+        assert view == {first.key: EpisodeHistory(1, NOW, NOW), second.key: EpisodeHistory(1, NOW, NOW)}
+        assert stored.snapshot_for_episodes((second.key,))[second.key].play_count == 2
+    finally:
+        writer.close()
+        reader.close()
 
 
 def fetcher(handler, **kwargs):
