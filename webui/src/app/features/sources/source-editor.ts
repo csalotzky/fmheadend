@@ -8,6 +8,7 @@ import { RdsProfileForm } from '../../shared/rds-profile-editor/rds-profile-form
 import { RdsProfileEditor } from '../../shared/rds-profile-editor/rds-profile-editor';
 import {
   Component,
+  DestroyRef,
   ElementRef,
   HostListener,
   OnInit,
@@ -17,6 +18,7 @@ import {
   inject,
   signal,
 } from '@angular/core';
+import { PodcastTestProgress, podcastTestError, testPodcastFeeds } from './podcast-feed-test';
 import {
   AbstractControl,
   FormControl,
@@ -74,6 +76,7 @@ import { DashboardState } from '../dashboard/dashboard-state';
 export class SourceEditor implements OnInit, OnDestroy {
   @ViewChild('pathPicker') pathPicker?: ElementRef<HTMLDialogElement>;
   private api = inject(SourceApi);
+  private destroyRef = inject(DestroyRef);
   @ViewChild(RadioBrowserPicker) radioPicker?: RadioBrowserPicker;
   @ViewChild(PodcastBrowserPicker) podcastPicker?: PodcastBrowserPicker;
   openRadioBrowser() {
@@ -89,6 +92,7 @@ export class SourceEditor implements OnInit, OnDestroy {
   private radioGeneration = 0;
   ngOnDestroy() {
     ++this.radioGeneration;
+    ++this.testRevision;
     this.testInputs.unsubscribe();
     this.testConfigInputs.unsubscribe();
   }
@@ -193,14 +197,14 @@ export class SourceEditor implements OnInit, OnDestroy {
   readonly scheduleDescriptions = scheduleDescriptions;
   readonly controlError = controlError;
   readonly feedsError = feedsError;
-  readonly testedFeeds = signal<string[]>([]);
+  readonly podcastTestProgress = signal<PodcastTestProgress | null>(null);
   private readonly podcastDirectoryTitles = new Map<string, string>();
   // Matches by tested URL (unique per source) so edits, adds and removes never show stale diagnostics.
   feedResult(index: number): { label: string; ok: boolean; status?: string } | null {
     const probe = this.result()?.podcast;
     const url = String(this.feeds.at(index)?.controls.url.value ?? '').trim();
-    const at = this.testedFeeds().indexOf(url);
-    const feed = at >= 0 ? probe?.feeds[at] : undefined;
+    const at = this.podcastTestProgress()?.urls.indexOf(url) ?? -1;
+    const feed = probe?.feeds[at];
     if (!feed) {
       const label = this.podcastDirectoryTitles.get(url);
       return label ? { label, ok: true } : null;
@@ -244,6 +248,7 @@ export class SourceEditor implements OnInit, OnDestroy {
     ++this.testRevision;
     this.result.set(null);
     this.testError.set('');
+    this.podcastTestProgress.set(null);
   }
   readonly error = signal('');
   readonly message = signal('');
@@ -444,7 +449,6 @@ export class SourceEditor implements OnInit, OnDestroy {
     this.testConfigInputs.add(
       this.feeds.valueChanges.subscribe(() => this.podcastFeedUrls.set(this.currentPodcastFeedUrls())),
     );
-    this.testedFeeds.set([]);
   }
   visibleFields() {
     return fields[this.form.controls.type.value].filter(
@@ -794,10 +798,15 @@ export class SourceEditor implements OnInit, OnDestroy {
     this.testing.set(true);
     this.invalidateTest();
     const revision = this.testRevision;
-    this.testedFeeds.set(
-      body.type === 'PODCAST' ? (body.config['feeds'] as { url: string }[]).map((f) => f.url) : [],
-    );
     try {
+      if (body.type === 'PODCAST') {
+        await testPodcastFeeds(this.api, body, this.destroyRef, () => revision === this.testRevision,
+          (progress, result) => {
+            this.podcastTestProgress.set(progress);
+            this.result.set(result);
+          });
+        return;
+      }
       const result = await firstValueFrom(this.api.test(body));
       if (revision !== this.testRevision) return;
       this.result.set(result);
@@ -811,9 +820,11 @@ export class SourceEditor implements OnInit, OnDestroy {
         this.form.controls.name.markAsDirty();
       }
     } catch (e) {
-      if (revision === this.testRevision) this.testError.set(errorMessage(e));
+      if (revision === this.testRevision) {
+        this.testError.set(body.type === 'PODCAST' ? podcastTestError(e) : errorMessage(e));
+      }
     } finally {
-      this.testing.set(false);
+      if (!this.destroyRef.destroyed) this.testing.set(false);
     }
   }
 }

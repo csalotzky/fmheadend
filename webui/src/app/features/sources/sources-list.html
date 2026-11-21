@@ -40,7 +40,7 @@
       </div>
       <div class="actions list-actions">
         <a class="button-link" [routerLink]="['/sources', source.id]">Edit</a
-        ><button (click)="test(source.id)" [disabled]="pending().has(source.id)">
+        ><button (click)="test(source.id)" [disabled]="testingId() !== null || pending().has(source.id)">
           {{ pending().has(source.id) ? pendingLabel()[source.id] : 'Test' }}</button
         ><button (click)="deleting.set(source.id)" [disabled]="pending().has(source.id)">
           Delete
@@ -61,7 +61,25 @@
     @if (errors()[source.id]) {
       <p class="error" role="alert">{{ errors()[source.id] }}</p>
     }
-    <app-source-test-result [result]="results()[source.id] ?? null" />
+    @if (source.type === 'PODCAST' && progress()[source.id]; as batch) {
+      <div class="feed-test-progress">
+        <progress aria-label="Podcast feeds tested" [value]="batch.completed" [max]="batch.urls.length"></progress>
+        <div role="status">
+          {{ batch.completed }} / {{ batch.urls.length }} feeds tested
+          @if (batch.completed < batch.urls.length) {
+            @if (testingId() === source.id) {
+              <div class="muted">Testing feed {{ batch.completed + 1 }} · {{ batch.urls[batch.completed] }}</div>
+            } @else {
+              <div>Test stopped. Results are available for completed feeds.</div>
+            }
+          }
+        </div>
+      </div>
+      <app-source-test-result [result]="results()[source.id] ?? null" [feeds]="batch.urls"
+        [showSummary]="batch.completed === batch.urls.length" />
+    } @else {
+      <app-source-test-result [result]="results()[source.id] ?? null" />
+    }
   </section>
 }
   </details>

@@ -1,11 +1,13 @@
-import { Component, computed, effect, inject, signal } from '@angular/core';
+import { Component, DestroyRef, computed, effect, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { RouterLink } from '@angular/router';
 import { catchError, firstValueFrom, from, map, mergeMap, of } from 'rxjs';
 import { DashboardState } from '../dashboard/dashboard-state';
 import { InputSource } from '../../core/api/models';
 import { sortSources } from '../../core/api/source-order';
 import { errorMessage } from '../../core/api/headend-api';
-import { SourceApi, SourceRuntime, SourceTest } from './source-api';
+import { SourceApi, SourceDraft, SourceRuntime, SourceTest } from './source-api';
+import { PodcastTestProgress, podcastTestError, testPodcastFeeds } from './podcast-feed-test';
 import { TestResult } from './test-result';
 export function endpoint(source: InputSource): string {
   if (source.type === 'LOCAL') return String(source.config['path'] ?? '\u2014');
@@ -35,6 +37,9 @@ export function endpoint(source: InputSource): string {
 export class SourcesList {
   readonly shared = inject(DashboardState);
   private api = inject(SourceApi);
+  private destroyRef = inject(DestroyRef);
+  readonly testingId = signal<number | null>(null);
+  readonly progress = signal<Record<number, PodcastTestProgress>>({});
   readonly sources = computed(() => sortSources(this.shared.data()?.sources ?? []));
   readonly groups = computed(() => [
     ['HTTP', 'Internet stream (HTTP)'], ['LOCAL', 'Local media'], ['PODCAST', 'Podcast'],
@@ -91,18 +96,46 @@ export class SourcesList {
     });
   }
   async test(id: number) {
-    if (this.pending().has(id)) return;
+    if (this.testingId() !== null || this.pending().has(id) || this.destroyRef.destroyed) return;
+    const source = this.sources().find((row) => row.id === id);
+    if (!source) return;
+    this.testingId.set(id);
     this.busy(id, true);
     this.errors.update((e) => ({ ...e, [id]: '' }));
     this.results.update((r) => ({ ...r, [id]: null }));
     try {
-      const result = await firstValueFrom(this.api.test(id));
-      this.results.update((r) => ({ ...r, [id]: result }));
+      if (source.type === 'PODCAST') {
+        const body: SourceDraft = {
+          name: source.name,
+          type: source.type,
+          config: source.config as SourceDraft['config'],
+          use_default_audio_profile: source.use_default_audio_profile,
+          audio_profile_id: source.audio_profile_id,
+          input_gain_db: source.input_gain_db,
+          gst_options: source.gst_options as SourceDraft['gst_options'],
+          rds_profile: source.rds_profile,
+        };
+        await testPodcastFeeds(this.api, structuredClone(body), this.destroyRef,
+          () => this.testingId() === id, (progress, result) => {
+            this.progress.update((rows) => ({ ...rows, [id]: progress }));
+            this.results.update((rows) => ({ ...rows, [id]: result }));
+          });
+      } else {
+        const result = await firstValueFrom(this.api.test(id).pipe(takeUntilDestroyed(this.destroyRef)));
+        if (!this.destroyRef.destroyed) this.results.update((r) => ({ ...r, [id]: result }));
+      }
     } catch (e) {
-      this.errors.update((v) => ({ ...v, [id]: errorMessage(e) }));
+      if (!this.destroyRef.destroyed) {
+        this.errors.update((v) => ({
+          ...v, [id]: source.type === 'PODCAST' ? podcastTestError(e) : errorMessage(e),
+        }));
+      }
     } finally {
-      this.busy(id, false);
-      void this.shared.refresh();
+      if (!this.destroyRef.destroyed) {
+        this.testingId.set(null);
+        this.busy(id, false);
+        void this.shared.refresh();
+      }
     }
   }
   async remove(id: number) {

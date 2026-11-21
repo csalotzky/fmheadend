@@ -250,7 +250,23 @@
             {{ testing() ? 'Testing...' : 'Test feeds' }}
           </button>
         </div>
-        <app-source-test-result [result]="result()" [testing]="testing()" [error]="testError()" [feeds]="testedFeeds()" [showFeeds]="false" />
+        @if (podcastTestProgress(); as progress) {
+        <div class="feed-test-progress">
+          <progress aria-label="Podcast feeds tested" [value]="progress.completed"
+            [max]="progress.urls.length"></progress>
+          <div role="status">
+            {{ progress.completed }} / {{ progress.urls.length }} feeds tested
+            @if (testing() && progress.completed < progress.urls.length) {
+            <div class="muted">
+              Testing feed {{ progress.completed + 1 }} · {{ progress.urls[progress.completed] }}
+            </div>
+            } @else if (testError()) {
+            <div>Test stopped. Results are available for completed feeds.</div>
+            }
+          </div>
+        </div>
+        }
+        <app-source-test-result [result]="testing() ? null : result()" [error]="testError()" [showFeeds]="false" />
         <h3 class="playback-scheduling">Playback scheduling</h3>
         <div class="fields podcast-settings">
           <label>Schedule mode<select formControlName="schedule_mode" aria-describedby="podcast-mode-help">
@@ -361,7 +377,8 @@
     <button type="submit" [disabled]="saving() || testing() || radioRefreshing()">
       {{ saving() ? 'Saving...' : 'Save' }}
     </button>
-    <button type="button" routerLink="/sources" [disabled]="saving() || testing()">Cancel</button>
+    <button type="button" routerLink="/sources"
+      [disabled]="saving() || (testing() && form.controls.type.value !== 'PODCAST')">Cancel</button>
   </div>
 </form>
 @if (form.controls.type.value === 'HTTP') {

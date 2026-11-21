@@ -3,6 +3,7 @@ import { provideRouter, ActivatedRoute, convertToParamMap, Router } from '@angul
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting, HttpTestingController } from '@angular/common/http/testing';
 import { SourceEditor } from './source-editor';
+import { PodcastFeedProbe } from './source-api';
 import { DashboardState } from '../dashboard/dashboard-state';
 import { sample } from '../dashboard/test-fixtures';
 
@@ -14,6 +15,22 @@ const saved = (feeds: Feed[], extra: Record<string, unknown> = {}) => ({
   replay_cooldown_hours: 24,
   ...extra,
 });
+const bareFeed = (url: string): Feed => ({ url, max_age_days: null, max_episodes: null });
+const testUrl = '/api/v1/sources/test';
+function feedResponse(feed: PodcastFeedProbe) {
+  return {
+    ok: (feed.eligible_episodes ?? 0) > 0,
+    mocked: false,
+    message: 'Podcast feed diagnostics',
+    podcast: {
+      feeds_attempted: 1,
+      feeds_succeeded: feed.error ? 0 : 1,
+      discovered_episodes: feed.discovered_episodes,
+      eligible_episodes: feed.eligible_episodes ?? 0,
+      feeds: [feed],
+    },
+  };
+}
 
 describe('Podcast source configuration', () => {
   let http: HttpTestingController;
@@ -284,49 +301,47 @@ describe('Podcast source configuration', () => {
     http.expectNone('/api/v1/sources');
   });
 
-  it('shows partial feed failures with successful diagnostics', async () => {
-    const f = await editor();
-    type(f, input(f, 'Feed 1 URL'), 'https://good.example/rss');
-    button(f, '+ Add feed').click();
-    f.detectChanges();
-    type(f, input(f, 'Feed 2 URL'), 'https://bad.example/rss');
+  it('tests feeds sequentially and shows progress and results before the batch finishes', async () => {
+    const feeds = [
+      { url: 'https://good.example/rss', max_age_days: 14, max_episodes: 12 },
+      { ...bareFeed('https://bad.example/rss'), max_episodes: 0 },
+      { ...bareFeed('https://empty.example/rss'), max_age_days: 0 },
+    ];
+    const config = saved(feeds, { schedule_mode: 'RANDOM', refresh_interval_minutes: 90 });
+    const f = await editor(config);
     const done = f.componentInstance.test();
-    await Promise.resolve();
-    http.expectOne('/api/v1/sources/test').flush({
-      ok: true,
-      mocked: false,
-      message: 'Podcast catalog available; audio playback was not tested',
-      podcast: {
-        feeds_attempted: 2,
-        feeds_succeeded: 1,
-        discovered_episodes: 180,
-        eligible_episodes: 12,
-        feeds: [
-          {
-            feed_id: 'a',
-            title: 'Good Show',
-            error: null,
-            discovered_episodes: 180,
-            eligible_episodes: 12,
-          },
-          {
-            feed_id: 'b',
-            error: 'PODCAST_FETCH_TIMEOUT',
-            discovered_episodes: 0,
-            eligible_episodes: null,
-          },
-        ],
-      },
-    });
+    const diagnostics = [
+      { feed_id: 'a', title: 'Good Show', error: null, discovered_episodes: 180, eligible_episodes: 12 },
+      { feed_id: 'b', error: 'PODCAST_FETCH_TIMEOUT', discovered_episodes: 0, eligible_episodes: null },
+      { feed_id: 'c', error: null, discovered_episodes: 10, eligible_episodes: 0 },
+    ];
+    const progress = () => el(f).querySelector('.feed-test-progress')!;
+    const cards = [...el(f).querySelectorAll('.feed-card')];
+    for (const [index, feed] of feeds.entries()) {
+      f.detectChanges();
+      const req = http.expectOne(testUrl);
+      expect(req.request.method).toBe('POST');
+      expect(req.request.body.type).toBe('PODCAST');
+      expect(req.request.body.name).toBe(sample().sources[0].name);
+      expect(req.request.body.config).toEqual({ ...config, feeds: [feed] });
+      expect(progress().querySelector('progress')!.value).toBe(index);
+      expect(progress().textContent).toContain(`${index} / 3 feeds tested`);
+      expect(progress().textContent).toContain(feed.url);
+      expect(el(f).querySelectorAll('.feed-result')).toHaveLength(index);
+      expect(el(f).querySelector('app-source-test-result')!.textContent!.trim()).toBe('');
+      await f.componentInstance.test(); // The active run owns the only request.
+      http.expectNone(testUrl);
+      req.flush(feedResponse(diagnostics[index]));
+      await Promise.resolve();
+    }
     await done;
     f.detectChanges();
     const result = el(f).querySelector('app-source-test-result')!;
     expect(result.querySelector('.warning')).toBeTruthy();
     expect(result.querySelector('.error')).toBeNull();
-    expect(result.textContent).toContain('1 of 2 feeds failed');
+    expect(result.textContent).toContain('1 of 3 feeds failed');
     expect(result.textContent).not.toContain('OK: 180');
     expect(result.textContent).not.toContain('Timed out');
-    const cards = el(f).querySelectorAll('.feed-card');
     expect(cards[0].querySelector('.feed-result')!.textContent).toContain(
       'OK: 180 discovered / 12 eligible',
     );
@@ -338,7 +353,13 @@ describe('Podcast source configuration', () => {
     expect(cards[1].querySelector('.feed-result .error')!.textContent).toContain(
       'Error: Timed out',
     );
-    expect(result.textContent).toContain('180 discovered');
+    expect(cards[2].querySelector('.feed-result')!.textContent).toContain('OK: 10 discovered / 0 eligible');
+    expect(result.textContent).toContain('2 / 3');
+    expect(result.textContent).toContain('190 discovered');
+    expect([...result.querySelectorAll('dd')].at(-1)?.textContent).toBe('12');
+    expect(progress().textContent).toContain('3 / 3 feeds tested');
+    expect(progress().textContent).not.toContain('Testing feed');
+    http.expectNone('/api/v1/sources/1');
   });
 
   it('reports total feed failure as an error', async () => {
@@ -366,6 +387,123 @@ describe('Podcast source configuration', () => {
     expect(el(f).querySelector('.feed-card .feed-result')!.textContent).toContain(
       'Error: Not a usable RSS/Atom feed',
     );
+  });
+
+  it('reports a successful feed with zero eligible episodes separately from RSS failures', async () => {
+    const f = await editor(saved([bareFeed('https://zero.example/rss')]));
+    const done = f.componentInstance.test();
+    http.expectOne(testUrl).flush(feedResponse({
+      feed_id: 'zero', error: null, discovered_episodes: 7, eligible_episodes: 0,
+    }));
+    await done;
+    f.detectChanges();
+    const summary = el(f).querySelector('app-source-test-result')!;
+    expect(summary.textContent).toContain('Feed test found no eligible episodes');
+    expect(summary.textContent).toContain('1 / 1');
+    expect(el(f).querySelector('.feed-result')!.textContent).toContain('OK: 7 discovered / 0 eligible');
+  });
+
+  it.each([
+    [503, 'DISCOVERY_BUSY', 'Discovery is busy or shutting down'],
+    [503, 'DISCOVERY_TIMEOUT', 'Discovery did not finish within its timeout'],
+    [502, 'UPSTREAM_ERROR', 'The server could not complete the request'],
+  ])('stops with partial results on HTTP %i %s', async (status, code, message) => {
+    const f = await editor(saved([
+      bareFeed('https://good.example/rss'),
+      bareFeed('https://interrupted.example/rss'),
+      bareFeed('https://not-started.example/rss'),
+    ]));
+    const done = f.componentInstance.test();
+    http.expectOne(testUrl).flush(feedResponse({
+      feed_id: 'good', title: 'Good Show', error: null, discovered_episodes: 5, eligible_episodes: 3,
+    }));
+    await Promise.resolve();
+    http.expectOne(testUrl).flush({ error: code, message }, { status, statusText: 'Error' });
+    await done;
+    f.detectChanges();
+    http.expectNone(testUrl);
+    expect(el(f).querySelector('.feed-test-progress')!.textContent).toContain('1 / 3 feeds tested');
+    expect(el(f).querySelector('.feed-test-progress')!.textContent).toContain('Test stopped');
+    expect(el(f).querySelector('app-source-test-result [role="alert"]')!.textContent).toContain(
+      `${code}: ${message}`,
+    );
+    expect(el(f).querySelectorAll('.feed-result')).toHaveLength(1);
+    expect(el(f).querySelector('.feed-result')!.textContent).toContain('Good Show');
+    expect(button(f, 'Test feeds').disabled).toBe(false);
+  });
+
+  it('stops after the client timeout and resets progress when testing again', async () => {
+    const f = await editor(saved([
+      bareFeed('https://a.example/rss'), bareFeed('https://b.example/rss'),
+    ]));
+    vi.useFakeTimers();
+    try {
+      const done = f.componentInstance.test();
+      http.expectOne(testUrl).flush(feedResponse({
+        feed_id: 'a', error: null, discovered_episodes: 1, eligible_episodes: 1,
+      }));
+      await Promise.resolve();
+      const pending = http.expectOne(testUrl);
+      await vi.advanceTimersByTimeAsync(60_000);
+      await done;
+      f.detectChanges();
+      expect(pending.cancelled).toBe(true);
+      http.expectNone(testUrl);
+      expect(el(f).querySelector('.feed-test-progress')!.textContent).toContain('1 / 2 feeds tested');
+      expect(f.componentInstance.testError()).toContain('timed out after 60 seconds');
+      const retry = f.componentInstance.test();
+      f.detectChanges();
+      expect(el(f).querySelector('.feed-test-progress')!.textContent).toContain('0 / 2 feeds tested');
+      expect(el(f).querySelectorAll('.feed-result')).toHaveLength(0);
+      http.expectOne(testUrl).flush({ error: 'DISCOVERY_BUSY', message: 'Discovery is busy' }, {
+        status: 503, statusText: 'Service Unavailable',
+      });
+      await retry;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('discards an in-flight result and stops the old batch after editing the configuration', async () => {
+    const f = await editor(saved([
+      bareFeed('https://a.example/rss'),
+      bareFeed('https://b.example/rss'),
+      bareFeed('https://c.example/rss'),
+    ]));
+    const c = f.componentInstance;
+    const done = c.test();
+    http.expectOne(testUrl).flush(feedResponse({
+      feed_id: 'a', error: null, discovered_episodes: 1, eligible_episodes: 1,
+    }));
+    await Promise.resolve();
+    const pending = http.expectOne(testUrl);
+    c.feeds.at(1).controls.url.setValue('https://changed.example/rss');
+    expect(c.podcastTestProgress()).toBeNull();
+    await c.test();
+    http.expectNone(testUrl);
+    pending.flush(feedResponse({
+      feed_id: 'b', title: 'Stale title', error: null, discovered_episodes: 2, eligible_episodes: 2,
+    }));
+    await done;
+    f.detectChanges();
+    http.expectNone(testUrl);
+    expect(c.testing()).toBe(false);
+    expect(c.result()).toBeNull();
+    expect(el(f).querySelectorAll('.feed-result')).toHaveLength(0);
+  });
+
+  it('allows leaving during a test and cancels the client subscription on destruction', async () => {
+    const f = await editor(saved([
+      bareFeed('https://a.example/rss'), bareFeed('https://b.example/rss'),
+    ]));
+    const done = f.componentInstance.test();
+    const pending = http.expectOne(testUrl);
+    f.detectChanges();
+    expect(button(f, 'Cancel').disabled).toBe(false);
+    f.destroy();
+    await done;
+    expect(pending.cancelled).toBe(true);
+    http.expectNone(testUrl);
   });
 
   it('keeps the shared Audio processing panel and no playback controls', async () => {
@@ -437,7 +575,8 @@ describe('Podcast source configuration', () => {
     f.detectChanges();
     const results = el(f).querySelectorAll('app-source-test-result');
     expect(results).toHaveLength(1);
-    expect(actions.nextElementSibling).toBe(results[0]);
+    expect(actions.nextElementSibling?.classList.contains('feed-test-progress')).toBe(true);
+    expect(actions.nextElementSibling?.nextElementSibling).toBe(results[0]);
     const heading = results[0].nextElementSibling!;
     expect(heading.tagName).toBe('H3');
     expect(heading.textContent).toBe('Playback scheduling');
@@ -462,27 +601,13 @@ describe('Podcast source configuration', () => {
     expect(el(f).querySelectorAll('.feed-result')).toHaveLength(0);
     const done = f.componentInstance.test();
     await Promise.resolve();
-    http.expectOne('/api/v1/sources/test').flush({
-      ok: true,
-      mocked: false,
-      message: 'ok',
-      podcast: {
-        feeds_attempted: 2,
-        feeds_succeeded: 2,
-        discovered_episodes: 8,
-        eligible_episodes: 3,
-        feeds: [
-          {
-            feed_id: 'a',
-            title: 'Show A',
-            error: null,
-            discovered_episodes: 5,
-            eligible_episodes: 0,
-          },
-          { feed_id: 'b', title: null, error: null, discovered_episodes: 3, eligible_episodes: 3 },
-        ],
-      },
-    });
+    http.expectOne(testUrl).flush(feedResponse({
+      feed_id: 'a', title: 'Show A', error: null, discovered_episodes: 5, eligible_episodes: 0,
+    }));
+    await Promise.resolve();
+    http.expectOne(testUrl).flush(feedResponse({
+      feed_id: 'b', title: null, error: null, discovered_episodes: 3, eligible_episodes: 3,
+    }));
     await done;
     f.detectChanges();
     const cards = el(f).querySelectorAll('.feed-card');

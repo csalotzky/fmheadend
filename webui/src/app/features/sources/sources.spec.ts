@@ -586,7 +586,10 @@ describe('Sources management', () => {
     shared.data.set(data);
     expect(list().nativeElement.textContent).toContain('No Sources configured');
   });
-  it('tests saved source with duplicate prevention', async () => {
+  it.each(['HTTP', 'LOCAL', 'ALSA', 'UDP', 'RTP'] as const)('tests saved %s by id with duplicate prevention', async (type) => {
+    const data = sample();
+    data.sources[0].type = type;
+    shared.data.set(data);
     const f = list();
     http.expectOne('/api/v1/sources/1/status').flush({ state: 'IDLE' });
     const c = f.componentInstance;
@@ -599,6 +602,126 @@ describe('Sources management', () => {
     expect(c.results()[1]?.ok).toBe(true);
     expect(shared.data()?.sources[0].name).toBe('Studio feed');
     http.expectNone('/api/v1/sources/1');
+  });
+
+  function savedPodcastList() {
+    const data = sample();
+    const source = {
+      ...data.sources[0], type: 'PODCAST' as const, input_gain_db: -3,
+      use_default_audio_profile: false, audio_profile_id: 'custom/talk.json',
+      gst_options: { queue: { silent: true } }, rds_profile: null,
+      config: {
+        schedule_mode: 'RANDOM', refresh_interval_minutes: 17, replay_cooldown_hours: 4,
+        feeds: [
+          { url: 'https://first.example/rss', max_age_days: 10, max_episodes: null },
+          { url: 'https://second.example/rss', max_age_days: null, max_episodes: 0 },
+          { url: 'https://third.example/rss', max_age_days: 2, max_episodes: 4 },
+        ],
+      },
+    };
+    data.sources = [source, { ...data.sources[0], id: 2 }];
+    shared.data.set(data);
+    const f = list();
+    for (const req of http.match((r) => r.url.endsWith('/status'))) req.flush({ state: 'IDLE' });
+    const row = f.nativeElement.querySelector('[data-source-type="PODCAST"]') as HTMLElement;
+    return { source, f, row, c: f.componentInstance };
+  }
+
+  function oneFeedProbe(title: string, discovered: number, eligible: number, error: string | null = null) {
+    return {
+      ...result, ok: eligible > 0,
+      podcast: {
+        feeds_attempted: 1, feeds_succeeded: error ? 0 : 1,
+        discovered_episodes: discovered, eligible_episodes: eligible,
+        feeds: [{ feed_id: title, title, error, discovered_episodes: discovered, eligible_episodes: error ? null : eligible }],
+      },
+    };
+  }
+
+  it('tests the saved feed settings sequentially and displays each result before the final summary', async () => {
+    const { f, c, source, row } = savedPodcastList();
+    const original = structuredClone(source);
+    const done = c.test(1);
+    const replies = [
+      oneFeedProbe('Offline', 0, 0, 'PODCAST_FETCH_TIMEOUT'),
+      oneFeedProbe('Filtered', 14, 0),
+      oneFeedProbe('Playable', 9, 4),
+    ];
+    for (const [index, feed] of source.config.feeds.entries()) {
+      f.detectChanges();
+      expect(row.querySelector('progress')?.value).toBe(index);
+      expect(row.textContent).toContain(`${index} / 3 feeds tested`);
+      expect(row.textContent).toContain(feed.url);
+      expect(row.querySelectorAll('.podcast-feeds li')).toHaveLength(index);
+      expect(row.querySelector('.podcast-summary')).toBeNull();
+      await c.test(1);
+      await c.test(2);
+      const req = http.expectOne('/api/v1/sources/test');
+      expect(req.request.method).toBe('POST');
+      expect(req.request.body).toEqual({
+        name: source.name, type: source.type, input_gain_db: -3,
+        use_default_audio_profile: false, audio_profile_id: source.audio_profile_id,
+        gst_options: source.gst_options, rds_profile: null, config: { ...source.config, feeds: [feed] },
+      });
+      http.expectNone('/api/v1/sources/2/test');
+      req.flush(replies[index]);
+      await Promise.resolve();
+    }
+    await done;
+    f.detectChanges();
+    expect(source).toEqual(original);
+    expect(row.textContent).toContain('3 / 3 feeds tested');
+    expect(row.textContent).toContain('1 of 3 feeds failed');
+    expect(row.textContent).toContain('Timed out');
+    expect(row.textContent).toContain('OK: 14 discovered / 0 eligible');
+    expect([...row.querySelectorAll('.podcast-summary dd')].map(dd => dd.textContent?.trim())).toEqual([
+      '2 / 3', '23 discovered', '4',
+    ]);
+    expect(c.results()[1]?.ok).toBe(true);
+  });
+
+  it.each(['DISCOVERY_BUSY', 'DISCOVERY_TIMEOUT', 'client timeout'])('retains completed list diagnostics on %s and resets on retry', async (reason) => {
+    const { f, c, row } = savedPodcastList();
+    vi.useFakeTimers();
+    try {
+      const done = c.test(1);
+      http.expectOne('/api/v1/sources/test').flush(oneFeedProbe('Completed', 3, 0));
+      await Promise.resolve();
+      const interrupted = http.expectOne('/api/v1/sources/test');
+      if (reason === 'client timeout') await vi.advanceTimersByTimeAsync(60_000);
+      else interrupted.flush({ error: reason, message: 'Request interrupted' }, { status: 503, statusText: 'Unavailable' });
+      await done;
+      f.detectChanges();
+      http.expectNone('/api/v1/sources/test');
+      expect(row.textContent).toContain(reason === 'client timeout' ? 'timed out after 60 seconds' : reason);
+      expect(row.textContent).toContain('Test stopped');
+      expect(row.textContent).toContain('1 / 3 feeds tested');
+      expect(row.textContent).toContain('Completed');
+      expect(row.querySelectorAll('.podcast-feeds li')).toHaveLength(1);
+      expect(row.querySelector('.podcast-summary')).toBeNull();
+      const retry = c.test(1);
+      f.detectChanges();
+      expect(row.textContent).toContain('0 / 3 feeds tested');
+      expect(row.querySelectorAll('.podcast-feeds li')).toHaveLength(0);
+      const pending = http.expectOne('/api/v1/sources/test');
+      f.destroy();
+      await retry;
+      expect(pending.cancelled).toBe(true);
+      http.expectNone('/api/v1/sources/test');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('discards a delivered response when the list is destroyed before its continuation', async () => {
+    const { f, c } = savedPodcastList();
+    const done = c.test(1);
+    http.expectOne('/api/v1/sources/test').flush(oneFeedProbe('Stale', 2, 1));
+    f.destroy();
+    await done;
+    expect(c.results()[1]).toBeNull();
+    expect(shared.refresh).not.toHaveBeenCalled();
+    http.expectNone('/api/v1/sources/test');
   });
   it.each([true, false])('handles delete success=%s without cascade', async (success) => {
     const c = list().componentInstance;

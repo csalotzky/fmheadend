@@ -16,9 +16,10 @@ import { feedErrorText, feedStatus } from './podcast-form';
         <div
           class="test-result"
           role="status"
-          [class.error]="podcastLevel(r) === 'error'"
-          [class.warning]="podcastLevel(r) === 'warning'"
+          [class.error]="showSummary() && podcastLevel(r) === 'error'"
+          [class.warning]="showSummary() && podcastLevel(r) === 'warning'"
         >
+          @if (showSummary()) {
           <strong>{{ podcastTitle(r) }}</strong>
           <dl class="podcast-summary">
             <dt>Feeds</dt>
@@ -28,6 +29,7 @@ import { feedErrorText, feedStatus } from './podcast-form';
             <dt>Eligible</dt>
             <dd>{{ p.eligible_episodes }}</dd>
           </dl>
+          }
           @if (showFeeds()) {
             <ul class="podcast-feeds">
               @for (feed of p.feeds; track $index) {
@@ -141,7 +143,8 @@ export class TestResult {
   readonly testing = input(false);
   readonly error = input('');
   readonly result = input<SourceTest | null>(null);
-  readonly feeds = input<string[]>([]);
+  readonly feeds = input<readonly string[]>([]);
+  readonly showSummary = input(true);
   readonly showFeeds = input(true);
   bitrate(value: number | null | undefined): number | null {
     return value != null && Number.isFinite(value) && value > 0

@@ -290,6 +290,18 @@ summary {
   justify-content: space-between;
 }
 
+.feed-test-progress {
+  display: grid;
+  gap: 4px;
+  margin-top: var(--space-2);
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+}
+.feed-test-progress progress {
+  width: 100%;
+  height: 8px;
+}
+
 .feed-result {
   display: flex;
   gap: 12px;
