@@ -14,6 +14,16 @@ router = APIRouter(prefix="/api/v1", responses={
     code: {"model": ErrorResponse} for code in (400, 403, 404, 409, 422, 500, 503)
 })
 
+# A one-feed Podcast test can use 20 s for HTTP, 120 s for parser admission,
+# and 45 s for execution. Leave room for bounded reap and result publication.
+SINGLE_PODCAST_TEST_TIMEOUT_S = 195.0
+
+
+def _source_test_timeout(source):
+    if source.type == 'PODCAST' and len(source.config['feeds']) == 1:
+        return SINGLE_PODCAST_TEST_TIMEOUT_S
+    return None
+
 
 def published_view(request, response, name):
     status = request.app.state.services.status
@@ -66,7 +76,7 @@ def create_source(body: InputSourceConfig, request: Request):
 async def test_unsaved_source(body: InputSourceConfig, request: Request):
     """Probe without persisting or assigning configuration. Uses the selected media backend."""
     probe = await request.app.state.control.call(lambda: request.app.state.services.sources.prepare_test(body))
-    return await request.app.state.discovery.call(probe)
+    return await request.app.state.discovery.call(probe, timeout=_source_test_timeout(body))
 
 
 @router.get("/sources/{id}", response_model=InputSource, tags=["sources"])
@@ -92,9 +102,13 @@ def delete_source(id: int, request: Request):
 @router.post("/sources/{id}/test", response_model=SourceTestResult, tags=["sources"])
 async def test_saved_source(id: int, request: Request):
     services = request.app.state.services
-    probe = await request.app.state.control.call(
-        lambda: services.sources.prepare_test(services.config.get("sources", id)))
-    return await request.app.state.discovery.call(probe)
+
+    def prepare():
+        source = services.config.get("sources", id)
+        return services.sources.prepare_test(source), _source_test_timeout(source)
+
+    probe, timeout = await request.app.state.control.call(prepare)
+    return await request.app.state.discovery.call(probe, timeout=timeout)
 
 
 @router.get("/sources/{id}/status", response_model=InputSourceStatus, tags=["sources"])

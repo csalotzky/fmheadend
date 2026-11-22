@@ -739,12 +739,12 @@ describe('Sources management', () => {
       http.expectOne('/api/v1/sources/test').flush(oneFeedProbe('Completed', 3, 0));
       await Promise.resolve();
       const interrupted = http.expectOne('/api/v1/sources/test');
-      if (reason === 'client timeout') await vi.advanceTimersByTimeAsync(60_000);
+      if (reason === 'client timeout') await vi.advanceTimersByTimeAsync(205_000);
       else interrupted.flush({ error: reason, message: 'Request interrupted' }, { status: 503, statusText: 'Unavailable' });
       await done;
       f.detectChanges();
       http.expectNone('/api/v1/sources/test');
-      expect(row.textContent).toContain(reason === 'client timeout' ? 'timed out after 60 seconds' : reason);
+      expect(row.textContent).toContain(reason === 'client timeout' ? 'timed out after 205 seconds' : reason);
       expect(row.textContent).toContain('Test stopped');
       expect(row.textContent).toContain('1 / 3 feeds tested');
       expect(row.textContent).toContain('Completed');

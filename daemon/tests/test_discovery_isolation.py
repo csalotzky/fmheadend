@@ -9,7 +9,7 @@ import pytest
 from fmheadendd.app import create_app
 from fmheadendd.control import DiscoveryExecutor
 from fmheadendd.errors import DomainError
-from fmheadendd.models.configuration import InputSourceConfig
+from fmheadendd.models.configuration import InputSourceConfig, SourceTestResult
 from fmheadendd.mux.unix_client import UnixMuxClient
 from fmheadendd.sources.gst_pipeline import GstPipeline
 from fmheadendd.sources.podcast_fetch import FeedFetcher, FeedResponse
@@ -157,6 +157,39 @@ def test_saved_probe_snapshot_survives_edit_and_delete(tmp_path, monkeypatch):
                 assert seen == ['https://example.org/old']
                 assert await app.state.control.call(lambda: app.state.services.database.list('sources')) == []
                 assert not app.state.services.sources.pipelines
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('saved', [False, True])
+@pytest.mark.parametrize('feed_count,expected', [(0, 65.0), (1, 195.0), (2, 65.0)])
+def test_source_probe_deadline_extends_only_for_one_podcast_feed(tmp_path, monkeypatch, saved, feed_count, expected):
+    app = create_app(profile_settings(tmp_path / 'config.db'))
+    seen = []
+    source = (dict(name='show', type='PODCAST', config={
+        'feeds': [{'url': f'https://example.org/feed{i}'} for i in range(feed_count)]})
+        if feed_count else dict(name='stream', type='HTTP', config={'uri': 'https://example.org/live'}))
+
+    async def record_deadline(future, timeout):
+        seen.append(timeout)
+        return await future
+
+    async def run():
+        async with app.router.lifespan_context(app):
+            monkeypatch.setattr(app.state.services.sources, 'prepare_test',
+                                lambda source: lambda: SourceTestResult(mocked=True))
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as api:
+                if saved:
+                    created = await api.post('/api/v1/sources', json=source)
+                    assert created.status_code == 201, created.text
+                    path, body = f"/api/v1/sources/{created.json()['id']}/test", None
+                else:
+                    path, body = '/api/v1/sources/test', source
+                with monkeypatch.context() as patch:
+                    patch.setattr('fmheadendd.control.asyncio.wait_for', record_deadline)
+                    response = await api.post(path, json=body)
+                assert response.status_code == 200, response.text
+                assert seen == [expected]
 
     asyncio.run(run())
 

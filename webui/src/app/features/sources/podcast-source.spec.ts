@@ -444,13 +444,15 @@ describe('Podcast source configuration', () => {
       }));
       await Promise.resolve();
       const pending = http.expectOne(testUrl);
-      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.advanceTimersByTimeAsync(195_000);
+      expect(pending.cancelled).toBe(false);
+      await vi.advanceTimersByTimeAsync(10_000);
       await done;
       f.detectChanges();
       expect(pending.cancelled).toBe(true);
       http.expectNone(testUrl);
       expect(el(f).querySelector('.feed-test-progress')!.textContent).toContain('1 / 2 feeds tested');
-      expect(f.componentInstance.testError()).toContain('timed out after 60 seconds');
+      expect(f.componentInstance.testError()).toContain('timed out after 205 seconds');
       const retry = f.componentInstance.test();
       f.detectChanges();
       expect(el(f).querySelector('.feed-test-progress')!.textContent).toContain('0 / 2 feeds tested');

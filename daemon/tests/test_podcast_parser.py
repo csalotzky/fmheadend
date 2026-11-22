@@ -70,6 +70,8 @@ def test_sources_share_parser_and_source_close_does_not_close_pool():
     second = PodcastRuntime(config, Event())
     try:
         assert first.feed_service._parser is second.feed_service._parser is module.shared_parser()
+        assert module.shared_parser().timeout == 45
+        assert module.shared_parser().queue_timeout == 120
         first.feed_service.catalog.refresh(config, lambda url: FeedResponse(RSS, url), NOW)
         executor = first.feed_service._parser._executor
         first.close()

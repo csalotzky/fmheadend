@@ -3,7 +3,7 @@ import { DestroyRef } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { firstValueFrom, TimeoutError } from 'rxjs';
 import { errorMessage } from '../../core/api/headend-api';
-import { PodcastProbe, SourceApi, SourceDraft, SourceTest } from './source-api';
+import { PODCAST_FEED_TEST_TIMEOUT_MS, PodcastProbe, SourceApi, SourceDraft, SourceTest } from './source-api';
 
 export interface PodcastTestProgress {
   urls: readonly string[];
@@ -53,7 +53,8 @@ export async function testPodcastFeeds(
 }
 
 export function podcastTestError(error: unknown): string {
-  if (error instanceof TimeoutError) return 'The feed test request timed out after 60 seconds.';
+  if (error instanceof TimeoutError)
+    return `The feed test request timed out after ${PODCAST_FEED_TEST_TIMEOUT_MS / 1000} seconds.`;
   if (error instanceof HttpErrorResponse) {
     const code = error.error?.error;
     const message = error.error?.message;

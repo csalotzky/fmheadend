@@ -21,7 +21,7 @@ def _parse(data, url, now, base_url):
 
 
 class PodcastParser:
-    def __init__(self, timeout=15, queue_timeout=120):
+    def __init__(self, timeout=45, queue_timeout=120):
         self.timeout = timeout
         self.queue_timeout = queue_timeout
         self._lock = Condition()

@@ -16,14 +16,14 @@ class DiscoveryExecutor:
         self.pending = None
         self.closing = False
 
-    async def call(self, function):
+    async def call(self, function, *, timeout=None):
         if self.closing or self.pending is not None:
             raise DomainError(503, 'DISCOVERY_BUSY', 'Discovery is busy or shutting down')
         future = asyncio.get_running_loop().run_in_executor(self.executor, function)
         self.pending = future
         future.add_done_callback(self._complete)
         try:
-            return await asyncio.wait_for(asyncio.shield(future), self.timeout)
+            return await asyncio.wait_for(asyncio.shield(future), self.timeout if timeout is None else timeout)
         except asyncio.TimeoutError as exc:
             raise DomainError(503, 'DISCOVERY_TIMEOUT', 'Discovery did not finish within its timeout') from exc
 

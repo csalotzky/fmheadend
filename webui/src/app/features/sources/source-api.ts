@@ -95,6 +95,10 @@ export interface FilesystemBrowse {
   can_go_up: boolean;
   entries: FilesystemEntry[];
 }
+
+// Allow the backend's 195-second single-feed budget to return its diagnostics.
+export const PODCAST_FEED_TEST_TIMEOUT_MS = 205_000;
+
 @Injectable({ providedIn: 'root' })
 export class SourceApi {
   private http = inject(HttpClient);
@@ -133,10 +137,12 @@ export class SourceApi {
     return this.http.get<SourceRuntime>(`/api/v1/sources/${id}/status`).pipe(timeout(15000));
   }
   test(value: number | SourceDraft) {
+    const singlePodcastFeed = typeof value !== 'number' && value.type === 'PODCAST' &&
+      Array.isArray(value.config['feeds']) && value.config['feeds'].length === 1;
     return (
       typeof value === 'number'
         ? this.http.post<SourceTest>(`/api/v1/sources/${value}/test`, {})
         : this.http.post<SourceTest>('/api/v1/sources/test', value)
-    ).pipe(timeout(60000));
+    ).pipe(timeout(singlePodcastFeed ? PODCAST_FEED_TEST_TIMEOUT_MS : 60_000));
   }
 }
