@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 from fmheadendd.app import create_app
 from fmheadendd.errors import DependencyUnavailable
-from fmheadendd.rp2354.protocol import QnError, Command, Status
+from fmheadendd.rp2354.protocol import Busy, InternalError, QnError, Command, Status
 import sqlite3
 
 
@@ -153,8 +153,68 @@ def test_save_partial_outcomes_and_ambiguous_stop_fencing(running, stage):
     if stage == 'stop':
         assert s.recovery.pending == {0:'enable'}
         assert api.patch('/api/v1/modulators/0', json={'frequency_khz':99700}).status_code == 409
+    if stage == 'save':
+        api.app.state.control.executor.submit(s.status.refresh).result()
+        row = api.get('/api/v1/status').json()['modulators'][0]
+        assert config['enabled'] and not row['desired_on']
+        assert row['hardware_tx_state'] == 'OFF' and row['intent_action'] == 'SAVE'
     if stage == 'start': assert 'Configuration saved, but TX restart failed' in result['message']
     s.rp.set_tx_enabled, s.database.save = enable, save
+
+
+def test_lifecycle_preflight_rejections_are_explicit(running, monkeypatch):
+    api, s, _ = running
+    with monkeypatch.context() as patch:
+        enable = Mock(wraps=s.rp.set_tx_enabled)
+        patch.setattr(s.rp, 'set_tx_enabled', enable)
+        row = api.post('/api/v1/modulators/7/start').json()
+        assert row['error'] == 'FREQUENCY_REQUIRED' and row['rf_outcome'] == 'REJECTED'
+        patch.setattr(s.database, 'save_system', Mock(side_effect=sqlite3.OperationalError('disk full')))
+        row = api.post('/api/v1/modulators/stop-all').json()
+        assert row['error'] == 'GLOBAL_STATE_SAVE_FAILED' and row['rf_outcome'] == 'REJECTED'
+        enable.assert_not_called()
+
+
+@pytest.mark.parametrize('bulk', [False, True])
+@pytest.mark.parametrize('error, outcome', [
+    (Busy(Command.SET_TX_ENABLED, Status.BUSY), 'REJECTED'),
+    (InternalError(Command.SET_TX_ENABLED, Status.INTERNAL_ERROR), 'UNCERTAIN'),
+    (DependencyUnavailable('lost OFF ACK'), 'UNCERTAIN'),
+])
+def test_rf_error_outcome_and_revision(running, monkeypatch, bulk, error, outcome):
+    api, s, _ = running
+    enable = s.rp.set_tx_enabled
+    before = api.get('/api/v1/status').json()['modulators'][0]
+
+    def fail_first_tx(channel, enabled):
+        if channel == 0:
+            raise error
+        return enable(channel, enabled)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(s.rp, 'set_tx_enabled', fail_first_tx)
+        response = api.post('/api/v1/modulators/' + ('stop-all' if bulk else '0/stop'))
+    assert response.status_code == (200 if bulk else 503)
+    row = response.json()[0] if bulk else response.json()
+    assert row['rf_outcome'] == outcome and row['intent_revision'] > before['intent_revision']
+    status = api.get('/api/v1/status').json()['modulators'][0]
+    assert status['intent_revision'] == row['intent_revision'] and status['intent_action'] == 'STOP'
+    assert not status['desired_on'] and s.rp.enabled[0]
+
+
+def test_stop_off_ack_keeps_cleanup_failure_separate_from_hardware_readback(running, monkeypatch):
+    api, s, _ = running
+    with monkeypatch.context() as patch:
+        patch.setattr(s.mux, 'detach', Mock(side_effect=DependencyUnavailable('detach failed')))
+        response = api.post('/api/v1/modulators/0/stop')
+        assert response.status_code == 200
+        result = response.json()
+        assert result['tx_state'] == 'OFF' and 'detach failed' in result['last_error']
+        api.app.state.control.executor.submit(s.status.refresh).result()
+        row = api.get('/api/v1/status').json()['modulators'][0]
+        assert row['hardware_tx_state'] == 'OFF' and not row['desired_on']
+        assert row['last_error'] == result['last_error']
+        assert row['intent_revision'] == result['intent_revision']
 
 
 def test_failed_bulk_stop_and_unknown_state_cannot_save(running):

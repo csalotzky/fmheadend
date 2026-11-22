@@ -24,7 +24,8 @@ export class ChannelCard {
   });
   readonly requestedState = computed(() => {
     if (this.commandState()) return this.commandState();
-    if (this.channel().runtime?.start_pending) return 'ON';
+    if (this.stale()) return undefined;
+    if (this.channel().desiredOn === true && this.channel().runtime?.start_pending) return 'ON';
     if (this.channel().error || this.reportedState() === 'ERROR') return undefined;
     if (this.channel().desiredOn && this.reportedState() !== 'ON') return 'ON';
     if (this.channel().desiredOn === false && this.reportedState() === 'ON') return 'OFF';

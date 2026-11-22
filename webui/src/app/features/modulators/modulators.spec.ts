@@ -10,7 +10,7 @@ import { ModulatorsList } from './modulators-list';
 import { mhz, khz, parseHex, hex, ptyLabels, rdsText, afOptions, textLength } from './values';
 import { DashboardState, compose } from '../dashboard/dashboard-state';
 import { sample } from '../dashboard/test-fixtures';
-import { Modulator } from '../../core/api/models';
+import { Modulator, Snapshot } from '../../core/api/models';
 
 describe('Modulator value conversions', () => {
   it.each([
@@ -565,33 +565,55 @@ describe('Modulator configuration', () => {
       'Configuration saved',
     );
   });
-    it.each(['ready','failure'] as const)('keeps the editor open through a pending restart: %s', async (outcome) => {
+  it.each(['ready', 'failure', 'stop', 'superseded'] as const)(
+    'uses the latest matching TX intent during a pending restart: %s', async (outcome) => {
       vi.useFakeTimers();
       const f = await editor(), c = f.componentInstance;
+      const observation = vi.spyOn(shared, 'observedAfter').mockReturnValue(false);
       const pending = c.save();
       const req = http.expectOne('/api/v1/modulators/0/save-and-resume');
-      const config = {...sample().modulators[0], ...req.request.body};
-      const data = sample();
-      data.modulators[0] = config;
-      Object.assign(data.status.modulators[0], {start_pending:true, tx_state:'STARTING', hardware_tx_state:'OFF', source_state:'CONNECTING'});
-      shared.channels.set(compose(data));
-      req.flush({saved:true, restarted:false, restart_pending:true, stop_confirmed:true, failed_stage:null, configuration:config, message:'Configuration saved — Preparing audio…'});
-      await pending; f.detectChanges();
+      const configuration = { ...sample().modulators[0], ...req.request.body };
+      req.flush({ saved: true, restarted: false, restart_pending: true, stop_confirmed: true,
+        failed_stage: null, configuration, intent_revision: 2, message: 'Configuration saved — Preparing audio…' });
+      await pending;
+      const publish = (row: Partial<Snapshot['status']['modulators'][number]>, stale = false) => {
+        const data = sample();
+        Object.assign(data.status.modulators[0], row);
+        data.status.system.snapshot_stale = stale;
+        shared.data.set(data);
+        shared.channels.set(compose(data));
+        f.detectChanges();
+      };
+      publish({ intent_revision: 1, desired_on: false, tx_state: 'OFF', start_error: 'Old decoder failure' });
+      publish({ intent_revision: 3, intent_action: 'STOP', desired_on: false, tx_state: 'OFF' }, true);
+      publish({ intent_revision: 2, start_pending: true, tx_state: 'STARTING', hardware_tx_state: 'OFF' });
+      vi.advanceTimersByTime(61000);
       expect(c.error()).toBe('');
       expect(c.message()).toContain('Preparing audio');
-      Object.assign(data.status.modulators[0], {start_pending:false, tx_state:outcome==='ready'?'ON':'OFF', hardware_tx_state:outcome==='ready'?'ON':'OFF', source_state:outcome==='ready'?'RUNNING':'ERROR', source_last_error:outcome==='ready'?null:'Decoder failed'});
-      shared.channels.set(compose(data)); f.detectChanges();
-      if (outcome==='ready') {
+
+      if (outcome === 'ready') {
+        const running = { intent_revision: 2, tx_state: 'ON', hardware_tx_state: 'ON' } as const;
+        publish(running);
+        expect(c.message()).toContain('Preparing audio');
+        observation.mockReturnValue(true);
+        publish(running);
         expect(c.message()).toContain('restarted');
         vi.advanceTimersByTime(3001);
         expect(c.message()).toBe('');
+      } else if (outcome === 'failure') {
+        publish({ intent_revision: 2, desired_on: false, tx_state: 'OFF', start_error: 'Decoder failed' });
+        expect(c.error()).toBe('Decoder failed');
+        expect(c.message()).toBe('');
       } else {
-        expect(c.error()).toContain('Decoder failed');
-        vi.advanceTimersByTime(61000);
-        expect(c.error()).toContain('Decoder failed');
+        publish({ intent_revision: 3, intent_action: outcome === 'stop' ? 'STOP' : 'SAVE', desired_on: false,
+          tx_state: 'OFF', start_error: outcome === 'superseded' ? 'A different operation failed' : null });
+        expect(c.error()).toBe('');
+        expect(c.message()).toContain(outcome === 'stop' ? 'start cancelled' : 'superseded');
       }
-      f.destroy(); vi.useRealTimers();
-    });
+      f.destroy();
+      vi.useRealTimers();
+    },
+  );
     it('protects Cancel/navigation and browser unload', async () => {
     const f = await editor(),
       c = f.componentInstance;

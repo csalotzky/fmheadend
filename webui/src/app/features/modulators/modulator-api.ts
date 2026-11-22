@@ -8,6 +8,7 @@ export type ModulatorDraft = Omit<
 >;
 export interface ModulatorSaveResult {
   restart_pending?: boolean;
+  intent_revision: number | null;
   saved: boolean;
   stop_confirmed: boolean;
   restarted: boolean;

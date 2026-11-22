@@ -50,7 +50,7 @@ class ControlExecutor:
 
     async def call(self, function):
         if self.pending >= 32:
-            raise DomainError(503, "CONTROL_BUSY", "Too many pending control requests")
+            raise DomainError(503, "CONTROL_BUSY", "Too many pending control requests", rf_outcome='REJECTED')
         self.pending += 1
         future = asyncio.get_running_loop().run_in_executor(self.executor, function)
         future.add_done_callback(lambda unused: self._complete())

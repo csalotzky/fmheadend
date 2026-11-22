@@ -291,6 +291,8 @@ class RtStatus(Model):
 class ErrorResponse(Model):
     error: str
     message: str
+    rf_outcome: Literal['REJECTED', 'UNCERTAIN'] | None = None
+    intent_revision: int | None = None
 
 
 class PodcastFeedProbe(Model):

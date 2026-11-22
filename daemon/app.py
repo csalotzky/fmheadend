@@ -273,7 +273,7 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
     @app.exception_handler(DomainError)
     async def domain_error(request, exc):
         return JSONResponse(status_code=exc.status, headers=exc.headers,
-                            content={"error": exc.error, "message": exc.message})
+                            content=exc.payload())
 
     async def validation_error(request, exc):
         messages = [f"{'.'.join(map(str, item['loc']))}: {item['msg']}" for item in exc.errors()]

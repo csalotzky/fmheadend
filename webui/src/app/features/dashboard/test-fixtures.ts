@@ -62,6 +62,10 @@ export function sample(): Snapshot {
       },
       modulators: Array.from({ length: 8 }, (_, id) => ({
         id,
+        desired_on: id === 0,
+        intent_revision: 0,
+        intent_action: null,
+        start_error: null,
         tx_state: id === 0 ? 'ON' : 'OFF',
         input_saturated: null,
         hardware_tx_state: id === 0 ? 'ON' : 'OFF',

@@ -11,7 +11,7 @@ describe('Dashboard API composition and operations', () => {
     data.status.system.controller_observation_stale = false;
     data.status.system.controller_observation_age_s = 0;
     data.modulators[1].enabled = true;
-    Object.assign(data.status.modulators[1], {start_pending:true, tx_state:'STARTING', source_state:'CONNECTING', hardware_tx_state:'OFF'});
+    Object.assign(data.status.modulators[1], {desired_on:true, start_pending:true, tx_state:'STARTING', source_state:'CONNECTING', hardware_tx_state:'OFF'});
     await load(data);
     expect(state.commandStates()[1]).toBe('ON');
     expect(state['accelerating']()).toBe(true);
@@ -28,11 +28,54 @@ describe('Dashboard API composition and operations', () => {
   });
   it('bounds editor-initiated transition polling', () => {
     vi.useFakeTimers();
-    state.trackPendingStart(1);
+    state.trackPendingStart(1, 1);
     expect(state['accelerating']()).toBe(true);
     vi.advanceTimersByTime(60001);
+    state['expireConfirmations']();
     expect(state['accelerating']()).toBe(false);
     expect(state.commandStates()[1]).toBe('ON'); // Timeout is not RF confirmation.
+    expect(state.actionFeedback()[1]).toContain('Preparing audio');
+  });
+  it('ignores stale publications and older TX revisions during a newer pending start', async () => {
+    const old = observed(false);
+    Object.assign(old.status.modulators[1], { start_error: 'Old decoder error', source_state: 'ERROR' });
+    await load(old);
+    state.trackPendingStart(1, 2);
+    await load(old);
+    const stale = structuredClone(old);
+    stale.status.system.snapshot_stale = true;
+    Object.assign(stale.status.modulators[1], { intent_revision: 3, intent_action: 'STOP' });
+    await load(stale);
+    expect(state.commandStates()[1]).toBe('ON');
+    expect(state.actionFeedback()[1]).toContain('Preparing audio');
+    const current = observed(true);
+    current.status.modulators[1].intent_revision = 2;
+    await load(current);
+    expect(state.commandStates()[1]).toBeUndefined();
+    expect(state.actionFeedback()[1]).toContain('confirms ON');
+  });
+  it('does not start tracking audio preparation from a stale publication', async () => {
+    const data = observed(false);
+    data.status.system.snapshot_stale = true;
+    Object.assign(data.status.modulators[1], { desired_on: true, start_pending: true });
+    await load(data);
+    expect(state.commandStates()[1]).toBeUndefined();
+    expect(state.actionFeedback()[1]).toBeUndefined();
+  });
+  it.each(['failure', 'stop', 'superseded'] as const)('distinguishes %s for a pending start', async (outcome) => {
+    state.trackPendingStart(1, 2);
+    const data = observed(false, null, true); // Backend intent remains usable when RF observation is stale.
+    Object.assign(data.status.modulators[1], {
+      intent_revision: outcome === 'failure' ? 2 : 3,
+      intent_action: outcome === 'stop' ? 'STOP' : 'SAVE',
+      start_error: 'Decoder failed',
+    });
+    if (outcome !== 'failure') data.status.modulators[1].start_error = null;
+    await load(data);
+    expect(state.commandStates()[1]).toBeUndefined();
+    expect(state.actionFeedback()[1]).toBe({
+      failure: 'Decoder failed', stop: 'Start cancelled.', superseded: 'Operation superseded by a newer TX action.',
+    }[outcome]);
   });
   it('shows the assigned source error without inventing a hardware fault', () => {
     const data = sample();
@@ -319,6 +362,60 @@ describe('Dashboard API composition and operations', () => {
     expect(state.failures()).toHaveLength(8);
     expect(state.notice()).toContain('outcome unknown');
   });
+  it.each(['single', 'bulk', 'bulk-request'] as const)(
+    'preserves %s command rejection even when fresh readback already matches', async (way) => {
+      const before = observed(false);
+      await load(before);
+      const done = way === 'single' ? state.operate(1, 'stop') : state.all('stop');
+      const request = http.expectOne(`/api/v1/modulators/${way === 'single' ? '1/stop' : 'stop-all'}`);
+      const rejection = { error: 'COMMAND_REJECTED', message: 'TX command was rejected', rf_outcome: 'REJECTED' };
+      if (way === 'bulk') request.flush(before.status.modulators.map((r) => r.id === 1 ? { id: 1, ...rejection } : r));
+      else request.flush(rejection, { status: 503, statusText: 'Service Unavailable' });
+      const matching = observed(false);
+      matching.status.modulators[1].intent_revision = 1;
+      await settle();
+      respond(matching);
+      await done;
+      await load(matching);
+      expect(state.failures()).toContainEqual({ id: 1, message: rejection.message });
+      expect(state.actionFeedback()[1]).toBe(rejection.message);
+      expect(state.commandStates()[1]).toBeUndefined();
+    },
+  );
+  it.each(['single', 'bulk'] as const)('confirms observed OFF while retaining the %s cleanup error', async (way) => {
+    const before = observed(true);
+    await load(before);
+    const done = way === 'single' ? state.operate(1, 'stop') : state.all('stop');
+    const request = http.expectOne(`/api/v1/modulators/${way === 'single' ? '1/stop' : 'stop-all'}`);
+    const after = observed(false);
+    const cleanup = 'RF OFF confirmed; cleanup pending: mux detach failed';
+    Object.assign(after.status.modulators[1], {
+      last_error: cleanup, source_last_error: 'Source release failed', intent_revision: 2,
+    });
+    request.flush(way === 'single' ? after.status.modulators[1] : after.status.modulators);
+    await settle();
+    respond(after);
+    await done;
+    expect(state.channels()[1].runtime?.hardware_tx_state).toBe('OFF');
+    expect(state.commandStates()[1]).toBeUndefined();
+    expect(state.actionFeedback()[1]).toContain('Controller observation confirms OFF');
+    expect(state.failures()).toContainEqual({ id: 1, message: cleanup });
+  });
+  it('does not attribute fresh ON to an uncertain request superseded by a newer save', async () => {
+    await load(observed(false));
+    const done = state.operate(1, 'start');
+    http.expectOne('/api/v1/modulators/1/start').flush({
+      error: 'DEPENDENCY_UNAVAILABLE', message: 'Lost ACK', rf_outcome: 'UNCERTAIN', intent_revision: 1,
+    }, { status: 503, statusText: 'Service Unavailable' });
+    await settle();
+    const newer = observed(true);
+    Object.assign(newer.status.modulators[1], { intent_revision: 2, intent_action: 'SAVE' });
+    respond(newer);
+    await done;
+    expect(state.actionFeedback()[1]).toContain('superseded');
+    expect(state.failures()[0].message).toBe('Lost ACK');
+    http.expectNone('/api/v1/modulators/1/start');
+  });
   it('retains previous configuration and recovers after a failed poll', async () => {
     await load();
     const previous = state.data();
@@ -353,6 +450,9 @@ describe('Dashboard API composition and operations', () => {
     value.status.system.controller_observation_age_s = age;
     value.status.modulators[1].hardware_tx_state = on ? 'ON' : 'OFF';
     value.status.modulators[1].tx_state = on ? 'ON' : 'OFF';
+    value.status.modulators[1].desired_on = on;
+    value.status.modulators[1].intent_revision = on ? 1 : 0;
+    value.status.modulators[1].intent_action = on ? 'START' : null;
     return value;
   }
   async function acceptedStart() {
@@ -478,7 +578,7 @@ describe('Dashboard API composition and operations', () => {
     http.expectNone('/api/v1/status');
     expect(state.commandStates()).toEqual({});
   });
-  it('releases timed-out commands without retrying them or claiming a target state', async () => {
+  it.each(['START', 'SAVE'] as const)('reconciles a timed-out START only with a matching intent (%s)', async (intent) => {
     vi.useFakeTimers();
     await load(observed(false));
     const done = state.operate(1, 'start');
@@ -487,10 +587,13 @@ describe('Dashboard API composition and operations', () => {
     expect(request.cancelled).toBe(true);
     expect(state.busy()).toBeNull();
     expect(state.commandStates()[1]).toBeUndefined();
-    expect(state.actionFeedback()[1]).toContain('outcome unknown');
-    respond(observed(true));
+    expect(state.actionFeedback()[1]).toContain('Outcome unconfirmed');
+    const after = observed(true);
+    after.status.modulators[1].intent_action = intent;
+    respond(after);
     await done;
     expect(state.channels()[1].runtime?.hardware_tx_state).toBe('ON');
+    expect(state.actionFeedback()[1]).toContain(intent === 'START' ? 'confirms ON' : 'Outcome unconfirmed');
     http.expectNone('/api/v1/modulators/1/start');
   });
   it('cancels a pending command without launching a refresh after teardown', async () => {
@@ -580,7 +683,7 @@ describe('Dashboard API composition and operations', () => {
     const done = state.all('start');
     http
       .expectOne('/api/v1/modulators/start-all')
-      .flush(initial.status.modulators.map((r) => ({ ...r, tx_state: 'ON' })));
+      .flush(initial.status.modulators.map((r) => ({ ...r, tx_state: 'ON', intent_revision: 1 })));
     await settle();
     expect(state.commandStates()).toEqual({ 0: 'ON', 1: 'ON' });
     expect(state.bulkPendingIds()).toEqual([]);
@@ -599,6 +702,7 @@ describe('Dashboard API composition and operations', () => {
     await done;
     await vi.advanceTimersByTimeAsync(1000);
     const confirmed = observed(true);
+    confirmed.status.modulators[0].intent_revision = 1;
     respond(confirmed);
     await settle();
     expect(state.commandStates()).toEqual({});

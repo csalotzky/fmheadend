@@ -21,6 +21,7 @@ class TxState(StrEnum):
 
 class ModulatorSaveResult(Model):
     restart_pending: bool = False
+    intent_revision: int | None = None
     saved: bool
     stop_confirmed: bool
     restarted: bool
@@ -71,6 +72,10 @@ class InputSourceStatus(Model):
 
 
 class ModulatorStatus(Model):
+    desired_on: bool = False
+    intent_revision: int = 0
+    intent_action: Literal['START', 'STOP', 'SAVE'] | None = None
+    start_error: str | None = None
     start_pending: bool = False
     pending_message: str | None = None
     source_last_error: str | None = None

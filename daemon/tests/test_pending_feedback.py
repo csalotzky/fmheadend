@@ -28,21 +28,32 @@ def test_saved_restart_pending_then_authoritative_outcome(running,change_source,
     assert not s.rp.enabled[0]
     row=s.modulators.statuses[0]
     assert row.start_pending and row.source_state=='CONNECTING' and row.source_last_error is None
+    status = api.get('/api/v1/status').json()['modulators'][0]
+    assert status['intent_revision'] == result['intent_revision'] and status['intent_action'] == 'SAVE'
+    assert status['desired_on'] and status['start_pending'] and status['start_error'] is None
     assert 0 in s.recovery.audio_pending
     if outcome in ('stop','stop-all'):
         api.post(p+'/stop' if outcome=='stop' else '/api/v1/modulators/stop-all')
     blocked[0]=False
     s.recovery.clock=lambda:100
     api.app.state.control.executor.submit(s.recovery.service).result()
+    api.app.state.control.executor.submit(s.status.refresh).result()
+    status = api.get('/api/v1/status').json()['modulators'][0]
     assert not row.start_pending
     if outcome=='ready':
         assert s.rp.enabled[0] and row.tx_state=='ON'
         assert row.source_last_error is None
+        assert status['intent_revision'] == result['intent_revision'] and status['desired_on']
     else:
         assert not s.rp.enabled[0]
         if outcome in ('failure','exhausted'):
             assert row.source_state=='ERROR' and row.source_last_error
-        else:assert 0 not in s.recovery.audio_pending
+            assert status['intent_revision'] == result['intent_revision'] and not status['desired_on']
+            assert status['start_error'] == row.source_last_error
+        else:
+            assert 0 not in s.recovery.audio_pending
+            assert status['intent_revision'] > result['intent_revision'] and status['intent_action'] == 'STOP'
+            assert not status['desired_on'] and status['start_error'] is None
 
 
 def test_manual_cleanup_snapshot_and_generation_remain_owned(running):

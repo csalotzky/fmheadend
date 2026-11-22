@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Request, Response
 from ..control import control_route
+from ..errors import DomainError
 from ..alsa import AlsaCaptureDevices
 from ..models.configuration import (
     ErrorResponse,
@@ -153,11 +154,21 @@ async def list_modulators(request: Request, response: Response):
     return published_view(request, response, 'modulators')
 
 
+def tx_action(action, *args):
+    try:
+        return action(*args)
+    except DomainError as exc:
+        # Command failures carry their own certainty from the RF boundary.
+        if exc.rf_outcome is None:
+            exc.rf_outcome = 'REJECTED'
+        raise
+
+
 @router.post("/modulators/start-all", tags=["modulators"])
 @control_route
 def start_all(request: Request):
     """Start configured, desired-enabled modulators only; return per-ID status or error."""
-    return request.app.state.services.modulators.all(True)
+    return tx_action(request.app.state.services.modulators.all, True)
 
 
 @router.post("/modulators/stop-all", tags=["modulators"])
@@ -165,7 +176,7 @@ def start_all(request: Request):
 def stop_all(request: Request):
     """Attempt every modulator even if one dependency operation fails."""
     # Operational stop preserves persistent desired-enabled flags.
-    return request.app.state.services.modulators.all(False)
+    return tx_action(request.app.state.services.modulators.all, False)
 
 
 @router.get("/modulators/{id}", response_model=Modulator, tags=["modulators"])
@@ -185,7 +196,8 @@ def update_modulator(id: int, body: ModulatorPatch, request: Request):
 @control_route
 def start_modulator(id: int, request: Request):
     """Persist enabled=true and start the TX through the selected Controller client."""
-    return request.app.state.services.modulators.start(id)
+    manager = request.app.state.services.modulators
+    return manager.lifecycle_status(tx_action(manager.start, id))
 
 
 @router.post('/modulators/{id}/save-and-resume', response_model=ModulatorSaveResult, tags=['modulators'])
@@ -199,7 +211,8 @@ def save_and_resume_modulator(id: int, body: ModulatorPatch, request: Request):
 @control_route
 def stop_modulator(id: int, request: Request):
     """Persist enabled=false and stop RF before releasing the source."""
-    return request.app.state.services.modulators.stop(id)
+    manager = request.app.state.services.modulators
+    return manager.lifecycle_status(tx_action(manager.stop, id))
 
 
 @router.put("/modulators/{id}/rds/rt", response_model=RtStatus, tags=["runtime RDS"])

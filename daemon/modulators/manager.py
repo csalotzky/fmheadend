@@ -6,7 +6,7 @@ from ..errors import DependencyUnavailable, DomainError, SourceUnavailable, Sour
 from ..models.configuration import ModulatorConfig, RDS_FIELDS
 from ..models.runtime_status import ModulatorStatus, TxState
 from ..rp2354.client import TxConfig
-from ..rp2354.protocol import Command, Outcome, RpResponseError, IncompatibleProtocol, execution_outcome, validate_frequency
+from ..rp2354.protocol import Command, Outcome, Status, RpResponseError, IncompatibleProtocol, execution_outcome, validate_frequency
 from ..sources.direct_pcm import DirectMux
 
 logger = logging.getLogger(__name__)
@@ -18,7 +18,10 @@ class ModulatorManager:
         self.settings = settings
         self.rds = None
         self.recovery = None
-        self.statuses = {config.id: ModulatorStatus(id=config.id, source_state=None if config.audio_mode == "ANALOG" else "IDLE")
+        # Keep revisions comparable across daemon restarts on the same boot.
+        initial_revision = time.monotonic_ns() // 1_000
+        self.statuses = {config.id: ModulatorStatus(id=config.id, intent_revision=initial_revision,
+                                                  source_state=None if config.audio_mode == "ANALOG" else "IDLE")
                          for config in database.list("modulators")}
         self.active_sources: dict[int, int] = {}
         self.global_stopped = database.get_system().global_stopped
@@ -102,11 +105,13 @@ class ModulatorManager:
         config = self._edited_config(modulator_id, patch)
         if self._rds_only(old, config, patch):
             saved = self.database.save('modulators', config, modulator_id)
+            self._record_intent(modulator_id, 'SAVE')
             if old.model_dump(include=RDS_FIELDS) != saved.model_dump(include=RDS_FIELDS) or old.rds_follow_source != saved.rds_follow_source:
                 self.apply_rds_profiles([modulator_id])
             return saved
         self._require_configurable(modulator_id)
         saved = self.database.save("modulators", config, modulator_id)
+        self._record_intent(modulator_id, 'SAVE')
         self.statuses[modulator_id].source_state = None if config.audio_mode == "ANALOG" else "IDLE"
         if config.audio_mode != old.audio_mode:
             self.statuses[modulator_id].input_saturated = None
@@ -142,6 +147,7 @@ class ModulatorManager:
                 # Also fences reconciliation after an ambiguous temporary OFF.
                 # On failure an explicit Start/Start All may release this hold.
                 self.bulk_stopped.add(modulator_id)
+                self._record_intent(modulator_id, 'SAVE')
                 stopped = self._stop(modulator_id, retry_budget)
                 result['stop_confirmed'] = True
                 stage = 'save'
@@ -156,6 +162,7 @@ class ModulatorManager:
                 result['restart_pending'] = started.start_pending
                 result['restarted'] = not started.start_pending
                 if started.start_pending:
+                    result['intent_revision'] = started.intent_revision
                     result['message'] = 'Configuration saved — Preparing audio…'
                     return result
             result['message'] = 'Configuration saved and TX restarted.' if resume else 'Configuration saved; TX remains stopped.'
@@ -185,6 +192,7 @@ class ModulatorManager:
                     raise
             result['failed_stage'] = 'save'
             saved = self.database.save('modulators', config, channel)
+            self._record_intent(channel, 'SAVE')
         except (DomainError, DependencyUnavailable, ValueError, sqlite3.Error, OSError) as exc:
             self.sources.release(source, channel)
             return dict(result, message=f'Source assignment not changed: {exc}')
@@ -214,9 +222,27 @@ class ModulatorManager:
             self.global_stopped = False
             self.bulk_stopped.clear()
         else:
-            self.database.save("modulators", config, modulator_id)
+            self._save_enabled(config, modulator_id)
             self.bulk_stopped.discard(modulator_id)
+        self._record_intent(modulator_id, 'START')
         return self._start(modulator_id)
+
+    def _save_enabled(self, config, modulator_id):
+        try:
+            self.database.save('modulators', config, modulator_id)
+        except sqlite3.Error as exc:
+            raise DomainError(503, 'TX_STATE_SAVE_FAILED', 'TX state could not be saved; command not accepted') from exc
+
+    def _record_intent(self, channel, action):
+        # A new user decision supersedes prior UI feedback. Recovery and
+        # terminal startup failure still belong to the current decision.
+        row = self.statuses[channel]
+        row.intent_revision += 1
+        row.intent_action = action
+        row.start_error = None
+
+    def lifecycle_status(self, status):
+        return status.model_copy(update={'desired_on': self.desired_on(status.id)})
 
     def _lifecycle_command(self, command, operation, retry_budget):
         """One session reacquisition, only with proof the requested write never began."""
@@ -257,6 +283,16 @@ class ModulatorManager:
         if certainty == Outcome.AMBIGUOUS:
             return f'{command.name} outcome unknown (AMBIGUOUS): {exc}'
         return str(exc)
+
+    @staticmethod
+    def _rf_outcome(command, exc):
+        if command not in (Command.SET_TX_ENABLED, Command.SET_TX_CONFIG):
+            return 'REJECTED'
+        certainty = execution_outcome(exc, command)
+        if certainty == Outcome.AMBIGUOUS or (isinstance(exc, RpResponseError) and
+                certainty == Outcome.RESPONSE and exc.rp_status in (Status.QN_ERROR, Status.INTERNAL_ERROR)):
+            return 'UNCERTAIN'
+        return 'REJECTED'
 
     def _start(self, modulator_id, retry_budget=None):
         self.require_available(modulator_id)
@@ -324,7 +360,9 @@ class ModulatorManager:
                     self.recovery.defer_audio(modulator_id, exc)
             if self.recovery and command is not None:
                 self.recovery.command_failed(modulator_id, command, exc)
-            raise DomainError(503, "DEPENDENCY_UNAVAILABLE", status.last_error or str(exc)) from exc
+            raise DomainError(503, "DEPENDENCY_UNAVAILABLE", status.last_error or str(exc),
+                              rf_outcome=self._rf_outcome(command, exc),
+                              intent_revision=status.intent_revision) from exc
         status.tx_state = TxState.ON
         status.start_pending, status.pending_message = False, None
         status.source_last_error = None
@@ -339,7 +377,8 @@ class ModulatorManager:
         self.require_available(modulator_id)
         current = self.get(modulator_id)
         config = ModulatorConfig.model_validate(current.model_dump(exclude={"id", "timestamp", "rds_override_profile_id"}) | {"enabled": False})
-        self.database.save("modulators", config, modulator_id)
+        self._save_enabled(config, modulator_id)
+        self._record_intent(modulator_id, 'STOP')
         return self._stop(modulator_id)
 
     def _stop(self, modulator_id, retry_budget=None):
@@ -358,7 +397,9 @@ class ModulatorManager:
                 status.tx_state = TxState.ERROR
             if self.recovery:
                 self.recovery.command_failed(modulator_id, Command.SET_TX_ENABLED, exc)
-            raise DomainError(503, "DEPENDENCY_UNAVAILABLE", status.last_error) from exc
+            raise DomainError(503, "DEPENDENCY_UNAVAILABLE", status.last_error,
+                              rf_outcome=self._rf_outcome(Command.SET_TX_ENABLED, exc),
+                              intent_revision=status.intent_revision) from exc
         # The CRC-protected ACK confirms RF OFF independently of cleanup.
         status.tx_state, status.last_error = TxState.OFF, None
         if self.rds is not None:
@@ -388,8 +429,9 @@ class ModulatorManager:
         logger.info("modulator %s stopped", modulator_id)
         return status
 
-    def desired_on(self, channel):
-        return channel in self.physical_ids and self.get(channel).enabled and channel not in self.bulk_stopped
+    def desired_on(self, channel, *, config=None):
+        return (channel in self.physical_ids and channel not in self.bulk_stopped
+                and (config if config is not None else self.get(channel)).enabled)
 
     def all(self, start):
         if start:
@@ -415,16 +457,20 @@ class ModulatorManager:
                 config = self.get(modulator_id)
                 if start:
                     if not config.enabled or config.frequency_khz is None or (config.audio_mode == "DIGITAL" and config.input_source_id is None):
-                        results.append(self.statuses[modulator_id].model_dump(mode="json"))
+                        results.append(self.lifecycle_status(self.statuses[modulator_id]))
                         continue
                     self.validate(config)
                     self.bulk_stopped.discard(modulator_id)
+                    self._record_intent(modulator_id, 'START')
                     result = self._start(modulator_id, retry_budget)
                 else:
+                    self._record_intent(modulator_id, 'STOP')
                     result = self._stop(modulator_id, retry_budget)
-                results.append(result.model_dump(mode="json"))
+                results.append(self.lifecycle_status(result))
             except DomainError as exc:
-                results.append({"id": modulator_id, "error": exc.error, "message": exc.message})
+                if exc.rf_outcome is None:
+                    exc.rf_outcome = 'REJECTED'
+                results.append({"id": modulator_id, **exc.payload()})
         return results
 
     def shutdown(self):
@@ -466,6 +512,7 @@ class ModulatorManager:
         row = self.statuses[channel]
         row.start_pending, row.pending_message = False, None
         row.source_state, row.source_last_error, row.source_error_scope = 'ERROR', str(error), 'SOURCE'
+        row.start_error = str(error)
         logger.error('TX%s source %s LOCAL startup failed; enable intent cleared: %s',
                      channel, config.input_source_id, error)
 

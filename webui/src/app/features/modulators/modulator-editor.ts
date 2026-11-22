@@ -18,7 +18,7 @@ import { firstValueFrom, forkJoin } from 'rxjs';
 import { Modulator } from '../../core/api/models';
 import { sortSources } from '../../core/api/source-order';
 import { errorMessage } from '../../core/api/headend-api';
-import { DashboardState } from '../dashboard/dashboard-state';
+import { DashboardState, startDisposition } from '../dashboard/dashboard-state';
 import { ModulatorApi, ModulatorDraft } from './modulator-api';
 import { decimal, rfOutputOptions, analogGainOptions } from './values';
 const text = (value = '') => new FormControl(value, { nonNullable: true });
@@ -42,32 +42,31 @@ export class ModulatorEditor implements OnInit {
   readonly saving = signal(false);
   readonly error = signal('');
   readonly message = signal('');
-  private readonly monitoringRestart = signal(false);
+  private readonly pendingRestart = signal<{ revision: number; receivedAt: number } | null>(null);
   private feedbackTimer?: ReturnType<typeof setTimeout>;
-  private restartTimestamp?: string;
   constructor() {
     this.rds.attach(this.form);
     this.destroyRef.onDestroy(() => clearTimeout(this.feedbackTimer));
     effect(() => {
-      if (!this.monitoringRestart()) return;
-      const channel = this.channel();
-      const row = channel?.runtime;
+      const pending = this.pendingRestart();
+      const snapshot = this.shared.data();
+      if (!pending || !snapshot || this.shared.stale() || snapshot.status.system.snapshot_stale) return;
+      const row = snapshot.status.modulators.find((status) => status.id === this.id);
       if (!row) return;
-      const fault = row.source_state === 'ERROR' || row.tx_state === 'ERROR' || !!row.last_error;
-      if (!channel?.desiredOn && !fault) {
-        this.monitoringRestart.set(false);
-        clearTimeout(this.feedbackTimer);
-        this.message.set('Configuration saved; start cancelled.');
-        return;
-      }
-      if (channel?.config?.timestamp !== this.restartTimestamp &&
-          !(fault && channel?.config?.input_source_id === this.form.controls.input_source_id.value)) return;
-      if (fault) {
+      const disposition = startDisposition(row, pending.revision);
+      if (disposition === 'older' || disposition === 'preparing') return;
+      if (disposition === 'failed') {
+        this.pendingRestart.set(null);
         this.message.set('');
-        this.error.set(row.source_last_error || row.last_error || 'TX restart failed.');
-      } else if (!row.start_pending && !channel?.observationStale && row.hardware_tx_state === 'ON' && row.tx_state === 'ON') {
-        this.monitoringRestart.set(false);
-        clearTimeout(this.feedbackTimer);
+        this.error.set(row.start_error!);
+      } else if (disposition === 'stopped' || disposition === 'superseded') {
+        this.pendingRestart.set(null);
+        this.error.set('');
+        this.message.set(disposition === 'stopped' ? 'Configuration saved; start cancelled.' :
+          'Restart superseded by a newer TX action.');
+      } else if (row.hardware_tx_state === 'ON' && row.tx_state === 'ON' && !row.last_error &&
+          !row.source_last_error && this.shared.observedAfter(pending.receivedAt)) {
+        this.pendingRestart.set(null);
         this.error.set('');
         this.message.set('Configuration saved and TX restarted.');
         this.feedbackTimer = setTimeout(() => this.message.set(''), 3000);
@@ -115,7 +114,7 @@ export class ModulatorEditor implements OnInit {
   }
   async loadConfig() {
     if (this.saving()) return;
-    this.monitoringRestart.set(false);
+    this.pendingRestart.set(null);
     clearTimeout(this.feedbackTimer);
     const requestedId = this.id;
     this.loading.set(true);
@@ -244,6 +243,8 @@ export class ModulatorEditor implements OnInit {
     if (this.saving() || this.loading() || this.failed() || !this.channel()) return;
     this.error.set('');
     this.message.set('');
+    this.pendingRestart.set(null);
+    clearTimeout(this.feedbackTimer);
     let body: ModulatorDraft;
     try {
       body = this.draft();
@@ -252,25 +253,19 @@ export class ModulatorEditor implements OnInit {
       return;
     }
     this.saving.set(true);
-    this.monitoringRestart.set(false);
-    clearTimeout(this.feedbackTimer);
     try {
       const result = await firstValueFrom(this.api.saveAndResume(this.id, body));
       if (result.saved && result.configuration) this.load(result.configuration);
       if (result.failed_stage) this.error.set(result.message);
       else {
         this.message.set(result.message);
-        if (result.restart_pending) this.shared.trackPendingStart(this.id);
+        if (result.restart_pending && result.intent_revision !== null) {
+          this.pendingRestart.set({ revision: result.intent_revision, receivedAt: Date.now() });
+          this.shared.trackPendingStart(this.id, result.intent_revision);
+        }
       }
       await this.shared.refreshAfterMutation();
-      if (result.restart_pending) {
-        this.restartTimestamp = result.configuration?.timestamp;
-        this.monitoringRestart.set(true);
-        this.feedbackTimer = setTimeout(() => {
-          this.monitoringRestart.set(false);
-          if (!this.error()) this.message.set('Configuration saved — Restart still pending; check TX status.');
-        }, 60000);
-      } else if (!result.failed_stage) {
+      if (!result.restart_pending && !result.failed_stage) {
         this.feedbackTimer = setTimeout(() => this.message.set(''), 3000);
       }
     } catch (e) {

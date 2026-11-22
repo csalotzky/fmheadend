@@ -1,4 +1,5 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
+import { HttpErrorResponse } from '@angular/common/http';
 import {
   Subject,
   Subscription,
@@ -10,7 +11,7 @@ import {
   timer,
 } from 'rxjs';
 import { HeadendApi, errorMessage } from '../../core/api/headend-api';
-import { InputSource, Modulator, ModulatorStatus, Snapshot } from '../../core/api/models';
+import { ApiError, InputSource, Modulator, ModulatorStatus, Snapshot } from '../../core/api/models';
 
 export interface ChannelView {
   id: number;
@@ -44,6 +45,7 @@ export function compose(snapshot: Snapshot, previous?: Snapshot): ChannelView[] 
               : runtime?.tx_state === 'OFF' ? 'Idle' : 'No flow observed';
     // Latched hardware_last_error alone is not an active fault (M4 semantics).
     const error =
+      runtime?.start_error ||
       (runtime?.last_error_scope !== 'GLOBAL' ? runtime?.last_error : null) ||
       (runtime?.rds_last_error_scope !== 'GLOBAL' ? runtime?.rds_last_error : null) ||
       runtime?.source_last_error ||
@@ -60,7 +62,7 @@ export function compose(snapshot: Snapshot, previous?: Snapshot): ChannelView[] 
       analog,
       pcm,
       error,
-      desiredOn: config?.enabled === true && snapshot.status.system.global_stopped !== true,
+      desiredOn: runtime?.desired_on,
       observationStale: snapshot.status.system.controller_observation_stale === true,
       confirmedOff:
         snapshot.status.system.controller_observation_stale !== true &&
@@ -73,6 +75,22 @@ export function compose(snapshot: Snapshot, previous?: Snapshot): ChannelView[] 
       canStart: config?.frequency_khz != null && (analog || !!source),
     };
   });
+}
+
+export function startDisposition(row: ModulatorStatus, revision: number) {
+  if (row.intent_revision < revision) return 'older';
+  if (row.intent_revision > revision) return row.intent_action === 'STOP' ? 'stopped' : 'superseded';
+  if (row.start_error) return 'failed';
+  if (!row.desired_on) return 'stopped';
+  return row.start_pending ? 'preparing' : 'awaiting-rf';
+}
+
+function controllerObservedAfter(snapshot: Snapshot, requestedAt: number, receivedAt: number) {
+  const system = snapshot.status.system;
+  const age = system.controller_observation_age_s;
+  // Request start minus server-reported age is a conservative lower bound.
+  return system.snapshot_stale !== true && system.controller_observation_stale === false &&
+    age != null && Number.isFinite(age) && age >= 0 && requestedAt - age * 1000 >= receivedAt;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -116,10 +134,15 @@ export class DashboardState {
       expired: boolean;
       messageGeneration: number;
       commandConfirmed: boolean;
+      revision?: number;
+      inferredAction?: 'START' | 'STOP';
+      cleanupFailed?: boolean;
       audioPending?: boolean;
     }
   >();
   private snapshotGeneration = 0;
+  private snapshotRequestedAt = 0;
+  private mutationRequestedAt = 0;
   private nextRefreshAt = 0;
   readonly profileNames = signal<Record<string, string>>({});
   readonly defaultAudioProfileId = signal<string | null>(null);
@@ -184,6 +207,7 @@ export class DashboardState {
     // An older in-flight request is neither post-action evidence nor our refresh.
     // Concurrent callers wait on it, then share the next request.
     this.snapshotGeneration++;
+    this.mutationRequestedAt = Date.now();
     await this.inFlight;
     await this.refresh();
   }
@@ -215,8 +239,15 @@ export class DashboardState {
           return;
         }
         this.confirmObservations(snapshot, requestedAt);
-        for (const row of snapshot.status.modulators) {
-          if (row.start_pending && !this.confirmations.has(row.id)) this.trackPendingStart(row.id);
+        const publicationAt = requestedAt - (snapshot.status.system.snapshot_age_s ?? 0) * 1000;
+        if (snapshot.status.system.snapshot_stale !== true && publicationAt >= this.mutationRequestedAt &&
+            this.busy() === null) {
+          for (const row of snapshot.status.modulators) {
+            if (row.start_pending && row.desired_on && !this.confirmations.has(row.id) &&
+                !this.failures().some((failure) => failure.id === row.id)) {
+              this.trackPendingStart(row.id, row.intent_revision);
+            }
+          }
         }
         this.channels.set(compose(snapshot, this.data() ?? undefined));
         if (snapshot.status.system.snapshot_stale !== true &&
@@ -225,6 +256,7 @@ export class DashboardState {
               channel.runtime?.hardware_tx_state === 'ON' || channel.runtime?.hardware_tx_state === 'OFF')) {
           this.lastValidActiveCount.set(this.activeCount());
         }
+        this.snapshotRequestedAt = requestedAt;
         this.data.set(snapshot);
         this.stale.set(snapshot.status.system.snapshot_stale === true);
         this.updated.set(new Date());
@@ -243,13 +275,19 @@ export class DashboardState {
   private accelerating() {
     return [...this.confirmations.values()].some((c) => c.deadline > Date.now());
   }
-  trackPendingStart(id: number) {
-    this.trackConfirmation(id, 'ON', this.messageGeneration, false);
+  observedAfter(receivedAt: number) {
+    const snapshot = this.data();
+    return !!snapshot && !this.stale() &&
+      controllerObservedAfter(snapshot, this.snapshotRequestedAt, receivedAt);
+  }
+  trackPendingStart(id: number, revision: number, generation = this.messageGeneration) {
+    this.trackConfirmation(id, 'ON', generation, false, revision);
     const confirmation = this.confirmations.get(id)!;
     confirmation.audioPending = true;
     confirmation.deadline = Date.now() + 60000;
     this.commandStates.update(v => ({...v, [id]: 'ON'}));
-    this.actionFeedback.update(v => ({...v, [id]: 'Preparing audio…'}));
+    if (generation === this.messageGeneration)
+      this.actionFeedback.update(v => ({...v, [id]: 'Preparing audio…'}));
     this.nextRefreshAt = 0;
   }
   private expireConfirmations() {
@@ -266,7 +304,7 @@ export class DashboardState {
     for (const [id, c] of this.confirmations) {
       if (!c.expired && Date.now() >= c.deadline) {
         c.expired = true;
-        if (c.messageGeneration === this.messageGeneration)
+        if (!c.audioPending && c.messageGeneration === this.messageGeneration)
           this.actionFeedback.update((v) => ({
             ...v,
             [id]: c.commandConfirmed
@@ -277,42 +315,40 @@ export class DashboardState {
     }
   }
   private confirmObservations(snapshot: Snapshot, requestedAt: number) {
+    if (snapshot.status.system.snapshot_stale === true) return;
     for (const [id, c] of this.confirmations) {
-      const row = snapshot.status.modulators.find(r => r.id === id);
-      if (c.audioPending && row && !row.start_pending &&
-          (row.source_state === 'ERROR' || row.tx_state === 'ERROR' ||
-           snapshot.status.system.global_stopped || !snapshot.modulators.find(m => m.id === id)?.enabled)) {
-        this.confirmations.delete(id);
-        this.commandStates.update(v => { const next = {...v}; delete next[id]; return next; });
-        this.actionFeedback.update(v => ({...v, [id]: row.source_last_error || row.last_error || 'Start cancelled.'}));
-      }
-    }
-    const system = snapshot.status.system;
-    const age = system.controller_observation_age_s;
-    if (
-      system.snapshot_stale === true ||
-      system.controller_observation_stale !== false ||
-      age == null ||
-      !Number.isFinite(age) ||
-      age < 0
-    )
-      return;
-    for (const [id, c] of this.confirmations) {
-      // Request start minus server-reported age is a conservative lower bound:
-      // network/serialization delay must never make an old observation look new.
-      if (requestedAt - age * 1000 < c.receivedAt) continue;
       const row = snapshot.status.modulators.find((r) => r.id === id);
-      if (row?.hardware_tx_state !== c.state || row.start_pending || row.last_error || row.source_last_error ||
-          (c.state === 'ON' && row.tx_state !== 'ON')) continue;
-      this.confirmations.delete(id);
-      this.commandStates.update((v) => {
-        const next = { ...v };
-        delete next[id];
-        return next;
-      });
+      if (!row || (c.revision !== undefined && row.intent_revision < c.revision)) continue;
+      const superseded = c.revision !== undefined && row.intent_revision > c.revision;
+      const start = c.audioPending && c.revision !== undefined ? startDisposition(row, c.revision) : null;
+      if (superseded || start === 'failed' || start === 'stopped') {
+        this.clearConfirmation(id);
+        if (c.messageGeneration === this.messageGeneration) {
+          const message = start === 'failed' ? row.start_error! : start === 'stopped'
+            ? 'Start cancelled.' : 'Operation superseded by a newer TX action.';
+          this.actionFeedback.update((v) => ({ ...v, [id]: message }));
+        }
+        continue;
+      }
+      // A lost reply carries no receipt. A matching RF state from another
+      // kind of action cannot reconcile even the expected next revision.
+      if (c.inferredAction && row.intent_action !== c.inferredAction) continue;
+      if (start === 'awaiting-rf' && row.tx_state === 'ON' && !row.last_error && !row.source_last_error) {
+        c.audioPending = false;
+        c.commandConfirmed = true;
+        c.expired = false;
+        c.deadline = Date.now() + 10000;
+        if (c.messageGeneration === this.messageGeneration)
+          this.actionFeedback.update((v) => ({ ...v, [id]: 'Awaiting Controller observation.' }));
+      }
+      if (!controllerObservedAfter(snapshot, requestedAt, c.receivedAt) ||
+          row.hardware_tx_state !== c.state ||
+          (c.state === 'ON' && (!row.desired_on || row.start_pending || row.last_error ||
+            row.source_last_error || row.tx_state !== 'ON'))) continue;
+      this.clearConfirmation(id);
       if (c.messageGeneration === this.messageGeneration) {
         const resolvedFailure = this.failures().some((failure) => failure.id === id);
-        this.failures.update((failures) => failures.filter((failure) => failure.id !== id));
+        if (!c.cleanupFailed) this.failures.update((failures) => failures.filter((failure) => failure.id !== id));
         if (
           resolvedFailure &&
           this.failures().length === 0 &&
@@ -327,18 +363,22 @@ export class DashboardState {
       }
     }
   }
-  async operate(id: number, action: 'start' | 'stop') {
-    if (this.closed || this.busy() !== null) return;
-    this.feedbackExpiry.delete(id);
-    const generation = this.messageGeneration;
-    this.busy.set(id);
-    this.pendingAction.set(action);
+  private clearConfirmation(id: number) {
     this.confirmations.delete(id);
     this.commandStates.update((v) => {
       const next = { ...v };
       delete next[id];
       return next;
     });
+  }
+  async operate(id: number, action: 'start' | 'stop') {
+    if (this.closed || this.busy() !== null) return;
+    this.feedbackExpiry.delete(id);
+    const generation = this.messageGeneration;
+    const expectedRevision = this.nextIntentRevision(id);
+    this.busy.set(id);
+    this.pendingAction.set(action);
+    this.clearConfirmation(id);
     this.failures.set([]);
     this.actionFeedback.update((v) => ({
       ...v,
@@ -351,18 +391,18 @@ export class DashboardState {
       );
       if (this.closed) return;
       if (result.id !== id) throw new Error('Unexpected action target');
-      this.acceptResult(result, generation);
-      if (generation === this.messageGeneration)
+      const cleanupError = this.acceptResult(result, generation);
+      if (generation === this.messageGeneration) {
+        if (cleanupError) this.failures.set([{ id, message: cleanupError }]);
         this.notice.set(`TX ${id}: command returned ${result.tx_state}. Refreshing observations.`);
+      }
     } catch (error) {
       if (!this.closed && generation === this.messageGeneration) {
-        this.trackConfirmation(id, action === 'start' ? 'ON' : 'OFF', generation, false, true);
-        this.failures.set([{ id, message: errorMessage(error) }]);
-        this.notice.set('Operation failed or outcome unknown.');
-        this.actionFeedback.update((v) => ({
-          ...v,
-          [id]: 'Operation failed or outcome unknown; reconciling status.',
-        }));
+        const message = errorMessage(error);
+        const details = error instanceof HttpErrorResponse ? (error.error as ApiError | null) : null;
+        this.commandFailure(id, action, message, generation, expectedRevision, details, true);
+        this.failures.set([{ id, message }]);
+        this.notice.set(details?.rf_outcome === 'REJECTED' ? 'Command rejected.' : 'Operation failed or outcome unknown.');
       }
     } finally {
       // Release request pending even if the observation refresh is slow or fails.
@@ -376,6 +416,7 @@ export class DashboardState {
     state: 'ON' | 'OFF',
     generation: number,
     commandConfirmed: boolean,
+    revision: number | undefined,
     pollingOnly = false,
   ) {
     const receivedAt = Date.now();
@@ -387,34 +428,52 @@ export class DashboardState {
       expired: pollingOnly,
       messageGeneration: generation,
       commandConfirmed,
+      revision,
     });
     if (commandConfirmed) this.commandStates.update((v) => ({ ...v, [id]: state }));
   }
   private acceptResult(result: ModulatorStatus, generation: number) {
     if (result.start_pending) {
-      this.trackPendingStart(result.id);
+      this.trackPendingStart(result.id, result.intent_revision, generation);
       return;
     }
     // Only tx_state is command-confirmed; never copy RP readbacks or source state.
-    if (result.tx_state === 'ON' || result.tx_state === 'OFF')
-      this.trackConfirmation(result.id, result.tx_state, generation, true);
+    const cleanupError = result.tx_state === 'OFF' ? result.last_error : null;
+    if (result.tx_state === 'ON' || result.tx_state === 'OFF') {
+      this.trackConfirmation(result.id, result.tx_state, generation, true, result.intent_revision);
+      if (cleanupError) this.confirmations.get(result.id)!.cleanupFailed = true;
+    }
     if (generation === this.messageGeneration)
       this.actionFeedback.update((v) => ({
         ...v,
         [result.id]: `Command returned ${result.tx_state}; awaiting Controller observation.`,
       }));
+    return cleanupError;
   }
-  private unconfirmedResult(
+  private nextIntentRevision(id: number) {
+    const previous = this.channels().find((c) => c.id === id)?.runtime?.intent_revision;
+    return previous === undefined ? undefined : previous + 1;
+  }
+  private commandFailure(
     id: number,
     action: 'start' | 'stop',
     message: string,
     generation: number,
+    expectedRevision: number | undefined,
+    details?: ApiError | null,
+    pollingOnly = false,
   ) {
-    this.trackConfirmation(id, action === 'start' ? 'ON' : 'OFF', generation, false);
+    const rejected = details?.rf_outcome === 'REJECTED';
+    if (!rejected) {
+      this.trackConfirmation(id, action === 'start' ? 'ON' : 'OFF', generation, false,
+        details?.intent_revision ?? expectedRevision, pollingOnly);
+      if (details?.intent_revision === undefined)
+        this.confirmations.get(id)!.inferredAction = action === 'start' ? 'START' : 'STOP';
+    }
     if (generation === this.messageGeneration)
       this.actionFeedback.update((v) => ({
         ...v,
-        [id]: `${message} Outcome unconfirmed; reconciling status.`,
+        [id]: rejected ? message : `${message} Outcome unconfirmed; reconciling status.`,
       }));
   }
   async all(action: 'start' | 'stop') {
@@ -429,6 +488,7 @@ export class DashboardState {
           c.config.frequency_khz != null &&
           (c.config.audio_mode === 'ANALOG' || c.config.input_source_id != null)),
     );
+    const expectedRevisions = new Map(eligible.map((c) => [c.id, this.nextIntentRevision(c.id)]));
     const pending = eligible.filter(
       (c) =>
         action === 'start' ||
@@ -450,6 +510,7 @@ export class DashboardState {
     this.failures.set([]);
     this.notice.set(`${action === 'start' ? 'START' : 'STOP ALL'} pending`);
     const failed: { id: number; message: string }[] = [];
+    let cleanupFailures = 0;
     let accepted = 0;
     try {
       const results = await firstValueFrom(
@@ -472,28 +533,36 @@ export class DashboardState {
               ? result.message
               : `Command returned ${result.tx_state}.`;
           failed.push({ id: c.id, message });
-          this.unconfirmedResult(c.id, action, message, generation);
+          this.commandFailure(c.id, action, message, generation, expectedRevisions.get(c.id),
+            result && 'error' in result ? result : null);
         } else {
           accepted++;
-          this.acceptResult(result, generation);
+          const cleanupError = this.acceptResult(result, generation);
+          if (cleanupError) {
+            cleanupFailures++;
+            failed.push({ id: c.id, message: cleanupError });
+          }
         }
       }
       if (generation === this.messageGeneration)
         this.notice.set(
-          `${action === 'start' ? 'START' : 'STOP ALL'}: ${accepted} accepted, ${failed.length} failed or unconfirmed.` +
+          `${action === 'start' ? 'START' : 'STOP ALL'}: ${accepted} accepted, ${failed.length - cleanupFailures} failed or unconfirmed.` +
+            (cleanupFailures ? ` Cleanup failed for ${cleanupFailures} TX.` : '') +
             (action === 'start' && eligible.length < this.channels().length
               ? ' Skipped disabled or unconfigured channels.'
               : ''),
         );
     } catch (error) {
       if (this.closed) return;
+      const details = error instanceof HttpErrorResponse ? (error.error as ApiError | null) : null;
+      const message = errorMessage(error);
       for (const c of eligible) {
-        const message = errorMessage(error);
         failed.push({ id: c.id, message });
-        this.unconfirmedResult(c.id, action, message, generation);
+        this.commandFailure(c.id, action, message, generation, expectedRevisions.get(c.id), details);
       }
       if (generation === this.messageGeneration)
-        this.notice.set(`${action === 'start' ? 'START' : 'STOP ALL'} failed or outcome unknown.`);
+        this.notice.set(`${action === 'start' ? 'START' : 'STOP ALL'} ` +
+          (details?.rf_outcome === 'REJECTED' ? `rejected. ${message}` : 'failed or outcome unknown.'));
     } finally {
       if (generation === this.messageGeneration) this.failures.set(failed);
       this.bulkPendingIds.set([]);

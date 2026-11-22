@@ -228,6 +228,7 @@ class StatusService:
                 continue
             row = status.model_copy(deep=True)
             config = self._modulator_configs[row.id]
+            row.desired_on = self.modulators.desired_on(row.id, config=config)
             source_id = config.input_source_id if config.audio_mode != 'ANALOG' else None
             if source_id is not None:
                 if source_id not in source_statuses:

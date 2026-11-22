@@ -44,6 +44,10 @@ export interface InputSource {
   timestamp: string;
 }
 export interface ModulatorStatus {
+  desired_on: boolean;
+  intent_revision: number;
+  intent_action: 'START' | 'STOP' | 'SAVE' | null;
+  start_error: string | null;
   start_pending?: boolean;
   pending_message?: string | null;
   rds_rt_effective?: string | null;
@@ -104,6 +108,8 @@ export interface HeadendStatus {
 export interface ApiError {
   error: string;
   message: string;
+  rf_outcome?: 'REJECTED' | 'UNCERTAIN';
+  intent_revision?: number;
 }
 export interface ChannelError extends ApiError {
   id: number;
