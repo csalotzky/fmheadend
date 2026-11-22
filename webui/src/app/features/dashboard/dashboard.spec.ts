@@ -165,6 +165,33 @@ describe('Operational display', () => {
     fixture.detectChanges();
     expect(audio?.textContent?.replace(/\s+/g, ' ').trim()).toBe('Audio input: Analog');
   });
+  it.each(['HTTP', 'PODCAST', 'ALSA'] as const)('shows %s pending detail and suppresses it after STOP or a real failure', (type) => {
+    const state = setup();
+    const data = sample();
+    data.sources[0].type = type;
+    const row = data.status.modulators[0];
+    const reason = 'Waiting for the previous audio worker to stop.';
+    Object.assign(row, { tx_state: 'STARTING', start_pending: true, source_state: 'CONNECTING',
+      hardware_tx_state: 'OFF', pending_message: reason });
+    state.channels.set(compose(data));
+    const f = TestBed.createComponent(Dashboard);
+    f.detectChanges();
+    const card = (f.nativeElement as HTMLElement).querySelectorAll('app-channel-card')[0];
+    expect(card.querySelector('.action-feedback')?.textContent).toContain(reason);
+    Object.assign(row, { tx_state: 'ON', start_pending: false, hardware_tx_state: 'ON' });
+    state.channels.set(compose(data));
+    f.detectChanges();
+    expect(card.querySelector('.action-feedback')?.textContent).toContain(reason);
+    row.source_last_error = 'Audio decoder failed';
+    state.channels.set(compose(data));
+    f.detectChanges();
+    expect(card.querySelector('.card-error')?.textContent).toContain('Audio decoder failed');
+    expect(card.textContent).not.toContain(reason);
+    Object.assign(row, { tx_state: 'OFF', hardware_tx_state: 'OFF', source_last_error: null });
+    state.channels.set(compose(data));
+    f.detectChanges();
+    expect(card.textContent).not.toContain(reason);
+  });
   it('uses real START and STOP buttons without card navigation', () => {
     const state = setup();
     const action = vi.spyOn(state, 'operate').mockResolvedValue();

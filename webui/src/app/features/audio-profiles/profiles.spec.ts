@@ -327,6 +327,46 @@ describe('File Audio Profiles', () => {
     confirm.mockRestore();
     http.expectNone((request) => request.method === 'DELETE');
   });
+  it('reports pending default-profile application without a restart error', async () => {
+    const f = await list();
+    const pending = f.componentInstance.setDefault(profile);
+    http.expectOne('/api/v1/system/config').flush({
+      default_audio_profile_id: profile.path, applied: false,
+      restart_pending: { 2: 'Preparing source audio.' }, restarted_source_ids: [], restart_errors: {},
+    });
+    await Promise.resolve();
+    http.expectOne(base).flush([factory, { ...profile, is_system_default: true }]);
+    http.expectOne('/api/v1/sources').flush([]);
+    await pending;
+    f.detectChanges();
+    expect(f.nativeElement.textContent).toContain('Audio application pending for Source IDs 2');
+    expect(f.nativeElement.querySelector('[role="alert"]')).toBeNull();
+  });
+  it('reports mixed profile application results and clears obsolete restart errors on the next save', async () => {
+    const f = await editor();
+    const c = f.componentInstance;
+    const first = c.save();
+    http.expectOne(base + '/' + profile.path).flush({
+      ...profile, saved: true, applied: false,
+      restarted_source_ids: [1], restart_pending: { 2: 'Preparing source audio.' },
+      restart_errors: { 3: 'Decoder start failed' },
+    });
+    await first;
+    f.detectChanges();
+    expect(f.nativeElement.textContent).toContain('Audio restarted for Source IDs 1');
+    expect(f.nativeElement.textContent).toContain('Audio application pending for Source IDs 2');
+    expect(f.nativeElement.querySelector('[role="alert"]').textContent).toContain('Source 3: Decoder start failed');
+    const next = c.save();
+    expect(c.error()).toBe('');
+    http.expectOne(base + '/' + profile.path).flush({
+      ...profile, saved: true, applied: true,
+      restarted_source_ids: [3], restart_pending: {}, restart_errors: {},
+    });
+    await next;
+    f.detectChanges();
+    expect(f.nativeElement.textContent).toContain('Audio restarted for Source IDs 3');
+    expect(f.nativeElement.querySelector('[role="alert"]')).toBeNull();
+  });
   for (const implementation of ['LSP_MULTIBAND_GATE', 'LSP_MULTIBAND_EXPANDER']) {
     it(`edits, switches, saves and reloads ${implementation} with the shared crossover/band editor`, async () => {
       const f = await editor(),
@@ -646,8 +686,10 @@ describe('File Audio Profiles', () => {
     await pending;
     f.detectChanges();
     expect(c.form.pristine).toBe(true);
-    expect(f.nativeElement.querySelector('.editor-feedback').textContent).toContain(
-      'Profile saved, but audio restart failed',
+    const feedback = f.nativeElement.querySelector('.editor-feedback');
+    expect(feedback.querySelector('[role="status"]').textContent).toContain('Audio Profile saved');
+    expect(feedback.querySelector('[role="alert"]').textContent).toContain(
+      'Audio restart failed. Source 1: Audio start failed',
     );
     expect(TestBed.inject(Router).navigate).not.toHaveBeenCalled();
   });

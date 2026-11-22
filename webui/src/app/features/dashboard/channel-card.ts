@@ -57,9 +57,10 @@ export class ChannelCard {
         : null),
   );
   readonly pendingSourceMessage = computed(() => {
-    const { source, runtime } = this.channel();
+    const { source, runtime, analog } = this.channel();
     if (this.stale() || this.commandState() === 'OFF' || this.pendingAction() === 'stop' ||
-        source?.type !== 'LOCAL' || !runtime?.start_pending || this.reportedError()) return null;
+        analog || !source || !runtime || this.reportedError() ||
+        (!runtime.start_pending && runtime.tx_state !== 'ON')) return null;
     return runtime.pending_message;
   });
   sourceState() {

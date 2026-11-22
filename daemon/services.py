@@ -52,6 +52,7 @@ class ConfigurationService:
             profile = self.sources.profile_files.get(config.default_audio_profile_id).profile
             self.sources.validate_profile(profile)
         self.database.save_system(config)
-        errors = (self.sources.apply_default_profile(retry_failed_only=not changed)
-                  if 'default_audio_profile_id' in patch.model_fields_set else {})
-        return SystemSaveResult(**config.model_dump(), applied=not errors, restart_errors=errors)
+        outcome = (self.sources.apply_default_profile(retry_failed_only=not changed)
+                   if 'default_audio_profile_id' in patch.model_fields_set
+                   else dict(applied=True, restart_errors={}))
+        return SystemSaveResult(**config.model_dump(), **outcome)

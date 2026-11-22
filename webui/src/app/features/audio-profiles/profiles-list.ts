@@ -6,6 +6,7 @@ import { timeout } from 'rxjs';
 import { InputSource } from '../../core/api/models';
 import { errorMessage } from '../../core/api/headend-api';
 import { AudioProfile, ProfileApi } from './profile-api';
+import { profileApplyFeedback } from './profile-apply-feedback';
 @Component({
   host: { class: 'page-content' },
   selector: 'app-profiles-list',
@@ -18,6 +19,9 @@ import { AudioProfile, ProfileApi } from './profile-api';
     </div>
     @if (error()) {
       <p role="alert" class="error">{{ error() }}</p>
+    }
+    @if (message()) {
+      <p role="status">{{ message() }}</p>
     }
     @if (loading()) {
       <p role="status">Loading audio profiles...</p>
@@ -78,6 +82,7 @@ export class ProfilesList implements OnInit {
   readonly sources = signal<InputSource[]>([]);
   readonly loading = signal(false);
   readonly error = signal('');
+  readonly message = signal('');
   readonly deleting = signal<string | null>(null);
   private router = inject(Router);
   ngOnInit() {
@@ -86,6 +91,7 @@ export class ProfilesList implements OnInit {
   async load() {
     this.loading.set(true);
     this.error.set('');
+    this.message.set('');
     try {
       const data = await firstValueFrom(
         forkJoin({
@@ -110,11 +116,13 @@ export class ProfilesList implements OnInit {
     if (this.deleting() !== null || profile.is_system_default) return;
     this.deleting.set(profile.path);
     this.error.set('');
+    this.message.set('');
     try {
       const result = await firstValueFrom(this.api.setDefault(profile.path));
       await this.load();
-      if (!result.applied) this.error.set('Default saved; audio restart failed: ' +
-        Object.entries(result.restart_errors).map(([id, error]) => `Source ${id}: ${error}`).join('; '));
+      const feedback = profileApplyFeedback(result, 'Default Audio Profile saved.');
+      this.message.set(feedback.message);
+      if (feedback.error) this.error.set(feedback.error);
     } catch (e) {
       this.error.set(errorMessage(e));
     } finally {
@@ -126,6 +134,8 @@ export class ProfilesList implements OnInit {
     const name = window.prompt('Name for cloned Audio Profile', profile.name + ' copy');
     if (!name?.trim()) return;
     this.deleting.set(profile.path);
+    this.error.set('');
+    this.message.set('');
     try {
       const result = await firstValueFrom(this.api.clone(profile.path, name));
       await this.router.navigate(['/audio-profiles/edit'], { queryParams: { path: result.path } });
@@ -141,6 +151,7 @@ export class ProfilesList implements OnInit {
       return;
     this.deleting.set(profile.path);
     this.error.set('');
+    this.message.set('');
     try {
       await firstValueFrom(this.api.delete(profile.path));
       await this.load();

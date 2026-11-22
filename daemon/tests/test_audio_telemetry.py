@@ -443,7 +443,7 @@ def test_registry_snapshot_replacement_release_and_failed_stop():
     thread.start()
     try:
         assert reading.wait(2)
-        assert manager._restart_audio(source) is None
+        assert manager._restart_audio(source).applied
         replacement = manager.pipelines[3]
         assert replacement is not old
         assert manager.telemetry_snapshot()[0]['consumer_tx_ids'] == [2, 7]

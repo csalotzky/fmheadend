@@ -237,6 +237,8 @@ class StatusService:
                     row.source_state = source.state.value
                     row.source_last_error = source.last_error
                     row.source_error_scope = source.error_scope
+                    if not row.start_pending and row.tx_state == TxState.ON:
+                        row.pending_message = source.pending_message
                 elif row.start_pending and source.error_scope == 'SOURCE':
                     source_config = source_configs.get(source_id)
                     if source_config is not None and source_config.type == 'LOCAL':

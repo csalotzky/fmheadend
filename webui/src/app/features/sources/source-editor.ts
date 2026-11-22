@@ -15,6 +15,7 @@ import {
   OnDestroy,
   ViewChild,
   computed,
+  effect,
   inject,
   signal,
 } from '@angular/core';
@@ -32,6 +33,7 @@ import {
   AlsaCaptureDevice,
   SourceApi,
   SourceDraft,
+  SourceSaveResult,
   SourceType,
   SourceTest,
   Profile,
@@ -168,6 +170,8 @@ export class SourceEditor implements OnInit, OnDestroy {
     )
       return;
     this.error.set('');
+    this.applyReceipt.set(null);
+    this.message.set('');
     await this.ngOnInit();
     if (!this.loadFailed()) {
       this.config.markAsPristine();
@@ -180,6 +184,35 @@ export class SourceEditor implements OnInit, OnDestroy {
   }
   private route = inject(ActivatedRoute);
   private shared = inject(DashboardState);
+  private readonly applyReceipt = signal<{
+    result: SourceSaveResult;
+    snapshotAtSave: ReturnType<DashboardState['data']>;
+  } | null>(null);
+  readonly applyFeedback = computed(() => {
+    const receipt = this.applyReceipt();
+    if (!receipt) return null;
+    const { result, snapshotAtSave } = receipt;
+    const snapshot = this.shared.data();
+    let pending = result.apply_pending;
+    if (snapshot && snapshot !== snapshotAtSave && !this.shared.stale() &&
+        !snapshot.status.system.snapshot_stale) {
+      const current = snapshot.sources.find((source) => source.id === result.id);
+      if (current && current.timestamp > result.timestamp) return null;
+      if (current?.timestamp === result.timestamp) {
+        const assigned = new Set(snapshot.modulators
+          .filter((tx) => tx.audio_mode === 'DIGITAL' && tx.input_source_id === result.id)
+          .map((tx) => tx.id));
+        const active = snapshot.status.modulators.filter((row) =>
+          assigned.has(row.id) && (row.tx_state !== 'OFF' || row.start_pending || row.source_last_error),
+        );
+        if (!active.length) return null;
+        if (pending) pending = active.find((row) => row.pending_message)?.pending_message;
+      }
+    }
+    return result.apply_error
+      ? { error: true, text: 'Source saved, but audio restart failed: ' + result.apply_error }
+      : { error: false, text: 'Source saved. Audio application accepted.' + (pending ? ' ' + pending : '') };
+  });
   id = this.route.snapshot.paramMap.has('id')
     ? Number(this.route.snapshot.paramMap.get('id'))
     : undefined;
@@ -370,6 +403,9 @@ export class SourceEditor implements OnInit, OnDestroy {
     this.feeds.markAsDirty();
   }
   constructor() {
+    effect(() => {
+      if (this.applyReceipt() && !this.applyFeedback()) this.applyReceipt.set(null);
+    });
     if (this.id === undefined) {
       this.rds.form.patchValue({ rds_metadata_to_rt: true, rds_rt_termination: 'PAD' });
     }
@@ -742,6 +778,7 @@ export class SourceEditor implements OnInit, OnDestroy {
   async save() {
     if (this.saving() || this.testing() || this.loadFailed() || this.radioRefreshing()) return;
     this.message.set('');
+    this.applyReceipt.set(null);
     const body = this.draft();
     if (!body) return;
     this.saving.set(true);
@@ -777,13 +814,12 @@ export class SourceEditor implements OnInit, OnDestroy {
       this.configureRds.markAsPristine();
       this.rds.form.markAsPristine();
       this.persistedRds = !!result.rds_profile;
-      await this.shared.refreshAfterMutation();
-      this.saving.set(false);
-      if (result.applied === false) {
-        this.error.set('Source saved, but audio restart failed: ' + result.apply_error);
+      if (result.apply_error || result.apply_pending) {
+        this.applyReceipt.set({ result, snapshotAtSave: this.shared.data() });
       } else {
         this.message.set('Source saved.');
       }
+      await this.shared.refreshAfterMutation();
     } catch (e) {
       if (this.persistedRds && body.rds_profile === null) this.configureRds.setValue(true);
       this.error.set(errorMessage(e));

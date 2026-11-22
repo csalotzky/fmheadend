@@ -214,6 +214,7 @@ class InputSource(InputSourceConfig):
 class SourceSaveResult(InputSource):
     saved: Literal[True] = True
     applied: bool
+    apply_pending: str | None = None
     apply_error: str | None = None
 
 
@@ -258,6 +259,8 @@ class SystemConfig(Model):
 class SystemSaveResult(SystemConfig):
     applied: bool
     restart_errors: dict[int, str]
+    restart_pending: dict[int, str] = Field(default_factory=dict)
+    restarted_source_ids: list[int] = Field(default_factory=list)
 
 
 def patch_model(name, model, *, exclude=()):

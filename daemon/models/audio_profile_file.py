@@ -1,7 +1,7 @@
 """The single supported first-release modular profile schema."""
 from typing import Literal
 
-from pydantic import ConfigDict, model_validator
+from pydantic import ConfigDict, Field, model_validator
 
 from .configuration import Model, Name
 from .dsp import IMPLEMENTATIONS, STAGES
@@ -66,3 +66,5 @@ class ProfileSaveResult(ProfileFileResult):
     saved: Literal[True] = True
     applied: bool
     restart_errors: dict[int, str]
+    restart_pending: dict[int, str] = Field(default_factory=dict)
+    restarted_source_ids: list[int] = Field(default_factory=list)

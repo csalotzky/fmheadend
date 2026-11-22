@@ -49,6 +49,8 @@
     </div>
     @if (runtime()[source.id]?.last_error) {
       <p class="error">{{ runtime()[source.id]?.last_error }}</p>
+    } @else if (runtime()[source.id]?.pending_message; as message) {
+      <p role="status">{{ message }}</p>
     }
     @if (deleting() === source.id) {
       <div class="actions" role="group" [attr.aria-label]="'Delete ' + source.name">

@@ -115,13 +115,14 @@ def test_source_roundtrip_shared_profile_and_reference_guard(api):
     assert api.delete(BASE + path).status_code == 204
 
 
-def test_save_restarts_shared_audio_only_and_preserves_pcm_identity(api):
+def test_save_restarts_shared_audio_only_and_preserves_pcm_identity(api, monkeypatch):
     path = api.post(BASE + 'custom', json=document()).json()['path']
     a = source(api, use_default_audio_profile=False, audio_profile_id=path, input_gain_db=-6)
     b = source(api, use_default_audio_profile=False, audio_profile_id=path)
     unrelated = source(api)
     for tx, sid in enumerate((a, a, b, unrelated)): start(api, sid, tx)
     services = api.app.state.services
+    api.app.state.control.executor.submit(monkeypatch.setattr, services.rds, 'tick', Mock()).result()
     before = dict(services.sources.pipelines)
     rp_methods = ['set_tx_enabled', 'set_tx_config', 'clear_rds']
     spies = []
@@ -280,11 +281,13 @@ def test_actual_gst_builder_gains_and_json_stages(tmp_path, builtin, telemetry_c
 
 
 @pytest.mark.parametrize('count', [1, 3])
-def test_source_hot_save_replaces_one_pipeline_preserving_all_consumers(api, count):
+def test_source_hot_save_replaces_one_pipeline_preserving_all_consumers(api, count, monkeypatch):
     sid, other = source(api), source(api)
     for tx in range(count): start(api, sid, tx)
     start(api, other, 7)
     services = api.app.state.services
+    # Isolate calls caused by the save from the application's maintenance tick.
+    api.app.state.control.executor.submit(monkeypatch.setattr, services.rds, 'tick', Mock()).result()
     manager = services.sources
     before = dict(manager.pipelines)
     create = Mock(wraps=manager._new_pipeline)
@@ -310,11 +313,104 @@ def test_source_hot_save_replaces_one_pipeline_preserving_all_consumers(api, cou
         assert services.modulators.statuses[tx].tx_state == 'ON'
 
 
+@pytest.mark.parametrize(('kind', 'config', 'patch'), [
+    ('LOCAL', {'mode': 'folder', 'path': '/test'},
+     {'config': {'mode': 'folder', 'path': '/test', 'recursive': True}}),
+    ('HTTP', {'uri': 'http://localhost/live'}, {'config': {'uri': 'http://localhost/new'}}),
+    ('PODCAST', {'feeds': [{'url': 'http://localhost/rss'}]}, {'input_gain_db': -4}),
+    ('ALSA', {'device': 'test'}, {'input_gain_db': -4}),
+])
+def test_source_save_reports_pending_until_replacement_has_its_own_status(api, kind, config, patch):
+    sid = source(api, type=kind, config=config)
+    start(api, sid, 0)
+    services = api.app.state.services
+    manager = services.sources
+    old = manager.pipelines[sid]
+    reaped = False
+    old.recovery_observation = lambda: (manager.clock(), manager.clock(), 'RUNNING', None, reaped)
+    old.snapshot = lambda: dict(state='RUNNING', last_error='error from retired worker')
+    url = f'/api/v1/sources/{sid}'
+
+    for edit in (patch, {}, {'input_gain_db': -9}):
+        response = api.patch(url, json=edit)
+        assert response.status_code == 200, response.text
+        saved = response.json()
+        assert saved['saved'] and not saved['applied']
+        assert 'previous audio worker' in saved['apply_pending']
+        assert saved['apply_error'] is None
+        status = api.get(url + '/status').json()
+        assert status['state'] == 'CONNECTING' and status['last_error'] is None
+        assert status['pending_message'] == saved['apply_pending']
+        row = api.get('/api/v1/status').json()['modulators'][0]
+        assert row['pending_message'] == saved['apply_pending']
+        assert row['source_last_error'] is None and row['tx_state'] == 'ON'
+    if kind == 'LOCAL':
+        assert saved['config']['recursive'] is True
+    assert sid not in manager.restart_errors
+
+    def finish_replacement():
+        nonlocal reaped
+        reaped = True
+        manager.worker_recovery.service()
+        services.status.publish()
+
+    api.app.state.control.executor.submit(finish_replacement).result()
+    replacement = manager.pipelines[sid]
+    assert replacement is not old and replacement.running and replacement.source.input_gain_db == -9
+    status = api.get(url + '/status').json()
+    assert status['state'] == 'RUNNING' and status['pending_message'] is None
+
+
+def test_stop_drops_pending_apply_feedback_while_reaping_previous_worker(api):
+    sid = source(api)
+    start(api, sid, 0)
+    services = api.app.state.services
+    manager = services.sources
+    manager.pipelines[sid].recovery_observation = lambda: (manager.clock(), manager.clock(), 'RUNNING', None, False)
+    assert api.patch(f'/api/v1/sources/{sid}', json={'input_gain_db': -6}).json()['apply_pending']
+    assert api.post('/api/v1/modulators/0/stop').status_code == 200
+    status = api.get(f'/api/v1/sources/{sid}/status').json()
+    assert status['state'] == 'IDLE' and status['pending_message'] is None and status['last_error'] is None
+    row = api.get('/api/v1/status').json()['modulators'][0]
+    assert row['pending_message'] is None and row['source_last_error'] is None
+    assert manager.worker_recovery.pending[sid][1] is None
+
+
+@pytest.mark.parametrize('default', [False, True])
+def test_profile_apply_reports_completed_pending_and_failed_sources(api, default):
+    path = api.post(BASE + 'custom', json=document()).json()['path']
+    fields = {} if default else dict(use_default_audio_profile=False, audio_profile_id=path)
+    ready, pending, failed = [source(api, **fields) for _ in range(3)]
+    for tx, sid in enumerate((ready, pending, failed)):
+        start(api, sid, tx)
+    manager = api.app.state.services.sources
+    manager.pipelines[pending].recovery_observation = lambda: (manager.clock(), manager.clock(), 'RUNNING', None, False)
+    failing = manager.pipelines[failed]
+    failing.fail_stop = True
+    try:
+        res = (api.patch('/api/v1/system/config', json={'default_audio_profile_id': path}) if default
+               else api.put(BASE + path, json=document()))
+        assert res.status_code == 200, res.text
+        outcome = res.json()
+        assert not outcome['applied'] and outcome['restarted_source_ids'] == [ready]
+        assert list(outcome['restart_pending']) == [str(pending)]
+        assert outcome['restart_errors'] == {str(failed): 'audio stop failed'}
+        if default:
+            failing.fail_stop = False
+            retry = api.patch('/api/v1/system/config', json={'default_audio_profile_id': path}).json()
+            assert not retry['applied'] and retry['restarted_source_ids'] == [failed]
+            assert list(retry['restart_pending']) == [str(pending)]
+            assert retry['restart_errors'] == {}
+    finally:
+        failing.fail_stop = False
+
+
 @pytest.mark.parametrize('failure', ['start', 'stop'])
-def test_source_saved_but_apply_failed_retains_desired_and_worker_ownership(api, failure):
+def test_source_saved_but_apply_failed_retains_desired_and_worker_ownership(api, failure, monkeypatch):
     sid = source(api)
     start(api, sid, 0); start(api, sid, 1)
     services = api.app.state.services
+    api.app.state.control.executor.submit(monkeypatch.setattr, services.rds, 'tick', Mock()).result()
     manager = services.sources
     old = manager.pipelines[sid]
     create = Mock(wraps=manager._new_pipeline); manager._new_pipeline = create
@@ -325,6 +421,7 @@ def test_source_saved_but_apply_failed_retains_desired_and_worker_ownership(api,
     try:
         result = api.patch(f'/api/v1/sources/{sid}', json={'input_gain_db': -9}).json()
         assert result['saved'] and not result['applied'] and 'audio' in result['apply_error']
+        assert result['apply_pending'] is None
         assert api.get(f'/api/v1/sources/{sid}').json()['input_gain_db'] == -9
         assert manager.consumers[sid] == {0, 1}
         assert manager.pipelines[sid].output is old.output

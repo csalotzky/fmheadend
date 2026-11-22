@@ -91,7 +91,7 @@ def test_stop_during_recovery_and_latest_apply_complete(managed):
     m, a, b = managed
     old = m.pipelines[a.id]
     changed = a.model_copy(update={'input_gain_db': -6})
-    assert 'pending' in m._restart_audio(changed)
+    assert m._restart_audio(changed).pending
     latest = a.model_copy(update={'input_gain_db': -9})
     m._restart_audio(latest)
     service_until(m, lambda: m.pipelines[a.id] is not old)

@@ -1,5 +1,6 @@
 import logging
 import time
+from dataclasses import dataclass
 from threading import Lock
 from typing import Callable
 from ..errors import DependencyUnavailable, DomainError, SourceUnavailable, SourcePending
@@ -10,6 +11,17 @@ from .radio_recovery import SourceRadioRecovery
 from .output import DEFAULT_STAGING_BUFFER_MS, DEFAULT_CONSUMER_BUFFER_MS, DEFAULT_STAGING_MAX_AGE_MS, pcm_capacity_bytes
 
 logger = logging.getLogger(__name__)
+REPLACEMENT_PENDING = 'Waiting for the previous audio worker to stop.'
+
+
+@dataclass(frozen=True)
+class AudioApplyResult:
+    pending: str | None = None
+    error: str | None = None
+
+    @property
+    def applied(self):
+        return self.pending is None and self.error is None
 
 
 class SourceManager:
@@ -102,7 +114,8 @@ class SourceManager:
         and older injected backends (including missing-source validation).
         """
         pipeline = self.pipelines.get(source_id)
-        if source_id not in self.restart_errors and pipeline is not None:
+        if (source_id not in self.restart_errors and source_id not in self.worker_recovery.pending
+                and pipeline is not None):
             read = getattr(pipeline, 'current_stream_title', None)
             if read is not None:
                 return read()
@@ -114,13 +127,19 @@ class SourceManager:
         status = self.statuses.setdefault(source_id, InputSourceStatus(source_id=source_id))
         pending = self.worker_recovery.pending.get(source_id)
         if pending is not None and not pending[3] and source_id not in self.restart_errors:
-            return InputSourceStatus(source_id=source_id, state=SourceState.CONNECTING)
+            if not self.consumers.get(source_id):
+                return InputSourceStatus(source_id=source_id)
+            return InputSourceStatus(source_id=source_id, state=SourceState.CONNECTING,
+                                     pending_message=REPLACEMENT_PENDING)
         pipeline = self.pipelines.get(source_id)
         if source_id in self.restart_errors:
             return self.statuses[source_id]
         if pipeline is not None and not getattr(pipeline, "mocked", True):
             status = InputSourceStatus(source_id=source_id, **pipeline.snapshot(),
                                       pcm=pipeline.pcm_snapshot() if hasattr(pipeline, 'pcm_snapshot') else None)
+            if (getattr(pipeline, 'startup_pending', False) and not status.last_error
+                    and status.state in (SourceState.CONNECTING, SourceState.BUFFERING)):
+                status.pending_message = 'Preparing source audio.'
             self.statuses[source_id] = status
         return status
 
@@ -157,16 +176,9 @@ class SourceManager:
 
     def apply_default_profile(self, *, retry_failed_only=False):
         """Control-owned; only replace existing inheriting pipelines, once per Source."""
-        errors = {}
-        for source_id in list(self.pipelines):
-            if retry_failed_only and source_id not in self.restart_errors:
-                continue
-            source = self.database.get('sources', source_id)
-            if source.use_default_audio_profile:
-                error = self._restart_audio(source)
-                if error:
-                    errors[source_id] = error
-        return errors
+        return self._apply_profile_sources(
+            self.database.get_system().default_audio_profile_id,
+            default_only=True, retry_failed_only=retry_failed_only)
 
     def validate_profile(self, profile):
         if not getattr(self.pipeline_factory, 'mocked', True):
@@ -181,15 +193,28 @@ class SourceManager:
         profile = self.profile_files.validate(data)
         self.validate_profile(profile)
         saved = self.profile_files.save(path, data)
-        errors = {}
+        return ProfileSaveResult(**saved.model_dump(), **self._apply_profile_sources(path))
+
+    def _apply_profile_sources(self, path, *, default_only=False, retry_failed_only=False):
+        errors, pending, restarted = {}, {}, []
         for source_id in list(self.pipelines):
             source = self.database.get('sources', source_id)
-            if self.effective_profile_id(source) != path:
+            if self.effective_profile_id(source) != path or (default_only and not source.use_default_audio_profile):
                 continue
-            error = self._restart_audio(source)
-            if error:
-                errors[source_id] = error
-        return ProfileSaveResult(**saved.model_dump(), applied=not errors, restart_errors=errors)
+            if retry_failed_only and source_id not in self.restart_errors:
+                reason = self.status(source_id, source=source).pending_message
+                if reason:
+                    pending[source_id] = reason
+                continue
+            result = self._restart_audio(source)
+            if result.pending is not None:
+                pending[source_id] = result.pending
+            elif result.error is not None:
+                errors[source_id] = result.error
+            else:
+                restarted.append(source_id)
+        return dict(applied=not (pending or errors), restart_errors=errors,
+                    restart_pending=pending, restarted_source_ids=restarted)
 
     def apply_saved_source(self, previous, saved):
         """Called after persistence on the control executor; retain fanout/consumers."""
@@ -202,21 +227,23 @@ class SourceManager:
                     previous.model_dump(exclude={'rds_profile', 'rds_profile_id', 'timestamp'}) ==
                     saved.model_dump(exclude={'rds_profile', 'rds_profile_id', 'timestamp'}))
         needs_apply = not rds_only and (changed or saved.id in self.restart_errors)
-        error = self._restart_audio(saved) if needs_apply and saved.id in self.pipelines else None
-        return SourceSaveResult(**saved.model_dump(), applied=not error, apply_error=error)
+        if needs_apply and saved.id in self.pipelines:
+            result = self._restart_audio(saved)
+        else:
+            result = AudioApplyResult(pending=self.status(saved.id, source=saved).pending_message)
+        return SourceSaveResult(**saved.model_dump(), applied=result.applied,
+                                apply_pending=result.pending, apply_error=result.error)
 
     def _restart_audio(self, source):
         """One ownership-preserving audio replacement, shared by Source/profile Save."""
         source_id = source.id
         self.radio_recovery.invalidate(source_id)
         old = self.pipelines[source_id]
-        if hasattr(old, 'recovery_observation'):
-            self.worker_recovery.request(source_id, source.model_copy(deep=True))
-            self.restart_errors[source_id] = 'HTTP source apply pending'
-            self.statuses[source_id] = InputSourceStatus(source_id=source_id,
-                state='CONNECTING', last_error='HTTP source apply pending', error_scope='INTERNAL')
-            return 'HTTP source apply pending'
         try:
+            if hasattr(old, 'recovery_observation'):
+                self.worker_recovery.request(source_id, source.model_copy(deep=True))
+                self.restart_errors.pop(source_id, None)
+                return AudioApplyResult(pending=REPLACEMENT_PENDING)
             # Failed stop retains old ownership; never create a competing worker.
             old.stop()
             replacement = self._new_pipeline(source, output=getattr(old, 'output', None))
@@ -225,22 +252,25 @@ class SourceManager:
             self.restart_errors.pop(source_id, None)
             self.statuses[source_id] = InputSourceStatus(source_id=source_id,
                 **({'state': SourceState.RUNNING} if getattr(replacement, 'mocked', True) else replacement.snapshot()))
-            return None
+            return AudioApplyResult()
         except SourcePending as exc:
             self.restart_errors.pop(source_id, None)
-            logger.info('source %s LOCAL replacement pending; retaining discovery worker', source_id)
-            return str(exc)
+            logger.info('source %s (%s) replacement pending', source_id, source.type)
+            return AudioApplyResult(pending=str(exc) or 'Preparing source audio.')
         except Exception as exc:
-            self.restart_errors[source_id] = str(exc)
-            self.statuses[source_id] = InputSourceStatus(source_id=source_id, state=SourceState.ERROR, last_error=str(exc),
+            error = str(exc) or type(exc).__name__
+            self.restart_errors[source_id] = error
+            self.statuses[source_id] = InputSourceStatus(source_id=source_id, state=SourceState.ERROR, last_error=error,
                 error_scope='SOURCE' if isinstance(exc, SourceUnavailable) else 'INTERNAL')
             logger.error('Configuration saved; source %s audio restart failed: %s', source_id, exc,
                          exc_info=not isinstance(exc, SourceUnavailable))
-            return str(exc)
+            return AudioApplyResult(error=error)
 
     def acquire(self, source_id, modulator_id):
         if source_id in self.worker_recovery.pending:
-            raise SourcePending('HTTP source cleanup/replacement pending')
+            reason = ('Audio worker recovery pending.' if self.worker_recovery.pending[source_id][3]
+                      else REPLACEMENT_PENDING)
+            raise SourcePending(reason)
         source = self.database.get("sources", source_id)
         # Joining an existing pipeline must validate too: a live worker with old
         # settings is not proof that its selected file remains usable.
@@ -272,7 +302,7 @@ class SourceManager:
                     pipeline.output.attach(modulator_id)
                 pipeline.start()
             except SourcePending:
-                logger.info('source %s LOCAL startup deferred; retaining discovery worker', source_id)
+                logger.info('source %s %s startup deferred', source_id, source.type)
                 raise
             except Exception as exc:
                 try:
@@ -322,6 +352,7 @@ class SourceManager:
                     consumers.discard(modulator_id)
                 pipeline.output.detach(modulator_id)
                 self.worker_recovery.request(source_id)
+                self.restart_errors.pop(source_id, None)
                 return
             failed_start = (InputSourceStatus(source_id=source_id, **pipeline.snapshot())
                             if getattr(pipeline, 'startup_pending', False) and pipeline.fatal_error else None)

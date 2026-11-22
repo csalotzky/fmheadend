@@ -42,6 +42,7 @@ class SourceRadioRecovery:
         manager, source = self.manager, ticket.source
         return (not self.closed and manager.pipelines.get(source.id) is ticket.pipeline
                 and bool(manager.consumers.get(source.id))
+                and source.id not in manager.worker_recovery.pending
                 and source.id not in manager.restart_errors
                 and manager.database.source_revision(source.id) == ticket.revision)
 
@@ -89,6 +90,7 @@ class SourceRadioRecovery:
             state = getattr(pipeline, 'radio_url', None)
             if (state is None or source_id in self.pending or source_id in self.cooldowns
                     or not manager.consumers.get(source_id) or source_id in manager.restart_errors
+                    or source_id in manager.worker_recovery.pending
                     or not state.observe()[0]):
                 continue
             if len(tickets) >= lookup_slots:

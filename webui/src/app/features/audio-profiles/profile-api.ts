@@ -70,10 +70,14 @@ export interface AudioProfile {
 export interface ProfileResult extends AudioProfile {
   profile: ProfileDraft;
 }
-export interface ProfileSaveResult extends ProfileResult {
+export interface ProfileApplyOutcome {
+  applied: boolean;
+  restart_errors: Record<string, string>;
+  restart_pending: Record<string, string>;
+  restarted_source_ids: number[];
+}
+export interface ProfileSaveResult extends ProfileResult, Partial<ProfileApplyOutcome> {
   saved?: true;
-  applied?: boolean;
-  restart_errors?: Record<string, string>;
 }
 const base = '/api/v1/audio-profiles/files';
 export const profileUrl = (path: string) =>
@@ -85,7 +89,7 @@ export class ProfileApi {
     return this.http.get<AudioProfile[]>(base).pipe(timeout(15000));
   }
   setDefault(path: string) {
-    return this.http.patch<{ default_audio_profile_id: string; applied: boolean; restart_errors: Record<string, string> }>(
+    return this.http.patch<ProfileApplyOutcome & { default_audio_profile_id: string }>(
       '/api/v1/system/config', { default_audio_profile_id: path },
     ).pipe(timeout(300000));
   }

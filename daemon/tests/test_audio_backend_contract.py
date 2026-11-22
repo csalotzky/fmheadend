@@ -83,7 +83,8 @@ def test_public_pending_sharing_and_replacement_output_identity(rig):
     assert backend.telemetry_request == (True, 25)
     assert manager.telemetry_snapshot()[0]['consumer_tx_ids'] == [0, 1]
     # Replacement retains output and ownership even when its startup is pending.
-    assert manager._restart_audio(source) == 'catalog pending'
+    pending = manager._restart_audio(source)
+    assert not pending.applied and pending.pending == 'catalog pending' and pending.error is None
     replacement = manager.pipelines[source.id]
     assert replacement is not backend and not backend.running
     assert replacement.output is output
@@ -106,7 +107,8 @@ def test_failed_stop_retains_backend_output_and_consumers(rig):
         manager.release(source.id, 0)
     assert manager.pipelines[source.id] is backend
     assert manager.consumers[source.id] == {0}
-    assert manager._restart_audio(source) == 'audio stop failed'
+    failure = manager._restart_audio(source)
+    assert not failure.applied and failure.error == 'audio stop failed' and failure.pending is None
     assert manager.pipelines[source.id] is backend and backend.output is output
 
 

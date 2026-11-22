@@ -369,6 +369,9 @@
     @if (message()) {
     <p role="status">{{ message() }}</p>
     }
+    @if (applyFeedback(); as feedback) {
+    <p [class.error]="feedback.error" [attr.role]="feedback.error ? 'alert' : 'status'">{{ feedback.text }}</p>
+    }
     @if (error()) {
     <p class="error" role="alert">{{ error() }}</p>
     }

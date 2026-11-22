@@ -125,7 +125,7 @@ def test_late_owner_blocks_replacement_survives_manager_close_and_sibling(
         assert until(lambda: sibling.output.read(1)) == PCM
         enter_cleanup(late, child, monkeypatch)
         assert child.late.wait(2)
-        assert 'pending' in manager._restart_audio(first)
+        assert manager._restart_audio(first).pending
         assert manager.pipelines[first.id] is late
         assert len(simulated_process) == 1  # Only the sibling was launched.
         assert until(lambda: sibling.output.read(1)) == PCM

@@ -399,6 +399,57 @@ describe('Sources management', () => {
     );
     expect(navigate).not.toHaveBeenCalled();
     expect(shared.refreshAfterMutation).toHaveBeenCalledOnce();
+    const stopped = sample();
+    stopped.status.system.snapshot_stale = true;
+    Object.assign(stopped.status.modulators[0], { tx_state: 'OFF', source_last_error: null });
+    shared.data.set(stopped);
+    f.detectChanges();
+    expect(f.nativeElement.querySelector('.editor-feedback [role="alert"]')).not.toBeNull();
+    stopped.status.system.snapshot_stale = false;
+    shared.data.set({ ...stopped });
+    f.detectChanges();
+    expect(f.nativeElement.querySelector('.editor-feedback [role="alert"]')).toBeNull();
+    shared.data.set(sample());
+    f.detectChanges();
+    expect(f.nativeElement.querySelector('.editor-feedback [role="alert"]')).toBeNull();
+  });
+  it('shows accepted application without treating RUNNING as confirmation of the saved revision', async () => {
+    Object.assign(TestBed.inject(ActivatedRoute).snapshot, {
+      paramMap: convertToParamMap({ id: '1' }),
+    });
+    const f = editor(), c = f.componentInstance;
+    http.expectOne('/api/v1/sources/1').flush(sample().sources[0]);
+    await f.whenStable();
+    fill(c);
+    const saving = c.save();
+    const request = http.expectOne('/api/v1/sources/1');
+    const timestamp = '2026-11-22T10:00:00Z';
+    request.flush({
+      ...sample().sources[0], ...request.request.body, timestamp, saved: true, applied: false,
+      apply_pending: 'Waiting for the previous audio worker to stop.',
+      apply_error: null,
+    });
+    await saving;
+    const old = sample();
+    old.status.modulators[0].source_state = 'RUNNING';
+    shared.data.set(old);
+    f.detectChanges();
+    const feedback = () => f.nativeElement.querySelector('.editor-feedback') as HTMLElement;
+    expect(feedback().textContent).toContain('Waiting for the previous audio worker');
+    expect(feedback().querySelector('[role="alert"]')).toBeNull();
+    const current = sample();
+    current.sources[0].timestamp = timestamp;
+    current.status.modulators[0].source_state = 'RUNNING';
+    shared.data.set(current);
+    f.detectChanges();
+    expect(feedback().textContent).toContain('Audio application accepted');
+    expect(feedback().textContent).not.toContain('Waiting for');
+    expect(feedback().textContent).not.toContain('applied');
+    const newer = sample();
+    newer.sources[0].timestamp = '2026-11-22T10:00:01Z';
+    shared.data.set(newer);
+    f.detectChanges();
+    expect(feedback().textContent).not.toContain('Audio application accepted');
   });
   it('stays after creation and updates the returned ID on the next save', async () => {
     const f = editor(),

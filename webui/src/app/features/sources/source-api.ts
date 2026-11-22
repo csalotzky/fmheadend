@@ -36,10 +36,12 @@ export interface SourceRuntime {
   source_id: number;
   state: 'IDLE' | 'CONNECTING' | 'BUFFERING' | 'RUNNING' | 'ERROR';
   last_error: string | null;
+  pending_message?: string | null;
 }
 export interface SourceSaveResult extends InputSource {
   saved?: true;
   applied?: boolean;
+  apply_pending?: string | null;
   apply_error?: string | null;
 }
 export interface PodcastFeedProbe {

@@ -421,7 +421,7 @@ def test_simulated_manager_sharing_replacement_and_exit(simulated_process, tmp_p
         assert until(lambda: b.output.read(2)) == PCM
         assert len(simulated_process) == 2
         # Saved/apply retains old ownership while reap is pending.
-        assert 'pending' in manager._restart_audio(first)
+        assert manager._restart_audio(first).pending
         assert manager.pipelines[first.id] is a
         assert a._done.wait(3)
         manager.worker_recovery.service()  # Apply completes without another API call.

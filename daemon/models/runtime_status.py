@@ -67,6 +67,7 @@ class InputSourceStatus(Model):
     output_caps: str | None = None
     reconnect_count: int = 0
     last_error: str | None = None
+    pending_message: str | None = None
 
 
 class ModulatorStatus(Model):

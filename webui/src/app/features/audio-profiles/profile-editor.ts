@@ -9,6 +9,7 @@ import {
 import { ActivatedRoute, CanDeactivateFn, Router } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { ProfileApi, ProfileDraft, DspDescription } from './profile-api';
+import { profileApplyFeedback } from './profile-apply-feedback';
 import { DspFields } from './dsp-fields';
 import { validSettings } from './dsp-number';
 import { errorMessage } from '../../core/api/headend-api';
@@ -221,6 +222,8 @@ export class ProfileEditor implements OnInit {
     if (this.readOnly() || this.saving() || this.loading() || this.failed() || this.form.invalid)
       return;
     if (!this.document) return;
+    this.message.set('');
+    this.error.set('');
     for (const entry of Object.values(this.document.stages)) {
       if (
         entry.selected !== 'OFF' &&
@@ -237,8 +240,6 @@ export class ProfileEditor implements OnInit {
     body.name = this.form.controls.name.value;
     body.description = this.form.controls.description.value;
     this.saving.set(true);
-    this.error.set('');
-    this.message.set('');
     try {
       const creating = this.path === undefined;
       const result = await firstValueFrom(this.api.save(body, this.path));
@@ -246,22 +247,15 @@ export class ProfileEditor implements OnInit {
       this.document = result.profile;
       this.form.markAsPristine();
       this.saving.set(false);
-      if (result.applied === false) {
-        this.error.set(
-          'Profile saved, but audio restart failed: ' +
-            Object.values(result.restart_errors ?? {}).join('; '),
-        );
-      } else {
-        this.message.set(
-          'Audio Profile saved.' + (result.applied ? ' Active sources using it restarted.' : ''),
-        );
-        if (creating)
-          await this.router.navigate(['/audio-profiles/edit'], {
-            queryParams: { path: result.path },
-            replaceUrl: true,
-            state: { profileSaved: true },
-          });
-      }
+      const feedback = profileApplyFeedback(result, 'Audio Profile saved.');
+      this.message.set(feedback.message);
+      this.error.set(feedback.error);
+      if (creating)
+        await this.router.navigate(['/audio-profiles/edit'], {
+          queryParams: { path: result.path },
+          replaceUrl: true,
+          state: { profileSaved: true },
+        });
     } catch (e) {
       this.error.set(e instanceof Error && !('status' in e) ? e.message : errorMessage(e));
     } finally {
