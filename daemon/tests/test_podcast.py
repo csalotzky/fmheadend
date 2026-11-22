@@ -2,6 +2,7 @@
 import asyncio
 import gzip
 import random
+import zlib
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
@@ -373,6 +374,67 @@ def test_transport_redirect_utf8_gzip_and_safe_request_headers():
     assert result.body == rss(item()) and result.url == 'https://example.org/final'
     from fmheadendd import __version__
     assert calls[0].headers['user-agent'] == f'FMHeadend/{__version__} Podcast catalog'
+
+
+@pytest.mark.parametrize(('encoding', 'level', 'offset', 'accepted'), [
+    ('identity', None, 0, True),
+    ('identity', None, 1, False),
+    ('gzip', 6, 0, True),
+    ('gzip', 6, 1, False),
+    # The stored gzip blocks exceed the wire cap with decoded bytes still below it.
+    ('gzip', 0, -1, False),
+])
+def test_feed_size_limit_applies_to_wire_and_decoded_bytes(encoding, level, offset, accepted):
+    body_size = 64 * 1024 * 1024 + offset
+    block = b'x' * (64 * 1024)
+    wire_size = 0
+
+    class Stream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            nonlocal wire_size
+            encoder = zlib.compressobj(level, wbits=31) if level is not None else None
+            for remaining in range(body_size, 0, -len(block)):
+                part = block[:remaining]
+                chunk = encoder.compress(part) if encoder else part
+                if chunk:
+                    wire_size += len(chunk)
+                    yield chunk
+            if encoder:
+                trailer = encoder.flush()
+                wire_size += len(trailer)
+                yield trailer
+
+    fetch = fetcher(lambda _: httpx.Response(200, stream=Stream(), headers={'content-encoding': encoding}))
+    if accepted:
+        body = fetch(URL).body
+        assert len(body) == body_size and body[:1] == body[-1:] == b'x'
+    else:
+        with pytest.raises(DomainError) as exc:
+            fetch(URL)
+        assert exc.value.error == 'PODCAST_FEED_TOO_LARGE'
+    assert (wire_size > 64 * 1024 * 1024) == (encoding == 'identity' and not accepted or level == 0)
+
+
+@pytest.mark.parametrize('invalid', ['truncated', 'trailing', 'two_members'])
+def test_gzip_still_requires_one_complete_member(invalid):
+    compressed = gzip.compress(rss(item()))
+    if invalid == 'truncated':
+        chunks = [compressed[:-1]]
+    elif invalid == 'trailing':
+        chunks = [compressed, b'extra bytes']
+    else:
+        chunks = [compressed, compressed]
+
+    class Stream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            for chunk in chunks:
+                yield chunk
+
+    fetch = fetcher(lambda _: httpx.Response(200, stream=Stream(),
+                                            headers={'content-encoding': 'gzip'}))
+    with pytest.raises(DomainError) as exc:
+        fetch(URL)
+    assert exc.value.error == 'PODCAST_ENCODING_ERROR'
 
 
 @pytest.mark.parametrize('kind', ['size', 'gzip_bomb', 'redirect_loop', 'redirect_file', 'timeout', 'http', 'encoding'])

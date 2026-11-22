@@ -18,6 +18,7 @@ Run `sudo ./install.sh --webui-archive /path/to/fmheadend-webui.tar.gz` from the
 | Item | Requirement |
 |---|---|
 | Computer | Raspberry Pi with a 64-bit Linux environment and usable I²C/SPI interfaces |
+| RAM | 2 GB recommended |
 | OS | **Raspberry Pi OS Lite (64-bit)** is the primary target; other Linux distributions are not yet installation-tested |
 | Python | 3.11 or later |
 | Controller | FMheadend Controller connected through I²C and SPI |

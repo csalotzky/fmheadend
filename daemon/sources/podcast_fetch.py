@@ -14,6 +14,9 @@ from ..errors import DomainError
 from .podcast import valid_http_url
 
 
+GZIP_CHUNK_BYTES = 64 * 1024
+
+
 @dataclass(frozen=True)
 class FeedResponse:
     body: bytes
@@ -21,7 +24,7 @@ class FeedResponse:
 
 
 class FeedFetcher:
-    def __init__(self, *, timeout_s=10.0, total_timeout_s=20.0, max_bytes=4 * 1024 * 1024,
+    def __init__(self, *, timeout_s=10.0, total_timeout_s=20.0, max_bytes=64 * 1024 * 1024,
                  clock=time.monotonic, transport=None):
         self.timeout_s, self.max_bytes = timeout_s, max_bytes
         self.clock, self.total_timeout_s = clock, total_timeout_s
@@ -81,13 +84,24 @@ class FeedFetcher:
                             async for chunk in chunks:
                                 self._remaining(deadline)
                                 wire_bytes += len(chunk)
-                                if decoder:
-                                    chunk = decoder.decompress(chunk, self.max_bytes - len(body) + 1)
-                                body.extend(chunk)
-                                if len(body) > self.max_bytes or wire_bytes > self.max_bytes:
+                                if wire_bytes > self.max_bytes:
                                     raise DomainError(503, "PODCAST_FEED_TOO_LARGE", "Feed exceeds response size limit")
+                                if decoder is None:
+                                    body.extend(chunk)
+                                    continue
+                                # A small input chunk can inflate to many MiB. Bound the
+                                # temporary output separately from the full feed buffer.
+                                while chunk:
+                                    self._remaining(deadline)
+                                    room = min(GZIP_CHUNK_BYTES, self.max_bytes - len(body) + 1)
+                                    body.extend(decoder.decompress(chunk, room))
+                                    if len(body) > self.max_bytes:
+                                        raise DomainError(503, "PODCAST_FEED_TOO_LARGE", "Feed exceeds response size limit")
+                                    if decoder.unused_data:
+                                        raise DomainError(503, "PODCAST_ENCODING_ERROR", "Invalid compressed feed")
+                                    chunk = decoder.unconsumed_tail
                         self._remaining(deadline)
-                        if decoder and (not decoder.eof or decoder.unused_data):
+                        if decoder and not decoder.eof:
                             raise DomainError(503, "PODCAST_ENCODING_ERROR", "Invalid compressed feed")
                         return FeedResponse(bytes(body), url)
 
