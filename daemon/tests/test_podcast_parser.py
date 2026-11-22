@@ -9,7 +9,7 @@ import pytest
 
 from fmheadendd.errors import DomainError
 from fmheadendd.models.configuration import PodcastConfig
-from fmheadendd.sources.podcast import EpisodeCatalog, parse_feed
+from fmheadendd.sources.podcast import EpisodeCatalog, PodcastRefreshCancelled, parse_feed
 from fmheadendd.sources.podcast_fetch import FeedResponse
 from fmheadendd.sources import podcast_parser as module
 from fmheadendd.sources.podcast_runtime import PodcastRuntime
@@ -35,6 +35,14 @@ def slow_parse(*args):
 def delayed_parse(*args):
     time.sleep(0.6)
     return pid_parse(*args)
+
+
+def assert_pool_reaped(manager, children):
+    # shutdown(wait=False) lets the pool manager finish asynchronously. Wait
+    # for it before reading exit codes to avoid racing its final waitpid.
+    manager.join(timeout=3)
+    assert not manager.is_alive()
+    assert all(child.exitcode is not None for child in children)
 
 
 @pytest.fixture
@@ -67,11 +75,12 @@ def test_sources_share_parser_and_source_close_does_not_close_pool():
         first.close()
         second.feed_service.catalog.refresh(config, lambda url: FeedResponse(ATOM, url), NOW)
         assert second.feed_service._parser._executor is executor
+        manager = executor._executor_manager_thread
         children = list(executor._processes.values())
     finally:
         second.close()
         module.close_shared_parser()
-    assert all(not child.is_alive() for child in children)
+    assert_pool_reaped(manager, children)
 
 
 def test_invalid_feed_preserves_catalog_and_does_not_break_worker(parser):
@@ -94,13 +103,15 @@ def test_crash_timeout_and_recovery(parser, monkeypatch, worker, code):
     catalog = EpisodeCatalog(parser)
     good = catalog.refresh(config, lambda url: FeedResponse(RSS, url), NOW)
     monkeypatch.setattr(module, '_parse', worker)
-    children = list(parser._executor._processes.values())
+    executor = parser._executor
+    manager = executor._executor_manager_thread
+    children = list(executor._processes.values())
     parser.timeout = 1 if worker is slow_parse else 10
     failed = catalog.refresh(config, lambda url: FeedResponse(RSS, url), NOW)
     assert failed.results[0].error == code
     assert failed.feeds == good.feeds
     assert parser._executor is None
-    assert all(not child.is_alive() for child in children)
+    assert_pool_reaped(manager, children)
     monkeypatch.setattr(module, '_parse', original)
     parser.timeout = 10
     assert parser(RSS, URL, NOW) == parse_feed(RSS, URL, NOW)
@@ -109,7 +120,9 @@ def test_crash_timeout_and_recovery(parser, monkeypatch, worker, code):
 def test_close_interrupts_pending_parse_and_rejects_new_work(parser, monkeypatch):
     # Warm the pool so a slow Windows spawn is not mistaken for a blocked parse.
     parser(RSS, URL, NOW)
-    children = list(parser._executor._processes.values())
+    executor = parser._executor
+    manager = executor._executor_manager_thread
+    children = list(executor._processes.values())
     monkeypatch.setattr(module, '_parse', slow_parse)
     submitted = Event()
     original_submit = parser._executor.submit
@@ -130,7 +143,7 @@ def test_close_interrupts_pending_parse_and_rejects_new_work(parser, monkeypatch
     parser.close()
     thread.join(timeout=5)
     assert not thread.is_alive() and errors
-    assert all(not child.is_alive() for child in children)
+    assert_pool_reaped(manager, children)
     with pytest.raises(DomainError, match='closed'):
         parser(RSS, URL, NOW)
     parser.close()
@@ -144,13 +157,15 @@ def test_worker_sanitizes_unexpected_parser_exception(monkeypatch):
 
 
 def test_concurrent_feeds_get_separate_execution_budgets(parser, monkeypatch):
-    parser(RSS, URL, NOW)  # Exclude startup from this timing regression.
     monkeypatch.setattr(module, '_parse', delayed_parse)
+    # Warm this exact callable so the child imports the fixture module before
+    # we apply the short execution budget.
+    warm_pid, _ = parser(RSS, URL, NOW)
     parser.timeout = 1.5
     with ThreadPoolExecutor(max_workers=3) as callers:
         futures = [callers.submit(parser, RSS, URL, NOW) for _ in range(3)]
         results = [future.result(timeout=10) for future in futures]
-    assert len({pid for pid, feed in results}) == 1
+    assert {pid for pid, feed in results} == {warm_pid}
     assert all(feed == parse_feed(RSS, URL, NOW) for pid, feed in results)
 
 
@@ -169,9 +184,10 @@ def test_queue_expiry_does_not_discard_active_worker_and_close_wakes_waiters(par
         running = callers.submit(parser, RSS, URL, NOW)
         assert submitted.wait(timeout=5)
         parser.queue_timeout = 0.05
-        with pytest.raises(DomainError) as error:
-            parser(RSS, URL, NOW)
-        assert error.value.error == 'PODCAST_PARSE_BUSY'
+        for cancelled in (None, Event().is_set):
+            with pytest.raises(DomainError) as error:
+                parser(RSS, URL, NOW, cancelled=cancelled)
+            assert error.value.error == 'PODCAST_PARSE_BUSY'
         assert parser._executor is executor
         parser.queue_timeout = 120
         queued = Event()
@@ -186,6 +202,25 @@ def test_queue_expiry_does_not_discard_active_worker_and_close_wakes_waiters(par
         for future in (running, waiting):
             with pytest.raises(DomainError):
                 future.result(timeout=5)
+
+
+def test_cancel_after_admission_releases_slot_without_submitting(parser, monkeypatch):
+    parser(RSS, URL, NOW)
+    executor = parser._executor
+    stop = Event()
+    original_run = parser._run
+
+    def stop_before_submit(*args):
+        stop.set()
+        return original_run(*args)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(parser, '_run', stop_before_submit)
+        patch.setattr(executor, 'submit', lambda *args: pytest.fail('Cancelled parse was submitted'))
+        with pytest.raises(PodcastRefreshCancelled):
+            parser(RSS, URL, NOW, cancelled=stop.is_set)
+    assert not parser._busy and parser._executor is executor
+    assert parser(RSS, URL, NOW) == parse_feed(RSS, URL, NOW)
 
 
 def test_completed_result_is_rejected_if_close_wins_race(parser, monkeypatch):
@@ -216,13 +251,14 @@ def test_daemon_lifespan_closes_shared_worker(tmp_path, monkeypatch):
     with TestClient(app):
         parser = module.shared_parser()
         assert parser(RSS, URL, NOW) == parse_feed(RSS, URL, NOW)
-        children = list(parser._executor._processes.values())
+        executor = parser._executor
+        manager = executor._executor_manager_thread
+        children = list(executor._processes.values())
         close_sources = app.state.services.sources.close
         def close():
             assert parser._closed  # Do not join I/O threads behind queued parses.
-            assert all(not child.is_alive() for child in children)
             close_sources()
         monkeypatch.setattr(app.state.services.sources, 'close', close)
     assert parser._closed
-    assert all(not child.is_alive() for child in children)
+    assert_pool_reaped(manager, children)
     assert module._shared is None

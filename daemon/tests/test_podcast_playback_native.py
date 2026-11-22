@@ -15,6 +15,7 @@ from fmheadendd.sources.manager import SourceManager
 from fmheadendd.sources.podcast_history import PodcastHistory
 from fmheadendd.sources.podcast_runtime import PodcastRuntime
 from fmheadendd.errors import DependencyUnavailable
+from fmheadendd.tests.profile_support import profile_store
 from test_local_playback_native import TracedPipeline
 
 pytestmark=pytest.mark.gstreamer
@@ -94,7 +95,7 @@ def test_native_http_transitions_rss_identity_and_shared_cleanup(tmp_path,gst,fa
         def factory(s,**kwargs):
             p=TracedPipeline(s,timeout_s=3,**kwargs);p.disable_handoff=fallback;return p
         factory.mocked=False
-        manager=SourceManager(db,pipeline_factory=factory)
+        manager=SourceManager(db,pipeline_factory=factory,profile_files=profile_store(tmp_path))
         s=source(db,url)
         try:
             manager.acquire(s.id,0); p=manager.pipelines[s.id]
@@ -171,10 +172,13 @@ def test_native_initial_failure_exhaustion_and_refresh_recovery(tmp_path,gst):
             state['bad'].clear();tick[0]=122;r.feed_service._io_ready.set()
             wait_for(lambda:p.snapshot()['stream_title']=='Example Podcast - Episode A')
             assert p._local is r and p.builds==1
-            # A real bus error after some PCM is still a failed sub-threshold occurrence.
-            p._bus.post(gst.Message.new_error(p.sink, GLib.Error('test failure'), 'synthetic failure'))
+            # A media error after some PCM is still a failed sub-threshold occurrence.
+            error = GLib.Error.new_literal(gst.ResourceError.quark(), 'test read failure',
+                                           int(gst.ResourceError.READ))
+            assert p._bus.post(gst.Message.new_error(p.sink, error, 'synthetic read failure'))
             wait_for(lambda:r.error=='PLAYBACK_EXHAUSTED')
             assert p.snapshot()['stream_title'] is None
+            assert not p.fatal_error
             assert all(h.play_count==0 for h in PodcastHistory(db,s.id).snapshot().values())
             assert p._thread.is_alive() and r.feed_service._io_thread.is_alive()
         finally:

@@ -20,6 +20,10 @@ class PodcastScheduleMode(StrEnum):
     SMART = "SMART"
 
 
+class PodcastRefreshCancelled(Exception):
+    """The owning source stopped before its refresh could complete."""
+
+
 def utc(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("Podcast timestamps must be timezone-aware")
@@ -181,17 +185,24 @@ class EpisodeCatalog:
         previous = self.snapshot().refreshed_at
         return previous is None or (utc(now) - previous).total_seconds() >= config.refresh_interval_minutes * 60
 
-    def refresh(self, config, fetch, now: datetime) -> CatalogSnapshot:
+    def refresh(self, config, fetch, now: datetime, *, cancelled=None) -> CatalogSnapshot:
+        def check_cancelled():
+            if cancelled is not None and cancelled():
+                raise PodcastRefreshCancelled
+
         now = utc(now)
         with self._refresh_lock:
             previous = {feed.feed_id: feed for feed in self.snapshot().feeds}
             feeds, results = [], []
             for configured in config.feeds:
+                check_cancelled()
                 fid = feed_identity(configured.url)
                 old = previous.get(fid)
                 try:
                     response = fetch(configured.url)
+                    check_cancelled()
                     new = self._parse(response.body, configured.url, now, base_url=response.url)
+                    check_cancelled()
                     known = {e.episode_id: e for e in old.episodes} if old else {}
                     new = replace(new, episodes=tuple(replace(e,
                         discovered_at=known[e.episode_id].discovered_at) if e.episode_id in known else e
@@ -199,6 +210,7 @@ class EpisodeCatalog:
                     feeds.append(new)
                     results.append(FeedRefreshResult(fid, None, len(new.episodes), new.title or None))
                 except DomainError as exc:
+                    check_cancelled()
                     # Codes and hashes only: feed URLs/errors can contain tokens.
                     logger.warning("Podcast feed %s refresh failed: %s", fid, exc.error)
                     results.append(FeedRefreshResult(fid, exc.error, 0))
@@ -206,6 +218,7 @@ class EpisodeCatalog:
                         feeds.append(old)
             snapshot = CatalogSnapshot(tuple(feeds), tuple(results), now)
             with self._lock:
+                check_cancelled()
                 self._snapshot = snapshot
             return snapshot
 

@@ -3,9 +3,10 @@ import atexit
 from concurrent.futures import ProcessPoolExecutor, TimeoutError
 import multiprocessing
 from threading import Condition, Lock
+from time import monotonic
 
 from ..errors import DomainError
-from .podcast import parse_feed
+from .podcast import PodcastRefreshCancelled, parse_feed
 
 
 def _parse(data, url, now, base_url):
@@ -28,37 +29,50 @@ class PodcastParser:
         self._executor = None
         self._closed = False
 
-    def __call__(self, data, url, now, *, base_url=None):
+    def __call__(self, data, url, now, *, base_url=None, cancelled=None):
+        """Parse one feed. The optional cancellation callback applies until submission."""
         # Submit only one task: Future.result's timeout otherwise includes the
         # executor queue, allowing one slow feed to kill unrelated requests.
         # Admission has its own bounded budget; expiry never kills the worker.
         with self._lock:
-            if not self._lock.wait_for(lambda: self._closed or not self._busy,
-                                       timeout=self.queue_timeout):
-                raise DomainError(503, "PODCAST_PARSE_BUSY", "Podcast parser is busy")
-            if self._closed:
-                raise DomainError(503, "PODCAST_PARSE_CLOSED", "Podcast parser is closed")
-            self._busy = True
+            deadline = None if self.queue_timeout is None else monotonic() + self.queue_timeout
+            while True:
+                if cancelled is not None and cancelled():
+                    raise PodcastRefreshCancelled
+                if self._closed:
+                    raise DomainError(503, "PODCAST_PARSE_CLOSED", "Podcast parser is closed")
+                if not self._busy:
+                    self._busy = True
+                    break
+                remaining = None if deadline is None else deadline - monotonic()
+                if remaining is not None and remaining <= 0:
+                    raise DomainError(503, "PODCAST_PARSE_BUSY", "Podcast parser is busy")
+                # A source stop does not notify the shared condition.
+                if cancelled is not None:
+                    remaining = 0.25 if remaining is None else min(remaining, 0.25)
+                self._lock.wait(remaining)
         try:
-            return self._run(data, url, now, base_url)
+            return self._run(data, url, now, base_url, cancelled)
         finally:
             with self._lock:
                 self._busy = False
                 self._lock.notify_all()
 
-    def _run(self, data, url, now, base_url):
+    def _run(self, data, url, now, base_url, cancelled):
         executor = None
         try:
             with self._lock:
                 if self._closed:
                     raise DomainError(503, "PODCAST_PARSE_CLOSED", "Podcast parser is closed")
+                if cancelled is not None and cancelled():
+                    raise PodcastRefreshCancelled
                 if self._executor is None:
                     self._executor = ProcessPoolExecutor(
                         max_workers=1, mp_context=multiprocessing.get_context("spawn"))
                 executor = self._executor
                 future = executor.submit(_parse, data, url, now, base_url)
             feed, error = future.result(timeout=self.timeout)
-        except DomainError:
+        except (DomainError, PodcastRefreshCancelled):
             raise
         except Exception as exc:
             self._discard(executor)

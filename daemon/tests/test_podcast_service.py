@@ -1,4 +1,5 @@
 """Feed/history boundary: real SQLite, deterministic refresh and playback races."""
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import replace
 from threading import Event, Thread, get_ident
 from unittest.mock import Mock
@@ -11,6 +12,7 @@ from fmheadendd.errors import DependencyUnavailable, DomainError
 from fmheadendd.models.configuration import PodcastConfig
 from fmheadendd.sources.podcast import eligible_episodes, parse_feed
 from fmheadendd.sources.podcast_fetch import FeedFetcher, FeedResponse
+from fmheadendd.sources.podcast_parser import PodcastParser
 from fmheadendd.sources.podcast_runtime import PLAYED_BYTES
 from fmheadendd.sources.podcast_service import PodcastFeedService
 from fmheadendd.tests.test_podcast import item, rss
@@ -260,3 +262,121 @@ def test_closed_runtime_rejects_snapshot_and_pcm(rt):
     rt.p.apply_snapshot(replace(snapshot, revision=10))
     rt.p.pcm(PLAYED_BYTES)
     assert not rt.p.catalog_view.feeds and not rt.p.history_state
+
+
+@pytest.fixture
+def held_shared_parser(monkeypatch):
+    """Hold the first parse at Future.result, exercising real parser admission."""
+    parser = PodcastParser()
+    first = Future()
+    submitted, queued = Event(), Event()
+
+    def submit(parse, *args):
+        if not submitted.is_set():
+            submitted.set()
+            return first
+        result = Future()
+        result.set_result(parse(*args))
+        return result
+
+    executor = Mock(submit=Mock(side_effect=submit))
+    monkeypatch.setattr(parser, '_executor', executor)
+    monkeypatch.setattr('fmheadendd.sources.podcast_parser._shared', parser)
+    original_wait = parser._lock.wait
+
+    def wait(timeout):
+        queued.set()
+        return original_wait(timeout)
+
+    monkeypatch.setattr(parser._lock, 'wait', wait)
+    return parser, first, submitted, queued
+
+
+def source_with_mock_feeds(source_id, *urls):
+    config = PodcastConfig(feeds=[{'url': url} for url in urls])
+    history = Mock()
+    history.snapshot_for_episodes.return_value = {}
+    fetch = Mock(side_effect=lambda url: FeedResponse(rss(item()), url))
+    return PodcastFeedService(config, source_id=source_id, history_factory=lambda: history,
+                              fetch_factory=lambda: fetch, now=lambda: NOW,
+                              on_snapshot=Mock(), on_error=Mock()), fetch
+
+
+def test_stop_waiting_source_repeatedly_leaves_shared_parser_available(held_shared_parser, caplog):
+    parser, active, submitted, queued = held_shared_parser
+    executor = parser._executor
+    a_url = 'https://example.org/a'
+    first, _ = source_with_mock_feeds(1, a_url)
+    first_published = Event()
+    first.on_snapshot.side_effect = lambda snapshot: first_published.set()
+    waiting, successor = None, None
+    with ThreadPoolExecutor(max_workers=1) as callers:
+        try:
+            first.start()
+            assert submitted.wait(2)
+            for _ in range(3):
+                queued.clear()
+                waiting, fetch = source_with_mock_feeds(2, 'https://example.org/b', 'https://example.org/unused')
+                waiting.start()
+                assert queued.wait(2)
+                io_thread = waiting._io_thread
+                waiting.start()
+                assert waiting._io_thread is io_thread
+                callers.submit(waiting.close).result(timeout=2)
+                assert not io_thread.is_alive()
+                fetch.assert_called_once_with('https://example.org/b')
+                waiting.on_snapshot.assert_not_called()
+                waiting.on_error.assert_not_called()
+                assert waiting.error is None and waiting.snapshot().revision == 0
+                assert waiting.catalog.snapshot().refreshed_at is None
+                assert not active.done() and parser._busy
+                assert executor.submit.call_count == 1
+            active.set_result((parse_feed(rss(item()), a_url, NOW), None))
+            assert first_published.wait(2)
+            published = Event()
+            successor, _ = source_with_mock_feeds(3, 'https://example.org/c')
+            successor.on_snapshot.side_effect = lambda snapshot: published.set()
+            successor.start()
+            assert published.wait(2)
+        finally:
+            if not active.done():
+                active.set_result((parse_feed(rss(item()), a_url, NOW), None))
+            for service in (waiting, successor, first):
+                if service is not None:
+                    service.close()
+    assert first.snapshot().revision == successor.snapshot().revision == 1
+    first.on_error.assert_not_called()
+    assert first.snapshot().catalog.results[0].error is None
+    assert parser._executor is executor and not parser._busy and not parser._closed
+    assert executor.submit.call_count == 2
+    executor.shutdown.assert_not_called()
+    assert 'Podcast feed ' not in caplog.text
+
+
+@pytest.mark.parametrize('parse_error', [None, 'PODCAST_FEED_INVALID'])
+def test_stop_source_with_active_parse_waits_for_completion_and_drops_result(
+        held_shared_parser, caplog, parse_error):
+    parser, active, submitted, _ = held_shared_parser
+    executor = parser._executor
+    url = 'https://example.org/active'
+    service, fetch = source_with_mock_feeds(1, url, 'https://example.org/unused')
+    with ThreadPoolExecutor(max_workers=1) as callers:
+        service.start()
+        try:
+            assert submitted.wait(2)
+            stopping = callers.submit(service.close)
+            assert service._io_stop.wait(2)
+            assert not stopping.done() and not active.cancelled() and parser._busy
+        finally:
+            feed = None if parse_error else parse_feed(rss(item()), url, NOW)
+            active.set_result((feed, parse_error))
+        stopping.result(timeout=2)
+    assert not service._io_thread.is_alive()
+    fetch.assert_called_once_with(url)
+    service.on_snapshot.assert_not_called()
+    service.on_error.assert_not_called()
+    assert service.error is None and service.snapshot().revision == 0
+    assert service.catalog.snapshot().refreshed_at is None
+    assert 'Podcast feed ' not in caplog.text
+    assert parser._executor is executor and not parser._busy and not parser._closed
+    executor.shutdown.assert_not_called()

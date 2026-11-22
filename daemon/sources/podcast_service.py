@@ -7,6 +7,7 @@ failed writes are not retried because their commit outcome may be ambiguous.
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from functools import partial
 import logging
 from threading import Event, Lock, Thread
 from types import MappingProxyType
@@ -14,11 +15,11 @@ from typing import Mapping
 import time
 
 from ..database import Database
-from ..errors import DependencyUnavailable, DomainError
-from .podcast import CatalogSnapshot, EpisodeCatalog
+from ..errors import DependencyUnavailable
+from .podcast import CatalogSnapshot, EpisodeCatalog, PodcastRefreshCancelled
 from .podcast_fetch import FeedFetcher
 from .podcast_history import EpisodeHistory, PodcastHistory
-from .podcast_parser import shared_parser
+from .podcast_parser import PodcastParser, shared_parser
 
 log = logging.getLogger(__name__)
 
@@ -48,15 +49,18 @@ class PodcastFeedService:
         self.database_path, self.source_id = database_path, source_id
         self.history_factory = history_factory
         self.fetch_factory, self.clock, self.now = fetch_factory, clock, now
+        self._io_ready, self._io_stop = Event(), Event()
         self._parser = parser if parser is not None else shared_parser()
-        self.catalog = EpisodeCatalog(self._parser)
+        parse = self._parser
+        if isinstance(parse, PodcastParser):
+            parse = partial(parse, cancelled=self._io_stop.is_set)
+        self.catalog = EpisodeCatalog(parse)
         self.on_snapshot, self.on_error = on_snapshot, on_error
         self.lock = Lock()
         self.closed = False
         self.error = None
         self._snapshot = PodcastFeedSnapshot()
         self._marks = deque()
-        self._io_ready, self._io_stop = Event(), Event()
         self._io_thread = None
         self._next_refresh = float('-inf')
         self._snapshot_requested = Event()
@@ -108,6 +112,8 @@ class PodcastFeedService:
             while not self._io_stop.is_set():
                 self._io_ready.clear()
                 self.io_step(history)
+                if self._io_stop.is_set():
+                    break
                 self._io_ready.wait(max(0, self._next_refresh - self.clock()))
             self._flush_marks(history)
         except Exception:
@@ -142,12 +148,10 @@ class PodcastFeedService:
             return
         fetch = self.fetch_factory()
 
-        def cancellable(url):
-            if self._io_stop.is_set():
-                raise DomainError(503, 'PODCAST_REFRESH_CANCELLED', 'Source stopped')
-            return fetch(url)
-
-        view = self.catalog.refresh(self.config, cancellable, self.now())
+        try:
+            view = self.catalog.refresh(self.config, fetch, self.now(), cancelled=self._io_stop.is_set)
+        except PodcastRefreshCancelled:
+            return
         self._publish(view, history)
         self._next_refresh = self.clock() + self.config.refresh_interval_minutes * 60
 
@@ -166,8 +170,8 @@ class PodcastFeedService:
     def close(self):
         with self.lock:
             self.closed = True
-        self._io_stop.set()
-        self._io_ready.set()
+            self._io_stop.set()
+            self._io_ready.set()
         if self._io_thread is not None:
             self._io_thread.join(timeout=30)
             if self._io_thread.is_alive():
