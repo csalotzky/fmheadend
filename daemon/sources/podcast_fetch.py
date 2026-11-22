@@ -1,26 +1,55 @@
 """Bounded feed-only HTTP transport. No audio downloads or implicit retries."""
 import asyncio
+import re
 import time
 import zlib
 from collections import Counter
 from contextlib import aclosing
 from dataclasses import dataclass
+from datetime import timezone
+from email.utils import format_datetime, parsedate_to_datetime
 from urllib.parse import urljoin
 
 import httpx
 
 from .. import __version__
 from ..errors import DomainError
-from .podcast import valid_http_url
+from .podcast import FeedValidators, valid_http_url
 
 
 GZIP_CHUNK_BYTES = 64 * 1024
+_ETAG = re.compile(r'(?:W/)?"[!#-~]*"')
+_HTTP_DATE = re.compile(
+    r'(?:[A-Za-z]{3}, [0-9]{2} [A-Za-z]{3} [0-9]{4} [0-9:]{8} GMT'
+    r'|[A-Za-z]+, [0-9]{2}-[A-Za-z]{3}-[0-9]{2} [0-9:]{8} GMT'
+    r'|[A-Za-z]{3} [A-Za-z]{3} [ 0-9][0-9] [0-9:]{8} [0-9]{4})')
+
+
+def _single_header(headers, name):
+    values = headers.get_list(name)
+    if len(values) == 1 and len(values[0]) <= 1024:
+        return values[0].strip(' \t')
+    return ''
+
+
+def _response_validators(headers, url):
+    tag = _single_header(headers, 'etag')
+    etag = tag if _ETAG.fullmatch(tag) else None
+    last_modified = None
+    date = _single_header(headers, 'last-modified')
+    if _HTTP_DATE.fullmatch(date):
+        try:
+            last_modified = format_datetime(parsedate_to_datetime(date).replace(tzinfo=timezone.utc), usegmt=True)
+        except (ValueError, OverflowError):
+            pass
+    return FeedValidators(url, etag, last_modified) if etag is not None or last_modified is not None else None
 
 
 @dataclass(frozen=True)
 class FeedResponse:
-    body: bytes
+    body: bytes | None  # None only for a validated HTTP 304 response.
     url: str
+    validators: FeedValidators | None = None
 
 
 class FeedFetcher:
@@ -30,14 +59,14 @@ class FeedFetcher:
         self.clock, self.total_timeout_s = clock, total_timeout_s
         self.transport = transport
 
-    def __call__(self, url: str) -> FeedResponse:
+    def __call__(self, url: str, *, validators: FeedValidators | None = None) -> FeedResponse:
         deadline = self.clock() + self.total_timeout_s
         # The refresh and probe both run in synchronous worker threads. Closing
         # this loop without joining its executor lets a timed-out OS DNS call
         # finish separately, instead of delaying the next feed during teardown.
         loop = asyncio.new_event_loop()
         try:
-            return loop.run_until_complete(self._fetch(url, deadline))
+            return loop.run_until_complete(self._fetch(url, deadline, validators))
         except (TimeoutError, httpx.TimeoutException) as exc:
             raise DomainError(503, "PODCAST_FETCH_TIMEOUT", "Feed request timed out") from exc
         except (httpx.HTTPError, ValueError, zlib.error) as exc:
@@ -54,7 +83,7 @@ class FeedFetcher:
             raise TimeoutError("Feed download deadline exceeded")
         return remaining
 
-    async def _fetch(self, url: str, deadline: float) -> FeedResponse:
+    async def _fetch(self, url: str, deadline: float, validators: FeedValidators | None) -> FeedResponse:
         # HTTPX limits each network operation. This outer timer also cancels
         # an awaited operation when the feed's remaining time runs out.
         async with asyncio.timeout(self._remaining(deadline)):
@@ -66,8 +95,31 @@ class FeedFetcher:
                 for redirect in range(6):
                     valid_http_url(url)
                     timeout = min(self.timeout_s, self._remaining(deadline))
-                    async with client.stream("GET", url, timeout=timeout) as response:
+                    headers = {}
+                    if validators is not None and validators.url == url:
+                        if validators.etag is not None:
+                            headers['If-None-Match'] = validators.etag
+                        if validators.last_modified is not None:
+                            headers['If-Modified-Since'] = validators.last_modified
+                    async with client.stream("GET", url, timeout=timeout, headers=headers) as response:
                         self._remaining(deadline)
+                        if response.status_code == 304:
+                            if not headers:
+                                raise DomainError(503, "PODCAST_FETCH_FAILED", "Unexpected not-modified feed response")
+                            updated = _response_validators(response.headers, url)
+                            if updated is not None:
+                                if validators.etag is not None:
+                                    mismatch = (updated.etag is not None and
+                                                updated.etag.removeprefix('W/') != validators.etag.removeprefix('W/'))
+                                else:
+                                    mismatch = (updated.last_modified is not None and
+                                                parsedate_to_datetime(updated.last_modified) >
+                                                parsedate_to_datetime(validators.last_modified))
+                                if mismatch:
+                                    raise DomainError(503, "PODCAST_FETCH_FAILED", "Not-modified feed validator mismatch")
+                                validators = FeedValidators(url, updated.etag or validators.etag,
+                                                            updated.last_modified or validators.last_modified)
+                            return FeedResponse(None, url, validators)
                         if response.is_redirect:
                             location = response.headers.get("location")
                             if redirect == 5 or not location:
@@ -103,7 +155,7 @@ class FeedFetcher:
                         self._remaining(deadline)
                         if decoder and not decoder.eof:
                             raise DomainError(503, "PODCAST_ENCODING_ERROR", "Invalid compressed feed")
-                        return FeedResponse(bytes(body), url)
+                        return FeedResponse(bytes(body), url, _response_validators(response.headers, url))
 
 
 def probe_podcast(config):

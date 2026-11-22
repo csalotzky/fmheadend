@@ -88,6 +88,13 @@ class PodcastFeed:
     episodes: tuple[PodcastEpisode, ...]
 
 
+@dataclass(frozen=True)
+class FeedValidators:
+    url: str  # Effective URL of the reusable representation, including any query.
+    etag: str | None = None
+    last_modified: str | None = None
+
+
 def parse_feed(data: bytes, url: str, now: datetime, *, base_url: str | None = None) -> PodcastFeed:
     """feedparser handles RSS/Atom, encodings and dates; it never fetches URLs here."""
     import feedparser
@@ -174,6 +181,7 @@ class EpisodeCatalog:
     def __init__(self, parser=parse_feed):
         self._parse = parser
         self._snapshot = CatalogSnapshot()
+        self._validators: dict[str, FeedValidators] = {}
         self._lock = Lock()
         self._refresh_lock = Lock()
 
@@ -194,19 +202,29 @@ class EpisodeCatalog:
         with self._refresh_lock:
             previous = {feed.feed_id: feed for feed in self.snapshot().feeds}
             feeds, results = [], []
+            validators = {}
             for configured in config.feeds:
                 check_cancelled()
                 fid = feed_identity(configured.url)
                 old = previous.get(fid)
+                saved = self._validators.get(fid) if old is not None else None
                 try:
-                    response = fetch(configured.url)
+                    response = (fetch(configured.url, validators=saved) if saved is not None
+                                else fetch(configured.url))
                     check_cancelled()
-                    new = self._parse(response.body, configured.url, now, base_url=response.url)
-                    check_cancelled()
-                    known = {e.episode_id: e for e in old.episodes} if old else {}
-                    new = replace(new, episodes=tuple(replace(e,
-                        discovered_at=known[e.episode_id].discovered_at) if e.episode_id in known else e
-                        for e in new.episodes))
+                    if response.body is None:
+                        if old is None or saved is None or saved.url != response.url:
+                            raise DomainError(503, "PODCAST_FETCH_FAILED", "Feed has no reusable catalog")
+                        new = old
+                    else:
+                        new = self._parse(response.body, configured.url, now, base_url=response.url)
+                        check_cancelled()
+                        known = {e.episode_id: e for e in old.episodes} if old else {}
+                        new = replace(new, episodes=tuple(replace(e,
+                            discovered_at=known[e.episode_id].discovered_at) if e.episode_id in known else e
+                            for e in new.episodes))
+                    if response.validators is not None:
+                        validators[fid] = response.validators
                     feeds.append(new)
                     results.append(FeedRefreshResult(fid, None, len(new.episodes), new.title or None))
                 except DomainError as exc:
@@ -216,9 +234,12 @@ class EpisodeCatalog:
                     results.append(FeedRefreshResult(fid, exc.error, 0))
                     if old:
                         feeds.append(old)
+                        if saved is not None:
+                            validators[fid] = saved
             snapshot = CatalogSnapshot(tuple(feeds), tuple(results), now)
             with self._lock:
                 check_cancelled()
+                self._validators = validators
                 self._snapshot = snapshot
             return snapshot
 
