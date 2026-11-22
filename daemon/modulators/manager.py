@@ -163,7 +163,7 @@ class ModulatorManager:
                 result['restarted'] = not started.start_pending
                 if started.start_pending:
                     result['intent_revision'] = started.intent_revision
-                    result['message'] = 'Configuration saved — Preparing audio…'
+                    result['message'] = 'Configuration saved - Preparing audio…'
                     return result
             result['message'] = 'Configuration saved and TX restarted.' if resume else 'Configuration saved; TX remains stopped.'
         except (DomainError, DependencyUnavailable, ValueError, sqlite3.Error, OSError) as exc:

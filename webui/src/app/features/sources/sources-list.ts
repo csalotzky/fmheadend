@@ -10,13 +10,13 @@ import { SourceApi, SourceDraft, SourceRuntime, SourceTest } from './source-api'
 import { PodcastTestProgress, podcastTestError, testPodcastFeeds } from './podcast-feed-test';
 import { TestResult } from './test-result';
 export function endpoint(source: InputSource): string {
-  if (source.type === 'LOCAL') return String(source.config['path'] ?? '\u2014');
+  if (source.type === 'LOCAL') return String(source.config['path'] ?? '-');
   if (source.type === 'PODCAST') {
     const feeds = source.config['feeds'];
     const count = Array.isArray(feeds) ? feeds.length : 0;
     return `${count} podcast feed${count === 1 ? '' : 's'}`;
   }
-  if (source.type === 'ALSA') return String(source.config['device'] ?? '\u2014');
+  if (source.type === 'ALSA') return String(source.config['device'] ?? '-');
   if (source.type === 'HTTP') {
     try {
       const u = new URL(String(source.config['uri']));
@@ -25,7 +25,7 @@ export function endpoint(source: InputSource): string {
       return 'Stream URL unavailable';
     }
   }
-  return `${source.config['multicast_group'] || source.config['host'] || '0.0.0.0'}:${source.config['port'] ?? '\u2014'}`;
+  return `${source.config['multicast_group'] || source.config['host'] || '0.0.0.0'}:${source.config['port'] ?? '-'}`;
 }
 @Component({
   host: { class: 'page-content' },
@@ -80,7 +80,7 @@ export class SourcesList {
   }
   profileLabel(source: InputSource): string {
     const path = this.shared.profileId(source);
-    const name = path ? this.shared.profileNames()[path] || path : '\u2014';
+    const name = path ? this.shared.profileNames()[path] || path : '-';
     return source.use_default_audio_profile ? `System default (${name})` : name;
   }
   references(id: number) {

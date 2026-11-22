@@ -29,7 +29,7 @@
       <span>Audio input: Analog</span>
       @if (!shared.stale() && channel()?.runtime?.input_saturated === true) {
         <p class="warning" role="status">
-          Analog input overload — saturation detected. Reduce the input level.
+          Analog input overload - saturation detected. Reduce the input level.
         </p>
       }
       @if (!shared.stale() && channel()?.runtime?.input_saturated === false) {

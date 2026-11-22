@@ -79,20 +79,20 @@ export class ChannelCard {
     });
   }
   hex(value: number | null | undefined, length: number) {
-    return value == null ? '\u2014' : value.toString(16).toUpperCase().padStart(length, '0');
+    return value == null ? '-' : value.toString(16).toUpperCase().padStart(length, '0');
   }
   ps() {
     return (
       this.channel()
         .config?.rds_ps.map((p) => p.text)
-        .join(' / ') ?? '\u2014'
+        .join(' / ') ?? '-'
     );
   }
   af() {
     return (
       this.channel()
         .config?.rds_af_khz.map((f) => (f / 1000).toFixed(1))
-        .join(', ') || '\u2014'
+        .join(', ') || '-'
     );
   }
 }

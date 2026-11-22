@@ -58,7 +58,7 @@ export class Shell implements OnInit, AfterViewInit, OnDestroy {
   }
   hostMetric(value: number | null | undefined, suffix: string): string {
     return this.state.backendUnavailable() || value == null || !Number.isFinite(value)
-      ? '\u2014'
+      ? '-'
       : `${Math.round(value)}${suffix}`;
   }
   readonly links = [

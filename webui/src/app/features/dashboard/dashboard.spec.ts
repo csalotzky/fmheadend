@@ -554,7 +554,7 @@ describe('Operational display', () => {
     const cards = f.nativeElement.querySelectorAll('app-channel-card');
     expect(cards[0].querySelector('.rt dd').textContent).toBe('X'.repeat(64));
     expect(cards[0].querySelector('.rt').title).toContain('queued RDS transmission may lag');
-    expect(cards[1].querySelector('.rt dd').textContent).toBe('\u2014');
+    expect(cards[1].querySelector('.rt dd').textContent).toBe('-');
     expect(cards[0].querySelector('.audio-settings').textContent).toContain('Soft clipping ON');
     expect(cards[1].querySelector('.audio-settings').textContent).toContain('Soft clipping OFF');
     for (const selected of ['Artist - Track', 'Runtime override', 'Selected fallback']) {

@@ -31,7 +31,7 @@
       @if (channel().config?.rds_enabled && channel().config?.rds_rt_enabled) {
         <div class="rt" title="Selected RadioText; queued RDS transmission may lag">
           <dt>RT</dt>
-          <dd>{{ channel().runtime?.rds_rt_effective || '\u2014' }}</dd>
+          <dd>{{ channel().runtime?.rds_rt_effective || '-' }}</dd>
         </div>
       }
       <div class="codes">
@@ -48,8 +48,8 @@
       }
     </dl>
     <div class="audio-settings">
-      {{ channel().config ? (channel().config!.stereo ? 'Stereo' : 'Mono') : '\u2014' }}
-      <span>&middot;</span> {{ channel().config?.preemphasis_us ?? '\u2014' }} &micro;s
+      {{ channel().config ? (channel().config!.stereo ? 'Stereo' : 'Mono') : '-' }}
+      <span>&middot;</span> {{ channel().config?.preemphasis_us ?? '-' }} &micro;s
       @if (channel().config) {
         <span>&middot;</span> Soft clipping {{ channel().config!.soft_clipping ? 'ON' : 'OFF' }}
       }
@@ -59,7 +59,7 @@
       ><strong
         >{{
           attenuation() == null
-            ? '\u2014'
+            ? '-'
             : attenuation() === 0
               ? 'Maximum'
               : '-' + (attenuation() | number: '1.1-1') + ' dB'

@@ -12,7 +12,7 @@
       >Programme type<select formControlName="rds_pty">
         @if (form.controls.rds_pty.value === null) {
           <option [ngValue]="null" disabled>
-            Existing diagnostic value — choose a programme type to change
+            Existing diagnostic value - choose a programme type to change
           </option>
         }
         @for (label of labels(); track $index) {

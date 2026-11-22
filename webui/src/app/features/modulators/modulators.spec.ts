@@ -574,7 +574,7 @@ describe('Modulator configuration', () => {
       const req = http.expectOne('/api/v1/modulators/0/save-and-resume');
       const configuration = { ...sample().modulators[0], ...req.request.body };
       req.flush({ saved: true, restarted: false, restart_pending: true, stop_confirmed: true,
-        failed_stage: null, configuration, intent_revision: 2, message: 'Configuration saved — Preparing audio…' });
+        failed_stage: null, configuration, intent_revision: 2, message: 'Configuration saved - Preparing audio…' });
       await pending;
       const publish = (row: Partial<Snapshot['status']['modulators'][number]>, stale = false) => {
         const data = sample();
