@@ -2,9 +2,11 @@
 
 ## 1. Prepare your Raspberry Pi and HAT
 
-1. In Raspberry Pi Imager, select your Pi model, **Raspberry Pi OS Lite (64-bit)** and your microSD card. Set a hostname, create your login and enable SSH. Enter your Wi-Fi details if you won't use Ethernet. Write the card.
-2. With the Pi disconnected from power, insert the card and mount the FMheadend HAT. Before disconnecting the receiver's antenna, find a quiet FM frequency and note it. Then connect the HAT's RF output directly to the receiver's FM antenna input using suitable coaxial cable.
-3. Connect Ethernet if needed, then power up the Pi. From a computer on the same network, log in over SSH using the username and hostname you set in Imager.
+Get a Raspberry Pi running Raspberry Pi OS Lite (64-bit), with SSH enabled and internet access. Raspberry Pi Imager is an easy way to set this up.
+
+With the Pi powered off, mount the FMheadend HAT. Connect its RF output directly to your receiver's FM antenna input using a suitable coaxial cable.
+
+Power up the Pi. From a computer on the same network, log in over SSH using the username and hostname you configured.
 
 > [!NOTE]
 > Connecting an antenna changes the RF characteristics of the system. Any wireless operation must comply with the applicable local radio regulations, including radiated power and interference limits.
