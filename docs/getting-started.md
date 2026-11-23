@@ -92,14 +92,17 @@ Click **Save** when you're done.
 
 <a href="../assets/rds-edit.png"><img src="../assets/rds-edit.png" width="600" alt="Source Editor RDS settings for station identification, programme type, Programme Service and Radio Text"></a>
 
-## 6. Configure your first transmitter
+## 6. Modulators
 
-The Source supplies the programme audio. The Modulator sets where and how you transmit it.
+The Source supplies the programme audio. The Modulator determines how and where it is transmitted.
 
-1. Open **Modulators → Edit TX 0**. Under **Frequency**, choose the quiet frequency you noted earlier. As a precaution, leave at least 400 kHz (0.4 MHz) from any station you can receive, where practical.
-2. Start with **RF output** at **-40.5 dB**, the lowest setting, for the direct cable connection.
-3. Set **Audio input** to **FMheadend audio**. In **Source**, select the name you saved.
-4. Check **RDS enabled**. Set **RDS configuration source** to **Follow source**, then click **Save**.
+1. Open **Modulators → Edit TX 0**, or click the **TX 0** card on the **Dashboard**. Find a clear FM frequency on your receiver, preferably at least 400 kHz (0.4 MHz) away from any station you can receive. Enter this frequency under **Frequency**.
+2. Set **RF output** to **-30 dB** for the direct cable connection. Higher output levels may overload the receiver's antenna input.
+3. Choose **Stereo** or **Mono** under **Mode**.
+4. Set **Pre-emphasis** to match your local FM broadcast standard (50 µs or 75 µs).
+5. Under **Source**, select the internet radio or podcast you created earlier.
+6. Leave **Audio input** on **FMheadend audio**, **Gain control** on **Manual**, and **Soft clipping** on **Off**.
+7. If you configured RDS in the previous section, enable **RDS enabled** and set **RDS configuration source** to **Follow source**. Otherwise, leave RDS disabled. Click **Save**.
 
 <a href="../assets/tx-edit.png"><img src="../assets/tx-edit.png" width="660" alt="TX 0 editor showing the Frequency, RF output, audio Source and Follow source controls"></a>
 
