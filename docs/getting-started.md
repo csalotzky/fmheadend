@@ -96,16 +96,25 @@ Click **Save** when you're done.
 
 The Source supplies the programme audio. The Modulator determines how and where it is transmitted.
 
-1. Open **Modulators → Edit TX 0**, or click the **TX 0** card on the **Dashboard**. Find a clear FM frequency on your receiver, preferably at least 400 kHz (0.4 MHz) away from any station you can receive. Enter this frequency under **Frequency**.
+> [!NOTE]
+> Choose a clear FM frequency, preferably at least 400 kHz (0.4 MHz) away from any station you can receive.
+
+1. Open **Modulators → Edit TX 0**, or click the **TX 0** card on the **Dashboard**. Enter your chosen frequency under **Frequency**.
 2. Set **RF output** to **-30 dB** for the direct cable connection. Higher output levels may overload the receiver's antenna input.
 3. Choose **Stereo** or **Mono** under **Mode**.
 4. Set **Pre-emphasis** to match your local FM broadcast standard (50 µs or 75 µs).
-5. Under **Source**, select the internet radio or podcast you created earlier.
+5. Under **Source**, select the internet radio, podcast, or any other Source you configured earlier.
 6. Leave **Audio input** on **FMheadend audio**, **Gain control** on **Manual**, and **Soft clipping** on **Off**.
-7. If you configured RDS in the previous section, enable **RDS enabled** and set **RDS configuration source** to **Follow source**. Otherwise, leave RDS disabled. Click **Save**.
+7. If you configured RDS earlier, enable **RDS enabled** and set **RDS configuration source** to **Follow source**.
+
+Click **Save**.
 
 <a href="../assets/tx-edit.png"><img src="../assets/tx-edit.png" width="660" alt="TX 0 editor showing the Frequency, RF output, audio Source and Follow source controls"></a>
 
 ## 7. Start broadcasting!
 
-On the **Dashboard**, click **START** on **TX 0**. Wait for **Reported state: ON**. Tune your receiver to the frequency you selected and listen for the stream. On an RDS radio, look for your station name and open its RadioText display to read your message. Your first station is on air!
+On the **Dashboard**, click **START** on **TX 0**. Wait for **Reported state: ON**. Tune your receiver to the selected frequency and listen to your station.
+
+Your first FMheadend station is on air!
+
+<a href="../assets/tx-card.jpg"><img src="../assets/tx-card.jpg" width="400" alt="Single Dashboard transmitter card showing TX 3 with reported state ON"></a>
