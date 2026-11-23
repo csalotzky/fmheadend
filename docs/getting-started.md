@@ -39,7 +39,7 @@ RDS can be configured in either the Source Editor or the Modulator Editor. We'll
 
 ### Internet radio
 
-1. Open **Sources ? Add source** and select **Internet stream (HTTP)**.
+1. Open **Sources → Add source** and select **Internet stream (HTTP)**.
 2. Click **Browse stations**, find a station and click **Use station**. Its settings will appear in the editor. Alternatively, enter a **Stream URL** manually.
 
    <a href="../assets/radio-browser.png"><img src="../assets/radio-browser.png" width="740" alt="Radio Browser station search and Use station button"></a>
@@ -51,8 +51,11 @@ RDS can be configured in either the Source Editor or the Modulator Editor. We'll
 
 ### Podcast
 
-1. Open **Sources ? Add source** and select **Podcast**.
+1. Open **Sources → Add source** and select **Podcast**.
 2. A Podcast Source can contain multiple feeds. Enter their URLs manually or click **Browse podcasts** to search the Apple Podcasts directory and add your favorites.
+
+   <a href="../assets/podcast-browser.png"><img src="../assets/podcast-browser.png" width="740" alt="Podcast Browser with Apple Podcasts search results"></a>
+
 3. Set **Max age (days)** and **Max episodes** for each feed. For example, `7` and `10` limits the selection to the 10 newest episodes published within the last 7 days.
 4. Choose a **Schedule mode**:
    - **Random:** Shuffles eligible episodes without playback-history priorities.
@@ -62,6 +65,9 @@ RDS can be configured in either the Source Editor or the Modulator Editor. We'll
 5. Set **Feed refresh interval (minutes)** to control how often FMheadend checks for new episodes.
 6. Click **Test feeds** to check the feeds and see how many episodes are eligible for playback.
 7. Give your Source a **Name**.
+
+   <a href="../assets/source-edit-podcast.png"><img src="../assets/source-edit-podcast.png" width="740" alt="Podcast Source Editor with feeds and playback settings"></a>
+
 
 For either type, leave **Audio Profile** on **System default** and **Source Gain** at **0 dB**.
 
