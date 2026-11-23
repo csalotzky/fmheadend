@@ -1,12 +1,10 @@
-# Your first FMheadend station
+# FMheadend Quick Start Guide
 
 ## 1. Prepare your Raspberry Pi and HAT
 
-Get a Raspberry Pi running Raspberry Pi OS Lite (64-bit), with SSH enabled and internet access. Raspberry Pi Imager is an easy way to set this up.
-
-With the Pi powered off, mount the FMheadend HAT. Connect its RF output directly to your receiver's FM antenna input using a suitable coaxial cable.
-
-Power up the Pi. From a computer on the same network, log in over SSH using the username and hostname you configured.
+1. Get a Raspberry Pi running Raspberry Pi OS Lite (64-bit), with SSH enabled and internet access. Raspberry Pi Imager is an easy way to set this up.
+2. With the Pi powered off, mount the FMheadend HAT. Connect its RF output directly to your receiver's FM antenna input using a suitable coaxial cable.
+3. Power up the Pi. From a computer on the same network, log in over SSH using the username and hostname you configured.
 
 > [!NOTE]
 > Connecting an antenna changes the RF characteristics of the system. Any wireless operation must comply with the applicable local radio regulations, including radiated power and interference limits.
@@ -23,9 +21,11 @@ The interactive installer handles the initial FM region, default Audio Profile, 
 
 ## 3. Open the WebUI
 
-Open the installer's WebUI address in a browser on the same network. Sign in if prompted. On the **Dashboard**, look for **Controller OK** at the top and a card for each detected transmitter. Find **TX 0**. Leave it off while you set up the station.
+Open the WebUI address shown by the installer in a browser on the same network. Sign in if prompted. If everything is working correctly, you should see **Controller OK** in the top status bar.
 
-<a href="../assets/readme/dashboard.jpg"><img src="../assets/readme/dashboard.jpg" width="800" alt="Dashboard with Controller status above the transmitter cards and TX 0 at the upper left"></a>
+The **Dashboard** shows all detected transmitters, initially with their frequencies **Unset**. System status and telemetry appear across the top, while the sidebar provides access to the main configuration pages.
+
+<a href="../assets/dashboard-blank.png"><img src="../assets/dashboard-blank.png" width="800" alt="FMheadend Dashboard with all transmitters unconfigured"></a>
 
 ## 4. Create your first audio source
 
@@ -34,7 +34,7 @@ Open the installer's WebUI address in a browser on the same network. Sign in if 
 3. Click **Test stream** and look for **Test successful**. If it fails, try another station.
 4. Leave **Audio Profile** on **System default** to use the audio processing you chose during installation. **Source Gain (dB)** adjusts this source's level. Start at **0 dB**. Keep the editor open for RDS.
 
-<a href="../assets/readme/radio-browser.png"><img src="../assets/readme/radio-browser.png" width="740" alt="Radio Browser station search with results and the Use station button at the bottom right"></a>
+<a href="../assets/radio-browser.png"><img src="../assets/radio-browser.png" width="740" alt="Radio Browser station search with results and the Use station button at the bottom right"></a>
 
 For your own music, **Local media** plays a folder or playlist. **Podcast** plays episodes from RSS feeds. See [Local media](sources.md#14-local-media) or [Podcasts](sources.md#15-podcasts).
 
@@ -45,7 +45,7 @@ For your own music, **Local media** plays a folder or playlist. **Podcast** play
 3. In **PS 1**, enter the station name the radio should display, up to eight characters. Try `HOME FM`.
 4. Check **Radio Text (RT) enabled**. In **Default Radio Text**, enter a short message, such as `Welcome to Home FM`. Leave **Use source metadata for RadioText** unchecked so you can recognize your message on the receiver. Click **Save**.
 
-<a href="../assets/readme/source-edit.png"><img src="../assets/readme/source-edit.png" width="560" alt="Source Editor with audio processing above the RDS station identification, PS and Radio Text fields"></a>
+<a href="../assets/source-edit.png"><img src="../assets/source-edit.png" width="560" alt="Source Editor with audio processing above the RDS station identification, PS and Radio Text fields"></a>
 
 ## 6. Configure your first transmitter
 
@@ -56,7 +56,7 @@ The Source supplies the programme audio. The Modulator sets where and how you tr
 3. Set **Audio input** to **FMheadend audio**. In **Source**, select the name you saved.
 4. Check **RDS enabled**. Set **RDS configuration source** to **Follow source**, then click **Save**.
 
-<a href="../assets/readme/tx-edit.png"><img src="../assets/readme/tx-edit.png" width="660" alt="TX 0 editor showing the Frequency, RF output, audio Source and Follow source controls"></a>
+<a href="../assets/tx-edit.png"><img src="../assets/tx-edit.png" width="660" alt="TX 0 editor showing the Frequency, RF output, audio Source and Follow source controls"></a>
 
 ## 7. Start broadcasting!
 

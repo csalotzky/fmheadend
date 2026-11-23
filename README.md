@@ -120,11 +120,11 @@ A typical FM transmitter simply modulates a single audio input onto one frequenc
 </table>
 
 <p align="center">
-  <a href="assets/readme/dashboard.jpg?raw=true"><img src="assets/readme/dashboard.jpg" height="128" alt="Dashboard"></a>&ensp;
-  <a href="assets/readme/source-edit.png?raw=true"><img src="assets/readme/source-edit.png" height="128" alt="Source Editor"></a>&ensp;
-  <a href="assets/readme/radio-browser.png?raw=true"><img src="assets/readme/radio-browser.png" height="128" alt="Radio Browser"></a>&ensp;
-  <a href="assets/readme/tx-edit.png?raw=true"><img src="assets/readme/tx-edit.png" height="128" alt="Modulator Editor"></a>&ensp;
-  <a href="assets/readme/dsp.png?raw=true"><img src="assets/readme/dsp.png" height="128" alt="Audio Profiles (DSP)"></a>
+  <a href="assets/dashboard.jpg?raw=true"><img src="assets/dashboard.jpg" height="128" alt="Dashboard"></a>&ensp;
+  <a href="assets/source-edit.png?raw=true"><img src="assets/source-edit.png" height="128" alt="Source Editor"></a>&ensp;
+  <a href="assets/radio-browser.png?raw=true"><img src="assets/radio-browser.png" height="128" alt="Radio Browser"></a>&ensp;
+  <a href="assets/tx-edit.png?raw=true"><img src="assets/tx-edit.png" height="128" alt="Modulator Editor"></a>&ensp;
+  <a href="assets/dsp.png?raw=true"><img src="assets/dsp.png" height="128" alt="Audio Profiles (DSP)"></a>
 </p>
 
 ## Get FMheadend
