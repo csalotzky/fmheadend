@@ -27,16 +27,45 @@ The **Dashboard** shows all detected transmitters, initially with their frequenc
 
 <a href="../assets/dashboard-blank.png"><img src="../assets/dashboard-blank.png" width="800" alt="FMheadend Dashboard with all transmitters unconfigured"></a>
 
-## 4. Create your first audio source
+## 4. Audio sources
 
-1. Open **Sources → Add source**. Set **Source type** to **Internet stream (HTTP)**.
-2. Click **Browse stations**. In **Station name**, search for a station you know. Select a result, then click **Use station**. This fills **Stream URL** and, if blank, **Name**. Use a name you'll recognize later.
-3. Click **Test stream** and look for **Test successful**. If it fails, try another station.
-4. Leave **Audio Profile** on **System default** to use the audio processing you chose during installation. **Source Gain (dB)** adjusts this source's level. Start at **0 dB**. Keep the editor open for RDS.
+FMheadend separates audio **Sources** from physical FM **Modulators**. A Source defines what to play, independently of the Modulator that will transmit it. That's why we configure the Source first.
 
-<a href="../assets/radio-browser.png"><img src="../assets/radio-browser.png" width="740" alt="Radio Browser station search with results and the Use station button at the bottom right"></a>
+FMheadend supports internet radio, podcasts, local files and playlists, UDP/RTP streams, and sound card inputs. All types are covered in the [Audio Sources guide](sources.md). Here, we'll look at internet radio and podcasts.
 
-For your own music, **Local media** plays a folder or playlist. **Podcast** plays episodes from RSS feeds. See [Local media](sources.md#14-local-media) or [Podcasts](sources.md#15-podcasts).
+Each Source can use the system default **Audio Profile** or its own processing preset. See [Audio processing](audio.md) for details.
+
+RDS can be configured in either the Source Editor or the Modulator Editor. We'll configure it in the Source Editor in the next section.
+
+### Internet radio
+
+1. Open **Sources ? Add source** and select **Internet stream (HTTP)**.
+2. Click **Browse stations**, find a station and click **Use station**. Its settings will appear in the editor. Alternatively, enter a **Stream URL** manually.
+
+   <a href="../assets/radio-browser.png"><img src="../assets/radio-browser.png" width="740" alt="Radio Browser station search and Use station button"></a>
+
+3. Edit the automatically filled **Name** if desired.
+4. Click **Test stream** to verify that the station works.
+
+   <a href="../assets/source-edit-http.png"><img src="../assets/source-edit-http.png" width="740" alt="Internet stream settings in the Source Editor"></a>
+
+### Podcast
+
+1. Open **Sources ? Add source** and select **Podcast**.
+2. A Podcast Source can contain multiple feeds. Enter their URLs manually or click **Browse podcasts** to search the Apple Podcasts directory and add your favorites.
+3. Set **Max age (days)** and **Max episodes** for each feed. For example, `7` and `10` limits the selection to the 10 newest episodes published within the last 7 days.
+4. Choose a **Schedule mode**:
+   - **Random:** Shuffles eligible episodes without playback-history priorities.
+   - **Smart:** Tracks playback history, prioritizing unplayed and newer episodes.
+
+   **Replay cooldown (hours)** tells Smart how long to avoid repeating an episode. If no alternatives are available, the cooldown can be relaxed.
+5. Set **Feed refresh interval (minutes)** to control how often FMheadend checks for new episodes.
+6. Click **Test feeds** to check the feeds and see how many episodes are eligible for playback.
+7. Give your Source a **Name**.
+
+For either type, leave **Audio Profile** on **System default** and **Source Gain** at **0 dB**.
+
+Don't save yet. We'll configure RDS next.
 
 ## 5. Configure RDS for your station
 
