@@ -44,7 +44,7 @@ RDS can be configured in either the Source Editor or the Modulator Editor. We'll
 
    <a href="../assets/radio-browser.png"><img src="../assets/radio-browser.png" width="740" alt="Radio Browser station search and Use station button"></a>
 
-3. Edit the automatically filled **Name** if desired.
+3. Edit the **Name** if desired.
 4. Click **Test stream** to verify that the station works.
 
    <a href="../assets/source-edit-http.png"><img src="../assets/source-edit-http.png" width="740" alt="Internet stream settings in the Source Editor"></a>
@@ -52,26 +52,26 @@ RDS can be configured in either the Source Editor or the Modulator Editor. We'll
 ### Podcast
 
 1. Open **Sources → Add source** and select **Podcast**.
-2. A Podcast Source can contain multiple feeds. Enter their URLs manually or click **Browse podcasts** to search the Apple Podcasts directory and add your favorites.
+2. A Podcast Source can contain multiple feeds. Enter their URLs manually or click **Browse podcasts** to search for and add your favorites (via Apple Podcasts).
 
    <a href="../assets/podcast-browser.png"><img src="../assets/podcast-browser.png" width="740" alt="Podcast Browser with Apple Podcasts search results"></a>
 
-3. Set **Max age (days)** and **Max episodes** for each feed. For example, `7` and `10` limits the selection to the 10 newest episodes published within the last 7 days.
-4. Choose a **Schedule mode**:
+3. Give your Source a **Name**.
+4. Set **Max age (days)** and **Max episodes** for each feed. For example, `7` and `10` limit the selection to the 10 newest episodes published within the last 7 days.
+5. Choose a **Schedule mode**:
    - **Random:** Shuffles eligible episodes without playback-history priorities.
    - **Smart:** Tracks playback history, prioritizing unplayed and newer episodes.
 
-   **Replay cooldown (hours)** tells Smart how long to avoid repeating an episode. If no alternatives are available, the cooldown can be relaxed.
-5. Set **Feed refresh interval (minutes)** to control how often FMheadend checks for new episodes.
-6. Click **Test feeds** to check the feeds and see how many episodes are eligible for playback.
-7. Give your Source a **Name**.
+   **Replay cooldown** determines how soon an episode can be played again. If no alternatives are available, the cooldown may be relaxed.
+6. Set **Feed refresh interval** to control how often FMheadend checks for new episodes.
+7. Click **Test feeds** to check the feeds and see how many episodes are eligible for playback.
 
    <a href="../assets/source-edit-podcast.png"><img src="../assets/source-edit-podcast.png" width="740" alt="Podcast Source Editor with feeds and playback settings"></a>
 
 
 For either type, leave **Audio Profile** on **System default** and **Source Gain** at **0 dB**.
 
-Don't save yet. We'll configure RDS next.
+If you don't need RDS, click **Save**. Otherwise, continue to the next section before saving.
 
 ## 5. Configure RDS for your station
 
