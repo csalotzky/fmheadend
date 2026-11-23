@@ -73,14 +73,24 @@ For either type, leave **Audio Profile** on **System default** and **Source Gain
 
 If you don't need RDS, click **Save**. Otherwise, continue to the next section before saving.
 
-## 5. Configure RDS for your station
+## 5. RDS
 
-1. In the Source Editor, check **Configure RDS for this source**.
-2. Enter your station's four-digit hexadecimal identifier in **PI (hex)**. For this cabled test, you can use `1234`. Choose the **Programme type** (PTY) that fits your programme.
-3. In **PS 1**, enter the station name the radio should display, up to eight characters. Try `HOME FM`.
-4. Check **Radio Text (RT) enabled**. In **Default Radio Text**, enter a short message, such as `Welcome to Home FM`. Leave **Use source metadata for RadioText** unchecked so you can recognize your message on the receiver. Click **Save**.
+Enable **Configure RDS for this source** in the Source Editor. Here's a brief overview of the settings. For more details, see the [RDS guide](rds.md).
 
-<a href="../assets/source-edit.png"><img src="../assets/source-edit.png" width="560" alt="Source Editor with audio processing above the RDS station identification, PS and Radio Text fields"></a>
+- **PI (hex):** A four-digit hexadecimal programme identifier. Use a unique PI for each station and avoid conflicts with other stations.
+- **ECC (hex, optional):** Extended Country Code. Leave blank if you're unsure.
+- **Programme type (PTY):** Select the category that best describes your programme.
+- **Traffic programme (TP):** Usually unnecessary for home use, but some receivers may skip stations without this flag when traffic mode is active.
+- **Programme Service (PS):** The station name displayed on the receiver, up to 8 characters. You can add multiple entries to create a rotating display (Dynamic PS).
+- **Radio Text (RT):** Enable **Radio Text (RT) enabled** and enter a message in **Default Radio Text** (up to 64 characters). **Use source metadata for RadioText** can automatically display the current track or programme title when available.
+- **RT termination:**
+  - **CR:** Terminates shorter messages early for faster display, but may cause compatibility issues with older receivers.
+  - **PAD:** Pads messages to the full 64 characters for better compatibility.
+- **Alternative frequencies (AF):** Lists other frequencies carrying the same programme. Leave unset unless needed.
+
+Click **Save** when you're done.
+
+<a href="../assets/rds-edit.png"><img src="../assets/rds-edit.png" width="600" alt="Source Editor RDS settings for station identification, programme type, Programme Service and Radio Text"></a>
 
 ## 6. Configure your first transmitter
 
