@@ -21,8 +21,6 @@ curl -fsSL https://raw.githubusercontent.com/csalotzky/fmheadend/master/bootstra
 
 The interactive installer handles the initial FM region, default Audio Profile, WebUI access and Raspberry Pi hardware configuration. Note the WebUI address it prints. Reboot if requested.
 
-The command needs a published stable release. Until one is available, use the [installation guide](installation.md) for setup from source.
-
 ## 3. Open the WebUI
 
 Open the installer's WebUI address in a browser on the same network. Sign in if prompted. On the **Dashboard**, look for **Controller OK** at the top and a card for each detected transmitter. Find **TX 0**. Leave it off while you set up the station.
