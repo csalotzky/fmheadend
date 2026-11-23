@@ -2,7 +2,7 @@
 
 ## 1. Prepare your Raspberry Pi and HAT
 
-1. Get a Raspberry Pi running Raspberry Pi OS Lite (64-bit), with SSH enabled and internet access. Raspberry Pi Imager is an easy way to set this up.
+1. Get a Raspberry Pi running Raspberry Pi OS Lite (64-bit), with SSH enabled and internet access. [Raspberry Pi Imager](https://www.raspberrypi.com/software/) is an easy way to set this up.
 2. With the Pi powered off, mount the FMheadend HAT. Connect its RF output directly to your receiver's FM antenna input using a suitable coaxial cable.
 3. Power up the Pi. From a computer on the same network, log in over SSH using the username and hostname you configured.
 
@@ -105,7 +105,7 @@ The Source supplies the programme audio. The Modulator determines how and where 
 4. Set **Pre-emphasis** to match your local FM broadcast standard (50 µs or 75 µs).
 5. Under **Source**, select the internet radio, podcast, or any other Source you configured earlier.
 6. Leave **Audio input** on **FMheadend audio**, **Gain control** on **Manual**, and **Soft clipping** on **Off**.
-7. If you configured RDS earlier, enable **RDS enabled** and set **RDS configuration source** to **Follow source**.
+7. If you configured RDS earlier, check **RDS enabled** and select **Follow source**.
 
 Click **Save**.
 
@@ -117,4 +117,4 @@ On the **Dashboard**, click **START** on **TX 0**. Wait for **Reported state: ON
 
 Your first FMheadend station is on air!
 
-<a href="../assets/tx-card.jpg"><img src="../assets/tx-card.jpg" width="400" alt="Single Dashboard transmitter card showing TX 3 with reported state ON"></a>
+<a href="../assets/tx-card.jpg"><img src="../assets/tx-card.jpg" width="400" alt="Single Dashboard transmitter card showing TX 0 with reported state ON"></a>
