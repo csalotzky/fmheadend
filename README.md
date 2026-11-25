@@ -2,12 +2,6 @@
   <img src="assets/header-bg.svg" width="100%" alt="FMHEADEND - MULTI-CHANNEL FM MODULATOR">
 </p>
 
-<!--
-README LAYOUT DRAFT - edit freely.
-Priorities: section flow, image balance, approachable language.
-TODO: replace placeholders, add a HAT-on-Pi photograph, then refine the copy.
--->
-
 <h3 align="center">Nothing to listen to? Build your own lineup.</h3>
 
 <p align="center">
@@ -32,8 +26,6 @@ TODO: replace placeholders, add a HAT-on-Pi photograph, then refine the copy.
   <img src="assets/readme/badges/rest-api.svg" width="89" height="32" alt="REST API">
 </p>
 
-<!-- TODO: replace this SVG with the real HAT-on-Pi product photograph.
-Keep the square crop and 550 px display width; update the alt text. -->
 <p align="center">
   <img src="assets/readme/fmheadend_top_tr.webp" width="550" alt="FMheadend eight-channel FM transmitter HAT mounted on a Raspberry Pi">
 </p>
@@ -172,5 +164,3 @@ The project has a few cooperating parts:
 - **[fmheadend](https://github.com/csalotzky/fmheadend)** — this repository: Raspberry Pi software, WebUI and installation.
 - **[fmheadend-controller](https://github.com/csalotzky/fmheadend-controller)** — Controller firmware for the FMheadend hardware.
 - **[fmheadend-gst-plugins](https://github.com/csalotzky/fmheadend-gst-plugins)** — the FM-aware audio processing plugins.
-
-<!-- TODO: before publishing final copy, review hardware availability, release status and measurement captions. -->
