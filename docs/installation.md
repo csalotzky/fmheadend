@@ -1,4 +1,4 @@
-# FMheadend installation
+# FMheadend Installation
 
 FMheadend runs as two services on a Raspberry Pi:
 
@@ -9,11 +9,9 @@ FMheadend runs as two services on a Raspberry Pi:
 
 The WebUI is served by `fmheadendd`; Node.js is needed to **build** it, not to run it. Controller firmware installation is covered in the [firmware update guide](rp2354-firmware-update.md).
 
-## 1. Interactive installer
-Download the `fmheadend-webui` artifact from [Build WebUI](https://github.com/csalotzky/fmheadend/actions/workflows/build-webui.yml) and extract `fmheadend-webui.tar.gz`.
-Run `sudo ./install.sh --webui-archive /path/to/fmheadend-webui.tar.gz` from the FMheadend source directory (also for upgrades).
+## 1. Requirements
 
-## 2. Requirements
+These requirements apply to all three installation methods.
 
 | Item | Requirement |
 |---|---|
@@ -21,6 +19,7 @@ Run `sudo ./install.sh --webui-archive /path/to/fmheadend-webui.tar.gz` from the
 | RAM | 2 GB recommended |
 | OS | **Raspberry Pi OS Lite (64-bit)** is the primary target; other Linux distributions are not yet installation-tested |
 | Python | 3.11 or later |
+| Access | Internet access and a user account with `sudo` privileges |
 | Controller | FMheadend Controller connected through I²C and SPI |
 | Optional sources | Network, local storage and/or ALSA devices as needed |
 
@@ -28,9 +27,61 @@ Development has taken place on both Raspberry Pi 3B and Raspberry Pi 4.
 Raspberry Pi Zero 2 (W) and Pi 5 still need performance testing.
 Actual capacity depends on active channels and DSP workload, not just I²C/SPI
 compatibility. Only Pi 2 variants capable of running the required 64-bit OS are
-eligible for this installer.
+eligible for installation.
 
-## 3. System dependencies
+## 2. Installation methods
+
+Choose one method below, then continue to [Verify the installation](#3-verify-the-installation).
+
+### 2.1 Bootstrap (recommended)
+
+Run as your regular user in an interactive terminal:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/csalotzky/fmheadend/master/bootstrap.sh | bash
+```
+
+Bootstrap downloads the latest stable GitHub release and launches its interactive
+installer, which handles dependencies, configuration and service installation.
+Reboot if requested. For a walkthrough, see the [Quick Start Guide](getting-started.md).
+
+### 2.2 Manual installation with install.sh
+
+Use a local source checkout and a prebuilt WebUI archive. The installer builds and
+installs the backend, PCM multiplexer and GStreamer plugins, installs the prebuilt
+WebUI, and handles dependencies, configuration and services. Node.js and npm are
+not required for this method.
+
+With Git available, download the FMheadend source:
+
+```sh
+cd ~
+git clone https://github.com/csalotzky/fmheadend.git
+cd fmheadend
+```
+
+Download `fmheadend-webui.tar.gz` from the matching [GitHub release](https://github.com/csalotzky/fmheadend/releases)
+and check out that release's tag locally. Alternatively, download the
+`fmheadend-webui` artifact from a successful [Build WebUI](https://github.com/csalotzky/fmheadend/actions/workflows/build-webui.yml)
+run for the same commit as your checkout. Extract the downloaded artifact ZIP to
+obtain `fmheadend-webui.tar.gz`; leave the tar archive compressed.
+
+Run the installer from the source directory, supplying the archive's actual path:
+
+```sh
+cd ~/fmheadend
+sudo ./install.sh --webui-archive /path/to/fmheadend-webui.tar.gz
+```
+
+The same command also supports upgrades. Follow the prompts and reboot if requested.
+The installer performs the component installation and configuration steps detailed
+in the source-build method below.
+
+### 2.3 Build and install from source
+
+Use this method to build and install each component and configure the system manually.
+
+#### 2.3.1 System dependencies
 
 For Raspberry Pi OS Lite / Debian-based installations:
 
@@ -49,7 +100,17 @@ sudo apt install git build-essential cmake pkg-config \
 
 The Python environment must be able to import the OS-provided PyGObject/GStreamer bindings. Node.js **24.x** (`>=24.15.0`) and npm **11–12** are additionally required when building the Angular WebUI from source.
 
-### 3.1 FMheadend GStreamer plugins
+Download the FMheadend source code from the [official GitHub repository](https://github.com/csalotzky/fmheadend):
+
+```sh
+cd ~
+git clone https://github.com/csalotzky/fmheadend.git
+cd fmheadend
+```
+
+The source code is now available in `~/fmheadend`. Follow the steps below to build and install each component.
+
+#### 2.3.2 FMheadend GStreamer plugins
 
 FMheadend uses two custom GStreamer audio processing plugins:
 
@@ -73,20 +134,9 @@ make integration-test
 sudo make install
 ```
 
-**Verify installation:**
-
-```sh
-gst-inspect-1.0 fmheadendlimiter >/dev/null 2>&1 && echo "Limiter: OK" || echo "Limiter: FAILED"
-gst-inspect-1.0 fmheadendclipper >/dev/null 2>&1 && echo "Clipper: OK" || echo "Clipper: FAILED"
-```
-
-The commands print `Limiter: OK` and `Clipper: OK` when the plugins are available;
-otherwise they print the corresponding `FAILED` result.
-
 For additional information, see the [plugin documentation](https://github.com/csalotzky/fmheadend-gst-plugins#readme).
 
-
-## 4. Service account and directories
+#### 2.3.3 Service account and directories
 
 The supplied systemd units use a dedicated `fmheadend` account. On a fresh Raspberry Pi OS installation:
 
@@ -112,19 +162,7 @@ Confirm that the device groups exist and that the service account can access the
 | `/run/fmheadend` | Runtime sockets, created by the mux service |
 | `/etc/fmheadend` | Service environment files |
 
-## 5. Install FMheadend from source
-
-Download the FMheadend source code from the [official GitHub repository](https://github.com/csalotzky/fmheadend):
-
-```sh
-cd ~
-git clone https://github.com/csalotzky/fmheadend.git
-cd fmheadend
-```
-
-The source code is now available in `~/fmheadend`. Follow the steps below to build and install each component.
-
-### 5.1 Backend
+#### 2.3.4 Backend
 
 ```sh
 cd ~/fmheadend
@@ -140,7 +178,7 @@ Verify that the virtual environment can access the system GStreamer bindings:
 
 The backend executable is `/opt/fmheadend/venv/bin/fmheadendd`. Its installation also builds the native LV2 lifecycle component.
 
-### 5.2 PCM mux daemon
+#### 2.3.5 PCM mux daemon
 
 ```sh
 cd ~/fmheadend
@@ -152,7 +190,7 @@ sudo cmake --install build/muxd
 
 The commands assume the default CMake installation prefix (`/usr/local`).
 
-### 5.3 WebUI
+#### 2.3.6 WebUI
 
 The WebUI requires Node.js only when building from source. Prebuilt releases do not require Node.js or npm on the target device.
 
@@ -183,7 +221,7 @@ sudo cp -a dist/fmheadend-ui/browser/. /usr/share/fmheadend/webui/
 
 Verify that `/usr/share/fmheadend/webui/index.html` exists.
 
-### 5.4 Bundled Audio Profiles
+#### 2.3.7 Bundled Audio Profiles
 
 ```sh
 cd ~/fmheadend
@@ -193,7 +231,7 @@ sudo install -m 0644 audio-profiles/default/*.json /usr/share/fmheadend/audio-pr
 
 The bundled profiles are separate from the Python package. The default-profile directory must be present and readable by the backend.
 
-### 5.5 Optional: Password protection
+#### 2.3.8 Optional: Password protection
 
 Authentication is optional and disabled by default. The password tool prompts for
 a username (default `admin`), then requests and confirms the password with hidden input:
@@ -212,13 +250,13 @@ stdin is redirected. Existing files require explicit `--overwrite` to replace.
 Authentication protects both the WebUI and REST API. HTTP Basic Authentication does
 not encrypt credentials; use HTTPS for access across untrusted networks.
 
-## 6. Configure I²C and SPI
+#### 2.3.9 Configure I²C and SPI
 
 FMheadend requires I²C and SPI to be enabled, with the SPI transfer buffer increased
 to 8192 bytes. The supplied `tools/setup_pi.py` utility configures these settings
 automatically.
 
-After cloning the FMheadend repository as described in section 5, run:
+From the source checkout, run:
 
 ```sh
 cd ~/fmheadend
@@ -268,36 +306,7 @@ sudo python3 tools/setup_pi.py --i2c-mode sw --i2c-bus 8 --i2c-delay-us 2 --over
 
 FMheadend requires an SPI buffer of at least **4100 bytes**; the Linux default of 4096 bytes is insufficient. The setup utility configures 8192 bytes. Use `--keep-spi-bufsiz` only if an adequate buffer size is already configured.
 
-After reboot, verify the I²C device printed by the utility, SPI0 and the SPI buffer
-size:
-
-```sh
-# Pi 3/4 and supported older models
-ls -l /dev/i2c-8 /dev/spidev0.0
-
-# Pi 5 or explicit hardware I²C mode
-ls -l /dev/i2c-1 /dev/spidev0.0
-
-cat /sys/module/spidev/parameters/bufsiz
-```
-
-The final command should print `8192`.
-
-On Pi 3/4, `/dev/i2c-8` should be owned by `root:i2c` with `0660` permissions.
-The `i2c-tools` package supplies the standard device permission rule; no manual
-`modprobe`, ownership, permission or custom udev setup is required.
-
-If either device is missing, list the available interfaces:
-
-```sh
-ls -l /dev/i2c-* /dev/spidev*
-```
-
-Select interfaces that match the Controller's physical wiring. SPI bus and
-chip-select numbers are significant: `/dev/spidev0.0` and `/dev/spidev0.1` are
-not interchangeable.
-
-## 7. Configure the services
+#### 2.3.10 Configure the services
 
 Install the supplied systemd units:
 
@@ -322,7 +331,7 @@ Without authentication (default):
 FMHEADEND_ARGS="--host 0.0.0.0 --port 8080 --i2c-device /dev/i2c-8 --region 1 --webui-dir /usr/share/fmheadend/webui"
 ```
 
-With authentication, if section 5.5 was completed:
+With authentication, if [section 2.3.8](#238-optional-password-protection) was completed:
 
 ```ini
 FMHEADEND_ARGS="--host 0.0.0.0 --port 8080 --i2c-device /dev/i2c-8 --region 1 --webui-dir /usr/share/fmheadend/webui --passwd-file /var/lib/fmheadend/htpasswd"
@@ -331,7 +340,7 @@ FMHEADEND_ARGS="--host 0.0.0.0 --port 8080 --i2c-device /dev/i2c-8 --region 1 --
 `--region`: `0` Expert, `1` Europe (default), `2` United States, `3` Japan; see the
 [configuration reference](configuration.md#12-controller-communication) for details.
 
-Make sure `--i2c-device` matches the I²C interface configured in Chapter 6. By default, the `setup_pi.py` utility configures `/dev/i2c-8` on Pi 3/4 and `/dev/i2c-1` on Pi 5. If you changed the I²C configuration, adjust this path accordingly.
+Make sure `--i2c-device` matches the I²C interface configured in section 2.3.9. By default, the `setup_pi.py` utility configures `/dev/i2c-8` on Pi 3/4 and `/dev/i2c-1` on Pi 5. If you changed the I²C configuration, adjust this path accordingly.
 
 The `--transport spidev` setting uses real hardware; for a software-only check,
 set `--transport mock` explicitly in `MUXD_ARGS`.
@@ -350,7 +359,9 @@ sudo systemctl enable --now fmheadend-muxd.service fmheadendd.service
 
 The mux service waits for the backend to supply the physical transmitter count before sending SPI audio.
 
-## 8. Verify the installation
+## 3. Verify the installation
+
+These checks apply to all three methods. Complete any requested reboot first.
 
 ```sh
 systemctl status fmheadend-muxd.service fmheadendd.service
@@ -371,7 +382,48 @@ curl -fsS --user YOUR_USERNAME http://127.0.0.1:8080/api/v1/status
 
 Open `http://<pi-address>:8080/` to access the WebUI. Create Sources and configure Modulators before starting transmitters.
 
-## 9. Troubleshooting
+The HTTP examples use the default port, `8080`; use the address and port selected
+during installation if they differ.
+
+Verify the I²C device configured during installation, SPI0 and the SPI buffer size:
+
+```sh
+# Pi 3/4 and supported older models
+ls -l /dev/i2c-8 /dev/spidev0.0
+
+# Pi 5 or explicit hardware I²C mode
+ls -l /dev/i2c-1 /dev/spidev0.0
+
+cat /sys/module/spidev/parameters/bufsiz
+```
+
+The final command should print `8192` with the supplied setup utility's defaults.
+
+On Pi 3/4, `/dev/i2c-8` should be owned by `root:i2c` with `0660` permissions.
+The `i2c-tools` package supplies the standard device permission rule; no manual
+`modprobe`, ownership, permission or custom udev setup is required.
+
+If either device is missing, list the available interfaces:
+
+```sh
+ls -l /dev/i2c-* /dev/spidev*
+```
+
+Select interfaces that match the Controller's physical wiring. SPI bus and
+chip-select numbers are significant: `/dev/spidev0.0` and `/dev/spidev0.1` are
+not interchangeable.
+
+Verify the FMheadend GStreamer plugins:
+
+```sh
+gst-inspect-1.0 fmheadendlimiter >/dev/null 2>&1 && echo "Limiter: OK" || echo "Limiter: FAILED"
+gst-inspect-1.0 fmheadendclipper >/dev/null 2>&1 && echo "Clipper: OK" || echo "Clipper: FAILED"
+```
+
+The commands print `Limiter: OK` and `Clipper: OK` when the plugins are available;
+otherwise they print the corresponding `FAILED` result.
+
+## 4. Troubleshooting
 
 | Problem | Check |
 |---|---|
@@ -385,6 +437,8 @@ Open `http://<pi-address>:8080/` to access the WebUI. Create Sources and configu
 
 For protocol diagnostics, see the [Controller protocol](controller-protocol.md). For SWD provisioning or I²C firmware updates, see the [RP2354 firmware update guide](rp2354-firmware-update.md).
 
-The manual installation procedure and refined interactive installer still need
-broader clean-system qualification. Automatic GitHub Release downloads are not
-implemented.
+For service options and installed paths, see the [configuration reference](configuration.md).
+For Audio Profile and plugin diagnostics, see [Audio processing](audio.md#6-troubleshooting).
+
+The manual installation procedure and interactive installer still need broader
+clean-system qualification.
