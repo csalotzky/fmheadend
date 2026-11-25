@@ -72,6 +72,27 @@ def test_replacement_build_and_start_failures_keep_retrying():
     lab.r.service();lab.expire();assert lab.current is not failed and lab.current.started
 
 
+def test_actual_recovery_logs_remain_visible(caplog):
+    caplog.set_level('INFO')
+    lab = Lab()
+    old = lab.current
+    old.state = 'RUNNING'
+    old.pcm_at = lab.now - 16
+    with RecentLogs() as logs:
+        lab.r.service()
+        assert old.stopped and 1 in lab.r.pending
+        lab.r.service()
+        lab.fail_build = 1
+        lab.expire()
+        lab.r.service()
+        lab.expire()
+        assert lab.current is not old and lab.current.started
+        messages = [row['message'] for row in logs.snapshot()]
+        for category in ('worker_recovery', 'worker_cooldown', 'replacement_failed', 'worker_replacement'):
+            assert any(f'category={category} ' in message for message in messages)
+    assert 'Worker PCM progress timeout' in caplog.text
+
+
 def test_stability_requires_progress_observation_and_full_300_seconds(caplog):
     caplog.set_level('INFO');lab=Lab();lab.r.attempts[1]=6;p=lab.current;p._has_pcm=True;p.state='RUNNING'
     lab.r.service();lab.now+=299;p.pcm_at=lab.now;lab.r.service()

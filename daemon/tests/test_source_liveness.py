@@ -1,9 +1,14 @@
 import threading,copy
+import logging
+import time
+from unittest.mock import Mock
 from types import SimpleNamespace
 import pytest
 from fmheadendd.sources.native_health import NativeHealth,accept
 from fmheadendd.sources.source_liveness import evaluate,request_progress
 from fmheadendd.tests.test_audio_worker import adapter
+from fmheadendd.diagnostics import RecentLogs
+from fmheadendd.sources.worker_recovery import WorkerRecovery
 
 
 def probe(health,ident=1):return dict(id=ident,attempt=health.attempt,owner=health.generation,mode='progress')
@@ -124,3 +129,117 @@ def test_ipc_failure_and_worker_exit_are_separate(adapter):
     assert evaluate(adapter,100)['decision']=='replace_candidate_ipc'
     adapter.recovery_observation=lambda:(101,100,'ERROR','exit -9',True)
     assert evaluate(adapter,102)['decision']=='replace_candidate_worker_exit'
+
+
+def test_healthy_shadow_observations_never_log(adapter, caplog):
+    caplog.set_level(logging.DEBUG)
+    now = [100.]
+    h = setup(adapter, now)
+    adapter._has_pcm = True
+    adapter.recovery_observation = lambda: (now[0], now[0], 'RUNNING', None, False)
+    with RecentLogs() as logs:
+        for tick in (100, 101, 102, 401, 1000, 10000):
+            now[0] = tick
+            h.checkpoint(force=True)
+            adapter.native_health = h.snapshot()
+            value = evaluate(adapter, tick)
+            assert value['decision'] == 'continue_playback'
+            assert adapter.shadow_decision is value and value['observed_at'] == tick
+        assert logs.snapshot() == []
+    assert caplog.records == []
+
+
+def test_suspicious_shadow_logs_only_material_changes(adapter, caplog):
+    caplog.set_level(logging.DEBUG)
+    now = [100.]
+    h = setup(adapter, now)
+    with h.operation('source', 'teardown'):
+        adapter.native_health = h.snapshot()
+        with RecentLogs() as logs:
+            now[0] = 111
+            assert evaluate(adapter, 111)['decision'] == 'await_operation_progress'
+            assert len(logs.snapshot()) == 1
+            request = adapter._source_probe
+            for tick in (112, 113, 115):
+                now[0] = tick
+                assert evaluate(adapter, tick)['decision'] == 'await_operation_progress'
+            assert len(logs.snapshot()) == 1
+            # Escalation remains visible inside the former five-minute limiter.
+            for tick in (117, 118, 418, 1000):
+                now[0] = tick
+                assert evaluate(adapter, tick)['decision'] == 'replace_candidate_native_unqualified'
+            assert len(logs.snapshot()) == 2
+            assert adapter._source_probe is request
+    # A distinct operation is useful even when the decision enum is unchanged.
+    now[0] = 1001
+    with h.operation('source', 'teardown'):
+        adapter.native_health = h.snapshot()
+        now[0] = 1018
+        assert evaluate(adapter, 1018)['decision'] == 'replace_candidate_native_unqualified'
+    assert len(caplog.records) == 3
+    assert all(record.levelno == logging.INFO for record in caplog.records)
+    assert all('observation_only=true' in record.message for record in caplog.records)
+    assert not adapter._stop.is_set() and not adapter.fatal_error
+
+
+@pytest.mark.parametrize('condition', ['exit', 'fault', 'ipc', 'writer'])
+def test_substantiated_shadow_fault_warns_once(adapter, caplog, condition):
+    caplog.set_level(logging.DEBUG)
+    now = [100.]
+    setup(adapter, now)
+    adapter.recovery_observation = lambda: (
+        90 if condition == 'ipc' else now[0], now[0], 'RUNNING',
+        'worker fault' if condition == 'fault' else None, condition == 'exit')
+    if condition == 'writer':
+        adapter._direct_intents = {0: (1, 1)}
+        adapter.direct_progress = {'writer_at': 90}
+    for tick in (100, 101, 401, 1000):
+        now[0] = tick
+        assert evaluate(adapter, tick)['decision'].startswith('replace_candidate_')
+    assert len(caplog.records) == 1
+    assert caplog.records[0].levelno == logging.WARNING
+    assert 'observation_only=true' in caplog.records[0].message
+
+
+def test_suspicion_after_healthy_playback_is_a_new_episode(adapter, caplog):
+    caplog.set_level(logging.INFO)
+    now = [100.]
+    h = setup(adapter, now)
+    adapter._has_pcm = True
+    adapter.recovery_observation = lambda: (now[0], now[0], 'RUNNING', None, False)
+    adapter._direct_intents = {0: (1, 1)}
+    adapter.direct_progress = {'writer_at': 90}
+    assert evaluate(adapter, 100)['decision'] == 'replace_candidate_writer'
+    now[0] = 101
+    h.checkpoint(force=True)
+    adapter.native_health = h.snapshot()
+    adapter.direct_progress['writer_at'] = 101
+    assert evaluate(adapter, 101)['decision'] == 'continue_playback'
+    now[0] = 107
+    assert evaluate(adapter, 107)['decision'] == 'replace_candidate_writer'
+    assert len(caplog.records) == 2
+
+
+def test_shadow_candidate_does_not_trigger_worker_recovery(adapter, caplog):
+    caplog.set_level(logging.INFO)
+    now = [time.monotonic() - 100]
+    h = setup(adapter, now)
+    adapter._has_pcm = True
+    adapter.recovery_observation = lambda: (now[0], now[0], 'RUNNING', None, False)
+    adapter._fail = Mock()
+    adapter.stop = Mock()
+    manager = SimpleNamespace(clock=lambda: now[0], pipelines={adapter.source_id: adapter},
+                              consumers={adapter.source_id: {0}})
+    recovery = WorkerRecovery(manager)
+    with h.operation('source', 'teardown'):
+        now[0] = time.monotonic()
+        adapter.native_health = h.snapshot()
+        recovery.service()
+    assert adapter.shadow_decision['decision'] == 'replace_candidate_native_unqualified'
+    assert recovery.pending == {} and recovery.attempts == {}
+    assert manager.pipelines[adapter.source_id] is adapter
+    adapter._fail.assert_not_called()
+    adapter.stop.assert_not_called()
+    assert not adapter._stop.is_set()
+    assert len(caplog.records) == 1
+    assert 'observation_only=true' in caplog.records[0].message

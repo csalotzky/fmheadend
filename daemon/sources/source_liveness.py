@@ -179,12 +179,23 @@ def _evaluate(parent, now=None):
                     response=reported[5] if reported else None)
     value = dict(decision=decision, reason=reason, evidence=evidence, observed_at=now)
     parent.shadow_decision = value
-    # Constant category-keyed storage, bounded by the finite decision enum.
-    times = getattr(parent, '_liveness_log_times', {})
-    if now >= times.get(decision, 0):
-        times[decision] = now+300
-        log.info('source=%s generation=%s category=shadow_recovery_decision decision=%s reason=%s request_id=%s operation=%s elapsed_s=%s observation_only=true',
-                 parent.source_id, parent.generation, decision, reason, evidence['request_id'],
-                 evidence.get('operation'), evidence.get('elapsed_s'))
-    parent._liveness_log_times = times
+    # One fixed-size transition key. Ages and routine checkpoints advance on
+    # every tick; they do not make an unchanged condition worth logging again.
+    # Healthy playback resets the episode silently, even at DEBUG level.
+    key = None if decision == 'continue_playback' else (
+        decision, reason, state, evidence.get('phase'),
+        evidence.get('operation_lane'), evidence.get('operation'),
+        evidence.get('attempt'), evidence.get('operation_kind'), evidence.get('start'),
+        evidence['request_id'], evidence['response'])
+    if key is not None and key != getattr(parent, '_liveness_log_key', None):
+        # Unqualified native deadlines and source probes remain observations.
+        # Only independently observed faults warrant WARNING, never an action claim.
+        emit = log.warning if decision in (
+            'replace_candidate_worker_exit', 'replace_candidate_worker_fault',
+            'replace_candidate_writer', 'replace_candidate_ipc') else log.info
+        emit('source=%s generation=%s category=shadow_recovery_decision decision=%s reason=%s state=%s request_id=%s response=%s operation=%s operation_kind=%s attempt=%s elapsed_s=%s observation_only=true',
+             parent.source_id, parent.generation, decision, reason, state, evidence['request_id'],
+             evidence['response'], evidence.get('operation'), evidence.get('operation_kind'),
+             evidence.get('attempt'), evidence.get('elapsed_s'))
+    parent._liveness_log_key = key
     return value
