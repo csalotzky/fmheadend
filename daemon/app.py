@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime
 import logging
 from types import SimpleNamespace
 import time
@@ -38,6 +39,7 @@ from .rds.refill import RdsRefill, POLL_SECONDS
 from .rp2354.client import MockRp2354Client
 from .rp2354.linux_client import Rp2354Client
 from .services import ConfigurationService
+from .scheduler import Scheduler
 from .sources.manager import SourceManager
 from .sources.pipeline import MockPipeline
 from .sources.gst_pipeline import GstPipeline
@@ -49,7 +51,8 @@ logger = logging.getLogger(__name__)
 
 
 def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipeline, clock=time.monotonic,
-               mux_factory=None, radio_browser_client=None, podcast_browser_client=None):
+               mux_factory=None, radio_browser_client=None, podcast_browser_client=None,
+               scheduler_clock=datetime.now):
     settings = settings or Settings()
     auth = None
     if settings.passwd_file is not None:
@@ -126,6 +129,7 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
                 services.status.publication_failed()
                 logger.exception('Status publication failed; retaining stale observation')
         app.state.publish_status = publish_status
+        scheduler = Scheduler(services.database, services.modulators, publish_status, clock=scheduler_clock)
 
         next_poll = 0.0
         def tick():
@@ -140,6 +144,7 @@ def create_app(settings=None, *, rp=None, mux=None, pipeline_factory=MockPipelin
             if now >= next_poll:
                 services.status.refresh(publish=False)
                 next_poll = now + settings.controller_status_poll_interval_ms / 1000
+            scheduler.tick()
             publish_status(force=False)
             interval = min(POLL_SECONDS, max(0.01, next_poll - time.monotonic()))
             delay = services.recovery.retry_delay

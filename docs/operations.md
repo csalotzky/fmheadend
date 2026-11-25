@@ -98,6 +98,17 @@ the public inventory and can be controlled. When verified capacity decreases,
 absent configurations are retained but their saved enablement is cleared. They
 remain OFF if they reappear until an operator enables them again.
 
+### 2.1 Scheduled transmissions
+
+The built-in scheduler runs enabled rules at minute precision using the Pi's
+local time. Each rule targets one TX and uses the same Start, Stop or source
+save-and-resume operation as manual control.
+
+The backend skips the minute in progress at startup and does not replay missed
+minutes. Each due rule is attempted once in its scheduled minute. Action failures
+are logged and the scheduler continues with the remaining rules. Manage rules
+through the [scheduler API](api.md#28-scheduler--4-operations).
+
 ## 3. STOP ALL and START ALL
 
 The shell header provides **STOP ALL** and **START ALL**. These commands have

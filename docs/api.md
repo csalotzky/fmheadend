@@ -75,7 +75,7 @@ subsequent status snapshots.
 
 ## 2. Endpoint inventory
 
-The application registers 39 functional operations under `/api/v1`.
+The application registers 44 functional operations under `/api/v1`.
 
 ### 2.1 System and status — 6 operations
 
@@ -431,6 +431,31 @@ Podcast operation is intentionally part of the Source API: there are no separate
 Podcast or playback-history endpoints. There are also no REST firmware-update,
 direct Controller-command, mux-control, audio-telemetry or debug endpoints. Those
 interfaces remain outside the public HTTP API.
+
+### 2.8 Scheduler — 4 operations
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/api/v1/schedules` | List saved rules in ID order. |
+| `POST` | `/api/v1/schedules` | Create a rule and return it (`201`). |
+| `PATCH` | `/api/v1/schedules/{id}` | Update supplied fields and return the rule. Set `enabled` to enable or disable it. |
+| `DELETE` | `/api/v1/schedules/{id}` | Delete a rule (`204`). |
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | Integer | Server-assigned rule ID, returned in responses. |
+| `enabled` | Boolean | Whether the rule runs. Defaults to `true`. |
+| `recurrence` | String | `daily`, `weekdays`, `weekends` or `selected_weekdays`. |
+| `weekdays` | Integer array | Distinct days with Monday `0` and Sunday `6`. Required for `selected_weekdays`; keep empty for other recurrences. |
+| `time` | String | Local time in 24-hour `HH:MM` format. |
+| `tx_id` | Integer | Logical Modulator ID, `0`–`7`. |
+| `action` | String | `start`, `stop` or `switch_source`. |
+| `source_id` | Integer or null | Existing Source ID for `switch_source`. Omit or use `null` for other actions. |
+
+Rules are saved in SQLite. A Source referenced by a rule can be deleted after the
+rule is updated or removed. With PATCH, send an empty `weekdays` array or a null
+`source_id` when changing to a recurrence or action that no longer uses that field.
+See [Scheduled transmissions](operations.md#21-scheduled-transmissions) for execution behavior.
 
 ## 3. Monitoring workflow
 

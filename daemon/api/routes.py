@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Request, Response
+from typing import Annotated
+
+from fastapi import APIRouter, Path, Request, Response
 from ..control import control_route
 from ..errors import DomainError
 from ..alsa import AlsaCaptureDevices
@@ -9,6 +11,7 @@ from ..models.configuration import (
 )
 from ..models.runtime_status import HeadendStatus, InputSourceStatus, ModulatorStatus, ModulatorSaveResult
 from ..models.audio_profile_file import AudioProfileFile, CloneProfileFile, ProfileFileResult, ProfileFileSummary, ProfileSaveResult
+from ..models.schedule import ScheduleConfig, SchedulePatch, ScheduleRule
 
 router = APIRouter(prefix="/api/v1", responses={
     code: {"model": ErrorResponse} for code in (400, 403, 404, 409, 422, 500, 503)
@@ -17,6 +20,7 @@ router = APIRouter(prefix="/api/v1", responses={
 # A one-feed Podcast test can use 20 s for HTTP, 120 s for parser admission,
 # and 45 s for execution. Leave room for bounded reap and result publication.
 SINGLE_PODCAST_TEST_TIMEOUT_S = 195.0
+ScheduleId = Annotated[int, Path(gt=0, le=2**63 - 1)]
 
 
 def _source_test_timeout(source):
@@ -227,6 +231,35 @@ def stop_modulator(id: int, request: Request):
     """Persist enabled=false and stop RF before releasing the source."""
     manager = request.app.state.services.modulators
     return manager.lifecycle_status(tx_action(manager.stop, id))
+
+
+@router.get('/schedules', response_model=list[ScheduleRule], tags=['scheduler'])
+@control_route
+def list_schedules(request: Request):
+    return request.app.state.services.database.list_schedules()
+
+
+@router.post('/schedules', response_model=ScheduleRule, status_code=201, tags=['scheduler'])
+@control_route
+def create_schedule(body: ScheduleConfig, request: Request):
+    return request.app.state.services.database.save_schedule(body)
+
+
+@router.patch('/schedules/{id}', response_model=ScheduleRule, tags=['scheduler'])
+@control_route
+def update_schedule(id: ScheduleId, body: SchedulePatch, request: Request):
+    database = request.app.state.services.database
+    current = database.get_schedule(id)
+    config = ScheduleConfig.model_validate(
+        current.model_dump(exclude={'id'}) | body.model_dump(exclude_unset=True))
+    return database.save_schedule(config, id)
+
+
+@router.delete('/schedules/{id}', status_code=204, tags=['scheduler'])
+@control_route
+def delete_schedule(id: ScheduleId, request: Request):
+    request.app.state.services.database.delete_schedule(id)
+    return Response(status_code=204)
 
 
 @router.put("/modulators/{id}/rds/rt", response_model=RtStatus, tags=["runtime RDS"])

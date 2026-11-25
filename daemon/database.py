@@ -7,6 +7,7 @@ from functools import wraps
 from pathlib import Path
 
 from .errors import DomainError
+from .models.schedule import ScheduleRule
 from .models.configuration import InputSource, Modulator, ModulatorConfig, PsEntry, SystemConfig, utcnow, RdsProfileConfig, RdsProfile, RDS_FIELDS
 
 SCHEMA_VERSION = 1
@@ -15,6 +16,7 @@ SCHEMA_STATEMENTS = (
     "CREATE TABLE sources (id INTEGER PRIMARY KEY AUTOINCREMENT, rds_profile_id INTEGER UNIQUE REFERENCES rds_profiles(id) ON DELETE RESTRICT, data TEXT NOT NULL)",
     "CREATE TABLE modulators (id INTEGER PRIMARY KEY CHECK(id BETWEEN 0 AND 7), input_source_id INTEGER REFERENCES sources(id) ON DELETE RESTRICT, rds_override_profile_id INTEGER UNIQUE REFERENCES rds_profiles(id) ON DELETE RESTRICT, data TEXT NOT NULL)",
     "CREATE TABLE system_config (id INTEGER PRIMARY KEY CHECK(id = 1), data TEXT NOT NULL)",
+    "CREATE TABLE schedules (id INTEGER PRIMARY KEY AUTOINCREMENT, source_id INTEGER REFERENCES sources(id) ON DELETE RESTRICT, data TEXT NOT NULL)",
     "CREATE TABLE podcast_history (source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE, feed_id TEXT NOT NULL, episode_id TEXT NOT NULL, play_count INTEGER NOT NULL DEFAULT 0 CHECK(play_count >= 0), last_played_at TEXT, last_seen_at TEXT NOT NULL, PRIMARY KEY(source_id, feed_id, episode_id))",
     "CREATE TRIGGER fixed_modulator_delete BEFORE DELETE ON modulators BEGIN SELECT RAISE(ABORT, 'Modulators are fixed'); END",
     "CREATE TRIGGER fixed_modulator_id BEFORE UPDATE OF id ON modulators BEGIN SELECT RAISE(ABORT, 'Modulator IDs are fixed'); END",
@@ -91,7 +93,8 @@ class Database:
         expected_columns = {'sources': ['id', 'rds_profile_id', 'data'], 'rds_profiles': ['id', 'data'],
                             'podcast_history': ['source_id', 'feed_id', 'episode_id', 'play_count', 'last_played_at', 'last_seen_at'],
                             'modulators': ['id', 'input_source_id', 'rds_override_profile_id', 'data'],
-                            'system_config': ['id', 'data'], 'sqlite_sequence': ['name', 'seq']}
+                            'system_config': ['id', 'data'], 'schedules': ['id', 'source_id', 'data'],
+                            'sqlite_sequence': ['name', 'seq']}
         tables = {r[0] for r in self.connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         if tables != set(expected_columns) or any(
                 [r[1] for r in self.connection.execute(f'PRAGMA table_info({table})')] != columns
@@ -125,6 +128,38 @@ class Database:
             return self.connection.execute('INSERT INTO rds_profiles(data) VALUES (?)', (data,)).lastrowid
         self.connection.execute('UPDATE rds_profiles SET data=? WHERE id=?', (data, profile_id))
         return profile_id
+
+    @staticmethod
+    def _schedule(row):
+        return ScheduleRule.model_validate(json.loads(row['data']) | {
+            'id': row['id'], 'source_id': row['source_id']})
+
+    def list_schedules(self):
+        return [self._schedule(row) for row in self.connection.execute('SELECT * FROM schedules ORDER BY id')]
+
+    def get_schedule(self, rule_id):
+        row = self.connection.execute('SELECT * FROM schedules WHERE id=?', (rule_id,)).fetchone()
+        if row is None:
+            raise DomainError(404, 'NOT_FOUND', f'Schedule {rule_id} does not exist')
+        return self._schedule(row)
+
+    def save_schedule(self, config, rule_id=None):
+        if config.source_id is not None:
+            self.get('sources', config.source_id)
+        data = config.model_dump_json(exclude={'source_id'})
+        with self.connection:
+            if rule_id is None:
+                rule_id = self.connection.execute('INSERT INTO schedules(source_id, data) VALUES (?, ?)',
+                                                  (config.source_id, data)).lastrowid
+            else:
+                self.connection.execute('UPDATE schedules SET source_id=?, data=? WHERE id=?',
+                                        (config.source_id, data, rule_id))
+        return self.get_schedule(rule_id)
+
+    def delete_schedule(self, rule_id):
+        with self.connection:
+            if not self.connection.execute('DELETE FROM schedules WHERE id=?', (rule_id,)).rowcount:
+                raise DomainError(404, 'NOT_FOUND', f'Schedule {rule_id} does not exist')
 
     def _profile(self, profile_id):
         if profile_id is None:
