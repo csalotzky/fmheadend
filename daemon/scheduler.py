@@ -10,13 +10,9 @@ logger = logging.getLogger(__name__)
 
 
 def is_due(rule, minute):
-    if not rule.enabled or rule.time != minute.strftime('%H:%M'):
-        return False
-    day = minute.weekday()
-    return (rule.recurrence == 'daily'
-            or rule.recurrence == 'weekdays' and day < 5
-            or rule.recurrence == 'weekends' and day >= 5
-            or rule.recurrence == 'selected_weekdays' and day in rule.weekdays)
+    return (rule.enabled
+            and rule.time == minute.strftime('%H:%M')
+            and minute.weekday() in rule.days_of_week)
 
 
 class Scheduler:

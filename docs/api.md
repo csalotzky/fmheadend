@@ -445,17 +445,15 @@ interfaces remain outside the public HTTP API.
 |---|---|---|
 | `id` | Integer | Server-assigned rule ID, returned in responses. |
 | `enabled` | Boolean | Whether the rule runs. Defaults to `true`. |
-| `recurrence` | String | `daily`, `weekdays`, `weekends` or `selected_weekdays`. |
-| `weekdays` | Integer array | Distinct days with Monday `0` and Sunday `6`. Required for `selected_weekdays`; keep empty for other recurrences. |
+| `days_of_week` | Integer array | One to seven distinct days, Monday `0` through Sunday `6`. All seven days run daily. Required on POST and optional on PATCH. |
 | `time` | String | Local time in 24-hour `HH:MM` format. |
 | `tx_id` | Integer | Logical Modulator ID, `0`–`7`. |
 | `action` | String | `start`, `stop` or `switch_source`. |
 | `source_id` | Integer or null | Required for `switch_source` and optional for `start`. Omit or use `null` for `stop`. A `start` without a Source keeps the current assignment. |
 
 Rules are saved in SQLite. Deleting a Source referenced by any rule returns
-`409 RESOURCE_IN_USE`, including when the rule is disabled. With PATCH, send an
-empty `weekdays` array or a null `source_id` when changing to a recurrence or
-action that no longer uses that field.
+`409 RESOURCE_IN_USE`, including when the rule is disabled. When changing a
+rule with a Source to `stop` via PATCH, send a null `source_id`.
 See [Scheduled transmissions](operations.md#21-scheduled-transmissions) for execution behavior.
 
 ## 3. Monitoring workflow

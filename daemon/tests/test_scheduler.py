@@ -15,19 +15,14 @@ from fmheadendd.tests.test_audio_worker import until
 
 
 SCHEDULES = '/api/v1/schedules'
-RULE = dict(recurrence='daily', time='09:00', tx_id=0, action='start')
+RULE = dict(days_of_week=list(range(7)), time='09:00', tx_id=0, action='start')
 MONDAY = datetime(2026, 11, 23, 9)
 
 
-@pytest.mark.parametrize('recurrence,weekdays,expected', [
-    ('daily', [], set(range(7))),
-    ('weekdays', [], set(range(5))),
-    ('weekends', [], {5, 6}),
-    ('selected_weekdays', [0, 6], {0, 6}),
-])
-def test_recurrence(recurrence, weekdays, expected):
-    rule = ScheduleRule(id=1, **(RULE | dict(recurrence=recurrence, weekdays=weekdays)))
-    assert {day for day in range(7) if is_due(rule, MONDAY.replace(day=23 + day))} == expected
+@pytest.mark.parametrize('days', [list(range(7)), [0, 1, 2, 3, 4], [5, 6], [6, 0], [0]])
+def test_due_on_selected_days(days):
+    rule = ScheduleRule(id=1, **(RULE | dict(days_of_week=days)))
+    assert {day for day in range(7) if is_due(rule, MONDAY.replace(day=23 + day))} == set(days)
     assert not is_due(rule, MONDAY.replace(minute=1))
     assert not is_due(rule.model_copy(update={'enabled': False}), MONDAY)
 
@@ -87,7 +82,7 @@ def test_crud_and_persistence(api):
     conflict = {'error': 'RESOURCE_IN_USE', 'message': 'Cannot delete source: it is used by a scheduler rule.'}
     response = client.delete(f'/api/v1/sources/{source}')
     assert response.status_code == 409 and response.json() == conflict
-    changes = dict(enabled=False, time='14:25', recurrence='selected_weekdays', weekdays=[0, 6])
+    changes = dict(enabled=False, time='14:25', days_of_week=[0, 6])
     response = client.patch(path, json=changes)
     assert response.status_code == 200
     assert response.json() == rule | changes
@@ -97,7 +92,8 @@ def test_crud_and_persistence(api):
     with TestClient(create_app(settings)) as reopened:
         assert reopened.get(SCHEDULES).json() == [rule | changes]
     response = client.patch(path, json=dict(enabled=True, action='stop', source_id=None))
-    assert response.status_code == 200 and response.json()['enabled'] is True
+    assert response.status_code == 200
+    assert response.json() == rule | changes | dict(enabled=True, action='stop', source_id=None)
     assert client.delete(path).status_code == 204
     assert client.delete(path).status_code == 404
     assert client.patch(path, json=dict(enabled=True)).status_code == 404
@@ -109,10 +105,6 @@ def test_crud_and_persistence(api):
 @pytest.mark.parametrize('changes,status', [
     ({'time': '9:00'}, 422), ({'time': '24:00'}, 422), ({'time': '09:60'}, 422),
     ({'tx_id': 8}, 422), ({'tx_id': True}, 422), ({'action': 'stop_all'}, 422), ({'enabled': 1}, 422),
-    ({'recurrence': 'weekly'}, 422), ({'weekdays': [0]}, 422),
-    ({'recurrence': 'selected_weekdays'}, 422),
-    ({'recurrence': 'selected_weekdays', 'weekdays': [1, 1]}, 422),
-    ({'recurrence': 'selected_weekdays', 'weekdays': [7]}, 422),
     ({'action': 'switch_source'}, 422), ({'action': 'stop', 'source_id': 1}, 422),
     ({'source_id': 999}, 404),
     ({'action': 'switch_source', 'source_id': 999}, 404),
@@ -121,6 +113,21 @@ def test_validation(api, changes, status):
     client, _ = api
     assert client.post(SCHEDULES, json=RULE | changes).status_code == status
     assert client.get(SCHEDULES).json() == []
+
+
+def test_days_of_week_is_required_on_create(api):
+    client, _ = api
+    assert client.post(SCHEDULES, json={k: v for k, v in RULE.items() if k != 'days_of_week'}).status_code == 422
+
+
+@pytest.mark.parametrize('invalid', [None, [], [1, 1], [-1], [7], [True], ['1'], [1.0], list(range(7)) + [0]])
+def test_days_of_week_validation_on_create_and_patch(api, invalid):
+    client, _ = api
+    changes = {'days_of_week': invalid}
+    assert client.post(SCHEDULES, json=RULE | changes).status_code == 422
+    saved = client.post(SCHEDULES, json=RULE).json()
+    assert client.patch(f"{SCHEDULES}/{saved['id']}", json=changes).status_code == 422
+    assert client.get(SCHEDULES).json() == [saved]
 
 
 @pytest.mark.parametrize('failure', ['unsaved', 'restart', 'exception'])
