@@ -4,8 +4,7 @@ import { timeout } from 'rxjs';
 
 export interface ScheduleDraft {
   enabled: boolean;
-  recurrence: 'daily' | 'weekdays' | 'weekends' | 'selected_weekdays';
-  weekdays: number[];
+  days_of_week: number[];
   time: string;
   tx_id: number;
   action: 'start' | 'stop' | 'switch_source';

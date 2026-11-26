@@ -16,7 +16,7 @@ a {
 /* Type colors avoid the green, amber and red used for runtime state. */
 .list-card[data-source-type='HTTP'],
 .list-card[data-profile-kind='default'] {
-  --list-strip-color: #6f9fd8;
+  --list-strip-color: var(--blue);
 }
 .list-card[data-source-type='UDP'],
 .list-card[data-profile-kind='custom'] {

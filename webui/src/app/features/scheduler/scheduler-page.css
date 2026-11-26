@@ -1,0 +1,56 @@
+.list-card[data-schedule-enabled='false'] {
+  --list-strip-color: var(--inactive);
+}
+.list-card[data-schedule-enabled='true'][data-schedule-action='start'] {
+  --list-strip-color: var(--success);
+}
+.list-card[data-schedule-enabled='true'][data-schedule-action='stop'] {
+  --list-strip-color: var(--error);
+}
+.list-card[data-schedule-enabled='true'][data-schedule-action='switch_source'] {
+  --list-strip-color: var(--blue);
+}
+
+.rule-editor {
+  display: grid;
+  gap: 12px;
+}
+.rule-fields,
+.rule-days,
+.day-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.rule-fields input[name='time'] {
+  width: 8ch;
+}
+.rule-days,
+.day-options .checkbox-control,
+.day-preset {
+  font-size: 11px;
+}
+.day-options .checkbox-control {
+  grid-template-columns: 13px auto;
+  column-gap: 4px;
+}
+.day-options .checkbox-control > input[type='checkbox'] {
+  width: 13px;
+  height: 13px;
+}
+.day-preset {
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  text-decoration: underline;
+}
+.day-preset:hover:not(:disabled) {
+  background: transparent;
+}
+.rule-source {
+  width: min(100%, 280px);
+}
+.rule-actions {
+  justify-content: flex-end;
+}

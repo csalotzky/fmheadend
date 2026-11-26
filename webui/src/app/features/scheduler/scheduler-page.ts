@@ -1,40 +1,49 @@
+import { NgTemplateOutlet } from '@angular/common';
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Observable, firstValueFrom, forkJoin } from 'rxjs';
 import { errorMessage } from '../../core/api/headend-api';
-import { InputSource } from '../../core/api/models';
+import { InputSource, Modulator } from '../../core/api/models';
 import { sortSources } from '../../core/api/source-order';
 import { SourceApi } from '../sources/source-api';
+import { ModulatorApi } from '../modulators/modulator-api';
+import { mhz } from '../modulators/values';
 import { ScheduleDraft, ScheduleRule, SchedulerApi } from './scheduler-api';
+
+type RuleEdit = Omit<ScheduleDraft, 'enabled'>;
 
 @Component({
   host: { class: 'page-content' },
   selector: 'app-scheduler-page',
-  imports: [FormsModule],
+  imports: [FormsModule, NgTemplateOutlet],
   templateUrl: './scheduler-page.html',
-  styleUrls: ['../../shared/list-layout.css', '../../shared/editor-layout.css'],
+  styleUrls: [
+    '../../shared/list-layout.css',
+    '../../shared/editor-layout.css',
+    './scheduler-page.css',
+  ],
 })
 export class SchedulerPage implements OnInit {
   private api = inject(SchedulerApi);
   private sourceApi = inject(SourceApi);
+  private modulatorApi = inject(ModulatorApi);
 
   readonly rules = signal<ScheduleRule[]>([]);
   readonly sources = signal<InputSource[]>([]);
+  readonly targets = signal<Modulator[]>([]);
   readonly loading = signal(false);
   readonly busy = signal(false);
   readonly error = signal('');
-  readonly draft = signal<ScheduleDraft | null>(null);
+  readonly draft = signal<RuleEdit | null>(null);
   readonly editing = signal<number | null>(null);
   readonly deleting = signal<number | null>(null);
 
-  readonly weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  readonly targets = [0, 1, 2, 3, 4, 5, 6, 7];
-  readonly recurrences = {
-    daily: 'Daily',
-    weekdays: 'Weekdays',
-    weekends: 'Weekends',
-    selected_weekdays: 'Selected weekdays',
-  };
+  readonly days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  readonly dayPresets = [
+    { label: 'Every day', days: [0, 1, 2, 3, 4, 5, 6] },
+    { label: 'Weekdays', days: [0, 1, 2, 3, 4] },
+    { label: 'Weekend', days: [5, 6] },
+  ];
   readonly actions = { start: 'TX ON', stop: 'TX OFF', switch_source: 'Source Switch' };
 
   ngOnInit() {
@@ -45,11 +54,16 @@ export class SchedulerPage implements OnInit {
     this.loading.set(true);
     this.error.set('');
     try {
-      const { rules, sources } = await firstValueFrom(
-        forkJoin({ rules: this.api.list(), sources: this.sourceApi.list() }),
+      const { rules, sources, targets } = await firstValueFrom(
+        forkJoin({
+          rules: this.api.list(),
+          sources: this.sourceApi.list(),
+          targets: this.modulatorApi.list(),
+        }),
       );
       this.rules.set(rules);
       this.sources.set(sortSources(sources));
+      this.targets.set(targets);
     } catch (error) {
       this.error.set(errorMessage(error));
     } finally {
@@ -58,38 +72,61 @@ export class SchedulerPage implements OnInit {
   }
 
   edit(rule?: ScheduleRule) {
+    if (this.draft() || this.busy() || this.loading()) return;
+    const target = this.targets()[0];
+    if (!rule && !target) return;
     this.error.set('');
     this.deleting.set(null);
     this.editing.set(rule?.id ?? null);
     if (rule) {
-      const { id, ...draft } = rule;
+      const { id, enabled, ...draft } = rule;
       this.draft.set(draft);
     } else {
       this.draft.set({
-        recurrence: 'daily',
-        weekdays: [],
+        days_of_week: [...this.dayPresets[0].days],
         time: '08:00',
-        tx_id: 0,
+        tx_id: target.id,
         action: 'start',
         source_id: null,
-        enabled: true,
       });
     }
   }
 
-  change(changes: Partial<ScheduleDraft>) {
+  cancel() {
+    this.draft.set(null);
+    this.editing.set(null);
+    this.error.set('');
+  }
+
+  change(changes: Partial<RuleEdit>) {
     this.draft.update((draft) => draft && { ...draft, ...changes });
   }
 
-  changeWeekday(day: number, checked: boolean) {
-    const days = this.draft()?.weekdays ?? [];
-    this.change({ weekdays: checked ? [...days, day].sort() : days.filter((d) => d !== day) });
+  changeDay(day: number, checked: boolean) {
+    const days = new Set(this.draft()?.days_of_week);
+    if (checked) days.add(day);
+    else days.delete(day);
+    this.change({ days_of_week: [...days].sort() });
   }
 
   scheduleLabel(rule: ScheduleRule) {
-    return rule.recurrence === 'selected_weekdays'
-      ? this.weekdays.filter((_, day) => rule.weekdays.includes(day)).join(', ')
-      : this.recurrences[rule.recurrence];
+    const days = rule.days_of_week;
+    if (days.length === 7) return 'Daily';
+    if (days.length === 5 && days.every((day) => day < 5)) return 'Mon–Fri';
+    if (days.length === 2 && days.every((day) => day >= 5)) return 'Sat–Sun';
+    return this.days.filter((_, day) => days.includes(day)).join(', ');
+  }
+
+  targetLabel(txId: number) {
+    const target = this.targets().find(({ id }) => id === txId);
+    if (!target) return `TX ${txId} (Unavailable)`;
+    if (target.frequency_khz == null) return `TX ${txId} (Not configured)`;
+    const frequency = mhz(target.frequency_khz);
+    return `TX ${txId} (${frequency.includes('.') ? frequency : frequency + '.0'} MHz)`;
+  }
+
+  hasTarget(txId: number) {
+    return this.targets().some(({ id }) => id === txId);
   }
 
   sourceLabel(rule: ScheduleRule) {
@@ -99,10 +136,10 @@ export class SchedulerPage implements OnInit {
     );
   }
 
-  canSave(rule: ScheduleDraft) {
+  canSave(rule: RuleEdit) {
     return (
       /^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(rule.time) &&
-      (rule.recurrence !== 'selected_weekdays' || rule.weekdays.length > 0) &&
+      rule.days_of_week.length > 0 &&
       (rule.action !== 'switch_source' || rule.source_id !== null)
     );
   }
@@ -112,13 +149,13 @@ export class SchedulerPage implements OnInit {
     if (!draft || !this.canSave(draft) || this.busy()) return;
     const body = {
       ...draft,
-      weekdays: draft.recurrence === 'selected_weekdays' ? draft.weekdays : [],
       source_id: draft.action === 'stop' ? null : draft.source_id,
     };
     const id = this.editing();
-    await this.mutate(id === null ? this.api.create(body) : this.api.update(id, body), () => {
-      this.draft.set(null);
-    });
+    await this.mutate(
+      id === null ? this.api.create({ ...body, enabled: true }) : this.api.update(id, body),
+      () => this.cancel(),
+    );
   }
 
   toggle(rule: ScheduleRule) {

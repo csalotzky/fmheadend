@@ -1,6 +1,10 @@
 <div class="page-header">
   <h1>Scheduler</h1>
-  <button type="button" (click)="edit()" [disabled]="loading() || busy() || !!draft()">
+  <button
+    type="button"
+    (click)="edit()"
+    [disabled]="loading() || busy() || !!draft() || !targets().length"
+  >
     Add rule
   </button>
 </div>
@@ -10,81 +14,155 @@
 }
 @if (loading()) {
   <p role="status">Loading schedule rules...</p>
-} @else if (!rules().length && !error() && !draft()) {
-  <p>No schedule rules configured.</p>
+} @else if (!error()) {
+  @if (!rules().length && !draft()) {
+    <p>No schedule rules configured.</p>
+  }
+  @if (!targets().length) {
+    <p>No transmitters available.</p>
+  }
 }
-@if (draft(); as rule) {
-  <form class="editor-panel" (ngSubmit)="save()">
-    <h2>{{ editing() === null ? 'Add rule' : 'Edit rule' }}</h2>
-    <fieldset [disabled]="busy() || loading()">
-      <div class="fields">
-        <label>
-          Recurrence
-          <select
-            name="recurrence"
-            [ngModel]="rule.recurrence"
-            (ngModelChange)="change({ recurrence: $event })"
-          >
-            <option value="daily">Daily</option>
-            <option value="weekdays">Weekdays</option>
-            <option value="weekends">Weekends</option>
-            <option value="selected_weekdays">Selected weekdays</option>
-          </select>
-        </label>
-        <label>
-          Time (HH:MM, 24-hour)
-          <input
-            name="time"
-            [ngModel]="rule.time"
-            (ngModelChange)="change({ time: $event })"
-            placeholder="08:00"
-            maxlength="5"
-            required
-          />
-        </label>
-      </div>
-      @if (rule.recurrence === 'selected_weekdays') {
-        <fieldset class="fields">
-          <legend>Weekdays</legend>
-          @for (day of weekdays; track day; let index = $index) {
-            <label class="checkbox-control">
-              <input
-                type="checkbox"
-                [checked]="rule.weekdays.includes(index)"
-                (change)="changeWeekday(index, $any($event.target).checked)"
-              />
-              <span>{{ day }}</span>
-            </label>
+
+@for (rule of rules(); track rule.id) {
+  <section
+    class="list-card"
+    [attr.aria-label]="'Schedule rule ' + rule.id"
+    [attr.data-schedule-enabled]="rule.enabled"
+    [attr.data-schedule-action]="editing() === rule.id ? draft()?.action : rule.action"
+  >
+    @if (editing() === rule.id) {
+      <ng-container *ngTemplateOutlet="editor" />
+    } @else {
+      <div class="list-grid list-grid--four">
+        <div class="list-identity">
+          <strong class="list-primary">{{ rule.time }}</strong>
+          <p class="list-secondary">{{ scheduleLabel(rule) }}</p>
+        </div>
+        <div class="list-description">
+          <strong>{{ targetLabel(rule.tx_id) }} · {{ actions[rule.action] }}</strong>
+          @if (rule.action !== 'stop') {
+            <p class="list-secondary">{{ sourceLabel(rule) }}</p>
           }
-        </fieldset>
-      }
-      <div class="fields">
-        <label>
-          Target TX
-          <select name="tx" [ngModel]="rule.tx_id" (ngModelChange)="change({ tx_id: $event })">
-            @for (tx of targets; track tx) {
-              <option [ngValue]="tx">TX {{ tx }}</option>
-            }
-          </select>
-        </label>
-        <label>
-          Action
-          <select
-            name="action"
-            [ngModel]="rule.action"
-            (ngModelChange)="
-              change({ action: $event, source_id: $event === 'stop' ? null : rule.source_id })
-            "
+        </div>
+        <div class="list-status">{{ rule.enabled ? 'Enabled' : 'Disabled' }}</div>
+        <div class="actions list-actions">
+          <button type="button" (click)="edit(rule)" [disabled]="busy() || loading() || !!draft()">
+            Edit
+          </button>
+          <button
+            type="button"
+            (click)="toggle(rule)"
+            [disabled]="busy() || loading() || !!draft()"
           >
-            <option value="start">TX ON</option>
-            <option value="stop">TX OFF</option>
-            <option value="switch_source">Source Switch</option>
-          </select>
-        </label>
+            {{ rule.enabled ? 'Disable' : 'Enable' }}
+          </button>
+          <button
+            type="button"
+            (click)="deleting.set(rule.id)"
+            [disabled]="busy() || loading() || !!draft()"
+          >
+            Delete
+          </button>
+        </div>
+        @if (deleting() === rule.id) {
+          <div class="actions list-detail" role="group" aria-label="Confirm rule deletion">
+            <span>Delete this schedule rule?</span>
+            <button
+              type="button"
+              class="stop"
+              (click)="remove(rule.id)"
+              [disabled]="busy() || loading()"
+            >
+              Confirm delete
+            </button>
+            <button type="button" (click)="deleting.set(null)" [disabled]="busy()">Cancel</button>
+          </div>
+        }
       </div>
-      <div class="fields">
-        @if (rule.action !== 'stop') {
+    }
+  </section>
+}
+@if (draft() && editing() === null) {
+  <section
+    class="list-card"
+    aria-label="New schedule rule"
+    data-schedule-enabled="true"
+    [attr.data-schedule-action]="draft()?.action"
+  >
+    <ng-container *ngTemplateOutlet="editor" />
+  </section>
+}
+
+<ng-template #editor>
+  @if (draft(); as rule) {
+    <form (ngSubmit)="save()">
+      <fieldset class="rule-editor" [disabled]="busy() || loading()">
+        <div class="rule-fields">
           <label>
+            Time (HH:MM)
+            <input
+              name="time"
+              [ngModel]="rule.time"
+              (ngModelChange)="change({ time: $event })"
+              placeholder="08:00"
+              maxlength="5"
+              required
+            />
+          </label>
+          <label>
+            Target TX
+            <select name="tx" [ngModel]="rule.tx_id" (ngModelChange)="change({ tx_id: $event })">
+              @if (!hasTarget(rule.tx_id)) {
+                <option [ngValue]="rule.tx_id" disabled>{{ targetLabel(rule.tx_id) }}</option>
+              }
+              @for (tx of targets(); track tx.id) {
+                <option [ngValue]="tx.id">{{ targetLabel(tx.id) }}</option>
+              }
+            </select>
+          </label>
+          <label>
+            Action
+            <select
+              name="action"
+              [ngModel]="rule.action"
+              (ngModelChange)="
+                change({ action: $event, source_id: $event === 'stop' ? null : rule.source_id })
+              "
+            >
+              <option value="start">TX ON</option>
+              <option value="stop">TX OFF</option>
+              <option value="switch_source">Source Switch</option>
+            </select>
+          </label>
+        </div>
+        <div class="rule-days">
+          <div class="day-options" role="group" aria-label="Days">
+            <span class="muted">Days</span>
+            @for (day of days; track day; let index = $index) {
+              <label class="checkbox-control">
+                <input
+                  type="checkbox"
+                  [checked]="rule.days_of_week.includes(index)"
+                  (change)="changeDay(index, $any($event.target).checked)"
+                />
+                <span>{{ day }}</span>
+              </label>
+            }
+          </div>
+          <div class="day-options" role="group" aria-label="Day presets">
+            @for (preset of dayPresets; track preset.label) {
+              <button
+                class="day-preset"
+                type="button"
+                (click)="change({ days_of_week: preset.days })"
+              >
+                {{ preset.label }}
+              </button>
+            }
+          </div>
+        </div>
+        @if (rule.action !== 'stop') {
+          <label class="rule-source">
             Source
             <select
               name="source"
@@ -102,62 +180,11 @@
             </select>
           </label>
         }
-        <label class="checkbox-control">
-          <input
-            type="checkbox"
-            name="enabled"
-            [ngModel]="rule.enabled"
-            (ngModelChange)="change({ enabled: $event })"
-          />
-          <span>Enabled</span>
-        </label>
-      </div>
-      <div class="actions">
-        <button type="submit" [disabled]="!canSave(rule)">Save</button>
-        <button type="button" (click)="draft.set(null)">Cancel</button>
-      </div>
-    </fieldset>
-  </form>
-}
-@for (rule of rules(); track rule.id) {
-  <section
-    class="list-card list-grid list-grid--four"
-    [attr.aria-label]="'Schedule rule ' + rule.id"
-  >
-    <div class="list-identity">
-      <strong class="list-primary">{{ rule.time }}</strong>
-      <p class="list-secondary">{{ scheduleLabel(rule) }}</p>
-    </div>
-    <div class="list-description">
-      <strong>TX {{ rule.tx_id }} · {{ actions[rule.action] }}</strong>
-      @if (rule.action !== 'stop') {
-        <p class="list-secondary">{{ sourceLabel(rule) }}</p>
-      }
-    </div>
-    <div class="list-status">{{ rule.enabled ? 'Enabled' : 'Disabled' }}</div>
-    <div class="actions list-actions">
-      <button type="button" (click)="edit(rule)" [disabled]="busy() || loading() || !!draft()">
-        Edit
-      </button>
-      <button type="button" (click)="toggle(rule)" [disabled]="busy() || loading() || !!draft()">
-        {{ rule.enabled ? 'Disable' : 'Enable' }}
-      </button>
-      <button
-        type="button"
-        (click)="deleting.set(rule.id)"
-        [disabled]="busy() || loading() || !!draft()"
-      >
-        Delete
-      </button>
-    </div>
-    @if (deleting() === rule.id) {
-      <div class="actions list-detail" role="group" aria-label="Confirm rule deletion">
-        <span>Delete this schedule rule?</span>
-        <button type="button" class="stop" (click)="remove(rule.id)" [disabled]="busy()">
-          Confirm delete
-        </button>
-        <button type="button" (click)="deleting.set(null)" [disabled]="busy()">Cancel</button>
-      </div>
-    }
-  </section>
-}
+        <div class="actions list-actions rule-actions">
+          <button type="submit" [disabled]="!canSave(rule)">Save</button>
+          <button type="button" (click)="cancel()">Cancel</button>
+        </div>
+      </fieldset>
+    </form>
+  }
+</ng-template>

@@ -6,13 +6,14 @@ Authentication is enabled, the browser displays its native credentials prompt.
 
 ## 1. Interface overview
 
-The navigation sidebar provides five areas:
+The navigation sidebar provides six areas:
 
 | Page | Purpose |
 |---|---|
 | **Dashboard** | Monitor and operate the physical transmitters. |
 | **Sources** | Create, test and maintain audio inputs. |
 | **Modulators** | Configure RF, audio-input and RDS settings for each physical TX. |
+| **Scheduler** | Manage scheduled TX actions and edit their days, time and Source in the list. |
 | **Audio Profiles** | View bundled processing presets and manage custom profiles. |
 | **System** | Inspect backend, Controller and mux diagnostics and recent logs. |
 

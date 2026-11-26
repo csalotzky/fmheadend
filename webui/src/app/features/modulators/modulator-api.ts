@@ -19,6 +19,9 @@ export interface ModulatorSaveResult {
 @Injectable({ providedIn: 'root' })
 export class ModulatorApi {
   private http = inject(HttpClient);
+  list() {
+    return this.http.get<Modulator[]>('/api/v1/modulators').pipe(timeout(15000));
+  }
   get(id: number) {
     return this.http.get<Modulator>(`/api/v1/modulators/${id}`).pipe(timeout(15000));
   }
