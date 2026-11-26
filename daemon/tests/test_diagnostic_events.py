@@ -46,6 +46,33 @@ def test_parent_recovery_once_and_stale_summary(caplog):
         assert p._diagnostic_outage_since is None
 
 
+def test_identical_error_after_hours_of_pcm_has_new_start(monkeypatch, caplog):
+    clock = Mock(return_value=100.0)
+    monkeypatch.setattr('fmheadendd.sources.diagnostic_events.time', SimpleNamespace(monotonic=clock))
+    events = DiagnosticEvents(clock)
+    parent = SimpleNamespace(source_id=13, generation='generation', _has_pcm=False)
+    caplog.set_level('INFO', logger='fmheadendd.sources.events')
+
+    events.error('media_error', 'source stalled')
+    accept(parent, events.poll())
+    clock.return_value = 101.0
+    parent._has_pcm = True
+    parent._last_pcm = clock()
+    audio_recovered(parent)
+    assert 'outage_s=1.000 ' in caplog.messages[-1]
+
+    parent._last_pcm += 9 * 3600
+    clock.return_value = parent._last_pcm + 10
+    events.error('media_error', 'source stalled')
+    clock.return_value += 0.5
+    accept(parent, events.poll())
+    assert caplog.messages[-1].endswith('occurrences=1 span_s=0.000')
+    clock.return_value += 1.25
+    parent._last_pcm = clock()
+    audio_recovered(parent)
+    assert 'category=audio_recovered outage_s=1.750 ' in caplog.messages[-1]
+
+
 def test_timeout_reason_and_finite_cooldown_logged():
     old=SimpleNamespace(generation='g',recovery_exhausted=False,source=SimpleNamespace(type='HTTP'),
         recovery_observation=lambda:(100,0,'CONNECTING',None,False),_fail=Mock(),stop=Mock())

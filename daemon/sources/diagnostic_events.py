@@ -34,6 +34,8 @@ class DiagnosticEvents:
                         return  # Bounded even under changing/malicious error text.
                 self.entries.setdefault(key, dict(count=0, first=now, last=now, due=now))
             row = self.entries[key]
+            if row['count'] == 0:
+                row['first'] = now
             row['count'] = min(2**31-1, row['count']+1)
             row['last'] = now
 
