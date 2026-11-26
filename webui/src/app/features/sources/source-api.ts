@@ -102,6 +102,9 @@ export const PODCAST_FEED_TEST_TIMEOUT_MS = 205_000;
 @Injectable({ providedIn: 'root' })
 export class SourceApi {
   private http = inject(HttpClient);
+  list() {
+    return this.http.get<InputSource[]>('/api/v1/sources').pipe(timeout(15000));
+  }
   get(id: number) {
     return this.http.get<InputSource>(`/api/v1/sources/${id}`).pipe(timeout(15000));
   }

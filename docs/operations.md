@@ -102,12 +102,14 @@ remain OFF if they reappear until an operator enables them again.
 
 The built-in scheduler runs enabled rules at minute precision using the Pi's
 local time. Each rule targets one TX and uses the same Start, Stop or source
-save-and-resume operation as manual control.
+save-and-resume operation as manual control. A **TX ON** rule can keep the
+current Source or assign a Source before starting. If assignment fails, Start
+is skipped.
 
 The backend skips the minute in progress at startup and does not replay missed
 minutes. Each due rule is attempted once in its scheduled minute. Action failures
-are logged and the scheduler continues with the remaining rules. Manage rules
-through the [scheduler API](api.md#28-scheduler--4-operations).
+are logged and the scheduler continues with the remaining rules. Manage rules on
+the **Scheduler** page or through the [scheduler API](api.md#28-scheduler--4-operations).
 
 ## 3. STOP ALL and START ALL
 

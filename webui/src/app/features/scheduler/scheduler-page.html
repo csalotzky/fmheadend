@@ -1,0 +1,163 @@
+<div class="page-header">
+  <h1>Scheduler</h1>
+  <button type="button" (click)="edit()" [disabled]="loading() || busy() || !!draft()">
+    Add rule
+  </button>
+</div>
+@if (error()) {
+  <p class="error" role="alert">{{ error() }}</p>
+  <button type="button" (click)="load()" [disabled]="loading() || busy()">Refresh</button>
+}
+@if (loading()) {
+  <p role="status">Loading schedule rules...</p>
+} @else if (!rules().length && !error() && !draft()) {
+  <p>No schedule rules configured.</p>
+}
+@if (draft(); as rule) {
+  <form class="editor-panel" (ngSubmit)="save()">
+    <h2>{{ editing() === null ? 'Add rule' : 'Edit rule' }}</h2>
+    <fieldset [disabled]="busy() || loading()">
+      <div class="fields">
+        <label>
+          Recurrence
+          <select
+            name="recurrence"
+            [ngModel]="rule.recurrence"
+            (ngModelChange)="change({ recurrence: $event })"
+          >
+            <option value="daily">Daily</option>
+            <option value="weekdays">Weekdays</option>
+            <option value="weekends">Weekends</option>
+            <option value="selected_weekdays">Selected weekdays</option>
+          </select>
+        </label>
+        <label>
+          Time (HH:MM, 24-hour)
+          <input
+            name="time"
+            [ngModel]="rule.time"
+            (ngModelChange)="change({ time: $event })"
+            placeholder="08:00"
+            maxlength="5"
+            required
+          />
+        </label>
+      </div>
+      @if (rule.recurrence === 'selected_weekdays') {
+        <fieldset class="fields">
+          <legend>Weekdays</legend>
+          @for (day of weekdays; track day; let index = $index) {
+            <label class="checkbox-control">
+              <input
+                type="checkbox"
+                [checked]="rule.weekdays.includes(index)"
+                (change)="changeWeekday(index, $any($event.target).checked)"
+              />
+              <span>{{ day }}</span>
+            </label>
+          }
+        </fieldset>
+      }
+      <div class="fields">
+        <label>
+          Target TX
+          <select name="tx" [ngModel]="rule.tx_id" (ngModelChange)="change({ tx_id: $event })">
+            @for (tx of targets; track tx) {
+              <option [ngValue]="tx">TX {{ tx }}</option>
+            }
+          </select>
+        </label>
+        <label>
+          Action
+          <select
+            name="action"
+            [ngModel]="rule.action"
+            (ngModelChange)="
+              change({ action: $event, source_id: $event === 'stop' ? null : rule.source_id })
+            "
+          >
+            <option value="start">TX ON</option>
+            <option value="stop">TX OFF</option>
+            <option value="switch_source">Source Switch</option>
+          </select>
+        </label>
+      </div>
+      <div class="fields">
+        @if (rule.action !== 'stop') {
+          <label>
+            Source
+            <select
+              name="source"
+              [ngModel]="rule.source_id"
+              (ngModelChange)="change({ source_id: $event })"
+            >
+              @if (rule.action === 'start') {
+                <option [ngValue]="null">Keep current source</option>
+              } @else {
+                <option [ngValue]="null" disabled>Select a Source</option>
+              }
+              @for (source of sources(); track source.id) {
+                <option [ngValue]="source.id">{{ source.name }}</option>
+              }
+            </select>
+          </label>
+        }
+        <label class="checkbox-control">
+          <input
+            type="checkbox"
+            name="enabled"
+            [ngModel]="rule.enabled"
+            (ngModelChange)="change({ enabled: $event })"
+          />
+          <span>Enabled</span>
+        </label>
+      </div>
+      <div class="actions">
+        <button type="submit" [disabled]="!canSave(rule)">Save</button>
+        <button type="button" (click)="draft.set(null)">Cancel</button>
+      </div>
+    </fieldset>
+  </form>
+}
+@for (rule of rules(); track rule.id) {
+  <section
+    class="list-card list-grid list-grid--four"
+    [attr.aria-label]="'Schedule rule ' + rule.id"
+  >
+    <div class="list-identity">
+      <strong class="list-primary">{{ rule.time }}</strong>
+      <p class="list-secondary">{{ scheduleLabel(rule) }}</p>
+    </div>
+    <div class="list-description">
+      <strong>TX {{ rule.tx_id }} · {{ actions[rule.action] }}</strong>
+      @if (rule.action !== 'stop') {
+        <p class="list-secondary">{{ sourceLabel(rule) }}</p>
+      }
+    </div>
+    <div class="list-status">{{ rule.enabled ? 'Enabled' : 'Disabled' }}</div>
+    <div class="actions list-actions">
+      <button type="button" (click)="edit(rule)" [disabled]="busy() || loading() || !!draft()">
+        Edit
+      </button>
+      <button type="button" (click)="toggle(rule)" [disabled]="busy() || loading() || !!draft()">
+        {{ rule.enabled ? 'Disable' : 'Enable' }}
+      </button>
+      <button
+        type="button"
+        (click)="deleting.set(rule.id)"
+        [disabled]="busy() || loading() || !!draft()"
+      >
+        Delete
+      </button>
+    </div>
+    @if (deleting() === rule.id) {
+      <div class="actions list-detail" role="group" aria-label="Confirm rule deletion">
+        <span>Delete this schedule rule?</span>
+        <button type="button" class="stop" (click)="remove(rule.id)" [disabled]="busy()">
+          Confirm delete
+        </button>
+        <button type="button" (click)="deleting.set(null)" [disabled]="busy()">Cancel</button>
+      </div>
+    }
+  </section>
+}

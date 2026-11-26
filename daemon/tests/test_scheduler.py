@@ -84,12 +84,16 @@ def test_crud_and_persistence(api):
     assert response.status_code == 201
     rule = response.json()
     path = f"{SCHEDULES}/{rule['id']}"
-    assert client.delete(f'/api/v1/sources/{source}').status_code == 409
+    conflict = {'error': 'RESOURCE_IN_USE', 'message': 'Cannot delete source: it is used by a scheduler rule.'}
+    response = client.delete(f'/api/v1/sources/{source}')
+    assert response.status_code == 409 and response.json() == conflict
     changes = dict(enabled=False, time='14:25', recurrence='selected_weekdays', weekdays=[0, 6])
     response = client.patch(path, json=changes)
     assert response.status_code == 200
     assert response.json() == rule | changes
     assert client.get(SCHEDULES).json() == [rule | changes]
+    response = client.delete(f'/api/v1/sources/{source}')
+    assert response.status_code == 409 and response.json() == conflict
     with TestClient(create_app(settings)) as reopened:
         assert reopened.get(SCHEDULES).json() == [rule | changes]
     response = client.patch(path, json=dict(enabled=True, action='stop', source_id=None))
@@ -109,13 +113,49 @@ def test_crud_and_persistence(api):
     ({'recurrence': 'selected_weekdays'}, 422),
     ({'recurrence': 'selected_weekdays', 'weekdays': [1, 1]}, 422),
     ({'recurrence': 'selected_weekdays', 'weekdays': [7]}, 422),
-    ({'action': 'switch_source'}, 422), ({'source_id': 1}, 422),
+    ({'action': 'switch_source'}, 422), ({'action': 'stop', 'source_id': 1}, 422),
+    ({'source_id': 999}, 404),
     ({'action': 'switch_source', 'source_id': 999}, 404),
 ])
 def test_validation(api, changes, status):
     client, _ = api
     assert client.post(SCHEDULES, json=RULE | changes).status_code == status
     assert client.get(SCHEDULES).json() == []
+
+
+@pytest.mark.parametrize('failure', ['unsaved', 'restart', 'exception'])
+def test_start_is_skipped_when_source_assignment_fails(failure, caplog):
+    now = [MONDAY.replace(hour=8, minute=59)]
+    rule = ScheduleRule(id=1, **(RULE | {'source_id': 42}))
+    modulators = Mock()
+    if failure == 'exception':
+        modulators.save_and_resume.side_effect = DomainError(409, 'TEST', 'assignment failed')
+    else:
+        modulators.save_and_resume.return_value = dict(
+            saved=failure == 'restart', failed_stage='start' if failure == 'restart' else None,
+            message='assignment failed')
+    scheduler = Scheduler(Mock(list_schedules=lambda: [rule]), modulators, Mock(), clock=lambda: now[0])
+    now[0] = MONDAY
+    scheduler.tick()
+    modulators.save_and_resume.assert_called_once()
+    modulators.start.assert_not_called()
+    assert 'assignment failed' in caplog.text
+
+
+def test_start_source_can_be_cleared_and_modulator_reference_is_preserved(api):
+    client, _ = api
+    source = add_source(client, 'Station')
+    response = client.post(SCHEDULES, json=RULE | {'source_id': source})
+    assert response.status_code == 201 and response.json()['source_id'] == source
+    path = f"{SCHEDULES}/{response.json()['id']}"
+    assert client.patch(path, json={'action': 'stop'}).status_code == 422
+    response = client.patch(path, json={'source_id': None})
+    assert response.status_code == 200 and response.json()['source_id'] is None
+    assert client.patch('/api/v1/modulators/0', json={'input_source_id': source}).status_code == 200
+    response = client.delete(f'/api/v1/sources/{source}')
+    assert response.status_code == 409
+    assert response.json() == {
+        'error': 'RESOURCE_IN_USE', 'message': 'Resource is referenced by another configuration'}
 
 
 def test_app_dispatch_reuses_manual_operations_on_control_thread(tmp_path, monkeypatch):
@@ -125,7 +165,7 @@ def test_app_dispatch_reuses_manual_operations_on_control_thread(tmp_path, monke
         first = add_source(client, 'First')
         second = add_source(client, 'Second')
         tx = '/api/v1/modulators/0'
-        assert client.patch(tx, json=dict(frequency_khz=98100, input_source_id=first)).status_code == 200
+        assert client.patch(tx, json=dict(frequency_khz=98100)).status_code == 200
         manager = app.state.services.modulators
         owner = app.state.control.executor.submit(threading.get_ident).result(timeout=2)
         calls = []
@@ -140,22 +180,26 @@ def test_app_dispatch_reuses_manual_operations_on_control_thread(tmp_path, monke
 
         for name in ('start', 'save_and_resume', 'stop'):
             monkeypatch.setattr(manager, name, traced(name, getattr(manager, name)))
-        for changes in ({}, dict(time='09:01', action='switch_source', source_id=second),
+        for changes in (dict(source_id=first), dict(time='09:01', action='switch_source', source_id=second),
                         dict(time='09:02', action='stop')):
             assert client.post(SCHEDULES, json=RULE | changes).status_code == 201
 
         now[0] = MONDAY
-        until(lambda: len(calls) == 1)
-        assert calls[0] == ('start', (0,))
-        assert client.get(tx).json()['enabled']
-        now[0] = MONDAY.replace(minute=1)
         until(lambda: len(calls) == 2)
-        name, (channel, patch) = calls[1]
+        name, (channel, patch) = calls[0]
+        assert (name, channel, patch.model_dump(exclude_unset=True)) == (
+            'save_and_resume', 0, {'input_source_id': first})
+        assert calls[1] == ('start', (0,))
+        config = client.get(tx).json()
+        assert config['enabled'] and config['input_source_id'] == first
+        now[0] = MONDAY.replace(minute=1)
+        until(lambda: len(calls) == 3)
+        name, (channel, patch) = calls[2]
         assert (name, channel, patch.model_dump(exclude_unset=True)) == (
             'save_and_resume', 0, {'input_source_id': second})
         config = client.get(tx).json()
         assert config['enabled'] and config['input_source_id'] == second
         now[0] = MONDAY.replace(minute=2)
-        until(lambda: len(calls) == 3)
-        assert calls[2] == ('stop', (0,))
+        until(lambda: len(calls) == 4)
+        assert calls[3] == ('stop', (0,))
         assert not client.get(tx).json()['enabled']

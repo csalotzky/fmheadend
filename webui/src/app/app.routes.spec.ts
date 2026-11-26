@@ -29,6 +29,7 @@ describe('Product document title', () => {
       '/sources/1',
       '/modulators',
       '/modulators/0',
+      '/scheduler',
       '/audio-profiles',
       '/audio-profiles/new',
       '/audio-profiles/edit?path=default%2Fmoderate_loud.json',

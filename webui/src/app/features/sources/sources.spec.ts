@@ -793,6 +793,21 @@ describe('Sources management', () => {
     if (success) expect(shared.refreshAfterMutation).toHaveBeenCalled();
     else expect(c.errors()[1]).toContain('referenced');
   });
+  it('shows the scheduler conflict when Source deletion is blocked', async () => {
+    const f = list();
+    http.expectOne('/api/v1/sources/1/status').flush({ state: 'IDLE' });
+    const message = 'Cannot delete source: it is used by a scheduler rule.';
+    f.componentInstance.deleting.set(1);
+    const removal = f.componentInstance.remove(1);
+    http.expectOne('/api/v1/sources/1').flush(
+      { error: 'RESOURCE_IN_USE', message },
+      { status: 409, statusText: 'Conflict' },
+    );
+    await removal;
+    f.detectChanges();
+    expect(f.nativeElement.querySelector('[role="alert"]').textContent.trim()).toBe(message);
+    expect(shared.refreshAfterMutation).not.toHaveBeenCalled();
+  });
   it('shows the stored LOCAL path instead of a network endpoint', () => {
     expect(
       endpoint({

@@ -29,8 +29,10 @@ class ScheduleConfig(BaseModel):
                 raise ValueError('selected_weekdays requires distinct weekdays (Monday=0, Sunday=6)')
         elif self.weekdays:
             raise ValueError('weekdays may only be supplied with selected_weekdays')
-        if (self.action == 'switch_source') != (self.source_id is not None):
-            raise ValueError('source_id is required for switch_source and forbidden for other actions')
+        if self.action == 'switch_source' and self.source_id is None:
+            raise ValueError('source_id is required for switch_source')
+        if self.action == 'stop' and self.source_id is not None:
+            raise ValueError('source_id is forbidden for stop')
         return self
 
 

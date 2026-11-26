@@ -65,6 +65,7 @@ export class Shell implements OnInit, AfterViewInit, OnDestroy {
     ['dashboard', 'Dashboard'],
     ['sources', 'Sources'],
     ['modulators', 'Modulators'],
+    ['scheduler', 'Scheduler'],
     ['audio-profiles', 'Audio Profiles'],
     ['system', 'System'],
   ];

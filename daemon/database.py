@@ -285,6 +285,10 @@ class Database:
                 if source.rds_profile_id is not None:
                     self.connection.execute('DELETE FROM rds_profiles WHERE id=?', (source.rds_profile_id,))
         except sqlite3.IntegrityError as exc:
+            if self.connection.execute('SELECT 1 FROM schedules WHERE source_id=? LIMIT 1',
+                                       (record_id,)).fetchone():
+                raise DomainError(409, 'RESOURCE_IN_USE',
+                                  'Cannot delete source: it is used by a scheduler rule.') from exc
             raise DomainError(409, 'RESOURCE_IN_USE', 'Resource is referenced by another configuration') from exc
 
     @_configuration_read

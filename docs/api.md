@@ -450,11 +450,12 @@ interfaces remain outside the public HTTP API.
 | `time` | String | Local time in 24-hour `HH:MM` format. |
 | `tx_id` | Integer | Logical Modulator ID, `0`–`7`. |
 | `action` | String | `start`, `stop` or `switch_source`. |
-| `source_id` | Integer or null | Existing Source ID for `switch_source`. Omit or use `null` for other actions. |
+| `source_id` | Integer or null | Required for `switch_source` and optional for `start`. Omit or use `null` for `stop`. A `start` without a Source keeps the current assignment. |
 
-Rules are saved in SQLite. A Source referenced by a rule can be deleted after the
-rule is updated or removed. With PATCH, send an empty `weekdays` array or a null
-`source_id` when changing to a recurrence or action that no longer uses that field.
+Rules are saved in SQLite. Deleting a Source referenced by any rule returns
+`409 RESOURCE_IN_USE`, including when the rule is disabled. With PATCH, send an
+empty `weekdays` array or a null `source_id` when changing to a recurrence or
+action that no longer uses that field.
 See [Scheduled transmissions](operations.md#21-scheduled-transmissions) for execution behavior.
 
 ## 3. Monitoring workflow

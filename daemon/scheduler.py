@@ -52,11 +52,13 @@ class Scheduler:
                 self.publish_status()
 
     def execute(self, rule):
-        if rule.action == 'switch_source':
+        error, pending = None, False
+        if rule.source_id is not None:
             result = self.modulators.save_and_resume(rule.tx_id, ModulatorPatch(input_source_id=rule.source_id))
-            error = result['message'] if result['failed_stage'] or not result['saved'] else None
+            if result['failed_stage'] or not result['saved']:
+                error = result['message'] or 'Source assignment failed'
             pending = result.get('restart_pending', False)
-        else:
+        if rule.action != 'switch_source' and error is None:
             operation = self.modulators.start if rule.action == 'start' else self.modulators.stop
             result = operation(rule.tx_id)
             error = result.last_error or result.start_error

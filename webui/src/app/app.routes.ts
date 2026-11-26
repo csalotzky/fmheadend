@@ -7,6 +7,7 @@ import { SourceEditor, sourceDirtyGuard } from './features/sources/source-editor
 import { Routes } from '@angular/router';
 import { Dashboard } from './features/dashboard/dashboard';
 import { SystemPage } from './features/system/system-page';
+import { SchedulerPage } from './features/scheduler/scheduler-page';
 const pages: Routes = [
   { path: '', pathMatch: 'full', redirectTo: 'dashboard' },
   { path: 'dashboard', component: Dashboard },
@@ -15,6 +16,7 @@ const pages: Routes = [
   { path: 'sources/:id', component: SourceEditor, canDeactivate: [sourceDirtyGuard] },
   { path: 'modulators', component: ModulatorsList },
   { path: 'modulators/:id', component: ModulatorEditor, canDeactivate: [modulatorDirtyGuard] },
+  { path: 'scheduler', component: SchedulerPage },
   { path: 'audio-profiles', component: ProfilesList },
   { path: 'audio-profiles/new', component: ProfileEditor, canDeactivate: [profileDirtyGuard] },
   { path: 'audio-profiles/edit', component: ProfileEditor, canDeactivate: [profileDirtyGuard] },
