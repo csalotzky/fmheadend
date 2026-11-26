@@ -20,7 +20,8 @@ def mount_webui(app, directory):
             return FileResponse(asset, headers={"Cache-Control": "no-cache"})
         # Only client routes get fallback; missing assets remain 404s.
         parts = path.strip("/").split("/") if path.strip("/") else []
-        valid = not parts or parts in (["dashboard"], ["sources"], ["modulators"], ["audio-profiles"], ["system"])
+        valid = not parts or parts in (
+            ["dashboard"], ["sources"], ["modulators"], ["scheduler"], ["audio-profiles"], ["system"])
         if len(parts) == 2 and parts[0] in ("sources", "modulators", "audio-profiles"):
             valid = parts[1].isdigit() or (parts[1] == "new" and parts[0] != "modulators")
             if parts == ["audio-profiles", "edit"]:

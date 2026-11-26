@@ -42,7 +42,7 @@ def test_production_spa_routes_and_api_isolation(tmp_path):
     (assets/'index.html').write_text('<html>Production fixture</html>')
     (assets/'main.js').write_text('console.log(1)')
     with TestClient(create_app(Settings(tmp_path/'db',webui_dir=assets))) as api:
-        for path in ['/','/sources','/sources/new','/modulators','/modulators/0','/audio-profiles',
+        for path in ['/','/sources','/sources/new','/modulators','/modulators/0','/scheduler','/audio-profiles',
                      '/audio-profiles/edit?path=custom%2Fteszt2_20260928180555.json','/system']:
             response=api.get(path)
             assert response.status_code==200 and 'Production fixture' in response.text
